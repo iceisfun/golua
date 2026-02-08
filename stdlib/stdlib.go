@@ -62,6 +62,9 @@ func Open(v *vm.VM) {
 
 	// Channel library (only if ChanProvider is set)
 	openChan(v)
+
+	// Bit32 library (Lua 5.2 compat)
+	openBit32(v)
 }
 
 // print(...)
