@@ -56,6 +56,9 @@ func Open(v *vm.VM) {
 
 	// OS library (only if OsProvider is set)
 	openOs(v)
+
+	// Debug library (only if DebugProvider is set)
+	openDebug(v)
 }
 
 // print(...)

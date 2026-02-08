@@ -64,6 +64,7 @@ See the `examples/` directory for complete examples:
 - **[expose_go](examples/expose_go/)** - Exposing Go functions to Lua
 - **[code_provider](examples/code_provider/)** - Sandboxed file loading with LuaCodeProvider
 - **[jailed_io](examples/jailed_io/)** - Sandboxed IO and OS with JailedIoProvider and DefaultOsProvider
+- **[debug](examples/debug/)** - Diagnostic debug with DefaultDebugProvider (not the standard Lua debug library)
 
 ## Go Interop
 
@@ -139,6 +140,18 @@ v.SetOsProvider(vm.NewFilteredOsProvider(func(name string) bool {
 stdlib.Open(v)
 ```
 
+### Sandboxed Debug
+
+Diagnostic-only debug functions (not the standard Lua debug library):
+
+```go
+v := vm.New()
+v.SetDebugProvider(vm.NewDefaultDebugProvider())
+stdlib.Open(v)
+// Lua now has debug.traceback, debug.stackdepth, debug.where
+// No hooks, no local/upvalue mutation, no bytecode inspection
+```
+
 ## Security Model
 
 golua is sandboxed by default.
@@ -194,7 +207,7 @@ go run ./cmd/luac script.lua
 - No `require` with C modules
 - No `io.stdin`/`io.stdout`/`io.stderr` (no implicit stdio)
 - No `io.write` in `JailedIoProvider` (read-only by design)
-- No debug library
+- No standard Lua debug library (diagnostic-only `debug.traceback`, `debug.stackdepth`, `debug.where` available via `LuaDebugProvider`)
 
 ## Contributing
 

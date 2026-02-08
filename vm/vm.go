@@ -37,6 +37,9 @@ type VM struct {
 	// IO and OS provider support
 	ioProvider LuaIoProvider  // Provider for IO operations (optional)
 	osProvider LuaOsProvider  // Provider for OS operations (optional)
+
+	// Debug provider support
+	debugProvider LuaDebugProvider // Provider for diagnostic debug operations (optional)
 }
 
 // callFrame represents a function call on the call stack.
@@ -166,8 +169,9 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		codeProvider: parent.codeProvider,
 		vmID:         parent.vmID,
 		chunkName:    parent.chunkName,
-		ioProvider:   parent.ioProvider,
-		osProvider:   parent.osProvider,
+		ioProvider:    parent.ioProvider,
+		osProvider:    parent.osProvider,
+		debugProvider: parent.debugProvider,
 	}
 }
 
@@ -1846,4 +1850,14 @@ func (vm *VM) SetOsProvider(provider LuaOsProvider) {
 // OsProvider returns the current OS provider, or nil if none is set.
 func (vm *VM) OsProvider() LuaOsProvider {
 	return vm.osProvider
+}
+
+// SetDebugProvider sets the debug provider for this VM.
+func (vm *VM) SetDebugProvider(provider LuaDebugProvider) {
+	vm.debugProvider = provider
+}
+
+// DebugProvider returns the current debug provider, or nil if none is set.
+func (vm *VM) DebugProvider() LuaDebugProvider {
+	return vm.debugProvider
 }
