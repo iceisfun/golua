@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/iceisfun/golua/compiler"
 	"github.com/iceisfun/golua/parser"
@@ -11,12 +14,35 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: lua <script.lua> [args...]")
+	var timeoutMs int
+	args := os.Args[1:]
+
+	// Parse --timeout flag
+	for len(args) > 0 {
+		if args[0] == "--timeout" {
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "--timeout requires a value in milliseconds")
+				os.Exit(1)
+			}
+			var err error
+			timeoutMs, err = strconv.Atoi(args[1])
+			if err != nil || timeoutMs <= 0 {
+				fmt.Fprintln(os.Stderr, "--timeout value must be a positive integer (milliseconds)")
+				os.Exit(1)
+			}
+			args = args[2:]
+		} else {
+			break
+		}
+	}
+
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: lua [--timeout <ms>] <script.lua> [args...]")
 		os.Exit(1)
 	}
 
-	filename := os.Args[1]
+	filename := args[0]
+	scriptArgs := args[1:]
 
 	// Read the source file
 	src, err := os.ReadFile(filename)
@@ -43,13 +69,20 @@ func main() {
 	v := vm.New()
 	stdlib.Open(v)
 
-	// Set command line arguments
-	args := vm.NewEmptyTable()
-	args.SetInt(0, vm.NewString(filename))
-	for i, arg := range os.Args[2:] {
-		args.SetInt(i+1, vm.NewString(arg))
+	// Set timeout context if requested
+	if timeoutMs > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+		defer cancel()
+		v.SetContext(ctx)
 	}
-	v.SetGlobal("arg", vm.NewTable(args))
+
+	// Set command line arguments
+	luaArgs := vm.NewEmptyTable()
+	luaArgs.SetInt(0, vm.NewString(filename))
+	for i, arg := range scriptArgs {
+		luaArgs.SetInt(i+1, vm.NewString(arg))
+	}
+	v.SetGlobal("arg", vm.NewTable(luaArgs))
 
 	// Run
 	_, err = v.Run(proto)
