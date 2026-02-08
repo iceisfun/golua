@@ -42,6 +42,9 @@ type VM struct {
 	// Debug provider support
 	debugProvider LuaDebugProvider // Provider for diagnostic debug operations (optional)
 
+	// Channel provider support
+	chanProvider LuaChanProvider // Provider for channel operations (optional)
+
 	// Execution control
 	ctx        context.Context // nil = no cancellation checking
 	limits     Limits          // zero values = no limit
@@ -182,6 +185,7 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		ioProvider:    parent.ioProvider,
 		osProvider:    parent.osProvider,
 		debugProvider: parent.debugProvider,
+		chanProvider:  parent.chanProvider,
 		ctx:           parent.ctx,
 		limits:        parent.limits,
 	}
@@ -290,10 +294,10 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 	return results, err
 }
 
-// checkInterrupt checks for context cancellation and instruction limits.
+// CheckInterrupt checks for context cancellation and instruction limits.
 // When neither ctx nor MaxInstructions is set, this is essentially free
 // (two comparisons returning nil).
-func (vm *VM) checkInterrupt() error {
+func (vm *VM) CheckInterrupt() error {
 	if vm.ctx != nil {
 		if err := vm.ctx.Err(); err != nil {
 			return fmt.Errorf("execution interrupted: %w", err)
@@ -657,7 +661,7 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_JMP:
 			sj := inst.SJ()
 			if sj < 0 {
-				if err := vm.checkInterrupt(); err != nil {
+				if err := vm.CheckInterrupt(); err != nil {
 					return nil, err
 				}
 			}
@@ -779,7 +783,7 @@ func (vm *VM) execute() ([]Value, error) {
 			}
 
 		case compiler.OP_CALL:
-			if err := vm.checkInterrupt(); err != nil {
+			if err := vm.CheckInterrupt(); err != nil {
 				return nil, err
 			}
 			a, b, c := inst.A(), inst.B(), inst.C()
@@ -790,7 +794,7 @@ func (vm *VM) execute() ([]Value, error) {
 			_ = results
 
 		case compiler.OP_TAILCALL:
-			if err := vm.checkInterrupt(); err != nil {
+			if err := vm.CheckInterrupt(); err != nil {
 				return nil, err
 			}
 			a, b, _ := inst.A(), inst.B(), inst.C()
@@ -910,7 +914,7 @@ func (vm *VM) execute() ([]Value, error) {
 			// Note: bx+1 accounts for pre-increment of frame.pc
 			if step >= 0 {
 				if idx <= limit {
-					if err := vm.checkInterrupt(); err != nil {
+					if err := vm.CheckInterrupt(); err != nil {
 						return nil, err
 					}
 					frame.pc -= bx + 1
@@ -918,7 +922,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 			} else {
 				if idx >= limit {
-					if err := vm.checkInterrupt(); err != nil {
+					if err := vm.CheckInterrupt(); err != nil {
 						return nil, err
 					}
 					frame.pc -= bx + 1
@@ -1021,7 +1025,7 @@ func (vm *VM) execute() ([]Value, error) {
 			// If R[A+2] (first result, now at R[A+4] after TFORCALL) is not nil, continue
 			// Note: bx+1 accounts for pre-increment of frame.pc
 			if !vm.stack[frame.base+a+4].IsNil() {
-				if err := vm.checkInterrupt(); err != nil {
+				if err := vm.CheckInterrupt(); err != nil {
 					return nil, err
 				}
 				vm.stack[frame.base+a+2] = vm.stack[frame.base+a+4]
@@ -1930,6 +1934,16 @@ func (vm *VM) SetDebugProvider(provider LuaDebugProvider) {
 // DebugProvider returns the current debug provider, or nil if none is set.
 func (vm *VM) DebugProvider() LuaDebugProvider {
 	return vm.debugProvider
+}
+
+// SetChanProvider sets the channel provider for this VM.
+func (vm *VM) SetChanProvider(provider LuaChanProvider) {
+	vm.chanProvider = provider
+}
+
+// ChanProvider returns the current channel provider, or nil if none is set.
+func (vm *VM) ChanProvider() LuaChanProvider {
+	return vm.chanProvider
 }
 
 // SetContext sets the context for cooperative cancellation.

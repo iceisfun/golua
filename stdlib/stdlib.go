@@ -59,6 +59,9 @@ func Open(v *vm.VM) {
 
 	// Debug library (only if DebugProvider is set)
 	openDebug(v)
+
+	// Channel library (only if ChanProvider is set)
+	openChan(v)
 }
 
 // print(...)
