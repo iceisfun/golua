@@ -15,6 +15,7 @@ A Lua 5.5 interpreter written in Go. Pure Go, zero dependencies, no cgo.
 - Sandboxed code loading via `LuaCodeProvider`
 - Sandboxed IO via `LuaIoProvider` (includes `JailedIoProvider` for read-only, directory-confined access)
 - Sandboxed OS via `LuaOsProvider` (includes `DefaultOsProvider` with optional env filtering)
+- Context cancellation and execution limits (call depth, stack, instructions)
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
 - Single static binary when compiled
 
@@ -152,6 +153,31 @@ stdlib.Open(v)
 // Lua now has debug.traceback, debug.stackdepth, debug.where
 // No hooks, no local/upvalue mutation, no bytecode inspection
 ```
+
+### Context Cancellation and Execution Limits
+
+Stop runaway scripts with cooperative context cancellation and execution limits:
+
+```go
+// Cancel infinite loops via context
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+v := vm.New(vm.WithContext(ctx))
+stdlib.Open(v)
+
+// Or use setters
+v.SetContext(ctx)
+
+// Limit call depth, stack size, and instructions
+v.SetLimits(vm.Limits{
+    MaxCallDepth:    200,   // Prevent deep recursion
+    MaxStackSlots:   10000, // Bound memory growth
+    MaxInstructions: 1000000, // Bound CPU (checkpoint visits)
+})
+```
+
+The VM checks for cancellation at backedges (loop iterations), function calls, and tail calls. No per-instruction overhead is added unless `MaxInstructions` is set. Context and limits are inherited by coroutine VMs. Errors from limits are catchable by `pcall`.
 
 ### LuaTable Interface
 

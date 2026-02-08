@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -40,6 +41,11 @@ type VM struct {
 
 	// Debug provider support
 	debugProvider LuaDebugProvider // Provider for diagnostic debug operations (optional)
+
+	// Execution control
+	ctx        context.Context // nil = no cancellation checking
+	limits     Limits          // zero values = no limit
+	instrCount int64           // only tracked when MaxInstructions > 0
 }
 
 // callFrame represents a function call on the call stack.
@@ -55,10 +61,14 @@ type callFrame struct {
 }
 
 // New creates a new VM with an empty global environment.
-func New() *VM {
+// Optional VMOption arguments can configure context and limits.
+func New(opts ...VMOption) *VM {
 	vm := &VM{
 		stack:   make([]Value, 256),
 		globals: NewEmptyTable(),
+	}
+	for _, opt := range opts {
+		opt(vm)
 	}
 	return vm
 }
@@ -160,18 +170,20 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 // It shares globals with the parent but has its own stack and coroutine channels.
 func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 	return &VM{
-		stack:        make([]Value, 256),
-		globals:      parent.globals,
-		stringMeta:   parent.stringMeta,
-		yieldCh:      yieldCh,
-		resumeCh:     resumeCh,
-		coroutineID:  coID,
-		codeProvider: parent.codeProvider,
-		vmID:         parent.vmID,
-		chunkName:    parent.chunkName,
+		stack:         make([]Value, 256),
+		globals:       parent.globals,
+		stringMeta:    parent.stringMeta,
+		yieldCh:       yieldCh,
+		resumeCh:      resumeCh,
+		coroutineID:   coID,
+		codeProvider:  parent.codeProvider,
+		vmID:          parent.vmID,
+		chunkName:     parent.chunkName,
 		ioProvider:    parent.ioProvider,
 		osProvider:    parent.osProvider,
 		debugProvider: parent.debugProvider,
+		ctx:           parent.ctx,
+		limits:        parent.limits,
 	}
 }
 
@@ -202,6 +214,11 @@ func (vm *VM) GetCoroutineChannels() (yieldCh, resumeCh chan []Value) {
 
 // call invokes a closure with the given arguments and returns results.
 func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error) {
+	if vm.limits.MaxCallDepth > 0 && len(vm.callStack) >= vm.limits.MaxCallDepth {
+		return nil, fmt.Errorf("call stack overflow: depth %d exceeds limit %d",
+			len(vm.callStack)+1, vm.limits.MaxCallDepth)
+	}
+
 	proto := closure.Proto
 
 	// Set up the stack frame
@@ -271,6 +288,25 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 	vm.top = savedTop
 
 	return results, err
+}
+
+// checkInterrupt checks for context cancellation and instruction limits.
+// When neither ctx nor MaxInstructions is set, this is essentially free
+// (two comparisons returning nil).
+func (vm *VM) checkInterrupt() error {
+	if vm.ctx != nil {
+		if err := vm.ctx.Err(); err != nil {
+			return fmt.Errorf("execution interrupted: %w", err)
+		}
+	}
+	if vm.limits.MaxInstructions > 0 {
+		vm.instrCount++
+		if vm.instrCount > vm.limits.MaxInstructions {
+			return fmt.Errorf("instruction limit exceeded: %d instructions",
+				vm.limits.MaxInstructions)
+		}
+	}
+	return nil
 }
 
 // execute runs the current call frame until it returns.
@@ -620,6 +656,11 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_JMP:
 			sj := inst.SJ()
+			if sj < 0 {
+				if err := vm.checkInterrupt(); err != nil {
+					return nil, err
+				}
+			}
 			frame.pc += sj
 
 		case compiler.OP_EQ:
@@ -738,6 +779,9 @@ func (vm *VM) execute() ([]Value, error) {
 			}
 
 		case compiler.OP_CALL:
+			if err := vm.checkInterrupt(); err != nil {
+				return nil, err
+			}
 			a, b, c := inst.A(), inst.B(), inst.C()
 			results, err := vm.doCall(frame, a, b, c)
 			if err != nil {
@@ -746,6 +790,9 @@ func (vm *VM) execute() ([]Value, error) {
 			_ = results
 
 		case compiler.OP_TAILCALL:
+			if err := vm.checkInterrupt(); err != nil {
+				return nil, err
+			}
 			a, b, _ := inst.A(), inst.B(), inst.C()
 			// Tail call optimization - reuse current frame
 			fn := vm.stack[frame.base+a]
@@ -863,11 +910,17 @@ func (vm *VM) execute() ([]Value, error) {
 			// Note: bx+1 accounts for pre-increment of frame.pc
 			if step >= 0 {
 				if idx <= limit {
+					if err := vm.checkInterrupt(); err != nil {
+						return nil, err
+					}
 					frame.pc -= bx + 1
 					vm.stack[frame.base+a+3] = NewFloat(idx)
 				}
 			} else {
 				if idx >= limit {
+					if err := vm.checkInterrupt(); err != nil {
+						return nil, err
+					}
 					frame.pc -= bx + 1
 					vm.stack[frame.base+a+3] = NewFloat(idx)
 				}
@@ -968,6 +1021,9 @@ func (vm *VM) execute() ([]Value, error) {
 			// If R[A+2] (first result, now at R[A+4] after TFORCALL) is not nil, continue
 			// Note: bx+1 accounts for pre-increment of frame.pc
 			if !vm.stack[frame.base+a+4].IsNil() {
+				if err := vm.checkInterrupt(); err != nil {
+					return nil, err
+				}
 				vm.stack[frame.base+a+2] = vm.stack[frame.base+a+4]
 				frame.pc -= bx + 1
 			}
@@ -1063,6 +1119,10 @@ func (vm *VM) execute() ([]Value, error) {
 // Helper methods
 
 func (vm *VM) ensureStack(n int) {
+	if vm.limits.MaxStackSlots > 0 && n >= vm.limits.MaxStackSlots {
+		panic(fmt.Sprintf("stack overflow: %d slots exceeds limit %d",
+			n, vm.limits.MaxStackSlots))
+	}
 	for len(vm.stack) <= n {
 		vm.stack = append(vm.stack, make([]Value, 256)...)
 	}
@@ -1870,4 +1930,34 @@ func (vm *VM) SetDebugProvider(provider LuaDebugProvider) {
 // DebugProvider returns the current debug provider, or nil if none is set.
 func (vm *VM) DebugProvider() LuaDebugProvider {
 	return vm.debugProvider
+}
+
+// SetContext sets the context for cooperative cancellation.
+func (vm *VM) SetContext(ctx context.Context) {
+	vm.ctx = ctx
+}
+
+// Context returns the current context, or nil if none is set.
+func (vm *VM) Context() context.Context {
+	return vm.ctx
+}
+
+// SetLimits sets execution limits on the VM.
+func (vm *VM) SetLimits(limits Limits) {
+	vm.limits = limits
+}
+
+// GetLimits returns the current execution limits.
+func (vm *VM) GetLimits() Limits {
+	return vm.limits
+}
+
+// InstructionCount returns the current checkpoint visit count.
+func (vm *VM) InstructionCount() int64 {
+	return vm.instrCount
+}
+
+// ResetInstructionCount resets the checkpoint visit counter to zero.
+func (vm *VM) ResetInstructionCount() {
+	vm.instrCount = 0
 }

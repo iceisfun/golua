@@ -7,6 +7,15 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
+// ctxDone returns the Done channel from the VM's context, or nil if no context is set.
+// A nil channel blocks forever in select, which is the correct fallback.
+func ctxDone(v *vm.VM) <-chan struct{} {
+	if ctx := v.Context(); ctx != nil {
+		return ctx.Done()
+	}
+	return nil
+}
+
 // Coroutine represents a Lua coroutine
 type Coroutine struct {
 	id       int
@@ -166,6 +175,10 @@ func coResume(v *vm.VM) int {
 			v.Set(i+1, r)
 		}
 		return 1 + len(result)
+	case <-ctxDone(v):
+		v.Set(0, vm.False)
+		v.Set(1, vm.NewString("execution interrupted: "+v.Context().Err().Error()))
+		return 2
 	}
 }
 
@@ -245,6 +258,13 @@ func coYield(v *vm.VM) int {
 
 	// Wait for resume - mark as running when we get it
 	args := <-resumeCh
+
+	// Check for context cancellation after waking
+	if ctx := v.Context(); ctx != nil {
+		if err := ctx.Err(); err != nil {
+			panic(fmt.Sprintf("execution interrupted: %v", err))
+		}
+	}
 
 	if coID != 0 {
 		coroutinesMu.Lock()
