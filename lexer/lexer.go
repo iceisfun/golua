@@ -532,7 +532,7 @@ func (l *Lexer) scanNumber(pos token.Pos) (token.Token, error) {
 	var buf strings.Builder
 	isHex := false
 
-	// Check for 0x / 0X prefix
+	// Check for 0x / 0X / 0b / 0B prefix
 	if l.current == '0' {
 		buf.WriteRune(l.current)
 		l.readChar()
@@ -540,10 +540,50 @@ func (l *Lexer) scanNumber(pos token.Pos) (token.Token, error) {
 			isHex = true
 			buf.WriteRune(l.current)
 			l.readChar()
+		} else if l.current == 'b' || l.current == 'B' {
+			return l.scanBinaryNumber(pos, &buf)
 		}
 	}
 
 	return l.scanNumberBody(pos, &buf, isHex)
+}
+
+// scanBinaryNumber reads a binary integer literal after "0b" or "0B".
+func (l *Lexer) scanBinaryNumber(pos token.Pos, buf *strings.Builder) (token.Token, error) {
+	buf.WriteRune(l.current) // write 'b' or 'B'
+	l.readChar()
+
+	// Must have at least one binary digit.
+	if l.current != '0' && l.current != '1' {
+		if isAlpha(l.current) || isDigit(l.current) {
+			return token.Token{}, fmt.Errorf("%s: malformed number '%s%c'",
+				pos, buf.String(), l.current)
+		}
+		return token.Token{}, fmt.Errorf("%s: malformed number '%s'", pos, buf.String())
+	}
+
+	for l.current == '0' || l.current == '1' {
+		buf.WriteRune(l.current)
+		l.readChar()
+	}
+
+	// Reject trailing digits or letters (e.g. 0b102, 0b10abc).
+	if isAlpha(l.current) || isDigit(l.current) {
+		return token.Token{}, fmt.Errorf("%s: malformed number '%s%c'",
+			pos, buf.String(), l.current)
+	}
+
+	raw := buf.String()
+	ival, err := parseInt(raw)
+	if err != nil {
+		return token.Token{}, fmt.Errorf("%s: malformed number '%s'", pos, raw)
+	}
+	return token.Token{
+		Type:    token.INT,
+		Literal: raw,
+		IntVal:  ival,
+		Pos:     pos,
+	}, nil
 }
 
 // scanNumberAfterDot reads a number that started with '.'.
@@ -691,6 +731,14 @@ func parseInt(s string) (int64, error) {
 	// then reinterpret as int64 (matching Lua's wrapping behaviour).
 	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
 		u, err := strconv.ParseUint(s[2:], 16, 64)
+		if err != nil {
+			return 0, err
+		}
+		return int64(u), nil
+	}
+	// Handle binary — same approach as hex.
+	if strings.HasPrefix(s, "0b") || strings.HasPrefix(s, "0B") {
+		u, err := strconv.ParseUint(s[2:], 2, 64)
 		if err != nil {
 			return 0, err
 		}

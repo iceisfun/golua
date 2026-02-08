@@ -260,6 +260,14 @@ func TestIntegers(t *testing.T) {
 		{"0xFF", 255},
 		{"0x10", 16},
 		{"0XDEAD", 0xDEAD},
+		{"0b0", 0},
+		{"0b1", 1},
+		{"0b10", 2},
+		{"0b1010", 10},
+		{"0B1010", 10},
+		{"0b1111", 15},
+		{"0b11111111", 255},
+		{"0b1111111111111111111111111111111111111111111111111111111111111111", -1}, // all 64 bits set
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
@@ -306,6 +314,25 @@ func TestMalformedNumber(t *testing.T) {
 	_, err := l.Next()
 	if err == nil {
 		t.Fatal("expected error for malformed number")
+	}
+}
+
+func TestMalformedBinaryNumber(t *testing.T) {
+	cases := []string{
+		"0b",     // no digits after prefix
+		"0B",     // no digits after prefix (uppercase)
+		"0b102",  // non-binary digit
+		"0b2",    // non-binary digit immediately
+		"0b10abc", // trailing letters
+	}
+	for _, input := range cases {
+		t.Run(input, func(t *testing.T) {
+			l := New("test", input)
+			_, err := l.Next()
+			if err == nil {
+				t.Fatalf("expected error for malformed binary number %q", input)
+			}
+		})
 	}
 }
 
