@@ -1,7 +1,6 @@
 package stdlib
 
 import (
-	"strings"
 	"unicode"
 )
 
@@ -129,6 +128,69 @@ func matchPattern(s string, pos int, pattern string, patPos int) *matchResult {
 		result.caps = append(result.caps, inner.caps...)
 		result.caps = append(result.caps, rest.caps...)
 		return result
+	}
+
+	// Handle balanced pattern %bxy
+	if pattern[patPos] == '%' && patPos+1 < len(pattern) && pattern[patPos+1] == 'b' {
+		if patPos+3 >= len(pattern) {
+			return nil // need two characters after %b
+		}
+		open := pattern[patPos+2]
+		close := pattern[patPos+3]
+		if pos >= len(s) || s[pos] != open {
+			return nil
+		}
+		depth := 1
+		i := pos + 1
+		for i < len(s) && depth > 0 {
+			if s[i] == open {
+				depth++
+			} else if s[i] == close {
+				depth--
+			}
+			i++
+		}
+		if depth != 0 {
+			return nil
+		}
+		// Matched balanced substring s[pos:i], continue with rest of pattern
+		result := matchPattern(s, i, pattern, patPos+4)
+		if result != nil {
+			result.start = pos
+		}
+		return result
+	}
+
+	// Handle frontier pattern %f[set]
+	if pattern[patPos] == '%' && patPos+1 < len(pattern) && pattern[patPos+1] == 'f' {
+		if patPos+2 >= len(pattern) || pattern[patPos+2] != '[' {
+			return nil
+		}
+		set, setLen := parseCharSetAt(pattern, patPos+2)
+		if set == nil {
+			return nil
+		}
+
+		// Get prev and curr bytes
+		var prev byte = 0
+		if pos > 0 {
+			prev = s[pos-1]
+		}
+		var curr byte = 0
+		if pos < len(s) {
+			curr = s[pos]
+		}
+
+		// Frontier: curr matches set, prev does not
+		if set.matches(curr) && !set.matches(prev) {
+			// Zero-width: continue matching at same position
+			result := matchPattern(s, pos, pattern, patPos+2+setLen)
+			if result != nil {
+				result.start = pos
+			}
+			return result
+		}
+		return nil
 	}
 
 	// Get the current pattern element
@@ -280,16 +342,30 @@ func (c classChar) matches(b byte) bool {
 }
 
 type charSet struct {
-	chars string
+	elems []patternElem // individual matchers (classChar, literalChar, rangeChar)
 	neg   bool
 }
 
 func (c charSet) matches(b byte) bool {
-	matched := strings.ContainsRune(c.chars, rune(b))
+	matched := false
+	for _, e := range c.elems {
+		if e.matches(b) {
+			matched = true
+			break
+		}
+	}
 	if c.neg {
 		return !matched
 	}
 	return matched
+}
+
+type rangeChar struct {
+	low, high byte
+}
+
+func (r rangeChar) matches(b byte) bool {
+	return b >= r.low && b <= r.high
 }
 
 // getPatternElem returns the pattern element at patPos and its length
@@ -320,25 +396,11 @@ func getPatternElem(pattern string, patPos int) (patternElem, int) {
 
 	// Character set [...]
 	if ch == '[' {
-		neg := false
-		start := patPos + 1
-		if start < len(pattern) && pattern[start] == '^' {
-			neg = true
-			start++
-		}
-		end := start
-		for end < len(pattern) && pattern[end] != ']' {
-			if pattern[end] == '%' && end+1 < len(pattern) {
-				end += 2
-			} else {
-				end++
-			}
-		}
-		if end >= len(pattern) {
+		set, setLen := parseCharSetAt(pattern, patPos)
+		if set == nil {
 			return nil, 0
 		}
-		chars := expandCharSet(pattern[start:end])
-		return charSet{chars: chars, neg: neg}, end - patPos + 1
+		return set, setLen
 	}
 
 	// Any character
@@ -350,41 +412,55 @@ func getPatternElem(pattern string, patPos int) (patternElem, int) {
 	return literalChar{ch: ch}, 1
 }
 
-// expandCharSet expands a character set definition like "a-z" to "abc...z"
-func expandCharSet(set string) string {
-	var result strings.Builder
+// parseCharSetAt parses a [...] character set starting at pattern[patPos] == '['
+// Returns the charSet and the total length consumed from the pattern.
+func parseCharSetAt(pattern string, patPos int) (*charSet, int) {
+	neg := false
+	start := patPos + 1
+	if start < len(pattern) && pattern[start] == '^' {
+		neg = true
+		start++
+	}
+	end := start
+	for end < len(pattern) && pattern[end] != ']' {
+		if pattern[end] == '%' && end+1 < len(pattern) {
+			end += 2
+		} else {
+			end++
+		}
+	}
+	if end >= len(pattern) {
+		return nil, 0
+	}
+	elems := parseCharSetElems(pattern[start:end])
+	return &charSet{elems: elems, neg: neg}, end - patPos + 1
+}
+
+// parseCharSetElems parses the contents of a [...] set into a list of matchers.
+func parseCharSetElems(set string) []patternElem {
+	var elems []patternElem
 	i := 0
 	for i < len(set) {
 		if set[i] == '%' && i+1 < len(set) {
-			// Escaped character or class
 			next := set[i+1]
 			switch next {
-			case 'a':
-				result.WriteString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-			case 'd':
-				result.WriteString("0123456789")
-			case 's':
-				result.WriteString(" \t\n\r\f\v")
-			case 'w':
-				result.WriteString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+			case 'a', 'd', 's', 'w', 'l', 'u', 'c', 'p', 'x', 'z':
+				elems = append(elems, classChar{class: next, neg: false})
+			case 'A', 'D', 'S', 'W', 'L', 'U', 'C', 'P', 'X', 'Z':
+				elems = append(elems, classChar{class: next + 32, neg: true})
 			default:
-				result.WriteByte(next)
+				elems = append(elems, literalChar{ch: next})
 			}
 			i += 2
 		} else if i+2 < len(set) && set[i+1] == '-' {
-			// Character range
-			start := set[i]
-			end := set[i+2]
-			for c := start; c <= end; c++ {
-				result.WriteByte(c)
-			}
+			elems = append(elems, rangeChar{low: set[i], high: set[i+2]})
 			i += 3
 		} else {
-			result.WriteByte(set[i])
+			elems = append(elems, literalChar{ch: set[i]})
 			i++
 		}
 	}
-	return result.String()
+	return elems
 }
 
 func isLetter(b byte) bool {
