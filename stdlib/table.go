@@ -48,7 +48,7 @@ func tableConcat(v *vm.VM) int {
 
 	var parts []string
 	for idx := i; idx <= j; idx++ {
-		val := tbl.GetInt(int(idx))
+		val := tbl.Get(vm.NewInt(idx))
 		if val.IsString() {
 			parts = append(parts, val.AsString())
 		} else if val.IsNumber() {
@@ -74,7 +74,7 @@ func tableInsert(v *vm.VM) int {
 
 	if n == 2 {
 		// table.insert(list, value) - append to end
-		tbl.SetInt(length+1, v.Get(2))
+		tbl.Set(vm.NewInt(int64(length+1)), v.Get(2))
 	} else if n >= 3 {
 		// table.insert(list, pos, value)
 		pos := int(getInt(v, 2, "insert"))
@@ -82,9 +82,9 @@ func tableInsert(v *vm.VM) int {
 
 		// Shift elements up
 		for i := length; i >= pos; i-- {
-			tbl.SetInt(i+1, tbl.GetInt(i))
+			tbl.Set(vm.NewInt(int64(i+1)), tbl.Get(vm.NewInt(int64(i))))
 		}
-		tbl.SetInt(pos, val)
+		tbl.Set(vm.NewInt(int64(pos)), val)
 	}
 
 	return 0
@@ -108,13 +108,13 @@ func tableRemove(v *vm.VM) int {
 		return 1
 	}
 
-	removed := tbl.GetInt(pos)
+	removed := tbl.Get(vm.NewInt(int64(pos)))
 
 	// Shift elements down
 	for i := pos; i < length; i++ {
-		tbl.SetInt(i, tbl.GetInt(i+1))
+		tbl.Set(vm.NewInt(int64(i)), tbl.Get(vm.NewInt(int64(i+1))))
 	}
-	tbl.SetInt(length, vm.Nil)
+	tbl.Set(vm.NewInt(int64(length)), vm.Nil)
 
 	v.Set(0, removed)
 	return 1
@@ -135,7 +135,7 @@ func tableSort(v *vm.VM) int {
 	// Extract values into slice
 	values := make([]vm.Value, length)
 	for i := 1; i <= length; i++ {
-		values[i-1] = tbl.GetInt(i)
+		values[i-1] = tbl.Get(vm.NewInt(int64(i)))
 	}
 
 	comp := v.Get(2)
@@ -157,7 +157,7 @@ func tableSort(v *vm.VM) int {
 
 	// Put values back
 	for i := 1; i <= length; i++ {
-		tbl.SetInt(i, values[i-1])
+		tbl.Set(vm.NewInt(int64(i)), values[i-1])
 	}
 
 	return 0
@@ -182,7 +182,7 @@ func tableUnpack(v *vm.VM) int {
 
 	count := 0
 	for idx := i; idx <= j; idx++ {
-		v.Set(count, tbl.GetInt(int(idx)))
+		v.Set(count, tbl.Get(vm.NewInt(idx)))
 		count++
 	}
 	return count
@@ -226,11 +226,11 @@ func tableMove(v *vm.VM) int {
 		if t > f {
 			// Copy backwards to avoid overwriting
 			for i := count - 1; i >= 0; i-- {
-				a2.SetInt(t+i, a1.GetInt(f+i))
+				a2.Set(vm.NewInt(int64(t+i)), a1.Get(vm.NewInt(int64(f+i))))
 			}
 		} else {
 			for i := 0; i < count; i++ {
-				a2.SetInt(t+i, a1.GetInt(f+i))
+				a2.Set(vm.NewInt(int64(t+i)), a1.Get(vm.NewInt(int64(f+i))))
 			}
 		}
 	}

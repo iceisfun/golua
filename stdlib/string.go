@@ -271,7 +271,7 @@ func stringGsub(v *vm.VM) int {
 		} else if repl.IsTable() {
 			// Table lookup with first capture (or whole match)
 			key := matchInfo.captures[0]
-			val := repl.AsTable().GetString(key)
+			val := repl.AsTable().Get(vm.NewString(key))
 			if val.IsString() {
 				replacement = val.AsString()
 			} else if val.IsNil() || (val.IsBool() && !val.AsBool()) {

@@ -100,6 +100,6 @@ func main() {
 
 	resultTable := results[0].AsTable()
 	fmt.Printf("process({x=5, y=3}) = {sum=%d, product=%d}\n",
-		resultTable.GetString("sum").AsInt(),
-		resultTable.GetString("product").AsInt())
+		resultTable.Get(vm.NewString("sum")).AsInt(),
+		resultTable.Get(vm.NewString("product")).AsInt())
 }

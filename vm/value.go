@@ -66,7 +66,7 @@ func NewString(s string) Value {
 }
 
 // NewTable creates a table value.
-func NewTable(t *Table) Value {
+func NewTable(t LuaTable) Value {
 	return Value{typ: typeTable, ptr: t}
 }
 
@@ -138,9 +138,9 @@ func (v Value) AsString() string {
 }
 
 // AsTable returns the table value.
-func (v Value) AsTable() *Table {
+func (v Value) AsTable() LuaTable {
 	if v.typ == typeTable {
-		return v.ptr.(*Table)
+		return v.ptr.(LuaTable)
 	}
 	return nil
 }

@@ -86,7 +86,7 @@ func coResume(v *vm.VM) int {
 	}
 
 	coTable := coVal.AsTable()
-	idVal := coTable.GetString("__coroutine_id")
+	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
 		v.Set(0, vm.False)
 		v.Set(1, vm.NewString("bad argument #1 to 'resume' (thread expected)"))
@@ -271,7 +271,7 @@ func coStatus(v *vm.VM) int {
 	}
 
 	coTable := coVal.AsTable()
-	idVal := coTable.GetString("__coroutine_id")
+	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
 		panic("bad argument #1 to 'status' (thread expected)")
 	}

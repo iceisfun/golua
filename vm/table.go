@@ -2,10 +2,12 @@ package vm
 
 // Table represents a Lua table.
 // It has both an array part (for integer keys 1..n) and a hash part.
+// The keys slice maintains insertion order so that next() is deterministic.
 type Table struct {
 	array     []Value
 	hash      map[any]Value
-	metatable *Table
+	keys      []any // insertion-ordered hash keys
+	metatable LuaTable
 }
 
 // NewEmptyTable creates a new empty table.
@@ -47,6 +49,32 @@ func hashKey(v Value) any {
 	default:
 		// Tables, functions use pointer identity
 		return v.ptr
+	}
+}
+
+// setHash inserts, updates, or deletes a hash entry while keeping the
+// ordered keys slice in sync.
+func (t *Table) setHash(k any, value Value) {
+	if value.IsNil() {
+		if _, exists := t.hash[k]; exists {
+			delete(t.hash, k)
+			t.removeKey(k)
+		}
+	} else {
+		if _, exists := t.hash[k]; !exists {
+			t.keys = append(t.keys, k)
+		}
+		t.hash[k] = value
+	}
+}
+
+// removeKey removes a key from the ordered keys slice.
+func (t *Table) removeKey(k any) {
+	for i, existing := range t.keys {
+		if existing == k {
+			t.keys = append(t.keys[:i], t.keys[i+1:]...)
+			return
+		}
 	}
 }
 
@@ -126,12 +154,7 @@ func (t *Table) Set(key, value Value) {
 	}
 
 	// Use hash part
-	k := hashKey(key)
-	if value.IsNil() {
-		delete(t.hash, k)
-	} else {
-		t.hash[k] = value
-	}
+	t.setHash(hashKey(key), value)
 }
 
 // SetInt sets by integer key (1-based).
@@ -150,20 +173,12 @@ func (t *Table) SetInt(i int, value Value) {
 		t.rehashToArray()
 		return
 	}
-	if value.IsNil() {
-		delete(t.hash, int64(i))
-	} else {
-		t.hash[int64(i)] = value
-	}
+	t.setHash(int64(i), value)
 }
 
 // SetString sets by string key.
 func (t *Table) SetString(s string, value Value) {
-	if value.IsNil() {
-		delete(t.hash, s)
-	} else {
-		t.hash[s] = value
-	}
+	t.setHash(s, value)
 }
 
 // shrinkArray removes trailing nils from the array part.
@@ -180,6 +195,7 @@ func (t *Table) rehashToArray() {
 		if v, ok := t.hash[nextIdx]; ok && !v.IsNil() {
 			t.array = append(t.array, v)
 			delete(t.hash, nextIdx)
+			t.removeKey(nextIdx)
 		} else {
 			break
 		}
@@ -193,13 +209,26 @@ func (t *Table) Len() int {
 	return len(t.array)
 }
 
+// Delete removes a key from the table.
+func (t *Table) Delete(key Value) {
+	t.Set(key, Nil)
+}
+
 // Metatable returns the table's metatable.
-func (t *Table) Metatable() *Table {
+func (t *Table) Metatable() LuaTable {
 	return t.metatable
 }
 
 // SetMetatable sets the table's metatable.
-func (t *Table) SetMetatable(mt *Table) {
+func (t *Table) SetMetatable(mt LuaTable) {
+	if mt == nil {
+		t.metatable = nil
+		return
+	}
+	if tp, ok := mt.(*Table); ok && tp == nil {
+		t.metatable = nil
+		return
+	}
 	t.metatable = mt
 }
 
@@ -207,15 +236,18 @@ func (t *Table) SetMetatable(mt *Table) {
 // Given a key, returns (nextKey, nextValue).
 // If key is nil, returns the first pair.
 // If no more pairs, returns (nil, nil).
+// The hash part is traversed in insertion order so that next() is
+// deterministic as long as the table is not modified.
 func (t *Table) Next(key Value) (Value, Value) {
 	if key.IsNil() {
-		// Start iteration
+		// Start iteration: array part first
 		if len(t.array) > 0 {
 			return NewInt(1), t.array[0]
 		}
-		// Fall through to hash iteration
-		for k, v := range t.hash {
-			return keyToValue(k), v
+		// First hash entry
+		if len(t.keys) > 0 {
+			k := t.keys[0]
+			return keyToValue(k), t.hash[k]
 		}
 		return Nil, Nil
 	}
@@ -228,25 +260,23 @@ func (t *Table) Next(key Value) (Value, Value) {
 				return NewInt(i + 1), t.array[i]
 			}
 			// End of array, start hash
-			for k, v := range t.hash {
-				return keyToValue(k), v
+			if len(t.keys) > 0 {
+				k := t.keys[0]
+				return keyToValue(k), t.hash[k]
 			}
 			return Nil, Nil
 		}
 	}
 
-	// In hash part - need to find next after current key
-	// This is tricky with Go maps since iteration order isn't guaranteed
-	// We'll do a simple approach: collect all keys, sort, find next
-	// For now, just iterate and return "some" next key
+	// In hash part — find current key in ordered keys, return the next one
 	k := hashKey(key)
-	found := false
-	for hk, v := range t.hash {
-		if found {
-			return keyToValue(hk), v
-		}
+	for i, hk := range t.keys {
 		if hk == k {
-			found = true
+			if i+1 < len(t.keys) {
+				nextK := t.keys[i+1]
+				return keyToValue(nextK), t.hash[nextK]
+			}
+			return Nil, Nil
 		}
 	}
 	return Nil, Nil
@@ -281,8 +311,8 @@ func (t *Table) ForEach(fn func(key, value Value) bool) {
 			}
 		}
 	}
-	for k, v := range t.hash {
-		if !fn(keyToValue(k), v) {
+	for _, k := range t.keys {
+		if !fn(keyToValue(k), t.hash[k]) {
 			return
 		}
 	}

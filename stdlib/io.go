@@ -54,8 +54,8 @@ func makeFileHandle(f vm.LuaFile) vm.Value {
 }
 
 // markFileClosed marks a file handle as closed.
-func markFileClosed(handle *vm.Table) {
-	handle.SetString("__file_open", vm.False)
+func markFileClosed(handle vm.LuaTable) {
+	handle.Set(vm.NewString("__file_open"), vm.False)
 }
 
 // makeIoOpen creates the io.open function.
@@ -86,7 +86,7 @@ func ioClose(v *vm.VM) int {
 		panic("bad argument #1 to 'close' (file expected)")
 	}
 
-	closeFunc := handle.GetString("close")
+	closeFunc := handle.Get(vm.NewString("close"))
 	if closeFunc.IsNil() || !closeFunc.IsNativeFunc() {
 		panic("bad argument #1 to 'close' (file expected)")
 	}
@@ -111,7 +111,7 @@ func ioType(v *vm.VM) int {
 		return 1
 	}
 
-	open := t.GetString("__file_open")
+	open := t.Get(vm.NewString("__file_open"))
 	if open.IsBool() && open.AsBool() {
 		v.Set(0, vm.NewString("file"))
 	} else {

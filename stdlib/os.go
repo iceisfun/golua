@@ -60,7 +60,7 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		dateTable := make(map[string]int)
 
 		for _, key := range []string{"year", "month", "day", "hour", "min", "sec"} {
-			val := t.GetString(key)
+			val := t.Get(vm.NewString(key))
 			if !val.IsNil() {
 				if i, ok := val.ToInt(); ok {
 					dateTable[key] = int(i)

@@ -13,7 +13,7 @@ type VM struct {
 	stack     []Value     // Value stack
 	top       int         // Top of stack (first free slot)
 	callStack []callFrame // Call stack
-	globals   *Table      // Global environment (_G)
+	globals   LuaTable    // Global environment (_G)
 
 	// Open upvalues linked list (sorted by stack index, descending)
 	openUpvalues []*Upvalue
@@ -22,7 +22,7 @@ type VM struct {
 	tbcVars []int
 
 	// Type metatables (for string, number, etc.)
-	stringMeta *Table
+	stringMeta LuaTable
 
 	// Coroutine support
 	yieldCh     chan []Value // Channel to send yield values (nil if not in coroutine)
@@ -64,18 +64,18 @@ func New() *VM {
 }
 
 // Globals returns the global table.
-func (vm *VM) Globals() *Table {
+func (vm *VM) Globals() LuaTable {
 	return vm.globals
 }
 
 // SetGlobal sets a global variable.
 func (vm *VM) SetGlobal(name string, value Value) {
-	vm.globals.SetString(name, value)
+	vm.globals.Set(NewString(name), value)
 }
 
 // GetGlobal gets a global variable.
 func (vm *VM) GetGlobal(name string) Value {
-	return vm.globals.GetString(name)
+	return vm.globals.Get(NewString(name))
 }
 
 // Run executes a compiled prototype and returns the results.
@@ -176,12 +176,12 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 }
 
 // SetStringMeta sets the metatable for all strings.
-func (vm *VM) SetStringMeta(mt *Table) {
+func (vm *VM) SetStringMeta(mt LuaTable) {
 	vm.stringMeta = mt
 }
 
 // StringMeta returns the string metatable.
-func (vm *VM) StringMeta() *Table {
+func (vm *VM) StringMeta() LuaTable {
 	return vm.stringMeta
 }
 
@@ -400,7 +400,7 @@ func (vm *VM) execute() ([]Value, error) {
 				vm.stack[frame.base+a] = val
 			} else if table.IsString() && vm.stringMeta != nil {
 				// String field access - use string metatable
-				val := vm.stringMeta.GetString(key)
+				val := vm.stringMeta.Get(NewString(key))
 				vm.stack[frame.base+a] = val
 			} else {
 				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
@@ -979,8 +979,8 @@ func (vm *VM) execute() ([]Value, error) {
 			vC := int((uint32(inst) >> 22) & 0x3FF)
 			k := inst.K()
 
-			table := vm.stack[frame.base+a].AsTable()
-			if table == nil {
+			tbl := vm.stack[frame.base+a].AsTable()
+			if tbl == nil {
 				return nil, fmt.Errorf("attempt to index a non-table value")
 			}
 
@@ -999,8 +999,15 @@ func (vm *VM) execute() ([]Value, error) {
 
 			// offset is the starting index (1-based for first batch)
 			// Indices set are: offset, offset+1, ..., offset+n-1
-			for i := 0; i < n; i++ {
-				table.SetInt(offset+i, vm.stack[frame.base+a+1+i])
+			// Fast path: OP_SETLIST always follows OP_NEWTABLE, so table is always *Table
+			if ct, ok := tbl.(*Table); ok {
+				for i := 0; i < n; i++ {
+					ct.SetInt(offset+i, vm.stack[frame.base+a+1+i])
+				}
+			} else {
+				for i := 0; i < n; i++ {
+					tbl.Set(NewInt(int64(offset+i)), vm.stack[frame.base+a+1+i])
+				}
 			}
 
 		case compiler.OP_CLOSURE:
@@ -1166,10 +1173,11 @@ func (vm *VM) arithMetamethod(op compiler.OpCode) string {
 
 // getArithMetamethod looks for an arithmetic metamethod on either operand
 func (vm *VM) getArithMetamethod(v1, v2 Value, name string) Value {
+	nameVal := NewString(name)
 	// Try first operand
 	if v1.IsTable() {
 		if mt := v1.AsTable().Metatable(); mt != nil {
-			if mm := mt.GetString(name); !mm.IsNil() {
+			if mm := mt.Get(nameVal); !mm.IsNil() {
 				return mm
 			}
 		}
@@ -1177,7 +1185,7 @@ func (vm *VM) getArithMetamethod(v1, v2 Value, name string) Value {
 	// Try second operand
 	if v2.IsTable() {
 		if mt := v2.AsTable().Metatable(); mt != nil {
-			if mm := mt.GetString(name); !mm.IsNil() {
+			if mm := mt.Get(nameVal); !mm.IsNil() {
 				return mm
 			}
 		}
@@ -1427,7 +1435,7 @@ func (vm *VM) callCloseMetamethod(stackIdx int) {
 	if mt == nil {
 		return
 	}
-	closeFunc := mt.GetString("__close")
+	closeFunc := mt.Get(metaClose)
 	if closeFunc.IsNil() {
 		return
 	}
@@ -1493,7 +1501,7 @@ func (vm *VM) Pop() Value {
 }
 
 // tableGet gets a value from a table, handling __index metamethod
-func (vm *VM) tableGet(t *Table, key Value) (Value, error) {
+func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 	val := t.Get(key)
 	if !val.IsNil() {
 		return val, nil
@@ -1505,7 +1513,7 @@ func (vm *VM) tableGet(t *Table, key Value) (Value, error) {
 		return Nil, nil
 	}
 
-	index := mt.GetString("__index")
+	index := mt.Get(metaIndex)
 	if index.IsNil() {
 		return Nil, nil
 	}
@@ -1524,8 +1532,8 @@ func (vm *VM) tableGet(t *Table, key Value) (Value, error) {
 }
 
 // tableGetString gets a value from a table by string key, handling __index metamethod
-func (vm *VM) tableGetString(t *Table, key string) (Value, error) {
-	val := t.GetString(key)
+func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
+	val := t.Get(NewString(key))
 	if !val.IsNil() {
 		return val, nil
 	}
@@ -1536,7 +1544,7 @@ func (vm *VM) tableGetString(t *Table, key string) (Value, error) {
 		return Nil, nil
 	}
 
-	index := mt.GetString("__index")
+	index := mt.Get(metaIndex)
 	if index.IsNil() {
 		return Nil, nil
 	}
@@ -1555,8 +1563,8 @@ func (vm *VM) tableGetString(t *Table, key string) (Value, error) {
 }
 
 // tableGetInt gets a value from a table by int key, handling __index metamethod
-func (vm *VM) tableGetInt(t *Table, key int) (Value, error) {
-	val := t.GetInt(key)
+func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
+	val := t.Get(NewInt(int64(key)))
 	if !val.IsNil() {
 		return val, nil
 	}
@@ -1567,7 +1575,7 @@ func (vm *VM) tableGetInt(t *Table, key int) (Value, error) {
 		return Nil, nil
 	}
 
-	index := mt.GetString("__index")
+	index := mt.Get(metaIndex)
 	if index.IsNil() {
 		return Nil, nil
 	}
@@ -1586,7 +1594,7 @@ func (vm *VM) tableGetInt(t *Table, key int) (Value, error) {
 }
 
 // tableSet sets a value in a table, handling __newindex metamethod
-func (vm *VM) tableSet(t *Table, key, value Value) error {
+func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 	// Check if key already exists (raw access)
 	existing := t.Get(key)
 	if !existing.IsNil() {
@@ -1602,7 +1610,7 @@ func (vm *VM) tableSet(t *Table, key, value Value) error {
 		return nil
 	}
 
-	newindex := mt.GetString("__newindex")
+	newindex := mt.Get(metaNewIndex)
 	if newindex.IsNil() {
 		t.Set(key, value)
 		return nil
@@ -1624,25 +1632,26 @@ func (vm *VM) tableSet(t *Table, key, value Value) error {
 }
 
 // tableSetString sets a value in a table by string key, handling __newindex metamethod
-func (vm *VM) tableSetString(t *Table, key string, value Value) error {
+func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
+	keyVal := NewString(key)
 	// Check if key already exists (raw access)
-	existing := t.GetString(key)
+	existing := t.Get(keyVal)
 	if !existing.IsNil() {
 		// Key exists, set directly
-		t.SetString(key, value)
+		t.Set(keyVal, value)
 		return nil
 	}
 
 	// Key doesn't exist, check for __newindex metamethod
 	mt := t.Metatable()
 	if mt == nil {
-		t.SetString(key, value)
+		t.Set(keyVal, value)
 		return nil
 	}
 
-	newindex := mt.GetString("__newindex")
+	newindex := mt.Get(metaNewIndex)
 	if newindex.IsNil() {
-		t.SetString(key, value)
+		t.Set(keyVal, value)
 		return nil
 	}
 
@@ -1653,34 +1662,35 @@ func (vm *VM) tableSetString(t *Table, key string, value Value) error {
 
 	if newindex.IsFunction() || newindex.IsNativeFunc() {
 		// __newindex is a function, call it with (table, key, value)
-		_, err := vm.callMetamethod3(newindex, NewTable(t), NewString(key), value)
+		_, err := vm.callMetamethod3(newindex, NewTable(t), keyVal, value)
 		return err
 	}
 
-	t.SetString(key, value)
+	t.Set(keyVal, value)
 	return nil
 }
 
 // tableSetInt sets a value in a table by int key, handling __newindex metamethod
-func (vm *VM) tableSetInt(t *Table, key int, value Value) error {
+func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
+	keyVal := NewInt(int64(key))
 	// Check if key already exists (raw access)
-	existing := t.GetInt(key)
+	existing := t.Get(keyVal)
 	if !existing.IsNil() {
 		// Key exists, set directly
-		t.SetInt(key, value)
+		t.Set(keyVal, value)
 		return nil
 	}
 
 	// Key doesn't exist, check for __newindex metamethod
 	mt := t.Metatable()
 	if mt == nil {
-		t.SetInt(key, value)
+		t.Set(keyVal, value)
 		return nil
 	}
 
-	newindex := mt.GetString("__newindex")
+	newindex := mt.Get(metaNewIndex)
 	if newindex.IsNil() {
-		t.SetInt(key, value)
+		t.Set(keyVal, value)
 		return nil
 	}
 
@@ -1691,11 +1701,11 @@ func (vm *VM) tableSetInt(t *Table, key int, value Value) error {
 
 	if newindex.IsFunction() || newindex.IsNativeFunc() {
 		// __newindex is a function, call it with (table, key, value)
-		_, err := vm.callMetamethod3(newindex, NewTable(t), NewInt(int64(key)), value)
+		_, err := vm.callMetamethod3(newindex, NewTable(t), keyVal, value)
 		return err
 	}
 
-	t.SetInt(key, value)
+	t.Set(keyVal, value)
 	return nil
 }
 

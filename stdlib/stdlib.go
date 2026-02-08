@@ -232,7 +232,7 @@ func luaIpairs(v *vm.VM) int {
 		i := v.Get(2)
 		idx, _ := i.ToInt()
 		idx++
-		val := t.GetInt(int(idx))
+		val := t.Get(vm.NewInt(idx))
 		if val.IsNil() {
 			v.Set(0, vm.Nil)
 			return 1
@@ -346,7 +346,7 @@ func luaGetmetatable(v *vm.VM) int {
 		mt := val.AsTable().Metatable()
 		if mt != nil {
 			// Check for __metatable field - if present, return that instead
-			protected := mt.GetString("__metatable")
+			protected := mt.Get(vm.NewString("__metatable"))
 			if !protected.IsNil() {
 				v.Set(0, protected)
 				return 1

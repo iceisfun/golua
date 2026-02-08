@@ -65,6 +65,7 @@ See the `examples/` directory for complete examples:
 - **[code_provider](examples/code_provider/)** - Sandboxed file loading with LuaCodeProvider
 - **[jailed_io](examples/jailed_io/)** - Sandboxed IO and OS with JailedIoProvider and DefaultOsProvider
 - **[debug](examples/debug/)** - Diagnostic debug with DefaultDebugProvider (not the standard Lua debug library)
+- **[table](examples/table/)** - LuaTable interface and deterministic iteration
 
 ## Go Interop
 
@@ -151,6 +152,24 @@ stdlib.Open(v)
 // Lua now has debug.traceback, debug.stackdepth, debug.where
 // No hooks, no local/upvalue mutation, no bytecode inspection
 ```
+
+### LuaTable Interface
+
+Tables implement the `LuaTable` interface, which is the contract used by the VM and stdlib:
+
+```go
+type LuaTable interface {
+    Get(key Value) Value
+    Set(key Value, val Value)
+    Delete(key Value)
+    Next(key Value) (nextKey Value, val Value)
+    Len() int
+    Metatable() LuaTable
+    SetMetatable(mt LuaTable)
+}
+```
+
+The default `*Table` implementation uses an ordered keys slice for the hash part, so `next()`/`pairs()` iteration is deterministic (insertion-ordered). This avoids the non-deterministic `range map` behavior in Go. Mutation during iteration is not safe; inserting or deleting keys may skip entries or produce duplicates. Tables have no implicit thread safety -- concurrent read+write requires external synchronization.
 
 ## Security Model
 
