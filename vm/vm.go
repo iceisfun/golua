@@ -9,10 +9,6 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
-// maxMetaDepth limits __index/__newindex chain length to prevent infinite loops.
-// Equivalent to Lua 5.4's MAXTAGLOOP.
-const maxMetaDepth = 2000
-
 // VM is the Lua virtual machine state.
 type VM struct {
 	stack     []Value     // Value stack
@@ -1570,7 +1566,7 @@ func (vm *VM) Pop() Value {
 
 // tableGet gets a value from a table, handling __index metamethod
 func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
-	for depth := 0; depth < maxMetaDepth; depth++ {
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		val := t.Get(key)
 		if !val.IsNil() {
 			return val, nil
@@ -1605,7 +1601,7 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 
 // tableGetString gets a value from a table by string key, handling __index metamethod
 func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
-	for depth := 0; depth < maxMetaDepth; depth++ {
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		val := t.Get(NewString(key))
 		if !val.IsNil() {
 			return val, nil
@@ -1640,7 +1636,7 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 
 // tableGetInt gets a value from a table by int key, handling __index metamethod
 func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
-	for depth := 0; depth < maxMetaDepth; depth++ {
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		val := t.Get(NewInt(int64(key)))
 		if !val.IsNil() {
 			return val, nil
@@ -1675,7 +1671,7 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 
 // tableSet sets a value in a table, handling __newindex metamethod
 func (vm *VM) tableSet(t LuaTable, key, value Value) error {
-	for depth := 0; depth < maxMetaDepth; depth++ {
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Check if key already exists (raw access)
 		existing := t.Get(key)
 		if !existing.IsNil() {
@@ -1718,7 +1714,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 // tableSetString sets a value in a table by string key, handling __newindex metamethod
 func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 	keyVal := NewString(key)
-	for depth := 0; depth < maxMetaDepth; depth++ {
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Check if key already exists (raw access)
 		existing := t.Get(keyVal)
 		if !existing.IsNil() {
@@ -1761,7 +1757,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 // tableSetInt sets a value in a table by int key, handling __newindex metamethod
 func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 	keyVal := NewInt(int64(key))
-	for depth := 0; depth < maxMetaDepth; depth++ {
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Check if key already exists (raw access)
 		existing := t.Get(keyVal)
 		if !existing.IsNil() {
@@ -1992,6 +1988,25 @@ func (vm *VM) SetLimits(limits Limits) {
 // GetLimits returns the current execution limits.
 func (vm *VM) GetLimits() Limits {
 	return vm.limits
+}
+
+// SetMaxMetaDepth sets the maximum __index/__newindex chain depth.
+// Values <= 0 reset to the default (DefaultMaxMetaDepth).
+func (vm *VM) SetMaxMetaDepth(n int) {
+	if n <= 0 {
+		vm.limits.MaxMetaDepth = 0
+	} else {
+		vm.limits.MaxMetaDepth = n
+	}
+}
+
+// MaxMetaDepth returns the effective maximum __index/__newindex chain depth.
+// Returns DefaultMaxMetaDepth if no custom value has been set.
+func (vm *VM) MaxMetaDepth() int {
+	if vm.limits.MaxMetaDepth <= 0 {
+		return DefaultMaxMetaDepth
+	}
+	return vm.limits.MaxMetaDepth
 }
 
 // InstructionCount returns the current checkpoint visit count.

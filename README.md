@@ -173,13 +173,20 @@ v.SetContext(ctx)
 
 // Limit call depth, stack size, and instructions
 v.SetLimits(vm.Limits{
-    MaxCallDepth:    200,   // Prevent deep recursion
-    MaxStackSlots:   10000, // Bound memory growth
+    MaxCallDepth:    200,     // Prevent deep recursion
+    MaxStackSlots:   10000,   // Bound memory growth
     MaxInstructions: 1000000, // Bound CPU (checkpoint visits)
+    MaxMetaDepth:    500,     // Limit __index/__newindex chain depth (default: 2000)
 })
+
+// Or configure metatable depth independently
+v = vm.New(vm.WithMaxMetaDepth(500))
+v.SetMaxMetaDepth(500) // runtime setter equivalent
 ```
 
 The VM checks for cancellation at backedges (loop iterations), function calls, and tail calls. No per-instruction overhead is added unless `MaxInstructions` is set. Context and limits are inherited by coroutine VMs. Errors from limits are catchable by `pcall`.
+
+`MaxMetaDepth` bounds the length of `__index` and `__newindex` table-to-table chains to prevent infinite loops from metatable cycles. The default is 2000, matching Lua 5.4's `MAXTAGLOOP`. A value of 0 means "use the default". Function metamethods are not affected by this limit.
 
 ### Channels (Go↔Lua Message Passing)
 
