@@ -23,6 +23,7 @@ type Coroutine struct {
 	status   string        // "suspended", "running", "dead", "normal"
 	started  bool          // Whether the goroutine has been started
 	vm       *vm.VM        // Reference to the VM
+	thread   vm.Value      // Thread object (table) for coroutine.running
 	resumeCh chan []vm.Value // Channel to send resume args
 	yieldCh  chan []vm.Value // Channel to receive yield values
 	doneCh   chan struct{}   // Channel to signal completion
@@ -49,6 +50,12 @@ func openCoroutine(v *vm.VM) {
 	co.SetString("isyieldable", vm.NewNativeFunc(coIsYieldable))
 
 	v.SetGlobal("coroutine", vm.NewTable(co))
+
+	// Create and store the main thread object so coroutine.running()
+	// returns a stable, non-nil identity for the main thread.
+	mainThread := vm.NewEmptyTable()
+	mainThread.SetString("__coroutine_id", vm.NewInt(0))
+	v.SetThreadObj(vm.NewTable(mainThread))
 }
 
 // coroutine.create(f) -> thread
@@ -81,7 +88,10 @@ func coCreate(v *vm.VM) int {
 	coTable := vm.NewEmptyTable()
 	coTable.SetString("__coroutine_id", vm.NewInt(int64(id)))
 
-	v.Set(0, vm.NewTable(coTable))
+	threadVal := vm.NewTable(coTable)
+	co.thread = threadVal
+
+	v.Set(0, threadVal)
 	return 1
 }
 
@@ -207,6 +217,7 @@ func runCoroutine(co *Coroutine) {
 
 	// Create a fresh VM for this coroutine that shares globals but has its own stack
 	coVM := vm.NewCoroutineVM(co.vm, co.yieldCh, co.resumeCh, co.id)
+	coVM.SetThreadObj(co.thread)
 
 	if co.fn.IsFunction() {
 		results, err = coVM.CallCoroutine(co.fn.AsClosure(), args)
@@ -316,9 +327,8 @@ func coStatus(v *vm.VM) int {
 
 // coroutine.running() -> thread, boolean
 func coRunning(v *vm.VM) int {
-	// TODO: return the current running coroutine
-	v.Set(0, vm.Nil)
-	v.Set(1, vm.True) // is main thread
+	v.Set(0, v.ThreadObj())
+	v.Set(1, vm.NewBool(v.CoroutineID() == 0))
 	return 2
 }
 
@@ -335,11 +345,16 @@ func coWrap(v *vm.VM) int {
 	id := coroutineID
 	coroutinesMu.Unlock()
 
+	// Create a thread table for this coroutine (for coroutine.running inside it)
+	coTable := vm.NewEmptyTable()
+	coTable.SetString("__coroutine_id", vm.NewInt(int64(id)))
+
 	co := &Coroutine{
 		id:       id,
 		fn:       fn,
 		status:   "suspended",
 		vm:       v,
+		thread:   vm.NewTable(coTable),
 		resumeCh: make(chan []vm.Value, 1),
 		yieldCh:  make(chan []vm.Value, 1),
 		doneCh:   make(chan struct{}),

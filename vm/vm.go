@@ -29,6 +29,7 @@ type VM struct {
 	yieldCh     chan []Value // Channel to send yield values (nil if not in coroutine)
 	resumeCh    chan []Value // Channel to receive resume values (nil if not in coroutine)
 	coroutineID int          // ID of the coroutine this VM belongs to (0 if main)
+	threadObj   Value        // Thread object representing this VM (for coroutine.running)
 
 	// Code loading support
 	codeProvider LuaCodeProvider // Provider for loading Lua chunks (optional)
@@ -209,6 +210,16 @@ func (vm *VM) CoroutineID() int {
 // CallCoroutine calls a closure as a coroutine, with yield support.
 func (vm *VM) CallCoroutine(closure *Closure, args []Value) ([]Value, error) {
 	return vm.call(closure, args, -1)
+}
+
+// ThreadObj returns the thread object representing this VM (for coroutine.running).
+func (vm *VM) ThreadObj() Value {
+	return vm.threadObj
+}
+
+// SetThreadObj sets the thread object representing this VM.
+func (vm *VM) SetThreadObj(v Value) {
+	vm.threadObj = v
 }
 
 // GetCoroutineChannels returns the yield and resume channels if this VM is a coroutine.
