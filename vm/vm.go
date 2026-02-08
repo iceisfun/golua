@@ -175,6 +175,17 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		return vm.call(fn.AsClosure(), args, -1)
 	}
 
+	// Check for __call metamethod
+	op := "__call"
+	mm := vm.getMetafield(fn, op)
+	if !mm.IsNil() {
+		// New args: prepend fn (self)
+		newArgs := make([]Value, len(args)+1)
+		newArgs[0] = fn
+		copy(newArgs[1:], args)
+		return vm.ProtectedCall(mm, newArgs)
+	}
+
 	return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
 }
 
@@ -658,13 +669,24 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_LEN:
 			a, b := inst.A(), inst.B()
 			v := vm.stack[frame.base+b]
-			switch {
-			case v.IsString():
+
+			if v.IsString() {
 				vm.stack[frame.base+a] = NewInt(int64(len(v.AsString())))
-			case v.IsTable():
-				vm.stack[frame.base+a] = NewInt(int64(v.AsTable().Len()))
-			default:
-				return nil, fmt.Errorf("attempt to get length of a %s value", v.Type())
+			} else {
+				// Check for __len metamethod
+				op := "__len"
+				mm := vm.getMetafield(v, op)
+				if !mm.IsNil() {
+					res, err := vm.callMetamethod(mm, v, Nil)
+					if err != nil {
+						return nil, err
+					}
+					vm.stack[frame.base+a] = res
+				} else if v.IsTable() {
+					vm.stack[frame.base+a] = NewInt(int64(v.AsTable().Len()))
+				} else {
+					return nil, fmt.Errorf("attempt to get length of a %s value", v.Type())
+				}
 			}
 
 		case compiler.OP_CONCAT:
@@ -928,61 +950,81 @@ func (vm *VM) execute() ([]Value, error) {
 			// Close upvalues
 			vm.closeUpvalues(frame.base)
 
-			if fn.IsFunction() {
-				closure := fn.AsClosure()
-				// Reuse the frame
-				frame.closure = closure
-				frame.pc = 0
-				proto := closure.Proto
+			// Dispatch loop for __call support
+			for {
+				if fn.IsFunction() {
+					closure := fn.AsClosure()
+					// Reuse the frame
+					frame.closure = closure
+					frame.pc = 0
+					proto := closure.Proto
 
-				// Set up parameters
-				numParams := proto.NumParams
-				numArgs := len(args)
+					// Set up parameters
+					numParams := proto.NumParams
+					numArgs := len(args)
 
-				if proto.IsVarArg {
-					for i := 0; i < numParams && i < numArgs; i++ {
-						vm.stack[frame.base+i] = args[i]
-					}
-					for i := numArgs; i < numParams; i++ {
-						vm.stack[frame.base+i] = Nil
-					}
-					if numArgs > numParams {
-						frame.varargPos = frame.base + proto.MaxStack
-						frame.numVararg = numArgs - numParams
-						vm.ensureStack(frame.varargPos + frame.numVararg)
-						for i := 0; i < frame.numVararg; i++ {
-							vm.stack[frame.varargPos+i] = args[numParams+i]
+					if proto.IsVarArg {
+						for i := 0; i < numParams && i < numArgs; i++ {
+							vm.stack[frame.base+i] = args[i]
 						}
+						for i := numArgs; i < numParams; i++ {
+							vm.stack[frame.base+i] = Nil
+						}
+						if numArgs > numParams {
+							frame.varargPos = frame.base + proto.MaxStack
+							frame.numVararg = numArgs - numParams
+							vm.ensureStack(frame.varargPos + frame.numVararg)
+							for i := 0; i < frame.numVararg; i++ {
+								vm.stack[frame.varargPos+i] = args[numParams+i]
+							}
+						} else {
+							frame.numVararg = 0
+						}
+						frame.isVararg = true
 					} else {
-						frame.numVararg = 0
+						for i := 0; i < numParams && i < numArgs; i++ {
+							vm.stack[frame.base+i] = args[i]
+						}
+						for i := numArgs; i < numParams; i++ {
+							vm.stack[frame.base+i] = Nil
+						}
 					}
-					frame.isVararg = true
+					break // Continue outer loop (instruction loop)
+				} else if fn.IsNativeFunc() {
+					// Native function tail call - can't truly optimize, just call
+					nf := fn.AsNativeFunc()
+					// Reuse current frame's base for the native call
+					vm.stack[frame.base] = fn
+					for i, arg := range args {
+						vm.stack[frame.base+1+i] = arg
+					}
+					vm.top = frame.base + 1 + len(args)
+					// The current frame already exists, just call the native function
+					// vm.Base() will correctly return frame.base
+					nResults := nf(vm)
+					results := make([]Value, nResults)
+					copy(results, vm.stack[frame.base:frame.base+nResults])
+					return results, nil
 				} else {
-					for i := 0; i < numParams && i < numArgs; i++ {
-						vm.stack[frame.base+i] = args[i]
+					// Check for __call metamethod
+					op := "__call"
+					mm := vm.getMetafield(fn, op)
+					if !mm.IsNil() {
+						// Create new args with self (fn) prepended
+						newArgs := make([]Value, len(args)+1)
+						newArgs[0] = fn
+						copy(newArgs[1:], args)
+						args = newArgs
+						fn = mm
+						continue // Retry dispatch with metamethod
 					}
-					for i := numArgs; i < numParams; i++ {
-						vm.stack[frame.base+i] = Nil
-					}
+					return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
 				}
+			}
+			if fn.IsFunction() {
+				// We broke out of the inner loop to continue the outer instruction loop
+				// because IsFunction setup sets frame.pc=0.
 				continue
-			} else if fn.IsNativeFunc() {
-				// Native function tail call - can't truly optimize, just call
-				nf := fn.AsNativeFunc()
-				// Reuse current frame's base for the native call
-				vm.stack[frame.base] = fn
-				for i, arg := range args {
-					vm.stack[frame.base+1+i] = arg
-				}
-				vm.top = frame.base + 1 + len(args)
-				// The current frame already exists, just call the native function
-				// vm.Base() will correctly return frame.base
-				nResults := nf(vm)
-				results := make([]Value, nResults)
-				copy(results, vm.stack[frame.base:frame.base+nResults])
-				return results, nil
-			} else {
-				return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
 			}
 
 		case compiler.OP_RETURN:
@@ -1642,7 +1684,109 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 		vm.top = oldTop
 	} else {
-		return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+		// Check for __call metamethod
+		op := "__call"
+		mm := vm.getMetafield(fn, op)
+		if !mm.IsNil() {
+			// We need to shift arguments up by one to make room for 'self' (fn)
+			// effectively calling mm(fn, args...)
+
+			// Top is currently at frame.base + a + 1 + len(args)
+			// We need to extend stack by 1
+			vm.ensureStack(vm.top + 1)
+
+			// Shift args up
+			// Range to move: from frame.base+a+1 up to frame.base+a+len(args)
+			// Move to frame.base+a+2
+			// Copy backwards to avoid overwriting
+			endArgs := frame.base + a + len(args)
+			for i := endArgs; i > frame.base+a; i-- {
+				vm.stack[i+1] = vm.stack[i]
+			}
+
+			// Place 'fn' (self) at first arg position
+			vm.stack[frame.base+a+1] = fn
+
+			// Place metamethod at function position
+			vm.stack[frame.base+a] = mm
+
+			// Update top
+			vm.top++
+
+			// Recurse/Retry call
+			// Since we modified the stack in place to look like a call to mm,
+			// we can just fall through or recurse.
+			// Recursing is safest to reuse logic.
+			// args count increased by 1 (self)
+			// 'b' in OP_CALL represents args+1. If b != 0, we should increment it?
+			// doCall signatures takes 'b' which is args count + 1 (or 0 for var).
+			// But doCall computes args slice manually.
+			// We can just call vm.call with changes.
+
+			newFn := mm
+			// Re-collect args including self
+			newArgsCount := len(args) + 1
+			newArgs := make([]Value, newArgsCount)
+			// self
+			newArgs[0] = fn
+			copy(newArgs[1:], args)
+
+			// Wait, we already modified the stack!
+			// If we call vm.call, it copies args again.
+			// Optimization: vm.call takes a closure.
+			if newFn.IsFunction() {
+				// vm.top is already updated to cover the new args
+				// But vm.call calculates its own base and ensures stack
+				// It expects args as a slice.
+				// We can just do:
+				return vm.call(newFn.AsClosure(), newArgs, c-1)
+			} else if newFn.IsNativeFunc() {
+				// Native call logic... simpler to just user vm.ProtectedCall logic style?
+				// But we are in doCall.
+				// Let's just recursively call doCall?
+				// But doCall expects finding function at frame.base+a.
+				// We placed 'mm' at frame.base+a.
+				// So we can just jump up to the IsFunction check?
+				// Recursion is cleaner but maybe slightly inefficient.
+				// Let's use vm.call helper or native logic.
+
+				if newFn.IsFunction() {
+					vm.top = frame.base + a + len(newArgs) + 1
+					results, err = vm.call(newFn.AsClosure(), newArgs, c-1)
+				} else if newFn.IsNativeFunc() {
+					// Setup native call reuse logic from above
+					nativeBase := frame.base + a
+					nativeFrame := callFrame{base: nativeBase}
+					vm.callStack = append(vm.callStack, nativeFrame)
+					oldTop := vm.top
+					vm.top = nativeBase + 1 + len(newArgs)
+
+					// Ensure stack clear
+					clearEnd := nativeBase + 1 + len(newArgs) + 4
+					if clearEnd > len(vm.stack) {
+						clearEnd = len(vm.stack)
+					}
+					for i := vm.top; i < clearEnd; i++ {
+						vm.stack[i] = Nil
+					}
+
+					nResults := newFn.AsNativeFunc()(vm)
+					results = make([]Value, nResults)
+					copy(results, vm.stack[nativeBase:nativeBase+nResults])
+					vm.callStack = vm.callStack[:len(vm.callStack)-1]
+					vm.top = oldTop
+				} else {
+					return nil, fmt.Errorf("attempt to call a %s value", newFn.Type())
+				}
+			} else {
+				// Metamethod itself is not callable? (Chain?)
+				// Lua 5.4 supports metamethods being tables (recursive? no, usually functions).
+				// We'll stick to callable check.
+				return nil, fmt.Errorf("attempt to call a %s value", newFn.Type())
+			}
+		} else {
+			return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+		}
 	}
 
 	if err != nil {
