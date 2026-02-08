@@ -15,11 +15,13 @@ import (
 
 func main() {
 	var timeoutMs int
+	var evalCode string
 	args := os.Args[1:]
 
-	// Parse --timeout flag
+	// Parse flags
 	for len(args) > 0 {
-		if args[0] == "--timeout" {
+		switch args[0] {
+		case "--timeout":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "--timeout requires a value in milliseconds")
 				os.Exit(1)
@@ -31,35 +33,52 @@ func main() {
 				os.Exit(1)
 			}
 			args = args[2:]
-		} else {
-			break
+		case "-e", "--e":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "-e requires a string argument")
+				os.Exit(1)
+			}
+			evalCode = args[1]
+			args = args[2:]
+		default:
+			goto done
 		}
 	}
+done:
 
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: lua [--timeout <ms>] <script.lua> [args...]")
-		os.Exit(1)
-	}
+	var source string
+	var name string
+	var scriptArgs []string
 
-	filename := args[0]
-	scriptArgs := args[1:]
-
-	// Read the source file
-	src, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-		os.Exit(1)
+	if evalCode != "" {
+		source = evalCode
+		name = "=(command line)"
+		scriptArgs = args
+	} else {
+		if len(args) < 1 {
+			fmt.Fprintln(os.Stderr, "Usage: lua [--timeout <ms>] [-e <code>] [<script.lua> [args...]]")
+			os.Exit(1)
+		}
+		filename := args[0]
+		scriptArgs = args[1:]
+		src, err := os.ReadFile(filename)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+			os.Exit(1)
+		}
+		source = string(src)
+		name = filename
 	}
 
 	// Parse
-	block, err := parser.Parse(filename, string(src))
+	block, err := parser.Parse(name, source)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Compile
-	proto, err := compiler.Compile(filename, block)
+	proto, err := compiler.Compile(name, block)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Compile error: %v\n", err)
 		os.Exit(1)
@@ -79,7 +98,7 @@ func main() {
 
 	// Set command line arguments
 	luaArgs := vm.NewEmptyTable()
-	luaArgs.SetInt(0, vm.NewString(filename))
+	luaArgs.SetInt(0, vm.NewString(name))
 	for i, arg := range scriptArgs {
 		luaArgs.SetInt(i+1, vm.NewString(arg))
 	}
