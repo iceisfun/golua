@@ -147,6 +147,28 @@ func (c *compiler) closeFuncState() *Proto {
 	return p
 }
 
+// regTop returns the first register past all active local variables.
+// When locals occupy contiguous registers from R(0), this equals nActVar.
+// When condition temporaries create gaps (e.g., while/for loop conditions
+// allocate a temp register before body locals are declared), this may be
+// higher than nActVar.
+//
+// This is a correctness guard: temporary registers used for expression
+// evaluation must not reuse registers assigned to user-visible locals.
+// Using regTop() instead of nActVar to reset freeReg prevents a class
+// of compiler bugs where condition temporaries push local variables to
+// higher registers than nActVar accounts for.
+func (fs *funcState) regTop() int {
+	top := 0
+	start := len(fs.locals) - fs.nActVar
+	for i := start; i < len(fs.locals); i++ {
+		if r := fs.locals[i].reg + 1; r > top {
+			top = r
+		}
+	}
+	return top
+}
+
 // maxReg is computed from the high-water mark.
 // We track it on funcState.
 func (fs *funcState) reserveReg() int {
@@ -329,7 +351,11 @@ func (c *compiler) leaveScope(line int) {
 		fs.nActVar--
 	}
 
-	fs.freeReg = scope.nLocals
+	// Reset freeReg past all remaining locals. We use regTop() instead
+	// of scope.nLocals because the remaining locals may occupy registers
+	// beyond their count (e.g., when a while loop condition temp creates
+	// a gap between outer and inner locals).
+	fs.freeReg = fs.regTop()
 
 	// Remove labels from this scope
 	fs.labels = fs.labels[:scope.firstLabel]
@@ -441,9 +467,12 @@ func (c *compiler) compileBlock(block *ast.Block) {
 	}
 	for _, stmt := range block.Stmts {
 		c.compileStmt(stmt)
-		// After each statement, reset freeReg to nActVar
-		// (release any temporary registers)
-		c.fs.freeReg = c.fs.nActVar
+		// After each statement, release temporary registers while
+		// preserving all registers occupied by active locals.
+		// We use regTop() instead of nActVar because locals may not
+		// occupy contiguous registers starting from R(0) — condition
+		// temporaries (e.g., while/for loop conditions) can create gaps.
+		c.fs.freeReg = c.fs.regTop()
 	}
 }
 

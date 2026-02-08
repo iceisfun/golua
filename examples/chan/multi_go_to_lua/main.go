@@ -32,13 +32,11 @@ func main() {
 		while true do
 			-- Select across data channels + done channel (4th)
 			local idx, val, ok = chan.select(ch1, ch2, ch3, done)
-			-- Save ok immediately (workaround for register reuse)
-			local is_ok = ok
 			if idx == 4 then
 				print("Lua: received stop signal")
 				break
 			end
-			if is_ok then
+			if ok then
 				total = total + 1
 				print("Lua: [" .. names[idx] .. "] " .. val)
 			end
