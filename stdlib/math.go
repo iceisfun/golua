@@ -207,7 +207,7 @@ func mathRandom(v *vm.VM) int {
 		if upper < 1 {
 			panic("bad argument #1 to 'random' (interval is empty)")
 		}
-		v.Set(0, vm.NewInt(rand.Int63n(upper)+1))
+		v.Set(0, vm.NewInt(randRange(1, upper)))
 	default:
 		// random(m, n) -> [m, n]
 		lower := getInt(v, 1, "random")
@@ -215,9 +215,23 @@ func mathRandom(v *vm.VM) int {
 		if lower > upper {
 			panic("bad argument #2 to 'random' (interval is empty)")
 		}
-		v.Set(0, vm.NewInt(rand.Int63n(upper-lower+1)+lower))
+		v.Set(0, vm.NewInt(randRange(lower, upper)))
 	}
 	return 1
+}
+
+// randRange returns a random int64 in [lower, upper] (inclusive).
+// Uses uint64 arithmetic to avoid overflow when the range spans
+// the full 64-bit integer space (e.g., [MinInt64, MaxInt64]).
+func randRange(lower, upper int64) int64 {
+	r := uint64(upper) - uint64(lower)
+	if r == 0 {
+		return lower
+	}
+	if r == math.MaxUint64 {
+		return int64(rand.Uint64())
+	}
+	return lower + int64(rand.Uint64()%(r+1))
 }
 
 func mathRandomseed(v *vm.VM) int {
