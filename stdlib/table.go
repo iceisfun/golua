@@ -147,12 +147,25 @@ func tableSort(v *vm.VM) int {
 			return ok && lt
 		})
 	} else {
-		// TODO: Implement custom comparator
-		// For now, just use default
+		// Custom comparator: call the Lua function for each comparison
+		var sortErr error
 		sort.Slice(values, func(i, j int) bool {
-			lt, ok := values[i].LessThan(values[j])
-			return ok && lt
+			if sortErr != nil {
+				return false // abort: don't reorder after error
+			}
+			results, err := v.ProtectedCall(comp, []vm.Value{values[i], values[j]})
+			if err != nil {
+				sortErr = err
+				return false
+			}
+			if len(results) == 0 {
+				return false
+			}
+			return results[0].ToBool()
 		})
+		if sortErr != nil {
+			panic(sortErr.Error())
+		}
 	}
 
 	// Put values back
