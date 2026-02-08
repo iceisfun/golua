@@ -37,8 +37,8 @@ type VM struct {
 	chunkName    string          // Name of the currently executing chunk
 
 	// IO and OS provider support
-	ioProvider LuaIoProvider  // Provider for IO operations (optional)
-	osProvider LuaOsProvider  // Provider for OS operations (optional)
+	ioProvider LuaIoProvider // Provider for IO operations (optional)
+	osProvider LuaOsProvider // Provider for OS operations (optional)
 
 	// Debug provider support
 	debugProvider LuaDebugProvider // Provider for diagnostic debug operations (optional)
@@ -54,13 +54,13 @@ type VM struct {
 
 // callFrame represents a function call on the call stack.
 type callFrame struct {
-	closure   *Closure  // Function being executed
-	pc        int       // Program counter (next instruction to execute)
-	base      int       // Base stack index for this frame's registers
-	nResults  int       // Expected number of results (-1 = variable)
-	isVararg  bool      // True if function is vararg
-	varargPos int       // Stack position where varargs start
-	numVararg int       // Number of varargs
+	closure    *Closure // Function being executed
+	pc         int      // Program counter (next instruction to execute)
+	base       int      // Base stack index for this frame's registers
+	nResults   int      // Expected number of results (-1 = variable)
+	isVararg   bool     // True if function is vararg
+	varargPos  int      // Stack position where varargs start
+	numVararg  int      // Number of varargs
 	isTailCall bool     // True if this was a tail call
 }
 
@@ -669,20 +669,62 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_CONCAT:
 			a, b := inst.A(), inst.B()
-			// Concatenate b values starting at R[A]
-			var builder strings.Builder
+			// Concatenate b values starting at R[A] which ends at R[A+b-1]
+			// The original implementation was building a string directly.
+			// To support __concat, we must check if simplification is possible.
+
+			// Optimization: Check if all are string/number
+			allStringOrNum := true
+			totalLen := 0
 			for i := 0; i < b; i++ {
 				v := vm.stack[frame.base+a+i]
-				switch {
-				case v.IsString():
-					builder.WriteString(v.AsString())
-				case v.IsNumber():
-					builder.WriteString(v.String())
-				default:
-					return nil, fmt.Errorf("attempt to concatenate a %s value", v.Type())
+				if !v.IsString() && !v.IsNumber() {
+					allStringOrNum = false
+					break
+				}
+				if v.IsString() {
+					totalLen += len(v.AsString())
+				} else {
+					// Conservative estimate for number length?
+					// Or just don't preload size if numbers present.
+					totalLen += 20
 				}
 			}
-			vm.stack[frame.base+a] = NewString(builder.String())
+
+			if allStringOrNum {
+				var builder strings.Builder
+				builder.Grow(totalLen)
+				for i := 0; i < b; i++ {
+					v := vm.stack[frame.base+a+i]
+					if v.IsString() {
+						builder.WriteString(v.AsString())
+					} else {
+						builder.WriteString(v.String())
+					}
+				}
+				vm.stack[frame.base+a] = NewString(builder.String())
+			} else {
+				// Fallback to pairwise concatenation to support __concat logic
+				// Lua semantics: concat A..B..C is A..(B..C).
+				// In lvm.c luaV_concat: "Lift semantic: the concatenation is performed from the last element to the first."
+
+				// So loop from b-2 down to 0
+				// buffer is at R[A + i] .. R[A+i+1]
+
+				// Start with the last element
+				if b >= 2 {
+					current := vm.stack[frame.base+a+b-1]
+					for i := b - 2; i >= 0; i-- {
+						prev := vm.stack[frame.base+a+i]
+						res, err := vm.concat(prev, current)
+						if err != nil {
+							return nil, err
+						}
+						current = res
+					}
+					vm.stack[frame.base+a] = current
+				}
+			}
 
 		case compiler.OP_CLOSE:
 			a := inst.A()
@@ -706,7 +748,10 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, k := inst.A(), inst.B(), inst.K()
 			v1 := vm.stack[frame.base+a]
 			v2 := vm.stack[frame.base+b]
-			eq := v1.Equal(v2)
+			eq, err := vm.equal(v1, v2)
+			if err != nil {
+				return nil, err
+			}
 			if eq != (k == 1) {
 				frame.pc++
 			}
@@ -715,9 +760,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, k := inst.A(), inst.B(), inst.K()
 			v1 := vm.stack[frame.base+a]
 			v2 := vm.stack[frame.base+b]
-			lt, ok := v1.LessThan(v2)
-			if !ok {
-				return nil, fmt.Errorf("attempt to compare %s with %s", v1.Type(), v2.Type())
+			lt, err := vm.lessThan(v1, v2)
+			if err != nil {
+				return nil, err
 			}
 			if lt != (k == 1) {
 				frame.pc++
@@ -727,9 +772,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, k := inst.A(), inst.B(), inst.K()
 			v1 := vm.stack[frame.base+a]
 			v2 := vm.stack[frame.base+b]
-			le, ok := v1.LessEqual(v2)
-			if !ok {
-				return nil, fmt.Errorf("attempt to compare %s with %s", v1.Type(), v2.Type())
+			le, err := vm.lessEqual(v1, v2)
+			if err != nil {
+				return nil, err
 			}
 			if le != (k == 1) {
 				frame.pc++
@@ -739,7 +784,10 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, k := inst.A(), inst.B(), inst.K()
 			v1 := vm.stack[frame.base+a]
 			v2 := vm.constToValue(proto.Constants[b])
-			eq := v1.Equal(v2)
+			eq, err := vm.equal(v1, v2)
+			if err != nil {
+				return nil, err
+			}
 			if eq != (k == 1) {
 				frame.pc++
 			}
@@ -747,12 +795,17 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_EQI:
 			a, k := inst.A(), inst.K()
 			sb := inst.SB()
-			v := vm.stack[frame.base+a]
-			var eq bool
-			if v.IsInt() {
-				eq = v.AsInt() == int64(sb)
+			v1 := vm.stack[frame.base+a]
+			// Create temp value for rapid comparison
+			var v2 Value
+			if v1.IsInt() {
+				v2 = NewInt(int64(sb))
 			} else {
-				eq = v.IsNumber() && v.AsFloat() == float64(sb)
+				v2 = NewFloat(float64(sb))
+			}
+			eq, err := vm.equal(v1, v2)
+			if err != nil {
+				return nil, err
 			}
 			if eq != (k == 1) {
 				frame.pc++
@@ -2061,6 +2114,158 @@ func (vm *VM) callMetamethod3(fn, arg1, arg2, arg3 Value) (Value, error) {
 	}
 
 	return Nil, nil
+}
+
+// equal checks for equality, handling __eq metamethod
+func (vm *VM) equal(v1, v2 Value) (bool, error) {
+	// 1. If types are different and not numbers (int/float), false
+	if v1.typ != v2.typ && !v1.IsNumber() && !v2.IsNumber() {
+		return false, nil // Standard Lua behavior: different types are unequal
+	}
+
+	// 2. Raw equality
+	if v1.Equal(v2) {
+		return true, nil
+	}
+
+	// 3. Userdata/Table check for __eq
+	// Only if both are tables or both are full userdata (we don't have full userdata yet)
+	if v1.IsTable() && v2.IsTable() {
+		// Get metamethods
+		op := "__eq"
+		mm1 := vm.getMetafield(v1, op)
+		mm2 := vm.getMetafield(v2, op)
+
+		// They must share the same metamethod logic
+		if mm1.IsNil() || mm2.IsNil() {
+			return false, nil
+		}
+		// In Lua 5.3+, it checks if they are the same function/value?
+		// "if not metamethod(a) or metamethod(a) ~= metamethod(b)"
+		if !mm1.Equal(mm2) {
+			return false, nil
+		}
+
+		res, err := vm.callMetamethod(mm1, v1, v2)
+		if err != nil {
+			return false, err
+		}
+		return res.ToBool(), nil
+	}
+
+	return false, nil
+}
+
+// lessThan checks for less than, handling __lt metamethod
+func (vm *VM) lessThan(v1, v2 Value) (bool, error) {
+	// 1. Primitive comparison
+	if res, ok := v1.LessThan(v2); ok {
+		return res, nil
+	}
+
+	// 2. Metamethod __lt
+	op := "__lt"
+	mm := vm.getMetafield(v1, op)
+	if mm.IsNil() {
+		mm = vm.getMetafield(v2, op)
+	}
+
+	if !mm.IsNil() {
+		res, err := vm.callMetamethod(mm, v1, v2)
+		if err != nil {
+			return false, err
+		}
+		return res.ToBool(), nil
+	}
+
+	return false, fmt.Errorf("attempt to compare %s with %s", v1.Type(), v2.Type())
+}
+
+// lessEqual checks for less equal, handling __le metamethod
+func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
+	// 1. Primitive comparison
+	if res, ok := v1.LessEqual(v2); ok {
+		return res, nil
+	}
+
+	// 2. Metamethod __le
+	op := "__le"
+	mm := vm.getMetafield(v1, op)
+	if mm.IsNil() {
+		mm = vm.getMetafield(v2, op)
+	}
+
+	if !mm.IsNil() {
+		res, err := vm.callMetamethod(mm, v1, v2)
+		if err != nil {
+			return false, err
+		}
+		return res.ToBool(), nil
+	}
+
+	// 3. Fallback to __lt ( b < a )
+	// Lua spec: if __le is not present, try __lt(b, a)
+	// a <= b  ===  not (b < a)
+	op = "__lt"
+	mm = vm.getMetafield(v1, op)
+	if mm.IsNil() {
+		mm = vm.getMetafield(v2, op)
+	}
+
+	if !mm.IsNil() {
+		res, err := vm.callMetamethod(mm, v2, v1) // Note swapped args: b < a
+		if err != nil {
+			return false, err
+		}
+		return !res.ToBool(), nil
+	}
+
+	return false, fmt.Errorf("attempt to compare %s with %s", v1.Type(), v2.Type())
+}
+
+// concat handles concatenation with __concat support
+func (vm *VM) concat(v1, v2 Value) (Value, error) {
+	// 1. Primitives (string/number)
+	if (v1.IsString() || v1.IsNumber()) && (v2.IsString() || v2.IsNumber()) {
+		var s1, s2 string
+		if v1.IsString() {
+			s1 = v1.AsString()
+		} else {
+			s1 = v1.String()
+		}
+		if v2.IsString() {
+			s2 = v2.AsString()
+		} else {
+			s2 = v2.String()
+		}
+		return NewString(s1 + s2), nil
+	}
+
+	// 2. Metamethod __concat
+	op := "__concat"
+	mm := vm.getMetafield(v1, op)
+	if mm.IsNil() {
+		mm = vm.getMetafield(v2, op)
+	}
+
+	if !mm.IsNil() {
+		return vm.callMetamethod(mm, v1, v2)
+	}
+
+	return Nil, fmt.Errorf("attempt to concatenate a %s value", v1.Type())
+}
+
+// getMetafield retrieves a metafield from a value's metatable
+func (vm *VM) getMetafield(v Value, key string) Value {
+	if v.IsTable() {
+		if mt := v.AsTable().Metatable(); mt != nil {
+			return mt.Get(NewString(key))
+		}
+	}
+	if v.IsString() && vm.stringMeta != nil {
+		return vm.stringMeta.Get(NewString(key))
+	}
+	return Nil
 }
 
 // SetCodeProvider sets the code provider for this VM.
