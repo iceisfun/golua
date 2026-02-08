@@ -3,6 +3,20 @@ package vm
 // Table represents a Lua table.
 // It has both an array part (for integer keys 1..n) and a hash part.
 // The keys slice maintains insertion order so that next() is deterministic.
+//
+// Nil-value invariant: Get, GetInt, and GetString always return a valid Value.
+// They never return raw Go nil. Missing keys and deleted keys both return the
+// canonical Nil value (Value{typ: typeNil}). Since Value is a struct (not a
+// pointer), it is impossible for a raw Go nil to escape through these methods.
+//
+// The array part may contain interior holes (nil-valued slots) after
+// deletion of non-trailing keys. shrinkArray removes only trailing nils.
+// Next() skips nil-valued array entries so that pairs() iteration never
+// exposes holes to Lua code.
+//
+// The hash part uses delete-on-nil: setting a hash key to nil removes
+// the entry from both the map and the ordered keys slice. There are no
+// tombstone values in the hash part.
 type Table struct {
 	array     []Value
 	hash      map[any]Value
@@ -238,11 +252,12 @@ func (t *Table) SetMetatable(mt LuaTable) {
 // If no more pairs, returns (nil, nil).
 // The hash part is traversed in insertion order so that next() is
 // deterministic as long as the table is not modified.
+// Array entries with nil values (holes) are skipped, matching Lua semantics.
 func (t *Table) Next(key Value) (Value, Value) {
 	if key.IsNil() {
-		// Start iteration: array part first
-		if len(t.array) > 0 {
-			return NewInt(1), t.array[0]
+		// Start iteration: find first non-nil array entry
+		if kv, vv, ok := t.nextArrayEntry(0); ok {
+			return kv, vv
 		}
 		// First hash entry
 		if len(t.keys) > 0 {
@@ -255,11 +270,11 @@ func (t *Table) Next(key Value) (Value, Value) {
 	// Find current key and return next
 	if key.IsNumber() {
 		if i, ok := key.ToInt(); ok && i >= 1 && int(i) <= len(t.array) {
-			// Currently in array part
-			if int(i) < len(t.array) {
-				return NewInt(i + 1), t.array[i]
+			// Currently in array part — find next non-nil entry
+			if kv, vv, ok := t.nextArrayEntry(int(i)); ok {
+				return kv, vv
 			}
-			// End of array, start hash
+			// No more non-nil array entries, start hash
 			if len(t.keys) > 0 {
 				k := t.keys[0]
 				return keyToValue(k), t.hash[k]
@@ -280,6 +295,17 @@ func (t *Table) Next(key Value) (Value, Value) {
 		}
 	}
 	return Nil, Nil
+}
+
+// nextArrayEntry returns the first non-nil array entry at or after index start
+// (0-based). Returns the Lua key, value, and true if found.
+func (t *Table) nextArrayEntry(start int) (Value, Value, bool) {
+	for j := start; j < len(t.array); j++ {
+		if !t.array[j].IsNil() {
+			return NewInt(int64(j + 1)), t.array[j], true
+		}
+	}
+	return Nil, Nil, false
 }
 
 // keyToValue converts a hash key back to a Value.

@@ -67,6 +67,7 @@ func main() {
 
 	// Create VM and register standard library
 	v := vm.New()
+	v.SetOsProvider(vm.NewDefaultOsProvider())
 	stdlib.Open(v)
 
 	// Set timeout context if requested
