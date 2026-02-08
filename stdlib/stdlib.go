@@ -50,6 +50,12 @@ func Open(v *vm.VM) {
 
 	// Load functions (load, loadfile, dofile)
 	openLoad(v)
+
+	// IO library (only if IoProvider is set)
+	openIo(v)
+
+	// OS library (only if OsProvider is set)
+	openOs(v)
 }
 
 // print(...)

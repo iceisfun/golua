@@ -33,6 +33,10 @@ type VM struct {
 	codeProvider LuaCodeProvider // Provider for loading Lua chunks (optional)
 	vmID         string          // Optional identifier for this VM
 	chunkName    string          // Name of the currently executing chunk
+
+	// IO and OS provider support
+	ioProvider LuaIoProvider  // Provider for IO operations (optional)
+	osProvider LuaOsProvider  // Provider for OS operations (optional)
 }
 
 // callFrame represents a function call on the call stack.
@@ -162,6 +166,8 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		codeProvider: parent.codeProvider,
 		vmID:         parent.vmID,
 		chunkName:    parent.chunkName,
+		ioProvider:   parent.ioProvider,
+		osProvider:   parent.osProvider,
 	}
 }
 
@@ -1820,4 +1826,24 @@ func (vm *VM) CallerContext() *LuaCallerContext {
 		VMID:       vm.vmID,
 		CallDepth:  len(vm.callStack),
 	}
+}
+
+// SetIoProvider sets the IO provider for this VM.
+func (vm *VM) SetIoProvider(provider LuaIoProvider) {
+	vm.ioProvider = provider
+}
+
+// IoProvider returns the current IO provider, or nil if none is set.
+func (vm *VM) IoProvider() LuaIoProvider {
+	return vm.ioProvider
+}
+
+// SetOsProvider sets the OS provider for this VM.
+func (vm *VM) SetOsProvider(provider LuaOsProvider) {
+	vm.osProvider = provider
+}
+
+// OsProvider returns the current OS provider, or nil if none is set.
+func (vm *VM) OsProvider() LuaOsProvider {
+	return vm.osProvider
 }

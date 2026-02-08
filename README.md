@@ -13,6 +13,8 @@ A Lua 5.5 interpreter written in Go. Pure Go, zero dependencies, no cgo.
 - Integer division (`//`)
 - Go interop (call Lua from Go, expose Go functions to Lua)
 - Sandboxed code loading via `LuaCodeProvider`
+- Sandboxed IO via `LuaIoProvider` (includes `JailedIoProvider` for read-only, directory-confined access)
+- Sandboxed OS via `LuaOsProvider` (includes `DefaultOsProvider` with optional env filtering)
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
 - Single static binary when compiled
 
@@ -61,6 +63,7 @@ See the `examples/` directory for complete examples:
 - **[call_lua](examples/call_lua/)** - Calling Lua functions from Go
 - **[expose_go](examples/expose_go/)** - Exposing Go functions to Lua
 - **[code_provider](examples/code_provider/)** - Sandboxed file loading with LuaCodeProvider
+- **[jailed_io](examples/jailed_io/)** - Sandboxed IO and OS with JailedIoProvider and DefaultOsProvider
 
 ## Go Interop
 
@@ -117,6 +120,39 @@ v.SetCodeProvider(&MyProvider{})
 stdlib.Open(v)
 ```
 
+### Sandboxed IO and OS
+
+```go
+v := vm.New()
+
+// Read-only file access, confined to a directory
+v.SetIoProvider(vm.NewJailedIoProvider("/path/to/allowed/dir"))
+
+// OS functions (clock, time, date, getenv)
+v.SetOsProvider(vm.NewDefaultOsProvider())
+
+// Or restrict which env vars are visible
+v.SetOsProvider(vm.NewFilteredOsProvider(func(name string) bool {
+    return name == "USER" || name == "HOME"
+}))
+
+stdlib.Open(v)
+```
+
+## Security Model
+
+golua is sandboxed by default.
+
+- No filesystem access unless explicitly provided
+- No OS access unless explicitly provided
+- No native code loading
+- No ambient authority
+
+The default IO provider (`JailedIoProvider`) enforces:
+- root confinement
+- read-only access
+- path traversal prevention
+
 ## Running Tests
 
 ```bash
@@ -156,7 +192,8 @@ go run ./cmd/luac script.lua
 
 - No loading of C shared objects (`.so`/`.dll`) - this is by design
 - No `require` with C modules
-- No `io` or `os` library (sandboxed by default)
+- No `io.stdin`/`io.stdout`/`io.stderr` (no implicit stdio)
+- No `io.write` in `JailedIoProvider` (read-only by design)
 - No debug library
 
 ## Contributing
