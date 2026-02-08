@@ -349,18 +349,62 @@ func coWrap(v *vm.VM) int {
 	coroutines[id] = co
 	coroutinesMu.Unlock()
 
-	// Return a wrapper function
+	// Return a wrapper function that resumes the coroutine on each call.
+	// Unlike coroutine.resume, errors are raised directly (not returned as false, err).
 	wrapper := vm.NewNativeFunc(func(v *vm.VM) int {
-		// Resume the coroutine
+		co.mu.Lock()
+		status := co.status
+		co.mu.Unlock()
+
+		if status == "dead" {
+			panic("cannot resume dead coroutine")
+		}
+
+		// Collect arguments
 		argc := v.ArgCount()
 		args := make([]vm.Value, argc)
 		for i := 1; i <= argc; i++ {
 			args[i-1] = v.Get(i)
 		}
 
-		// TODO: properly implement wrap resume
-		v.Set(0, vm.Nil)
-		return 1
+		// Start the goroutine if this is the first call
+		co.mu.Lock()
+		if !co.started {
+			co.started = true
+			co.status = "running"
+			go runCoroutine(co)
+		} else {
+			co.status = "running"
+		}
+		co.mu.Unlock()
+
+		// Send args to the coroutine
+		co.resumeCh <- args
+
+		// Wait for yield or completion
+		select {
+		case results := <-co.yieldCh:
+			for i, r := range results {
+				v.Set(i, r)
+			}
+			return len(results)
+		case <-co.doneCh:
+			co.mu.Lock()
+			err := co.err
+			result := co.result
+			co.mu.Unlock()
+
+			if err != nil {
+				panic(err.Error())
+			}
+
+			for i, r := range result {
+				v.Set(i, r)
+			}
+			return len(result)
+		case <-ctxDone(v):
+			panic("execution interrupted: " + v.Context().Err().Error())
+		}
 	})
 
 	v.Set(0, wrapper)
