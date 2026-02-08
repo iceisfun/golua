@@ -11,11 +11,10 @@ import (
 // Value represents a Lua runtime value.
 // Uses a tagged union approach for efficiency.
 type Value struct {
-	typ valueType
-	// For numbers, we store both representations and use typ to know which is authoritative
-	num float64
-	// For non-numeric types
-	ptr any
+	typ     valueType
+	num     float64 // authoritative for typeFloat, typeBool
+	integer int64   // authoritative for typeInt
+	ptr     any
 }
 
 type valueType byte
@@ -52,7 +51,7 @@ var (
 
 // NewInt creates an integer value.
 func NewInt(i int64) Value {
-	return Value{typ: typeInt, num: float64(i)}
+	return Value{typ: typeInt, integer: i}
 }
 
 // NewFloat creates a float value.
@@ -121,11 +120,17 @@ func (v Value) AsBool() bool {
 
 // AsInt returns the integer value (also works for floats that are whole numbers).
 func (v Value) AsInt() int64 {
+	if v.typ == typeInt {
+		return v.integer
+	}
 	return int64(v.num)
 }
 
 // AsFloat returns the float value.
 func (v Value) AsFloat() float64 {
+	if v.typ == typeInt {
+		return float64(v.integer)
+	}
 	return v.num
 }
 
@@ -165,7 +170,9 @@ func (v Value) AsNativeFunc() NativeFunc {
 // Returns (number, true) on success, (0, false) on failure.
 func (v Value) ToNumber() (float64, bool) {
 	switch v.typ {
-	case typeInt, typeFloat:
+	case typeInt:
+		return float64(v.integer), true
+	case typeFloat:
 		return v.num, true
 	case typeString:
 		s := strings.TrimSpace(v.ptr.(string))
@@ -193,7 +200,7 @@ func (v Value) ToNumber() (float64, bool) {
 func (v Value) ToInt() (int64, bool) {
 	switch v.typ {
 	case typeInt:
-		return int64(v.num), true
+		return v.integer, true
 	case typeFloat:
 		f := v.num
 		i := int64(f)
@@ -249,7 +256,7 @@ func (v Value) String() string {
 		}
 		return "false"
 	case typeInt:
-		return fmt.Sprintf("%d", int64(v.num))
+		return fmt.Sprintf("%d", v.integer)
 	case typeFloat:
 		f := v.num
 		if f == math.Trunc(f) && !math.IsInf(f, 0) && math.Abs(f) < 1e14 {
@@ -269,19 +276,77 @@ func (v Value) String() string {
 	}
 }
 
+// intFloatEqual returns true if int i and float f represent the same value.
+// This is exact: returns false if f cannot represent i without precision loss.
+func intFloatEqual(i int64, f float64) bool {
+	return float64(i) == f && int64(f) == i
+}
+
+// intFloatLessThan returns true if int i < float f.
+func intFloatLessThan(i int64, f float64) bool {
+	if math.IsNaN(f) {
+		return false
+	}
+	if f >= 1<<63 {
+		return true // f is above all int64
+	}
+	if f < -(1 << 63) {
+		return false // f is below all int64
+	}
+	fi := int64(f)
+	if float64(fi) == f {
+		return i < fi
+	}
+	// f is not a whole number; fi = trunc(f)
+	// if f > fi then i < f iff i <= fi
+	// if f < fi then i < f iff i < fi
+	if f > float64(fi) {
+		return i <= fi
+	}
+	return i < fi
+}
+
+// floatIntLessThan returns true if float f < int i.
+func floatIntLessThan(f float64, i int64) bool {
+	if math.IsNaN(f) {
+		return false
+	}
+	if f >= 1<<63 {
+		return false
+	}
+	if f < -(1 << 63) {
+		return true
+	}
+	fi := int64(f)
+	if float64(fi) == f {
+		return fi < i
+	}
+	if f > float64(fi) {
+		return fi < i
+	}
+	return fi-1 < i
+}
+
 // Equal checks Lua equality (==).
 func (v Value) Equal(other Value) bool {
 	if v.typ != other.typ {
 		// Special case: int and float can be equal
 		if v.IsNumber() && other.IsNumber() {
-			return v.num == other.num
+			if v.typ == typeInt {
+				return intFloatEqual(v.integer, other.num)
+			}
+			return intFloatEqual(other.integer, v.num)
 		}
 		return false
 	}
 	switch v.typ {
 	case typeNil:
 		return true
-	case typeBool, typeInt, typeFloat:
+	case typeBool:
+		return v.num == other.num
+	case typeInt:
+		return v.integer == other.integer
+	case typeFloat:
 		return v.num == other.num
 	case typeString:
 		return v.ptr.(string) == other.ptr.(string)
@@ -301,6 +366,15 @@ func (v Value) RawEqual(other Value) bool {
 // Returns (result, ok) where ok is false if comparison is invalid.
 func (v Value) LessThan(other Value) (bool, bool) {
 	if v.IsNumber() && other.IsNumber() {
+		if v.typ == typeInt && other.typ == typeInt {
+			return v.integer < other.integer, true
+		}
+		if v.typ == typeInt {
+			return intFloatLessThan(v.integer, other.num), true
+		}
+		if other.typ == typeInt {
+			return floatIntLessThan(v.num, other.integer), true
+		}
 		return v.num < other.num, true
 	}
 	if v.IsString() && other.IsString() {
@@ -312,6 +386,23 @@ func (v Value) LessThan(other Value) (bool, bool) {
 // LessEqual checks if v <= other.
 func (v Value) LessEqual(other Value) (bool, bool) {
 	if v.IsNumber() && other.IsNumber() {
+		if v.typ == typeInt && other.typ == typeInt {
+			return v.integer <= other.integer, true
+		}
+		if v.typ == typeInt {
+			// i <= f: NaN must return false
+			if math.IsNaN(other.num) {
+				return false, true
+			}
+			return !floatIntLessThan(other.num, v.integer), true
+		}
+		if other.typ == typeInt {
+			// f <= i: NaN must return false
+			if math.IsNaN(v.num) {
+				return false, true
+			}
+			return !intFloatLessThan(other.integer, v.num), true
+		}
 		return v.num <= other.num, true
 	}
 	if v.IsString() && other.IsString() {

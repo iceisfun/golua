@@ -109,11 +109,13 @@ assert_eq(math.tointeger(-3.5), nil)
 assert_eq(math.type(math.maxinteger), "integer")
 assert_eq(math.type(math.mininteger), "integer")
 
--- NOTE: Exact boundary values (2^63-1 and -2^63) cannot be tested because
--- the Value type stores integers as float64, which loses precision at
--- the int64 boundary. This is a known architectural limitation tracked
--- for a future phase. The constants exist but their exact values are
--- affected by float64 rounding.
+-- Exact boundary values (int64 precision)
+assert_eq(tostring(math.maxinteger), "9223372036854775807")
+assert_eq(tostring(math.mininteger), "-9223372036854775808")
+
+-- Wrapping: maxinteger + 1 == mininteger
+assert_eq(math.maxinteger + 1, math.mininteger)
+assert_eq(math.mininteger - 1, math.maxinteger)
 
 --------------------------------------------------------------------------------
 -- math.ult (unsigned less-than comparison)
@@ -128,8 +130,9 @@ assert_eq(math.ult(1, 1), false)
 assert_eq(math.ult(-1, 0), false)   -- -1 unsigned = max uint64
 assert_eq(math.ult(0, -1), true)
 
--- NOTE: maxinteger/mininteger boundary ult tests omitted due to
--- float64 precision limitation in Value type (both round to same value).
+-- maxinteger/mininteger boundary
+assert_eq(math.ult(math.maxinteger, math.mininteger), true)   -- max < min unsigned (min = 2^63)
+assert_eq(math.ult(math.mininteger, math.maxinteger), false)
 
 -- Zero
 assert_eq(math.ult(0, 0), false)

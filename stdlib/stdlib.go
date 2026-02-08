@@ -124,15 +124,31 @@ func luaToNumber(v *vm.VM) int {
 		}
 
 		if b == 10 {
-			// Try float first
-			if f, err := strconv.ParseFloat(s, 64); err == nil {
+			trimmed := strings.TrimSpace(s)
+			// If the string looks like a pure integer (no '.', 'e', 'E', 'n', 'N'),
+			// try integer parsing first to preserve int64 precision
+			isIntLike := true
+			for _, c := range trimmed {
+				if c == '.' || c == 'e' || c == 'E' || c == 'n' || c == 'N' {
+					isIntLike = false
+					break
+				}
+			}
+			if isIntLike {
+				if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+					v.Set(0, vm.NewInt(i))
+					return 1
+				}
+			}
+			// Try float
+			if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
 				v.Set(0, vm.NewFloat(f))
 				return 1
 			}
 		}
 
 		// Try integer with base
-		if i, err := strconv.ParseInt(s, b, 64); err == nil {
+		if i, err := strconv.ParseInt(strings.TrimSpace(s), b, 64); err == nil {
 			v.Set(0, vm.NewInt(i))
 			return 1
 		}

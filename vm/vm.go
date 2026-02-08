@@ -530,7 +530,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
 			v := vm.stack[frame.base+b]
-			if n, ok := v.ToNumber(); ok {
+			if v.IsInt() {
+				vm.stack[frame.base+a] = NewInt(v.AsInt() + int64(sc))
+			} else if n, ok := v.ToNumber(); ok {
 				vm.stack[frame.base+a] = NewFloat(n + float64(sc))
 			} else {
 				return nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v.Type())
@@ -723,7 +725,12 @@ func (vm *VM) execute() ([]Value, error) {
 			a, k := inst.A(), inst.K()
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			eq := v.IsNumber() && v.AsFloat() == float64(sb)
+			var eq bool
+			if v.IsInt() {
+				eq = v.AsInt() == int64(sb)
+			} else {
+				eq = v.IsNumber() && v.AsFloat() == float64(sb)
+			}
 			if eq != (k == 1) {
 				frame.pc++
 			}
@@ -735,7 +742,12 @@ func (vm *VM) execute() ([]Value, error) {
 			if !v.IsNumber() {
 				return nil, fmt.Errorf("attempt to compare %s with number", v.Type())
 			}
-			lt := v.AsFloat() < float64(sb)
+			var lt bool
+			if v.IsInt() {
+				lt = v.AsInt() < int64(sb)
+			} else {
+				lt = v.AsFloat() < float64(sb)
+			}
 			if lt != (k == 1) {
 				frame.pc++
 			}
@@ -747,7 +759,12 @@ func (vm *VM) execute() ([]Value, error) {
 			if !v.IsNumber() {
 				return nil, fmt.Errorf("attempt to compare %s with number", v.Type())
 			}
-			le := v.AsFloat() <= float64(sb)
+			var le bool
+			if v.IsInt() {
+				le = v.AsInt() <= int64(sb)
+			} else {
+				le = v.AsFloat() <= float64(sb)
+			}
 			if le != (k == 1) {
 				frame.pc++
 			}
@@ -759,7 +776,12 @@ func (vm *VM) execute() ([]Value, error) {
 			if !v.IsNumber() {
 				return nil, fmt.Errorf("attempt to compare %s with number", v.Type())
 			}
-			gt := v.AsFloat() > float64(sb)
+			var gt bool
+			if v.IsInt() {
+				gt = v.AsInt() > int64(sb)
+			} else {
+				gt = v.AsFloat() > float64(sb)
+			}
 			if gt != (k == 1) {
 				frame.pc++
 			}
@@ -771,7 +793,12 @@ func (vm *VM) execute() ([]Value, error) {
 			if !v.IsNumber() {
 				return nil, fmt.Errorf("attempt to compare %s with number", v.Type())
 			}
-			ge := v.AsFloat() >= float64(sb)
+			var ge bool
+			if v.IsInt() {
+				ge = v.AsInt() >= int64(sb)
+			} else {
+				ge = v.AsFloat() >= float64(sb)
+			}
 			if ge != (k == 1) {
 				frame.pc++
 			}
@@ -913,30 +940,54 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_FORLOOP:
 			a, bx := inst.A(), inst.Bx()
 			// R[A] = index, R[A+1] = limit, R[A+2] = step
-			idx := vm.stack[frame.base+a].AsFloat()
-			limit := vm.stack[frame.base+a+1].AsFloat()
-			step := vm.stack[frame.base+a+2].AsFloat()
-
-			idx += step
-			vm.stack[frame.base+a] = NewFloat(idx)
-
-			// Check if loop continues
-			// Note: bx+1 accounts for pre-increment of frame.pc
-			if step >= 0 {
-				if idx <= limit {
-					if err := vm.CheckInterrupt(); err != nil {
-						return nil, err
+			stepVal := vm.stack[frame.base+a+2]
+			if stepVal.IsInt() {
+				// Integer for loop
+				idx := vm.stack[frame.base+a].AsInt()
+				limit := vm.stack[frame.base+a+1].AsInt()
+				step := stepVal.AsInt()
+				idx += step
+				vm.stack[frame.base+a] = NewInt(idx)
+				if step >= 0 {
+					if idx <= limit {
+						if err := vm.CheckInterrupt(); err != nil {
+							return nil, err
+						}
+						frame.pc -= bx + 1
+						vm.stack[frame.base+a+3] = NewInt(idx)
 					}
-					frame.pc -= bx + 1
-					vm.stack[frame.base+a+3] = NewFloat(idx)
+				} else {
+					if idx >= limit {
+						if err := vm.CheckInterrupt(); err != nil {
+							return nil, err
+						}
+						frame.pc -= bx + 1
+						vm.stack[frame.base+a+3] = NewInt(idx)
+					}
 				}
 			} else {
-				if idx >= limit {
-					if err := vm.CheckInterrupt(); err != nil {
-						return nil, err
+				// Float for loop
+				idx := vm.stack[frame.base+a].AsFloat()
+				limit := vm.stack[frame.base+a+1].AsFloat()
+				step := stepVal.AsFloat()
+				idx += step
+				vm.stack[frame.base+a] = NewFloat(idx)
+				if step >= 0 {
+					if idx <= limit {
+						if err := vm.CheckInterrupt(); err != nil {
+							return nil, err
+						}
+						frame.pc -= bx + 1
+						vm.stack[frame.base+a+3] = NewFloat(idx)
 					}
-					frame.pc -= bx + 1
-					vm.stack[frame.base+a+3] = NewFloat(idx)
+				} else {
+					if idx >= limit {
+						if err := vm.CheckInterrupt(); err != nil {
+							return nil, err
+						}
+						frame.pc -= bx + 1
+						vm.stack[frame.base+a+3] = NewFloat(idx)
+					}
 				}
 			}
 
@@ -947,31 +998,50 @@ func (vm *VM) execute() ([]Value, error) {
 			limit := vm.stack[frame.base+a+1]
 			step := vm.stack[frame.base+a+2]
 
-			// Convert to numbers
-			initF, ok1 := init.ToNumber()
-			limitF, ok2 := limit.ToNumber()
-			stepF, ok3 := step.ToNumber()
-			if !ok1 || !ok2 || !ok3 {
-				return nil, fmt.Errorf("'for' limit must be a number")
-			}
-
-			// Store as floats for consistency
-			vm.stack[frame.base+a] = NewFloat(initF)
-			vm.stack[frame.base+a+1] = NewFloat(limitF)
-			vm.stack[frame.base+a+2] = NewFloat(stepF)
-
-			// Check if loop should run at all
-			if stepF >= 0 {
-				if initF > limitF {
-					frame.pc += bx + 1
+			// If all three are integers, use integer loop
+			if init.IsInt() && limit.IsInt() && step.IsInt() {
+				initI := init.AsInt()
+				limitI := limit.AsInt()
+				stepI := step.AsInt()
+				vm.stack[frame.base+a] = NewInt(initI)
+				vm.stack[frame.base+a+1] = NewInt(limitI)
+				vm.stack[frame.base+a+2] = NewInt(stepI)
+				if stepI >= 0 {
+					if initI > limitI {
+						frame.pc += bx + 1
+					} else {
+						vm.stack[frame.base+a+3] = NewInt(initI)
+					}
 				} else {
-					vm.stack[frame.base+a+3] = NewFloat(initF)
+					if initI < limitI {
+						frame.pc += bx + 1
+					} else {
+						vm.stack[frame.base+a+3] = NewInt(initI)
+					}
 				}
 			} else {
-				if initF < limitF {
-					frame.pc += bx + 1
+				// Convert to numbers for float loop
+				initF, ok1 := init.ToNumber()
+				limitF, ok2 := limit.ToNumber()
+				stepF, ok3 := step.ToNumber()
+				if !ok1 || !ok2 || !ok3 {
+					return nil, fmt.Errorf("'for' limit must be a number")
+				}
+				vm.stack[frame.base+a] = NewFloat(initF)
+				vm.stack[frame.base+a+1] = NewFloat(limitF)
+				vm.stack[frame.base+a+2] = NewFloat(stepF)
+				if stepF >= 0 {
+					if initF > limitF {
+						frame.pc += bx + 1
+					} else {
+						vm.stack[frame.base+a+3] = NewFloat(initF)
+					}
 				} else {
-					vm.stack[frame.base+a+3] = NewFloat(initF)
+					if initF < limitF {
+						frame.pc += bx + 1
+					} else {
+						vm.stack[frame.base+a+3] = NewFloat(initF)
+					}
 				}
 			}
 
@@ -1170,6 +1240,44 @@ func (vm *VM) getRK(frame *callFrame, c, k int) Value {
 }
 
 func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
+	// Integer fast path: both operands are int
+	if v1.IsInt() && v2.IsInt() && op != compiler.OP_DIV && op != compiler.OP_POW {
+		i1, i2 := v1.AsInt(), v2.AsInt()
+		switch op {
+		case compiler.OP_ADD:
+			return NewInt(i1 + i2), nil
+		case compiler.OP_SUB:
+			return NewInt(i1 - i2), nil
+		case compiler.OP_MUL:
+			return NewInt(i1 * i2), nil
+		case compiler.OP_IDIV:
+			if i2 == 0 {
+				return Nil, fmt.Errorf("attempt to perform 'n//0'")
+			}
+			if i2 == -1 {
+				return NewInt(-i1), nil
+			}
+			q := i1 / i2
+			// Lua floor division: correct toward negative infinity
+			if (i1^i2) < 0 && q*i2 != i1 {
+				q--
+			}
+			return NewInt(q), nil
+		case compiler.OP_MOD:
+			if i2 == 0 {
+				return Nil, fmt.Errorf("attempt to perform 'n%%0'")
+			}
+			if i2 == -1 {
+				return NewInt(0), nil
+			}
+			r := i1 % i2
+			if r != 0 && (r^i2) < 0 {
+				r += i2
+			}
+			return NewInt(r), nil
+		}
+	}
+
 	n1, ok1 := v1.ToNumber()
 	n2, ok2 := v2.ToNumber()
 
@@ -1186,6 +1294,9 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 		case compiler.OP_DIV:
 			result = n1 / n2
 		case compiler.OP_IDIV:
+			if n2 == 0 {
+				return Nil, fmt.Errorf("attempt to perform 'n//0'")
+			}
 			result = math.Floor(n1 / n2)
 		case compiler.OP_MOD:
 			result = math.Mod(n1, n2)
@@ -1197,12 +1308,6 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 			result = math.Pow(n1, n2)
 		}
 
-		// Try to return int if possible
-		if v1.IsInt() && v2.IsInt() && op != compiler.OP_DIV && op != compiler.OP_POW {
-			if i := int64(result); float64(i) == result {
-				return NewInt(i), nil
-			}
-		}
 		return NewFloat(result), nil
 	}
 
@@ -1268,6 +1373,43 @@ func (vm *VM) getArithMetamethod(v1, v2 Value, name string) Value {
 }
 
 func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
+	// Integer fast path
+	if v.IsInt() && kv.IsInt() && op != compiler.OP_DIVK && op != compiler.OP_POWK {
+		i1, i2 := v.AsInt(), kv.AsInt()
+		switch op {
+		case compiler.OP_ADDK:
+			return NewInt(i1 + i2), nil
+		case compiler.OP_SUBK:
+			return NewInt(i1 - i2), nil
+		case compiler.OP_MULK:
+			return NewInt(i1 * i2), nil
+		case compiler.OP_IDIVK:
+			if i2 == 0 {
+				return Nil, fmt.Errorf("attempt to perform 'n//0'")
+			}
+			if i2 == -1 {
+				return NewInt(-i1), nil
+			}
+			q := i1 / i2
+			if (i1^i2) < 0 && q*i2 != i1 {
+				q--
+			}
+			return NewInt(q), nil
+		case compiler.OP_MODK:
+			if i2 == 0 {
+				return Nil, fmt.Errorf("attempt to perform 'n%%0'")
+			}
+			if i2 == -1 {
+				return NewInt(0), nil
+			}
+			r := i1 % i2
+			if r != 0 && (r^i2) < 0 {
+				r += i2
+			}
+			return NewInt(r), nil
+		}
+	}
+
 	n1, ok1 := v.ToNumber()
 	n2, ok2 := kv.ToNumber()
 
@@ -1283,6 +1425,9 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 		case compiler.OP_DIVK:
 			result = n1 / n2
 		case compiler.OP_IDIVK:
+			if n2 == 0 {
+				return Nil, fmt.Errorf("attempt to perform 'n//0'")
+			}
 			result = math.Floor(n1 / n2)
 		case compiler.OP_MODK:
 			result = math.Mod(n1, n2)
@@ -1293,11 +1438,6 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 			result = math.Pow(n1, n2)
 		}
 
-		if v.IsInt() && kv.IsInt() && op != compiler.OP_DIVK && op != compiler.OP_POWK {
-			if i := int64(result); float64(i) == result {
-				return NewInt(i), nil
-			}
-		}
 		return NewFloat(result), nil
 	}
 

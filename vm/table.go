@@ -50,7 +50,7 @@ func hashKey(v Value) any {
 	case typeBool:
 		return v.num != 0
 	case typeInt:
-		return int64(v.num)
+		return v.integer
 	case typeFloat:
 		// If float is an integer, use int key for consistency
 		f := v.num

@@ -136,13 +136,17 @@ func mathMax(v *vm.VM) int {
 	}
 
 	maxVal := v.Get(1)
-	maxNum := getNumber(v, 1, "max")
+	if !maxVal.IsNumber() {
+		panic("bad argument #1 to 'max' (number expected)")
+	}
 
 	for i := 2; i <= n; i++ {
-		num := getNumber(v, i, "max")
-		if num > maxNum {
-			maxNum = num
-			maxVal = v.Get(i)
+		cur := v.Get(i)
+		if !cur.IsNumber() {
+			panic("bad argument #1 to 'max' (number expected)")
+		}
+		if lt, _ := maxVal.LessThan(cur); lt {
+			maxVal = cur
 		}
 	}
 
@@ -157,13 +161,17 @@ func mathMin(v *vm.VM) int {
 	}
 
 	minVal := v.Get(1)
-	minNum := getNumber(v, 1, "min")
+	if !minVal.IsNumber() {
+		panic("bad argument #1 to 'min' (number expected)")
+	}
 
 	for i := 2; i <= n; i++ {
-		num := getNumber(v, i, "min")
-		if num < minNum {
-			minNum = num
-			minVal = v.Get(i)
+		cur := v.Get(i)
+		if !cur.IsNumber() {
+			panic("bad argument #1 to 'min' (number expected)")
+		}
+		if lt, _ := cur.LessThan(minVal); lt {
+			minVal = cur
 		}
 	}
 

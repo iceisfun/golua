@@ -827,3 +827,94 @@ func TestToIntFromNegativeFloat(t *testing.T) {
 		t.Errorf("expected (-10, true), got (%d, %v)", i, ok)
 	}
 }
+
+// --- int64 precision tests ---
+
+func TestIntMaxInt64Precision(t *testing.T) {
+	max := NewInt(math.MaxInt64)
+	if max.AsInt() != math.MaxInt64 {
+		t.Errorf("expected MaxInt64 (%d), got %d", int64(math.MaxInt64), max.AsInt())
+	}
+	min := NewInt(math.MinInt64)
+	if min.AsInt() != math.MinInt64 {
+		t.Errorf("expected MinInt64 (%d), got %d", int64(math.MinInt64), min.AsInt())
+	}
+	// String representation must be exact
+	if max.String() != "9223372036854775807" {
+		t.Errorf("MaxInt64 string: expected '9223372036854775807', got %q", max.String())
+	}
+	if min.String() != "-9223372036854775808" {
+		t.Errorf("MinInt64 string: expected '-9223372036854775808', got %q", min.String())
+	}
+}
+
+func TestIntMaxInt64RoundTrip(t *testing.T) {
+	// ToInt on a NewInt should round-trip exactly
+	v := NewInt(math.MaxInt64)
+	i, ok := v.ToInt()
+	if !ok || i != math.MaxInt64 {
+		t.Errorf("ToInt round-trip failed: got (%d, %v)", i, ok)
+	}
+}
+
+func TestIntFloatEqualityEdgeCases(t *testing.T) {
+	// MaxInt64 cannot be exactly represented as float64
+	maxI := NewInt(math.MaxInt64)
+	maxF := NewFloat(float64(math.MaxInt64))
+	if maxI.Equal(maxF) {
+		t.Error("MaxInt64 should NOT equal float64(MaxInt64) because float64 rounds it")
+	}
+
+	// Small integers should be equal across types
+	if !NewInt(42).Equal(NewFloat(42.0)) {
+		t.Error("42 == 42.0 should be true")
+	}
+
+	// 2^53 fits exactly in float64
+	big := int64(1) << 53
+	if !NewInt(big).Equal(NewFloat(float64(big))) {
+		t.Error("2^53 should equal float64(2^53)")
+	}
+
+	// 2^53 + 1 does NOT fit exactly in float64
+	big1 := (int64(1) << 53) + 1
+	if NewInt(big1).Equal(NewFloat(float64(big1))) {
+		t.Error("2^53+1 should NOT equal float64(2^53+1)")
+	}
+}
+
+func TestIntComparisonEdgeCases(t *testing.T) {
+	// int vs float comparison near boundaries
+	maxI := NewInt(math.MaxInt64)
+	maxF := NewFloat(float64(math.MaxInt64))
+
+	// float64(MaxInt64) rounds up to 2^63, so MaxInt64 < float64(MaxInt64)
+	lt, ok := maxI.LessThan(maxF)
+	if !ok || !lt {
+		t.Error("MaxInt64 should be < float64(MaxInt64) because float rounds up")
+	}
+
+	// Negative: MinInt64 vs its float
+	minI := NewInt(math.MinInt64)
+	minF := NewFloat(float64(math.MinInt64))
+	// float64(MinInt64) is exact (-2^63 is a power of 2)
+	if !minI.Equal(minF) {
+		t.Error("MinInt64 should equal float64(MinInt64) because -2^63 is exact in float64")
+	}
+
+	// int-int comparison
+	lt, ok = NewInt(math.MinInt64).LessThan(NewInt(math.MaxInt64))
+	if !ok || !lt {
+		t.Error("MinInt64 < MaxInt64 should be true")
+	}
+
+	// NaN comparison
+	lt, ok = NewInt(0).LessThan(NewFloat(math.NaN()))
+	if !ok || lt {
+		t.Error("0 < NaN should be false")
+	}
+	le, ok := NewInt(0).LessEqual(NewFloat(math.NaN()))
+	if !ok || le {
+		t.Error("0 <= NaN should be false")
+	}
+}
