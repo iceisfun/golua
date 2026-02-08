@@ -199,16 +199,27 @@ func stringFind(v *vm.VM) int {
 		return 2
 	}
 
-	// TODO: Implement Lua pattern matching
-	// For now, use plain search as fallback
-	idx := strings.Index(searchStr, pattern)
-	if idx == -1 {
+	// Pattern matching via Lua pattern engine
+	matchInfo := luaMatchWithPos(s, pattern, start)
+	if matchInfo == nil {
 		v.Set(0, vm.Nil)
 		return 1
 	}
-	v.Set(0, vm.NewInt(int64(start+idx)))
-	v.Set(1, vm.NewInt(int64(start+idx+len(pattern)-1)))
-	return 2
+
+	// Always return 1-based start and end (inclusive)
+	v.Set(0, vm.NewInt(int64(matchInfo.start+1)))
+	v.Set(1, vm.NewInt(int64(matchInfo.end)))
+	nret := 2
+
+	// If the pattern had explicit captures, return them after positions
+	if matchInfo.hasExplicitCaptures {
+		for i, cap := range matchInfo.captures {
+			v.Set(2+i, vm.NewString(cap))
+		}
+		nret += len(matchInfo.captures)
+	}
+
+	return nret
 }
 
 // string.format(formatstring, ...)
@@ -308,9 +319,10 @@ func stringGsub(v *vm.VM) int {
 
 // matchWithPos holds match result with position info
 type matchWithPos struct {
-	start    int      // 0-based start position in string
-	end      int      // 0-based end position (exclusive)
-	captures []string // captured groups (or whole match if no groups)
+	start               int      // 0-based start position in string
+	end                 int      // 0-based end position (exclusive)
+	captures            []string // captured groups (or whole match if no groups)
+	hasExplicitCaptures bool     // true when pattern had () groups
 }
 
 // luaMatchWithPos returns match info including positions
@@ -338,9 +350,10 @@ func luaMatchWithPos(s, pattern string, init int) *matchWithPos {
 		caps := matchPattern(s, start, searchPat, 0)
 		if caps != nil {
 			return &matchWithPos{
-				start:    caps.start,
-				end:      caps.end,
-				captures: caps.captures(s),
+				start:               caps.start,
+				end:                 caps.end,
+				captures:            caps.captures(s),
+				hasExplicitCaptures: len(caps.caps) > 0,
 			}
 		}
 		return nil
@@ -350,9 +363,10 @@ func luaMatchWithPos(s, pattern string, init int) *matchWithPos {
 		caps := matchPattern(s, i, searchPat, 0)
 		if caps != nil {
 			return &matchWithPos{
-				start:    i,
-				end:      caps.end,
-				captures: caps.captures(s),
+				start:               i,
+				end:                 caps.end,
+				captures:            caps.captures(s),
+				hasExplicitCaptures: len(caps.caps) > 0,
 			}
 		}
 	}
@@ -436,25 +450,36 @@ func stringGmatch(v *vm.VM) int {
 	s := getString(v, 1, "gmatch")
 	pattern := getString(v, 2, "gmatch")
 
-	// Create iterator state
-	pos := 0
+	// 1-based position for luaMatchWithPos
+	pos := 1
 
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
-		if pos >= len(s) {
+		if pos > len(s)+1 {
 			v.Set(0, vm.Nil)
 			return 1
 		}
 
-		idx := strings.Index(s[pos:], pattern)
-		if idx == -1 {
+		matchInfo := luaMatchWithPos(s, pattern, pos)
+		if matchInfo == nil {
 			v.Set(0, vm.Nil)
 			return 1
 		}
 
-		matchStart := pos + idx
-		pos = matchStart + len(pattern)
+		// Advance past match; at least 1 byte for empty matches
+		if matchInfo.end > matchInfo.start {
+			pos = matchInfo.end + 1 // 0-based exclusive → 1-based
+		} else {
+			pos = matchInfo.start + 2 // advance past current char (1-based)
+		}
 
-		v.Set(0, vm.NewString(pattern))
+		// Return explicit captures if present, otherwise whole match
+		if matchInfo.hasExplicitCaptures {
+			for i, cap := range matchInfo.captures {
+				v.Set(i, vm.NewString(cap))
+			}
+			return len(matchInfo.captures)
+		}
+		v.Set(0, vm.NewString(matchInfo.captures[0]))
 		return 1
 	})
 
