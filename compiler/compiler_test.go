@@ -419,12 +419,28 @@ func TestBreak(t *testing.T) {
 func TestGotoLabel(t *testing.T) {
 	p := compile(t, `
 		goto skip
-		local x = 1
+		print("unreachable")
 		::skip::
 		return 2
 	`)
 	if !hasOp(p, OP_JMP) {
 		t.Error("expected JMP for goto")
+	}
+}
+
+func TestGotoIntoScopeError(t *testing.T) {
+	block, err := parser.Parse("<test>", `
+		goto skip
+		local x = 1
+		::skip::
+		return x
+	`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = Compile("<test>", block)
+	if err == nil {
+		t.Error("expected compile error for goto jumping into local scope")
 	}
 }
 

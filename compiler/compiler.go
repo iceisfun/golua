@@ -68,9 +68,10 @@ type scopeInfo struct {
 }
 
 type labelInfo struct {
-	name string
-	pc   int
-	line int
+	name    string
+	pc      int
+	line    int
+	nLocals int // number of active locals when label was defined
 }
 
 type pendingGoto struct {
@@ -129,6 +130,11 @@ func (c *compiler) newFuncState(source string, parent *funcState) *funcState {
 func (c *compiler) closeFuncState() *Proto {
 	fs := c.fs
 	p := fs.proto
+
+	// Check for unresolved gotos (label not visible)
+	for _, pg := range fs.pendGotos {
+		c.error(nil, "no visible label '%s' for <goto> at line %d", pg.name, pg.line)
+	}
 
 	// Close all remaining locals
 	for i := range fs.locals {
@@ -1203,9 +1209,15 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 	fs := c.fs
 	line := s.P.Line
 
-	// Check if label already exists
+	// Check if label already exists (backward goto)
 	for _, lbl := range fs.labels {
 		if lbl.name == s.Label {
+			// Validate: goto must not jump into scope of a local variable
+			if fs.nActVar > lbl.nLocals {
+				// This is a backward jump; the label had fewer locals,
+				// but we need OP_CLOSE to handle upvalues for locals
+				// being exited. This is valid — we're jumping OUT of scope.
+			}
 			jpc := fs.emitJump(line)
 			offset := lbl.pc - (jpc + 1)
 			fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
@@ -1227,15 +1239,22 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt) {
 	fs := c.fs
 
 	fs.labels = append(fs.labels, labelInfo{
-		name: s.Name,
-		pc:   fs.pc(),
-		line: s.P.Line,
+		name:    s.Name,
+		pc:      fs.pc(),
+		line:    s.P.Line,
+		nLocals: fs.nActVar,
 	})
 
 	// Resolve pending gotos
 	remaining := fs.pendGotos[:0]
 	for _, pg := range fs.pendGotos {
 		if pg.name == s.Name {
+			// Validate: goto must not jump into scope of a local variable
+			if pg.nLocals < fs.nActVar {
+				c.error(s, "<goto %s> at line %d jumps into the scope of local variable", pg.name, pg.line)
+				remaining = append(remaining, pg)
+				continue
+			}
 			offset := fs.pc() - (pg.pc + 1)
 			fs.proto.Code[pg.pc] = fs.proto.Code[pg.pc].SetSJ(offset)
 		} else {
