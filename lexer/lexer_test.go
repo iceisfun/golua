@@ -197,6 +197,57 @@ func TestIdentifiers(t *testing.T) {
 	}
 }
 
+func TestUnicodeIdentifiers(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		ident string
+	}{
+		{"pure_cjk", "你好", "你好"},
+		{"mixed_ascii_cjk", "l世u界a", "l世u界a"},
+		{"cjk_with_digits", "a测b试c001", "a测b试c001"},
+		{"cyrillic", "привет", "привет"},
+		{"accented_latin", "café", "café"},
+		{"japanese_katakana", "テスト", "テスト"},
+		{"emoji_letter", "α", "α"},           // Greek
+		{"underscore_unicode", "_数据", "_数据"}, // underscore + CJK
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expectSingle(t, tc.input, token.NAME, tc.ident)
+		})
+	}
+}
+
+func TestUnicodeIdentifierTokenization(t *testing.T) {
+	// Full statement: identifiers should not merge with keywords or operators
+	input := "local 你好 = 测试table.测试a"
+	tokens := mustTokenize(t, input)
+	expected := []struct {
+		typ     token.Type
+		literal string
+	}{
+		{token.LOCAL, "local"},
+		{token.NAME, "你好"},
+		{token.Type('='), "="},
+		{token.NAME, "测试table"},
+		{token.Type('.'), "."},
+		{token.NAME, "测试a"},
+		{token.EOS, ""},
+	}
+	if len(tokens) != len(expected) {
+		t.Fatalf("expected %d tokens, got %d: %v", len(expected), len(tokens), tokens)
+	}
+	for i, exp := range expected {
+		if tokens[i].Type != exp.typ {
+			t.Errorf("token %d type: want %v, got %v", i, exp.typ, tokens[i].Type)
+		}
+		if exp.literal != "" && tokens[i].Literal != exp.literal {
+			t.Errorf("token %d literal: want %q, got %q", i, exp.literal, tokens[i].Literal)
+		}
+	}
+}
+
 func TestIntegers(t *testing.T) {
 	cases := []struct {
 		input string
