@@ -62,10 +62,10 @@ func luaUtf8Len(v *vm.VM) int {
 		posj = getInt(v, 3, "len")
 	}
 
-	// Reject lax parameter
-	if !v.Get(4).IsNil() && v.Get(4).ToBool() {
-		panic("bad argument #4 to 'len' (lax mode not supported)")
-	}
+	// Accept lax parameter (arg 4) for API compatibility with Lua 5.4.
+	// golua uses Go's unicode/utf8 for all decoding, so lax mode behaves
+	// identically to strict mode on valid UTF-8. Invalid sequences still
+	// error regardless of the flag.
 
 	// Resolve relative positions (1-indexed)
 	i := posRelat(posi, slen)
@@ -116,10 +116,7 @@ func luaUtf8Codepoint(v *vm.VM) int {
 		posj = getInt(v, 3, "codepoint")
 	}
 
-	// Reject lax parameter
-	if !v.Get(4).IsNil() && v.Get(4).ToBool() {
-		panic("bad argument #4 to 'codepoint' (lax mode not supported)")
-	}
+	// Accept lax parameter (arg 4) for Lua 5.4 API compatibility.
 
 	// Resolve relative positions
 	i := posRelat(posi, slen)
@@ -156,10 +153,7 @@ func luaUtf8Codepoint(v *vm.VM) int {
 func luaUtf8Codes(v *vm.VM) int {
 	s := getString(v, 1, "codes")
 
-	// Reject lax parameter
-	if !v.Get(2).IsNil() && v.Get(2).ToBool() {
-		panic("bad argument #2 to 'codes' (lax mode not supported)")
-	}
+	// Accept lax parameter (arg 2) for Lua 5.4 API compatibility.
 
 	// Validate first byte is not a continuation byte
 	if len(s) > 0 && !utf8.RuneStart(s[0]) {

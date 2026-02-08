@@ -1,7 +1,7 @@
 # UTF-8 Library Support
 
 **Date:** 2026-02-08
-**Status:** Implemented (strict mode only)
+**Status:** Implemented (strict mode; lax flag accepted for API compatibility)
 **Implementation:** `stdlib/utf8.go`
 
 ---
@@ -11,8 +11,9 @@
 golua implements the Lua `utf8` standard library with the following
 constraints:
 
-* **Strict mode only** (the default). The `lax` parameter available in Lua 5.4
-  is not supported.
+* **Strict validation only.** The `lax` parameter is accepted for Lua 5.4 API
+  compatibility, but golua still uses Go's strict UTF-8 validation. Invalid
+  sequences may still error in lax mode.
 * **Standard Unicode range only** (U+0000 to U+10FFFF). `utf8.char` does not
   accept codepoints above U+10FFFF.
 * Surrogates (U+D800-U+DFFF) are rejected in all decoding functions, matching
@@ -46,7 +47,10 @@ not valid Unicode and are never encountered in real-world Lua programs.
 **Lua 5.4:** Returns count of UTF-8 characters between byte positions i and j.
 On invalid UTF-8, returns `nil, position`. Optional 4th arg enables lax mode.
 
-**golua:** Implements strict mode. No lax parameter.
+**golua:** The optional 4th `lax` parameter is accepted for API compatibility.
+On valid UTF-8, strict and lax modes produce identical results. Invalid
+sequences still error regardless of the flag, since Go's decoder enforces
+strict validation unconditionally.
 
 **Go primitives:**
 * `utf8.DecodeRuneInString(s[pos:])` to advance through characters
@@ -61,7 +65,9 @@ rejects (surrogates, overlong encodings, > U+10FFFF, bad continuation bytes).
 **Lua 5.4:** Returns codepoints as integers for characters between byte
 positions i and j. Raises error on invalid UTF-8. Optional 4th arg for lax mode.
 
-**golua:** Implements strict mode. No lax parameter.
+**golua:** The optional 4th `lax` parameter is accepted for API compatibility.
+Behavior is identical to strict mode on valid UTF-8; invalid sequences still
+raise errors.
 
 **Go primitive:** `utf8.DecodeRuneInString` returns the rune value directly.
 Detect errors via `r == utf8.RuneError && size == 1`.
@@ -71,7 +77,9 @@ Detect errors via `r == utf8.RuneError && size == 1`.
 **Lua 5.4:** Returns iterator yielding `(byte_position, codepoint)` pairs.
 Raises error on invalid UTF-8. Optional 2nd arg for lax mode.
 
-**golua:** Implements strict mode. No lax parameter.
+**golua:** The optional 2nd `lax` parameter is accepted for API compatibility.
+Behavior is identical to strict mode on valid UTF-8; invalid sequences still
+raise errors.
 
 **Go primitive:** Closure over `DecodeRuneInString` advancing through the
 string. Equivalent to Go's `for i, r := range s` but with error checking.
@@ -100,7 +108,7 @@ A string constant. Trivially implementable.
 
 ## 3. What Is Not Supported
 
-### 3.1 Lax Mode
+### 3.1 Lax Mode (API-Compatible, Strict Enforcement)
 
 Lua 5.4 added an optional `lax` parameter to `utf8.len`, `utf8.codepoint`, and
 `utf8.codes`. In lax mode, surrogates (U+D800-U+DFFF) and codepoints above
@@ -110,11 +118,15 @@ Go's `unicode/utf8.DecodeRuneInString` unconditionally rejects surrogates and
 values > U+10FFFF by returning `RuneError`. There is no way to decode these
 sequences using Go's standard library without implementing a custom decoder.
 
-**Behavior:** Passing a truthy `lax` parameter raises a runtime error.
+**Behavior:** The `lax` parameter is accepted without error for Lua 5.4 API
+compatibility. On valid UTF-8 data, strict and lax modes produce identical
+results. On invalid UTF-8 data, errors may still occur in lax mode because
+Go's decoder enforces strict validation unconditionally. This is a known,
+intentional divergence from Lua 5.4.
 
 **Impact:** Low. Lax mode was added in Lua 5.4 for niche use cases involving
 non-standard UTF-8 encodings. The vast majority of Lua programs use strict mode
-(the default).
+(the default), and valid UTF-8 is unaffected.
 
 ### 3.2 Extended Codepoint Range (> U+10FFFF)
 
@@ -176,13 +188,17 @@ return value disambiguates these cases.
 ## 6. What Users Should Expect
 
 golua provides the `utf8` standard library for working with UTF-8 encoded
-strings. All functions operate in **strict mode**, validating that sequences
-represent valid Unicode codepoints (U+0000 to U+10FFFF, excluding surrogates).
+strings. All functions validate that sequences represent valid Unicode
+codepoints (U+0000 to U+10FFFF, excluding surrogates).
 
-The following Lua 5.4 features are **not supported**:
-* The `lax` parameter on `utf8.len`, `utf8.codepoint`, and `utf8.codes`
+The `lax` parameter on `utf8.len`, `utf8.codepoint`, and `utf8.codes` is
+accepted for Lua 5.4 API compatibility, but golua still enforces Go's strict
+UTF-8 validation. Invalid sequences may still error in lax mode. This is a
+known, intentional divergence from Lua 5.4.
+
+The following Lua 5.4 feature is **not supported**:
 * Codepoints above U+10FFFF in `utf8.char`
 
-These features involve non-standard UTF-8 encodings that fall outside the
-Unicode specification and Go's standard library support. Programs that rely
-on standard Unicode text processing are fully supported.
+This involves non-standard UTF-8 encoding that falls outside the Unicode
+specification and Go's standard library support. Programs that rely on
+standard Unicode text processing are fully supported.
