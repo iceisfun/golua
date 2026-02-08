@@ -269,6 +269,10 @@ func mathTan(v *vm.VM) int {
 
 func mathTointeger(v *vm.VM) int {
 	val := v.Get(1)
+	if !val.IsNumber() {
+		v.Set(0, vm.Nil)
+		return 1
+	}
 	if i, ok := val.ToInt(); ok {
 		v.Set(0, vm.NewInt(i))
 	} else {
