@@ -9,6 +9,10 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
+// maxMetaDepth limits __index/__newindex chain length to prevent infinite loops.
+// Equivalent to Lua 5.4's MAXTAGLOOP.
+const maxMetaDepth = 2000
+
 // VM is the Lua virtual machine state.
 type VM struct {
 	stack     []Value     // Value stack
@@ -1566,211 +1570,235 @@ func (vm *VM) Pop() Value {
 
 // tableGet gets a value from a table, handling __index metamethod
 func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
-	val := t.Get(key)
-	if !val.IsNil() {
-		return val, nil
-	}
+	for depth := 0; depth < maxMetaDepth; depth++ {
+		val := t.Get(key)
+		if !val.IsNil() {
+			return val, nil
+		}
 
-	// Key not found, check for __index metamethod
-	mt := t.Metatable()
-	if mt == nil {
+		// Key not found, check for __index metamethod
+		mt := t.Metatable()
+		if mt == nil {
+			return Nil, nil
+		}
+
+		index := mt.Get(metaIndex)
+		if index.IsNil() {
+			return Nil, nil
+		}
+
+		if index.IsTable() {
+			// __index is a table, follow the chain
+			t = index.AsTable()
+			continue
+		}
+
+		if index.IsFunction() || index.IsNativeFunc() {
+			// __index is a function, call it with (table, key)
+			return vm.callMetamethod(index, NewTable(t), key)
+		}
+
 		return Nil, nil
 	}
-
-	index := mt.Get(metaIndex)
-	if index.IsNil() {
-		return Nil, nil
-	}
-
-	if index.IsTable() {
-		// __index is a table, recurse
-		return vm.tableGet(index.AsTable(), key)
-	}
-
-	if index.IsFunction() || index.IsNativeFunc() {
-		// __index is a function, call it with (table, key)
-		return vm.callMetamethod(index, NewTable(t), key)
-	}
-
-	return Nil, nil
+	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
 }
 
 // tableGetString gets a value from a table by string key, handling __index metamethod
 func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
-	val := t.Get(NewString(key))
-	if !val.IsNil() {
-		return val, nil
-	}
+	for depth := 0; depth < maxMetaDepth; depth++ {
+		val := t.Get(NewString(key))
+		if !val.IsNil() {
+			return val, nil
+		}
 
-	// Key not found, check for __index metamethod
-	mt := t.Metatable()
-	if mt == nil {
+		// Key not found, check for __index metamethod
+		mt := t.Metatable()
+		if mt == nil {
+			return Nil, nil
+		}
+
+		index := mt.Get(metaIndex)
+		if index.IsNil() {
+			return Nil, nil
+		}
+
+		if index.IsTable() {
+			// __index is a table, follow the chain
+			t = index.AsTable()
+			continue
+		}
+
+		if index.IsFunction() || index.IsNativeFunc() {
+			// __index is a function, call it with (table, key)
+			return vm.callMetamethod(index, NewTable(t), NewString(key))
+		}
+
 		return Nil, nil
 	}
-
-	index := mt.Get(metaIndex)
-	if index.IsNil() {
-		return Nil, nil
-	}
-
-	if index.IsTable() {
-		// __index is a table, recurse
-		return vm.tableGetString(index.AsTable(), key)
-	}
-
-	if index.IsFunction() || index.IsNativeFunc() {
-		// __index is a function, call it with (table, key)
-		return vm.callMetamethod(index, NewTable(t), NewString(key))
-	}
-
-	return Nil, nil
+	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
 }
 
 // tableGetInt gets a value from a table by int key, handling __index metamethod
 func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
-	val := t.Get(NewInt(int64(key)))
-	if !val.IsNil() {
-		return val, nil
-	}
+	for depth := 0; depth < maxMetaDepth; depth++ {
+		val := t.Get(NewInt(int64(key)))
+		if !val.IsNil() {
+			return val, nil
+		}
 
-	// Key not found, check for __index metamethod
-	mt := t.Metatable()
-	if mt == nil {
+		// Key not found, check for __index metamethod
+		mt := t.Metatable()
+		if mt == nil {
+			return Nil, nil
+		}
+
+		index := mt.Get(metaIndex)
+		if index.IsNil() {
+			return Nil, nil
+		}
+
+		if index.IsTable() {
+			// __index is a table, follow the chain
+			t = index.AsTable()
+			continue
+		}
+
+		if index.IsFunction() || index.IsNativeFunc() {
+			// __index is a function, call it with (table, key)
+			return vm.callMetamethod(index, NewTable(t), NewInt(int64(key)))
+		}
+
 		return Nil, nil
 	}
-
-	index := mt.Get(metaIndex)
-	if index.IsNil() {
-		return Nil, nil
-	}
-
-	if index.IsTable() {
-		// __index is a table, recurse
-		return vm.tableGetInt(index.AsTable(), key)
-	}
-
-	if index.IsFunction() || index.IsNativeFunc() {
-		// __index is a function, call it with (table, key)
-		return vm.callMetamethod(index, NewTable(t), NewInt(int64(key)))
-	}
-
-	return Nil, nil
+	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
 }
 
 // tableSet sets a value in a table, handling __newindex metamethod
 func (vm *VM) tableSet(t LuaTable, key, value Value) error {
-	// Check if key already exists (raw access)
-	existing := t.Get(key)
-	if !existing.IsNil() {
-		// Key exists, set directly
+	for depth := 0; depth < maxMetaDepth; depth++ {
+		// Check if key already exists (raw access)
+		existing := t.Get(key)
+		if !existing.IsNil() {
+			// Key exists, set directly
+			t.Set(key, value)
+			return nil
+		}
+
+		// Key doesn't exist, check for __newindex metamethod
+		mt := t.Metatable()
+		if mt == nil {
+			t.Set(key, value)
+			return nil
+		}
+
+		newindex := mt.Get(metaNewIndex)
+		if newindex.IsNil() {
+			t.Set(key, value)
+			return nil
+		}
+
+		if newindex.IsTable() {
+			// __newindex is a table, follow the chain
+			t = newindex.AsTable()
+			continue
+		}
+
+		if newindex.IsFunction() || newindex.IsNativeFunc() {
+			// __newindex is a function, call it with (table, key, value)
+			_, err := vm.callMetamethod3(newindex, NewTable(t), key, value)
+			return err
+		}
+
 		t.Set(key, value)
 		return nil
 	}
-
-	// Key doesn't exist, check for __newindex metamethod
-	mt := t.Metatable()
-	if mt == nil {
-		t.Set(key, value)
-		return nil
-	}
-
-	newindex := mt.Get(metaNewIndex)
-	if newindex.IsNil() {
-		t.Set(key, value)
-		return nil
-	}
-
-	if newindex.IsTable() {
-		// __newindex is a table, set in that table instead
-		return vm.tableSet(newindex.AsTable(), key, value)
-	}
-
-	if newindex.IsFunction() || newindex.IsNativeFunc() {
-		// __newindex is a function, call it with (table, key, value)
-		_, err := vm.callMetamethod3(newindex, NewTable(t), key, value)
-		return err
-	}
-
-	t.Set(key, value)
-	return nil
+	return fmt.Errorf("'__newindex' chain too long; possible loop")
 }
 
 // tableSetString sets a value in a table by string key, handling __newindex metamethod
 func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 	keyVal := NewString(key)
-	// Check if key already exists (raw access)
-	existing := t.Get(keyVal)
-	if !existing.IsNil() {
-		// Key exists, set directly
+	for depth := 0; depth < maxMetaDepth; depth++ {
+		// Check if key already exists (raw access)
+		existing := t.Get(keyVal)
+		if !existing.IsNil() {
+			// Key exists, set directly
+			t.Set(keyVal, value)
+			return nil
+		}
+
+		// Key doesn't exist, check for __newindex metamethod
+		mt := t.Metatable()
+		if mt == nil {
+			t.Set(keyVal, value)
+			return nil
+		}
+
+		newindex := mt.Get(metaNewIndex)
+		if newindex.IsNil() {
+			t.Set(keyVal, value)
+			return nil
+		}
+
+		if newindex.IsTable() {
+			// __newindex is a table, follow the chain
+			t = newindex.AsTable()
+			continue
+		}
+
+		if newindex.IsFunction() || newindex.IsNativeFunc() {
+			// __newindex is a function, call it with (table, key, value)
+			_, err := vm.callMetamethod3(newindex, NewTable(t), keyVal, value)
+			return err
+		}
+
 		t.Set(keyVal, value)
 		return nil
 	}
-
-	// Key doesn't exist, check for __newindex metamethod
-	mt := t.Metatable()
-	if mt == nil {
-		t.Set(keyVal, value)
-		return nil
-	}
-
-	newindex := mt.Get(metaNewIndex)
-	if newindex.IsNil() {
-		t.Set(keyVal, value)
-		return nil
-	}
-
-	if newindex.IsTable() {
-		// __newindex is a table, set in that table instead
-		return vm.tableSetString(newindex.AsTable(), key, value)
-	}
-
-	if newindex.IsFunction() || newindex.IsNativeFunc() {
-		// __newindex is a function, call it with (table, key, value)
-		_, err := vm.callMetamethod3(newindex, NewTable(t), keyVal, value)
-		return err
-	}
-
-	t.Set(keyVal, value)
-	return nil
+	return fmt.Errorf("'__newindex' chain too long; possible loop")
 }
 
 // tableSetInt sets a value in a table by int key, handling __newindex metamethod
 func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 	keyVal := NewInt(int64(key))
-	// Check if key already exists (raw access)
-	existing := t.Get(keyVal)
-	if !existing.IsNil() {
-		// Key exists, set directly
+	for depth := 0; depth < maxMetaDepth; depth++ {
+		// Check if key already exists (raw access)
+		existing := t.Get(keyVal)
+		if !existing.IsNil() {
+			// Key exists, set directly
+			t.Set(keyVal, value)
+			return nil
+		}
+
+		// Key doesn't exist, check for __newindex metamethod
+		mt := t.Metatable()
+		if mt == nil {
+			t.Set(keyVal, value)
+			return nil
+		}
+
+		newindex := mt.Get(metaNewIndex)
+		if newindex.IsNil() {
+			t.Set(keyVal, value)
+			return nil
+		}
+
+		if newindex.IsTable() {
+			// __newindex is a table, follow the chain
+			t = newindex.AsTable()
+			continue
+		}
+
+		if newindex.IsFunction() || newindex.IsNativeFunc() {
+			// __newindex is a function, call it with (table, key, value)
+			_, err := vm.callMetamethod3(newindex, NewTable(t), keyVal, value)
+			return err
+		}
+
 		t.Set(keyVal, value)
 		return nil
 	}
-
-	// Key doesn't exist, check for __newindex metamethod
-	mt := t.Metatable()
-	if mt == nil {
-		t.Set(keyVal, value)
-		return nil
-	}
-
-	newindex := mt.Get(metaNewIndex)
-	if newindex.IsNil() {
-		t.Set(keyVal, value)
-		return nil
-	}
-
-	if newindex.IsTable() {
-		// __newindex is a table, set in that table instead
-		return vm.tableSetInt(newindex.AsTable(), key, value)
-	}
-
-	if newindex.IsFunction() || newindex.IsNativeFunc() {
-		// __newindex is a function, call it with (table, key, value)
-		_, err := vm.callMetamethod3(newindex, NewTable(t), keyVal, value)
-		return err
-	}
-
-	t.Set(keyVal, value)
-	return nil
+	return fmt.Errorf("'__newindex' chain too long; possible loop")
 }
 
 // callMetamethod calls a metamethod with 2 arguments and returns the first result
