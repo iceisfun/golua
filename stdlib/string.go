@@ -288,12 +288,18 @@ func stringGsub(v *vm.VM) int {
 		if matchInfo.end > pos {
 			pos = matchInfo.end
 		} else {
+			// Empty match: copy the character at current position before advancing
+			if pos < len(s) {
+				result.WriteByte(s[pos])
+			}
 			pos++
 		}
 	}
 
 	// Append remaining text
-	result.WriteString(s[pos:])
+	if pos <= len(s) {
+		result.WriteString(s[pos:])
+	}
 
 	v.Set(0, vm.NewString(result.String()))
 	v.Set(1, vm.NewInt(int64(count)))

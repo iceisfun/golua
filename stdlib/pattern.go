@@ -157,7 +157,11 @@ func matchPattern(s string, pos int, pattern string, patPos int) *matchResult {
 		if pos >= len(s) || !elem.matches(s[pos]) {
 			return nil
 		}
-		return matchStar(s, pos+1, pattern, patPos+elemLen, elem)
+		result := matchStar(s, pos+1, pattern, patPos+elemLen, elem)
+		if result != nil {
+			result.start = pos
+		}
+		return result
 	case '-':
 		// Non-greedy zero or more
 		return matchMinus(s, pos, pattern, patPos+elemLen, elem)
