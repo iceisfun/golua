@@ -65,6 +65,9 @@ func Open(v *vm.VM) {
 
 	// Bit32 library (Lua 5.2 compat)
 	openBit32(v)
+
+	// UTF-8 library (strict mode only)
+	openUtf8(v)
 }
 
 // print(...)
