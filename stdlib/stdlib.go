@@ -18,6 +18,7 @@ func Open(v *vm.VM) {
 	v.SetGlobal("tonumber", vm.NewNativeFunc(luaToNumber))
 	v.SetGlobal("error", vm.NewNativeFunc(luaError))
 	v.SetGlobal("pcall", vm.NewNativeFunc(luaPcall))
+	v.SetGlobal("xpcall", vm.NewNativeFunc(luaXpcall))
 	v.SetGlobal("pairs", vm.NewNativeFunc(luaPairs))
 	v.SetGlobal("ipairs", vm.NewNativeFunc(luaIpairs))
 	v.SetGlobal("next", vm.NewNativeFunc(luaNext))
@@ -167,6 +168,16 @@ func luaToNumber(v *vm.VM) int {
 // error(message [, level])
 func luaError(v *vm.VM) int {
 	msg := v.Get(1)
+	level := int64(1) // default
+	if !v.Get(2).IsNil() {
+		level = getInt(v, 2, "error")
+	}
+
+	if level > 0 && msg.IsString() {
+		if loc := v.GetSourceLocation(int(level)); loc != "" {
+			panic(loc + ": " + msg.AsString())
+		}
+	}
 	panic(valueToString(msg))
 }
 
@@ -189,6 +200,47 @@ func luaPcall(v *vm.VM) int {
 	if err != nil {
 		v.Set(0, vm.False)
 		v.Set(1, vm.NewString(err.Error()))
+		return 2
+	}
+
+	// Success: return true followed by all results
+	v.Set(0, vm.True)
+	for i, r := range results {
+		v.Set(i+1, r)
+	}
+	return 1 + len(results)
+}
+
+// xpcall(f, msgh [, arg1, ...])
+func luaXpcall(v *vm.VM) int {
+	fn := v.Get(1)
+	msgh := v.Get(2)
+	if !fn.IsFunction() && !fn.IsNativeFunc() {
+		panic("bad argument #1 to 'xpcall' (function expected)")
+	}
+	if !msgh.IsFunction() && !msgh.IsNativeFunc() {
+		panic("bad argument #2 to 'xpcall' (function expected)")
+	}
+
+	// Collect extra arguments (after fn and msgh)
+	argc := v.ArgCount()
+	args := make([]vm.Value, argc-2)
+	for i := 3; i <= argc; i++ {
+		args[i-3] = v.Get(i)
+	}
+
+	results, err := v.ProtectedCall(fn, args)
+	if err != nil {
+		// Call message handler with the error
+		handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{vm.NewString(err.Error())})
+		v.Set(0, vm.False)
+		if handlerErr != nil {
+			v.Set(1, vm.NewString(handlerErr.Error()))
+		} else if len(handlerResults) > 0 {
+			v.Set(1, handlerResults[0])
+		} else {
+			v.Set(1, vm.Nil)
+		}
 		return 2
 	}
 

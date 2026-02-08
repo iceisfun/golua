@@ -648,6 +648,12 @@ func (vm *VM) execute() ([]Value, error) {
 				} else {
 					vm.stack[frame.base+a] = NewFloat(-v.AsFloat())
 				}
+			} else if mm := vm.getMetafield(v, "__unm"); !mm.IsNil() {
+				result, err := vm.callMetamethod(mm, v, v)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = result
 			} else {
 				return nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v.Type())
 			}
@@ -657,6 +663,12 @@ func (vm *VM) execute() ([]Value, error) {
 			v := vm.stack[frame.base+b]
 			if i, ok := v.ToInt(); ok {
 				vm.stack[frame.base+a] = NewInt(^i)
+			} else if mm := vm.getMetafield(v, "__bnot"); !mm.IsNil() {
+				result, err := vm.callMetamethod(mm, v, v)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = result
 			} else {
 				return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
 			}
@@ -1412,9 +1424,6 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 		case compiler.OP_DIV:
 			result = n1 / n2
 		case compiler.OP_IDIV:
-			if n2 == 0 {
-				return Nil, fmt.Errorf("attempt to perform 'n//0'")
-			}
 			result = math.Floor(n1 / n2)
 		case compiler.OP_MOD:
 			result = math.Mod(n1, n2)
@@ -1463,6 +1472,24 @@ func (vm *VM) arithMetamethod(op compiler.OpCode) string {
 		return "__mod"
 	case compiler.OP_POW, compiler.OP_POWK:
 		return "__pow"
+	default:
+		return ""
+	}
+}
+
+// bitwiseMetamethod returns the metamethod name for a bitwise opcode
+func (vm *VM) bitwiseMetamethod(op compiler.OpCode) string {
+	switch op {
+	case compiler.OP_BAND, compiler.OP_BANDK:
+		return "__band"
+	case compiler.OP_BOR, compiler.OP_BORK:
+		return "__bor"
+	case compiler.OP_BXOR, compiler.OP_BXORK:
+		return "__bxor"
+	case compiler.OP_SHL:
+		return "__shl"
+	case compiler.OP_SHR:
+		return "__shr"
 	default:
 		return ""
 	}
@@ -1543,9 +1570,6 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 		case compiler.OP_DIVK:
 			result = n1 / n2
 		case compiler.OP_IDIVK:
-			if n2 == 0 {
-				return Nil, fmt.Errorf("attempt to perform 'n//0'")
-			}
 			result = math.Floor(n1 / n2)
 		case compiler.OP_MODK:
 			result = math.Mod(n1, n2)
@@ -1578,57 +1602,69 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	i1, ok1 := v1.ToInt()
 	i2, ok2 := v2.ToInt()
+	if ok1 && ok2 {
+		var result int64
+		switch op {
+		case compiler.OP_BAND:
+			result = i1 & i2
+		case compiler.OP_BOR:
+			result = i1 | i2
+		case compiler.OP_BXOR:
+			result = i1 ^ i2
+		case compiler.OP_SHL:
+			if i2 >= 0 {
+				result = i1 << uint(i2)
+			} else {
+				result = i1 >> uint(-i2)
+			}
+		case compiler.OP_SHR:
+			if i2 >= 0 {
+				result = i1 >> uint(i2)
+			} else {
+				result = i1 << uint(-i2)
+			}
+		}
+		return NewInt(result), nil
+	}
+
+	// Try metamethods
+	mmName := vm.bitwiseMetamethod(op)
+	if mm := vm.getArithMetamethod(v1, v2, mmName); !mm.IsNil() {
+		return vm.callMetamethod(mm, v1, v2)
+	}
+
 	if !ok1 {
 		return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v1.Type())
 	}
-	if !ok2 {
-		return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v2.Type())
-	}
-
-	var result int64
-	switch op {
-	case compiler.OP_BAND:
-		result = i1 & i2
-	case compiler.OP_BOR:
-		result = i1 | i2
-	case compiler.OP_BXOR:
-		result = i1 ^ i2
-	case compiler.OP_SHL:
-		if i2 >= 0 {
-			result = i1 << uint(i2)
-		} else {
-			result = i1 >> uint(-i2)
-		}
-	case compiler.OP_SHR:
-		if i2 >= 0 {
-			result = i1 >> uint(i2)
-		} else {
-			result = i1 << uint(-i2)
-		}
-	}
-	return NewInt(result), nil
+	return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v2.Type())
 }
 
 func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
 	i1, ok1 := v.ToInt()
 	i2, ok2 := kv.ToInt()
+	if ok1 && ok2 {
+		var result int64
+		switch op {
+		case compiler.OP_BANDK:
+			result = i1 & i2
+		case compiler.OP_BORK:
+			result = i1 | i2
+		case compiler.OP_BXORK:
+			result = i1 ^ i2
+		}
+		return NewInt(result), nil
+	}
+
+	// Try metamethods
+	mmName := vm.bitwiseMetamethod(op)
+	if mm := vm.getArithMetamethod(v, kv, mmName); !mm.IsNil() {
+		return vm.callMetamethod(mm, v, kv)
+	}
+
 	if !ok1 {
 		return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
 	}
-	if !ok2 {
-		return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", kv.Type())
-	}
-
-	var result int64
-	switch op {
-	case compiler.OP_BANDK:
-		result = i1 & i2
-	case compiler.OP_BORK:
-		result = i1 | i2
-	case compiler.OP_BXORK:
-		result = i1 ^ i2
-	}
-	return NewInt(result), nil
+	return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", kv.Type())
 }
 
 func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
@@ -2410,6 +2446,34 @@ func (vm *VM) getMetafield(v Value, key string) Value {
 		return vm.stringMeta.Get(NewString(key))
 	}
 	return Nil
+}
+
+// GetSourceLocation returns "source:line" for the given call stack level.
+// Level 1 = the current Lua function, level 2 = its caller, etc.
+// Returns "" if the level is out of range or the frame is a native function.
+func (vm *VM) GetSourceLocation(level int) string {
+	// callStack index: len-1 is the native error() frame, len-2 is the Lua caller at level 1
+	// We skip native frames when counting levels.
+	count := 0
+	for i := len(vm.callStack) - 1; i >= 0; i-- {
+		frame := vm.callStack[i]
+		if frame.closure == nil {
+			continue // skip native frames
+		}
+		count++
+		if count == level {
+			proto := frame.closure.Proto
+			pc := frame.pc - 1
+			if pc < 0 {
+				pc = 0
+			}
+			if pc < len(proto.Lines) {
+				return fmt.Sprintf("%s:%d", proto.Source, proto.Lines[pc])
+			}
+			return proto.Source
+		}
+	}
+	return ""
 }
 
 // SetCodeProvider sets the code provider for this VM.
