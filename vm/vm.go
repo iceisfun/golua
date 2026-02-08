@@ -516,12 +516,16 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+b]
 			vm.stack[frame.base+a+1] = table
-			key := vm.constToValue(proto.Constants[c])
+			key := proto.Constants[c].SVal
 			if t := table.AsTable(); t != nil {
-				vm.stack[frame.base+a] = t.Get(key)
+				val, err := vm.tableGetString(t, key)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = val
 			} else if table.IsString() && vm.stringMeta != nil {
 				// String method call - use string metatable
-				vm.stack[frame.base+a] = vm.stringMeta.Get(key)
+				vm.stack[frame.base+a] = vm.stringMeta.Get(NewString(key))
 			} else {
 				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
 			}
