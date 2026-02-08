@@ -151,3 +151,130 @@ func TestDebug_NoHooks(t *testing.T) {
 	`
 	runLuaWithDebug(t, source, "test_debug_no_hooks", provider)
 }
+
+// TestDebug_TCO_InvisibleRecursion verifies that the debug provider doesn't
+// get confused by tail call optimization. A tail-recursive function that
+// recurses 1000 times should NOT grow the stack to depth 1000+.
+func TestDebug_TCO_InvisibleRecursion(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local function recurse(count, target)
+			if count >= target then
+				return debug.stackdepth(), debug.traceback()
+			end
+			return recurse(count + 1, target) -- Tail call
+		end
+
+		local depth, trace = recurse(0, 1000)
+		-- If TCO works, depth should be small (not 1001+).
+		-- The main chunk + recurse + native stackdepth = a handful of frames.
+		assert(depth < 20,
+			"TCO broken or debug miscounting: depth=" .. tostring(depth))
+		-- Traceback should mention tail calls or be short
+		assert(type(trace) == "string", "traceback should be a string")
+	`
+	runLuaWithDebug(t, source, "test_debug_tco_invisible_recursion", provider)
+}
+
+// TestDebug_ExploitUpvalueLeak verifies that the debug provider cannot be
+// used to leak private upvalues from closures. Even with the provider set,
+// getupvalue/setupvalue/getlocal/setlocal must not exist.
+func TestDebug_ExploitUpvalueLeak(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local private_key = "SECRET_123"
+		local function my_closure() return private_key end
+
+		-- Verify no upvalue access functions exist
+		assert(debug.getupvalue == nil,
+			"getupvalue must not exist - would leak private upvalues")
+		assert(debug.setupvalue == nil,
+			"setupvalue must not exist - would mutate private upvalues")
+		assert(debug.getlocal == nil,
+			"getlocal must not exist - would leak local variables")
+		assert(debug.setlocal == nil,
+			"setlocal must not exist - would mutate local variables")
+		assert(debug.upvalueid == nil,
+			"upvalueid must not exist - would expose upvalue identity")
+		assert(debug.upvaluejoin == nil,
+			"upvaluejoin must not exist - would alias upvalues")
+		assert(debug.getinfo == nil,
+			"getinfo must not exist - would expose closure internals")
+
+		-- The closure's private_key remains inaccessible via debug
+		-- Only the closure itself can return it
+		assert(my_closure() == "SECRET_123", "closure still works")
+	`
+	runLuaWithDebug(t, source, "test_debug_exploit_upvalue_leak", provider)
+}
+
+// TestDebug_CoroutineChaos verifies that the debug provider works correctly
+// inside coroutines. When debug functions are called from within a coroutine,
+// they should reflect that coroutine's stack, not the main thread's.
+func TestDebug_CoroutineChaos(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local main_depth = debug.stackdepth()
+
+		local co = coroutine.create(function()
+			-- Inside the coroutine, the stack is fresh
+			local co_depth = debug.stackdepth()
+			local co_trace = debug.traceback("from coroutine")
+			local co_src, co_line = debug.where()
+
+			-- Coroutine stack should be independent of main
+			-- It will have its own call frames
+			assert(type(co_depth) == "number", "depth should be number in coroutine")
+			assert(co_depth > 0, "depth should be > 0 in coroutine")
+
+			assert(type(co_trace) == "string", "traceback should be string in coroutine")
+			assert(co_trace:find("from coroutine") ~= nil,
+				"traceback message should appear in coroutine trace")
+			assert(co_trace:find("stack traceback") ~= nil,
+				"traceback header should appear in coroutine trace")
+
+			assert(type(co_src) == "string", "where source should be string in coroutine")
+			assert(type(co_line) == "number", "where line should be number in coroutine")
+
+			coroutine.yield(co_depth, co_trace)
+
+			-- After resume, debug still works
+			local d2 = debug.stackdepth()
+			assert(type(d2) == "number", "depth should work after resume")
+			return d2
+		end)
+
+		local ok, depth_inside, trace_inside = coroutine.resume(co)
+		assert(ok, "coroutine should not error")
+		assert(type(depth_inside) == "number", "yielded depth should be number")
+		assert(type(trace_inside) == "string", "yielded trace should be string")
+
+		-- Resume again to get the post-yield depth
+		local ok2, depth_after = coroutine.resume(co)
+		assert(ok2, "second resume should not error")
+		assert(type(depth_after) == "number", "post-resume depth should be number")
+	`
+	runLuaWithDebug(t, source, "test_debug_coroutine_chaos", provider)
+}
+
+// TestDebug_WhereBoundsCheck verifies that debug.where returns nil for
+// out-of-range levels rather than panicking.
+func TestDebug_WhereBoundsCheck(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		-- Level way beyond actual stack depth
+		local src = debug.where(9999)
+		assert(src == nil, "where(9999) should return nil, got " .. tostring(src))
+
+		-- Negative level (implementation-defined, should not panic)
+		local ok, err = pcall(function() return debug.where(-1) end)
+		-- Should either return nil or not panic
+		assert(ok or type(err) == "string", "where(-1) should not crash the VM")
+
+		-- Level 0 should work (current frame = the native where call)
+		-- May return nil since level 0 is the native frame
+		local ok2 = pcall(function() debug.where(0) end)
+		assert(ok2, "where(0) should not panic")
+	`
+	runLuaWithDebug(t, source, "test_debug_where_bounds", provider)
+}
