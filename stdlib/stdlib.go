@@ -189,7 +189,7 @@ func luaCollectgarbage(v *vm.VM) int {
 
 	switch opt {
 	case "collect", "":
-		// Trigger GC (no-op, Go handles this)
+		v.ProcessGcFinalizers()
 		v.Set(0, vm.NewInt(0))
 		return 1
 	case "count":
@@ -377,6 +377,10 @@ func luaSetmetatable(v *vm.VM) int {
 		tbl.SetMetatable(mt.AsTable())
 	} else {
 		panic("bad argument #2 to 'setmetatable' (nil or table expected)")
+	}
+	// Register __gc finalizer if applicable
+	if concrete, ok := tbl.(*vm.Table); ok {
+		vm.RegisterGcFinalizer(concrete)
 	}
 	v.Set(0, vm.NewTable(tbl))
 	return 1

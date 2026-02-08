@@ -44,4 +44,5 @@ var (
 	metaConcat    = NewString("__concat")
 	metaTostring  = NewString("__tostring")
 	metaMetatable = NewString("__metatable")
+	metaGc        = NewString("__gc")
 )

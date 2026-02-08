@@ -291,6 +291,16 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 	vm.callStack = vm.callStack[:len(vm.callStack)-1]
 	vm.top = savedTop
 
+	// Clear dead stack slots so Go's GC can collect objects
+	// that were only reachable from the called function's frame.
+	clearEnd := base + proto.MaxStack
+	if clearEnd > len(vm.stack) {
+		clearEnd = len(vm.stack)
+	}
+	for i := vm.top; i < clearEnd; i++ {
+		vm.stack[i] = Value{}
+	}
+
 	return results, err
 }
 
