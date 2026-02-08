@@ -231,20 +231,22 @@ assert_eq(type(utf8.charpattern), "string", "utf8.charpattern is string")
 assert_eq(#utf8.charpattern, 14, "utf8.charpattern length")
 
 --------------------------------------------------------------------------------
--- Lax mode rejection (negative tests)
+-- Lax mode acceptance (lax flag is accepted for Lua 5.4 API compatibility)
 --------------------------------------------------------------------------------
 
--- utf8.len with lax=true must error
-local ok9, err9 = pcall(utf8.len, "hello", 1, -1, true)
-assert(not ok9, "utf8.len lax=true must error")
+-- utf8.len with lax=true must succeed on valid UTF-8
+local ok9, res9 = pcall(utf8.len, "hello", 1, -1, true)
+assert(ok9, "utf8.len lax=true should succeed on valid UTF-8")
+assert(res9 == 5, "utf8.len lax=true should return correct length")
 
--- utf8.codepoint with lax=true must error
-local ok10, err10 = pcall(utf8.codepoint, "hello", 1, 1, true)
-assert(not ok10, "utf8.codepoint lax=true must error")
+-- utf8.codepoint with lax=true must succeed on valid UTF-8
+local ok10, res10 = pcall(utf8.codepoint, "hello", 1, 1, true)
+assert(ok10, "utf8.codepoint lax=true should succeed on valid UTF-8")
+assert(res10 == 104, "utf8.codepoint lax=true should return correct codepoint")
 
--- utf8.codes with lax=true must error
-local ok11, err11 = pcall(utf8.codes, "hello", true)
-assert(not ok11, "utf8.codes lax=true must error")
+-- utf8.codes with lax=true must succeed on valid UTF-8
+local ok11, res11 = pcall(utf8.codes, "hello", true)
+assert(ok11, "utf8.codes lax=true should succeed on valid UTF-8")
 
 --------------------------------------------------------------------------------
 -- Boundary values

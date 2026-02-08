@@ -3,6 +3,7 @@ package stdlib
 import (
 	"math"
 	"math/rand"
+	"time"
 
 	"github.com/iceisfun/golua/vm"
 )
@@ -220,9 +221,32 @@ func mathRandom(v *vm.VM) int {
 }
 
 func mathRandomseed(v *vm.VM) int {
-	seed := getInt(v, 1, "randomseed")
-	rand.Seed(seed)
-	return 0
+	n := v.ArgCount()
+	var seed1, seed2 int64
+
+	switch {
+	case n == 0:
+		// No arguments: seed from system entropy
+		seed1 = time.Now().UnixNano()
+		seed2 = seed1 >> 16
+	case n == 1:
+		// One argument: use it as seed
+		seed1 = getInt(v, 1, "randomseed")
+		seed2 = 0
+	default:
+		// Two arguments: combine both
+		seed1 = getInt(v, 1, "randomseed")
+		seed2 = getInt(v, 2, "randomseed")
+	}
+
+	// Combine seed1 and seed2 into a single seed for Go's RNG
+	combined := seed1 ^ (seed2 * 6364136223846793005)
+	rand.Seed(combined)
+
+	// Return the two seed state values per Lua 5.4
+	v.Set(0, vm.NewInt(seed1))
+	v.Set(1, vm.NewInt(seed2))
+	return 2
 }
 
 func mathSin(v *vm.VM) int {

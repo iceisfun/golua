@@ -144,14 +144,22 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		base := vm.top
 		vm.ensureStack(base + len(args) + 10)
 
-		// Copy arguments
+		// Copy arguments (slot 0 is reserved for the function, args start at 1)
 		for i, arg := range args {
 			vm.stack[base+1+i] = arg
 		}
 		vm.top = base + 1 + len(args)
 
+		// Push a call frame so Get/Set/ArgCount work correctly
+		vm.callStack = append(vm.callStack, callFrame{
+			base: base,
+		})
+
 		// Call native function
 		nResults := nf(vm)
+
+		// Pop the call frame
+		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 
 		// Collect results
 		results = make([]Value, nResults)
