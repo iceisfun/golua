@@ -1,4 +1,5 @@
 # IDE
+.gocache/
 .idea/
 .vscode/
 *.swp
