@@ -69,6 +69,9 @@ func Open(v *vm.VM) {
 
 	// UTF-8 library (strict mode only)
 	openUtf8(v)
+
+	// Glob library (Go-style pattern matching)
+	openGlob(v)
 }
 
 // print(...)

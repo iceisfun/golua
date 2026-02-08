@@ -1,16 +1,10 @@
 # Glob Matching
 
-Demonstrates how to use the `glob` package for case-insensitive pattern matching,
-both directly from Go and exposed to Lua as native functions.
+Demonstrates the `glob` package for case-insensitive pattern matching, used
+directly from Go and from Lua via the built-in `glob` library.
 
-## What This Shows
-
-- Using `glob.Match`, `glob.MatchWords`, and `glob.MatchNamed` from Go
-- Exposing glob matching to Lua via a `glob` table of native functions
-- Word-based matching for multi-word labels
-- Named captures for extracting parts of a match (e.g. route parameters)
-- A Lua utility module (`filter.lua`) that uses glob for list filtering
-- Detecting whether a string contains pattern metacharacters
+The `glob` library is loaded automatically by `stdlib.Open(v)` -- no manual
+binding or provider setup is needed.
 
 ## Run
 
@@ -55,7 +49,7 @@ Route pattern: /api/:version/:resource
   /api/v1/products -> version=v1, resource=products
   /web/home -> no match
 
---- Filtering (via dofile) ---
+--- Filtering ---
 Items matching 'alpha-*':
   alpha-100
   alpha-200
@@ -72,17 +66,9 @@ Items matching '*-100':
   [test] has patterns: true
 ```
 
-## Directory Layout
+## Lua API
 
-```
-examples/glob/
-├── main.go       # Go host: uses glob directly, exposes it to Lua
-├── demo.lua      # Lua script exercising all glob features
-├── filter.lua    # Lua utility module for list filtering via glob
-└── README.md     # This file
-```
-
-## Lua API (provided by Go host)
+The `glob` table is available globally after `stdlib.Open(v)`:
 
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
@@ -101,7 +87,7 @@ examples/glob/
 | `[a-z]` | Matches any character in the range |
 | `[^abc]` | Matches any character NOT in the set |
 | `\c` | Matches literal character `c` |
-| `:name` | Named capture (MatchNamed only) |
+| `:name` | Named capture (`match_named` only) |
 
 All matching is case-insensitive. This is **not** Lua pattern matching -- see
 the `glob` package documentation for details.
