@@ -154,6 +154,16 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		}
 		vm.top = base + 1 + len(args)
 
+		// Clear any slots beyond the arguments to prevent stale data from affecting
+		// optional argument checks (e.g., if !v.Get(5).IsNil())
+		clearEnd := vm.top + 4
+		if clearEnd > len(vm.stack) {
+			clearEnd = len(vm.stack)
+		}
+		for i := vm.top; i < clearEnd; i++ {
+			vm.stack[i] = Nil
+		}
+
 		// Push a call frame so Get/Set/ArgCount work correctly
 		vm.callStack = append(vm.callStack, callFrame{
 			base: base,
