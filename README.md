@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/contrib/logo.jpeg" alt="GoLua" width="300">
+</p>
+
 # GoLua
 
 A Lua 5.4 interpreter written in Go, with experimental 5.5 features. Pure Go, zero dependencies, no cgo.
