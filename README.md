@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/contrib/logo.jpeg" alt="GoLua" width="300">
+  <img src="docs/contrib/logo.png" alt="GoLua" width="640">
 </p>
 
 # GoLua
