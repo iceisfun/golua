@@ -3,6 +3,7 @@ package stdlib
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -185,10 +186,8 @@ func stringFind(v *vm.VM) int {
 		return 1
 	}
 
-	searchStr := s[start-1:]
-
 	if plain {
-		// Plain string search
+		searchStr := s[start-1:]
 		idx := strings.Index(searchStr, pattern)
 		if idx == -1 {
 			v.Set(0, vm.Nil)
@@ -199,51 +198,36 @@ func stringFind(v *vm.VM) int {
 		return 2
 	}
 
-	// Pattern matching via Lua pattern engine
-	matchInfo := luaMatchWithPos(s, pattern, start)
-	if matchInfo == nil {
+	// Pattern matching
+	mStart, mEnd, caps, found := luaMatchFrom(s, pattern, int(init))
+	if !found {
 		v.Set(0, vm.Nil)
 		return 1
 	}
 
-	// Always return 1-based start and end (inclusive)
-	v.Set(0, vm.NewInt(int64(matchInfo.start+1)))
-	v.Set(1, vm.NewInt(int64(matchInfo.end)))
+	v.Set(0, vm.NewInt(int64(mStart+1))) // 1-based
+	v.Set(1, vm.NewInt(int64(mEnd)))     // inclusive end
 	nret := 2
 
-	// If the pattern had explicit captures, return them after positions
-	if matchInfo.hasExplicitCaptures {
-		for i, cap := range matchInfo.captures {
-			v.Set(2+i, vm.NewString(cap))
+	for i, c := range caps {
+		if c.isPos {
+			v.Set(2+i, vm.NewInt(int64(c.pos)))
+		} else {
+			v.Set(2+i, vm.NewString(c.str))
 		}
-		nret += len(matchInfo.captures)
 	}
-
-	return nret
+	return nret + len(caps)
 }
 
 // string.format(formatstring, ...)
 func stringFormat(v *vm.VM) int {
 	format := getString(v, 1, "format")
-	args := make([]interface{}, v.ArgCount()-1)
+	vals := make([]vm.Value, v.ArgCount()-1)
 	for i := 2; i <= v.ArgCount(); i++ {
-		val := v.Get(i)
-		switch {
-		case val.IsInt():
-			args[i-2] = val.AsInt()
-		case val.IsFloat():
-			args[i-2] = val.AsFloat()
-		case val.IsString():
-			args[i-2] = val.AsString()
-		case val.IsBool():
-			args[i-2] = val.AsBool()
-		default:
-			args[i-2] = valueToString(val)
-		}
+		vals[i-2] = v.Get(i)
 	}
 
-	// Convert Lua format to Go format
-	result := luaFormatToGo(format, args)
+	result := luaFormatValues(format, vals)
 	v.Set(0, vm.NewString(result))
 	return 1
 }
@@ -253,57 +237,73 @@ func stringGsub(v *vm.VM) int {
 	s := getString(v, 1, "gsub")
 	pattern := getString(v, 2, "gsub")
 	repl := v.Get(3)
-	maxRepl := -1 // replace all
+	// Validate replacement type
+	if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() && !repl.IsTable() {
+		panic(fmt.Sprintf("bad argument #3 to 'gsub' (string/function/table expected, got %s)", repl.Type()))
+	}
+	maxRepl := -1
 	if v.ArgCount() >= 4 && !v.Get(4).IsNil() {
 		maxRepl = int(getInt(v, 4, "gsub"))
 	}
 
+	// Handle anchor
+	anchored := false
+	searchPat := pattern
+	if len(searchPat) > 0 && searchPat[0] == '^' {
+		anchored = true
+		searchPat = searchPat[1:]
+	}
+
 	var result strings.Builder
 	count := 0
-	pos := 0
+	pos := 0          // 0-based current position
+	lastMatch := -1   // 0-based end of last match, -1 = none
 
 	for pos <= len(s) && (maxRepl < 0 || count < maxRepl) {
-		// Find next match
-		matchInfo := luaMatchWithPos(s, pattern, pos+1) // 1-based init
-		if matchInfo == nil {
-			break
-		}
+		end, caps, ok := luaMatchAt(s, searchPat, pos)
+		if ok && end != lastMatch {
+			// Valid match at [pos, end)
+			hasCaps := len(caps) > 0
 
-		// Append text before the match
-		result.WriteString(s[pos:matchInfo.start])
-
-		// Get replacement
-		var replacement string
-		if repl.IsString() {
-			replacement = expandReplacement(repl.AsString(), s, matchInfo)
-		} else if repl.IsFunction() || repl.IsNativeFunc() {
-			// Call function with captures (or whole match if no captures)
-			replacement = callGsubFunc(v, repl, matchInfo.captures)
-		} else if repl.IsTable() {
-			// Table lookup with first capture (or whole match)
-			key := matchInfo.captures[0]
-			val := repl.AsTable().Get(vm.NewString(key))
-			if val.IsString() {
-				replacement = val.AsString()
-			} else if val.IsNil() || (val.IsBool() && !val.AsBool()) {
-				replacement = matchInfo.captures[0] // keep original
-			} else {
-				replacement = valueToString(val)
+			// Build capture list (default to whole match if no explicit captures)
+			matchCaps := caps
+			if !hasCaps {
+				matchCaps = []captureValue{{str: s[pos:end]}}
 			}
-		}
 
-		result.WriteString(replacement)
-		count++
+			// Get replacement
+			var replacement string
+			if repl.IsString() {
+				replacement = expandReplacement(repl.AsString(), s, pos, end, matchCaps)
+			} else if repl.IsFunction() || repl.IsNativeFunc() {
+				replacement = callGsubFunc(v, repl, matchCaps)
+			} else if repl.IsTable() {
+				replacement = lookupGsubTable(repl, matchCaps)
+			}
 
-		// Move past the match (but at least 1 char to avoid infinite loop on empty matches)
-		if matchInfo.end > pos {
-			pos = matchInfo.end
+			result.WriteString(replacement)
+			count++
+			lastMatch = end
+
+			if end == pos {
+				// Empty match: copy current char and advance
+				if pos < len(s) {
+					result.WriteByte(s[pos])
+				}
+				pos++
+			} else {
+				pos = end
+			}
 		} else {
-			// Empty match: copy the character at current position before advancing
+			// No match or duplicate empty match: copy char and advance
 			if pos < len(s) {
 				result.WriteByte(s[pos])
 			}
 			pos++
+		}
+
+		if anchored {
+			break
 		}
 	}
 
@@ -317,64 +317,8 @@ func stringGsub(v *vm.VM) int {
 	return 2
 }
 
-// matchWithPos holds match result with position info
-type matchWithPos struct {
-	start               int      // 0-based start position in string
-	end                 int      // 0-based end position (exclusive)
-	captures            []string // captured groups (or whole match if no groups)
-	hasExplicitCaptures bool     // true when pattern had () groups
-}
-
-// luaMatchWithPos returns match info including positions
-func luaMatchWithPos(s, pattern string, init int) *matchWithPos {
-	if init < 0 {
-		init = len(s) + init + 1
-	}
-	if init < 1 {
-		init = 1
-	}
-	if init > len(s)+1 {
-		return nil
-	}
-
-	// Handle anchored patterns
-	anchored := false
-	searchPat := pattern
-	if len(searchPat) > 0 && searchPat[0] == '^' {
-		anchored = true
-		searchPat = searchPat[1:]
-	}
-
-	start := init - 1 // convert to 0-based
-	if anchored {
-		caps := matchPattern(s, start, searchPat, 0)
-		if caps != nil {
-			return &matchWithPos{
-				start:               caps.start,
-				end:                 caps.end,
-				captures:            caps.captures(s),
-				hasExplicitCaptures: len(caps.caps) > 0,
-			}
-		}
-		return nil
-	}
-
-	for i := start; i <= len(s); i++ {
-		caps := matchPattern(s, i, searchPat, 0)
-		if caps != nil {
-			return &matchWithPos{
-				start:               i,
-				end:                 caps.end,
-				captures:            caps.captures(s),
-				hasExplicitCaptures: len(caps.caps) > 0,
-			}
-		}
-	}
-	return nil
-}
-
-// expandReplacement expands a replacement string with captures
-func expandReplacement(repl string, s string, m *matchWithPos) string {
+// expandReplacement expands a replacement string with captures.
+func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureValue) string {
 	var result strings.Builder
 	for i := 0; i < len(repl); i++ {
 		if repl[i] == '%' && i+1 < len(repl) {
@@ -382,10 +326,16 @@ func expandReplacement(repl string, s string, m *matchWithPos) string {
 			if next >= '0' && next <= '9' {
 				idx := int(next - '0')
 				if idx == 0 {
-					// %0 = whole match
-					result.WriteString(s[m.start:m.end])
-				} else if idx <= len(m.captures) {
-					result.WriteString(m.captures[idx-1])
+					result.WriteString(s[mStart:mEnd])
+				} else if idx <= len(caps) {
+					c := caps[idx-1]
+					if c.isPos {
+						result.WriteString(fmt.Sprintf("%d", c.pos))
+					} else {
+						result.WriteString(c.str)
+					}
+				} else {
+					panic(fmt.Sprintf("invalid use of '%%%c' in replacement string", next))
 				}
 				i++
 				continue
@@ -400,27 +350,63 @@ func expandReplacement(repl string, s string, m *matchWithPos) string {
 	return result.String()
 }
 
-// callGsubFunc calls a function for gsub replacement
-func callGsubFunc(v *vm.VM, fn vm.Value, captures []string) string {
-	// Build args
+// callGsubFunc calls a function for gsub replacement.
+func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue) string {
 	args := make([]vm.Value, len(captures))
 	for i, cap := range captures {
-		args[i] = vm.NewString(cap)
+		if cap.isPos {
+			args[i] = vm.NewInt(int64(cap.pos))
+		} else {
+			args[i] = vm.NewString(cap.str)
+		}
 	}
 
-	// Use ProtectedCall
+	// Use ProtectedCall but re-panic on error (Lua propagates gsub function errors)
 	results, err := v.ProtectedCall(fn, args)
-	if err != nil || len(results) == 0 {
-		return captures[0] // keep original on error
+	if err != nil {
+		panic(err.Error())
+	}
+	if len(results) == 0 {
+		return captureStr(captures[0])
 	}
 
 	ret := results[0]
 	if ret.IsString() {
 		return ret.AsString()
+	} else if ret.IsNumber() {
+		return valueToString(ret)
 	} else if ret.IsNil() || (ret.IsBool() && !ret.AsBool()) {
-		return captures[0] // keep original if nil/false returned
+		return captureStr(captures[0])
 	}
-	return valueToString(ret)
+	panic(fmt.Sprintf("invalid replacement value (a %s)", ret.Type()))
+}
+
+// lookupGsubTable looks up a gsub replacement from a table.
+func lookupGsubTable(repl vm.Value, captures []captureValue) string {
+	var key vm.Value
+	c := captures[0]
+	if c.isPos {
+		key = vm.NewInt(int64(c.pos))
+	} else {
+		key = vm.NewString(c.str)
+	}
+	val := repl.AsTable().Get(key)
+	if val.IsString() {
+		return val.AsString()
+	} else if val.IsNumber() {
+		return valueToString(val)
+	} else if val.IsNil() || (val.IsBool() && !val.AsBool()) {
+		return captureStr(captures[0])
+	}
+	panic(fmt.Sprintf("invalid replacement value (a %s)", val.Type()))
+}
+
+// captureStr returns the string representation of a capture value.
+func captureStr(c captureValue) string {
+	if c.isPos {
+		return fmt.Sprintf("%d", c.pos)
+	}
+	return c.str
 }
 
 // string.match(s, pattern [, init])
@@ -432,54 +418,87 @@ func stringMatch(v *vm.VM) int {
 		init = getInt(v, 3, "match")
 	}
 
-	matches := luaMatch(s, pattern, int(init))
-	if matches == nil {
+	mStart, mEnd, caps, found := luaMatchFrom(s, pattern, int(init))
+	if !found {
 		v.Set(0, vm.Nil)
 		return 1
 	}
 
-	// Return all captures
-	for i, m := range matches {
-		v.Set(i, vm.NewString(m))
+	if len(caps) == 0 {
+		// No explicit captures, return whole match
+		v.Set(0, vm.NewString(s[mStart:mEnd]))
+		return 1
 	}
-	return len(matches)
+
+	// Return all captures
+	for i, c := range caps {
+		if c.isPos {
+			v.Set(i, vm.NewInt(int64(c.pos)))
+		} else {
+			v.Set(i, vm.NewString(c.str))
+		}
+	}
+	return len(caps)
 }
 
-// string.gmatch(s, pattern)
+// string.gmatch(s, pattern [, init])
 func stringGmatch(v *vm.VM) int {
 	s := getString(v, 1, "gmatch")
 	pattern := getString(v, 2, "gmatch")
+	init := 1
+	if !v.Get(3).IsNil() {
+		init = int(getInt(v, 3, "gmatch"))
+	}
 
-	// 1-based position for luaMatchWithPos
-	pos := 1
+	// Handle anchor
+	searchPat := pattern
+	if len(searchPat) > 0 && searchPat[0] == '^' {
+		searchPat = searchPat[1:]
+	}
+
+	// Resolve negative init
+	if init < 0 {
+		init = len(s) + init + 1
+	}
+	if init < 1 {
+		init = 1
+	}
+
+	pos := init - 1     // 0-based
+	lastMatch := -1     // 0-based end of last match, -1 = none
 
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
-		if pos > len(s)+1 {
-			v.Set(0, vm.Nil)
-			return 1
-		}
+		for pos <= len(s) {
+			end, caps, ok := luaMatchAt(s, searchPat, pos)
+			if ok && end != lastMatch {
+				// Valid match
+				matchStart := pos
+				lastMatch = end
 
-		matchInfo := luaMatchWithPos(s, pattern, pos)
-		if matchInfo == nil {
-			v.Set(0, vm.Nil)
-			return 1
-		}
+				// Advance for next iteration
+				if end == pos {
+					pos++ // empty match: move forward 1
+				} else {
+					pos = end
+				}
 
-		// Advance past match; at least 1 byte for empty matches
-		if matchInfo.end > matchInfo.start {
-			pos = matchInfo.end + 1 // 0-based exclusive → 1-based
-		} else {
-			pos = matchInfo.start + 2 // advance past current char (1-based)
-		}
-
-		// Return explicit captures if present, otherwise whole match
-		if matchInfo.hasExplicitCaptures {
-			for i, cap := range matchInfo.captures {
-				v.Set(i, vm.NewString(cap))
+				// Return captures or whole match
+				if len(caps) > 0 {
+					for i, c := range caps {
+						if c.isPos {
+							v.Set(i, vm.NewInt(int64(c.pos)))
+						} else {
+							v.Set(i, vm.NewString(c.str))
+						}
+					}
+					return len(caps)
+				}
+				v.Set(0, vm.NewString(s[matchStart:end]))
+				return 1
 			}
-			return len(matchInfo.captures)
+			pos++
 		}
-		v.Set(0, vm.NewString(matchInfo.captures[0]))
+		v.Set(0, vm.Nil)
 		return 1
 	})
 
@@ -515,7 +534,7 @@ func posRelat(pos int64, len int) int {
 	return len + int(pos) + 1
 }
 
-func luaFormatToGo(format string, args []interface{}) string {
+func luaFormatValues(format string, vals []vm.Value) string {
 	var result strings.Builder
 	argIdx := 0
 
@@ -536,41 +555,143 @@ func luaFormatToGo(format string, args []interface{}) string {
 			continue
 		}
 
-		// Parse format specifier
+		// Parse flags and width/precision
 		spec := "%"
 		for i < len(format) && !strings.ContainsRune("diouxXeEfFgGaAcspq", rune(format[i])) {
 			spec += string(format[i])
 			i++
 		}
-		if i < len(format) {
-			specChar := format[i]
-			spec += string(specChar)
+		if i >= len(format) {
+			result.WriteString(spec)
+			break
+		}
 
-			if argIdx < len(args) {
-				arg := args[argIdx]
-				argIdx++
+		specChar := format[i]
 
-				switch specChar {
-				case 'd', 'i':
-					result.WriteString(fmt.Sprintf(spec, toInt(arg)))
-				case 'o', 'u', 'x', 'X':
-					result.WriteString(fmt.Sprintf(spec, toUint(arg)))
-				case 'e', 'E', 'f', 'F', 'g', 'G':
-					result.WriteString(fmt.Sprintf(spec, toFloat(arg)))
-				case 's':
-					result.WriteString(fmt.Sprintf(spec, toString(arg)))
-				case 'q':
-					result.WriteString(fmt.Sprintf("%q", toString(arg)))
-				case 'c':
-					result.WriteString(string(rune(toInt(arg))))
-				default:
-					result.WriteString(fmt.Sprintf(spec, arg))
-				}
+		if argIdx >= len(vals) {
+			panic(fmt.Sprintf("bad argument #%d to 'format' (no value)", argIdx+2))
+		}
+		val := vals[argIdx]
+		argIdx++
+
+		switch specChar {
+		case 'd', 'i':
+			goSpec := spec + "d"
+			if val.IsInt() {
+				result.WriteString(fmt.Sprintf(goSpec, val.AsInt()))
+			} else if n, ok := val.ToNumber(); ok {
+				result.WriteString(fmt.Sprintf(goSpec, int64(n)))
+			} else {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
+		case 'u':
+			goSpec := spec + "d"
+			if val.IsInt() {
+				result.WriteString(fmt.Sprintf(goSpec, uint64(val.AsInt())))
+			} else if n, ok := val.ToNumber(); ok {
+				result.WriteString(fmt.Sprintf(goSpec, uint64(n)))
+			} else {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
+			}
+		case 'o', 'x', 'X':
+			goSpec := spec + string(specChar)
+			if val.IsInt() {
+				result.WriteString(fmt.Sprintf(goSpec, uint64(val.AsInt())))
+			} else if n, ok := val.ToNumber(); ok {
+				result.WriteString(fmt.Sprintf(goSpec, uint64(n)))
+			} else {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
+			}
+		case 'e', 'E', 'f', 'F', 'g', 'G', 'a', 'A':
+			goSpec := spec + string(specChar)
+			if n, ok := val.ToNumber(); ok {
+				result.WriteString(fmt.Sprintf(goSpec, n))
+			} else {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
+			}
+		case 's':
+			goSpec := spec + "s"
+			result.WriteString(fmt.Sprintf(goSpec, valueToString(val)))
+		case 'q':
+			result.WriteString(luaQuote(val))
+		case 'c':
+			if val.IsInt() {
+				result.WriteString(string(rune(val.AsInt())))
+			} else if n, ok := val.ToNumber(); ok {
+				result.WriteString(string(rune(int64(n))))
+			} else {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
+			}
+		case 'p':
+			result.WriteString(luaPointerFormat(val))
+		default:
+			result.WriteString(spec + string(specChar))
 		}
 	}
 
 	return result.String()
+}
+
+// luaQuote implements Lua's %q format for proper Lua-parseable quoting.
+func luaQuote(val vm.Value) string {
+	if val.IsNil() {
+		return "nil"
+	}
+	if val.IsBool() {
+		if val.AsBool() {
+			return "true"
+		}
+		return "false"
+	}
+	if val.IsFloat() {
+		f := val.AsFloat()
+		if math.IsInf(f, 1) {
+			return "1e9999"
+		}
+		if math.IsInf(f, -1) {
+			return "-1e9999"
+		}
+		if math.IsNaN(f) {
+			return "(0/0)"
+		}
+		return fmt.Sprintf("%.17g", f)
+	}
+	if val.IsInt() {
+		return fmt.Sprintf("%d", val.AsInt())
+	}
+	// String quoting
+	s := valueToString(val)
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		switch ch {
+		case '\\':
+			b.WriteString("\\\\")
+		case '\n':
+			b.WriteString("\\n")
+		case '\r':
+			b.WriteString("\\r")
+		case '"':
+			b.WriteString("\\\"")
+		case 0:
+			b.WriteString("\\0")
+		case 0x1a: // Ctrl-Z
+			b.WriteString("\\26")
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// luaPointerFormat implements Lua's %p format.
+func luaPointerFormat(val vm.Value) string {
+	if val.IsTable() {
+		return fmt.Sprintf("%p", val.AsTable())
+	}
+	return "(null)"
 }
 
 func toInt(v interface{}) int64 {
@@ -619,7 +740,6 @@ func min(a, b int) int {
 	return b
 }
 
-// For UTF-8 support
 func utf8Len(s string) int {
 	return utf8.RuneCountInString(s)
 }

@@ -443,6 +443,14 @@ func luaGetmetatable(v *vm.VM) int {
 		}
 		return 1
 	}
+	if val.IsString() {
+		if sm := v.StringMeta(); sm != nil {
+			v.Set(0, vm.NewTable(sm))
+		} else {
+			v.Set(0, vm.Nil)
+		}
+		return 1
+	}
 	v.Set(0, vm.Nil)
 	return 1
 }

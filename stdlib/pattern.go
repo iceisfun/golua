@@ -1,13 +1,300 @@
 package stdlib
 
 import (
+	"fmt"
 	"unicode"
 )
 
-// luaMatch implements Lua pattern matching.
-// Returns list of captures if successful, nil if no match.
-// If no captures are defined, returns the whole match.
-func luaMatch(s, pattern string, init int) []string {
+const luaMaxCaptures = 32
+const capUnfinished = -1
+const capPosition = -2
+
+// matchState tracks pattern matching state including captures.
+// This implements the standard Lua pattern matching algorithm where
+// '(' and ')' are inline markers in the pattern, and captures are
+// tracked on a stack with backtracking support.
+type matchState struct {
+	s     string
+	p     string
+	level int
+	cap   [luaMaxCaptures]capSlot
+}
+
+type capSlot struct {
+	init int
+	slen int // length of capture, or capUnfinished/capPosition
+}
+
+// captureValue represents a resolved capture from a match.
+type captureValue struct {
+	str   string
+	pos   int  // 1-based position (only valid when isPos is true)
+	isPos bool // true for position captures ()
+}
+
+// getCaptures extracts resolved capture values from the match state.
+func (ms *matchState) getCaptures() []captureValue {
+	if ms.level == 0 {
+		return nil
+	}
+	caps := make([]captureValue, ms.level)
+	for i := 0; i < ms.level; i++ {
+		c := ms.cap[i]
+		if c.slen == capPosition {
+			caps[i] = captureValue{isPos: true, pos: c.init + 1}
+		} else if c.slen == capUnfinished {
+			panic("unfinished capture")
+		} else {
+			caps[i] = captureValue{str: ms.s[c.init : c.init+c.slen]}
+		}
+	}
+	return caps
+}
+
+// match tries to match pattern starting at pp against string position si.
+// Returns end position on success, -1 on failure.
+func (ms *matchState) match(si int, pp int) int {
+	for {
+		if pp >= len(ms.p) {
+			return si
+		}
+
+		ch := ms.p[pp]
+
+		if ch == '(' {
+			if pp+1 < len(ms.p) && ms.p[pp+1] == ')' {
+				return ms.matchPosCapture(si, pp)
+			}
+			return ms.matchOpenCapture(si, pp)
+		}
+
+		if ch == ')' {
+			return ms.matchCloseCapture(si, pp)
+		}
+
+		if ch == '$' && pp+1 == len(ms.p) {
+			if si == len(ms.s) {
+				return si
+			}
+			return -1
+		}
+
+		if ch == '%' && pp+1 < len(ms.p) {
+			next := ms.p[pp+1]
+			if next == 'b' {
+				return ms.matchBalance(si, pp)
+			}
+			if next == 'f' {
+				return ms.matchFrontier(si, pp)
+			}
+			if next >= '1' && next <= '9' {
+				return ms.matchBackRef(si, pp)
+			}
+		}
+
+		// Default: single element possibly followed by modifier
+		elem, elemLen := getPatternElem(ms.p, pp)
+		if elem == nil {
+			return -1
+		}
+
+		modPos := pp + elemLen
+		if modPos < len(ms.p) {
+			switch ms.p[modPos] {
+			case '*':
+				return ms.matchGreedy(si, modPos+1, elem, 0)
+			case '+':
+				return ms.matchGreedy(si, modPos+1, elem, 1)
+			case '-':
+				return ms.matchLazy(si, modPos+1, elem)
+			case '?':
+				if si < len(ms.s) && elem.matches(ms.s[si]) {
+					res := ms.match(si+1, modPos+1)
+					if res != -1 {
+						return res
+					}
+				}
+				// Try matching rest without consuming (tail-call via continue)
+				pp = modPos + 1
+				continue
+			}
+		}
+
+		// Single required match
+		if si >= len(ms.s) || !elem.matches(ms.s[si]) {
+			return -1
+		}
+		// Advance (tail-call optimization via continue)
+		si++
+		pp += elemLen
+	}
+}
+
+func (ms *matchState) matchOpenCapture(si, pp int) int {
+	level := ms.level
+	if level >= luaMaxCaptures {
+		panic("too many captures")
+	}
+	ms.cap[level].init = si
+	ms.cap[level].slen = capUnfinished
+	ms.level++
+	res := ms.match(si, pp+1)
+	if res == -1 {
+		ms.level = level
+	}
+	return res
+}
+
+func (ms *matchState) matchPosCapture(si, pp int) int {
+	level := ms.level
+	if level >= luaMaxCaptures {
+		panic("too many captures")
+	}
+	ms.cap[level].init = si
+	ms.cap[level].slen = capPosition
+	ms.level++
+	res := ms.match(si, pp+2)
+	if res == -1 {
+		ms.level = level
+	}
+	return res
+}
+
+func (ms *matchState) matchCloseCapture(si, pp int) int {
+	l := ms.captureToClose()
+	ms.cap[l].slen = si - ms.cap[l].init
+	res := ms.match(si, pp+1)
+	if res == -1 {
+		ms.cap[l].slen = capUnfinished
+	}
+	return res
+}
+
+func (ms *matchState) captureToClose() int {
+	for l := ms.level - 1; l >= 0; l-- {
+		if ms.cap[l].slen == capUnfinished {
+			return l
+		}
+	}
+	panic("invalid pattern capture")
+}
+
+func (ms *matchState) matchBalance(si, pp int) int {
+	if pp+3 >= len(ms.p) {
+		panic("malformed pattern (missing arguments to '%b')")
+	}
+	open := ms.p[pp+2]
+	close := ms.p[pp+3]
+	if si >= len(ms.s) || ms.s[si] != open {
+		return -1
+	}
+	depth := 1
+	i := si + 1
+	for i < len(ms.s) && depth > 0 {
+		if ms.s[i] == open {
+			depth++
+		} else if ms.s[i] == close {
+			depth--
+		}
+		i++
+	}
+	if depth != 0 {
+		return -1
+	}
+	return ms.match(i, pp+4)
+}
+
+func (ms *matchState) matchFrontier(si, pp int) int {
+	if pp+2 >= len(ms.p) || ms.p[pp+2] != '[' {
+		panic("missing '[' after '%f' in pattern")
+	}
+	set, setLen := parseCharSetAt(ms.p, pp+2)
+	if set == nil {
+		return -1
+	}
+	var prev byte = 0
+	if si > 0 {
+		prev = ms.s[si-1]
+	}
+	var curr byte = 0
+	if si < len(ms.s) {
+		curr = ms.s[si]
+	}
+	if set.matches(curr) && !set.matches(prev) {
+		return ms.match(si, pp+2+setLen)
+	}
+	return -1
+}
+
+func (ms *matchState) matchBackRef(si, pp int) int {
+	l := int(ms.p[pp+1] - '1')
+	if l < 0 || l >= ms.level {
+		panic(fmt.Sprintf("invalid back reference %%%d", l+1))
+	}
+	c := ms.cap[l]
+	if c.slen == capUnfinished {
+		panic(fmt.Sprintf("invalid back reference %%%d", l+1))
+	}
+	if c.slen == capPosition {
+		panic(fmt.Sprintf("invalid back reference %%%d", l+1))
+	}
+	capStr := ms.s[c.init : c.init+c.slen]
+	if si+len(capStr) > len(ms.s) {
+		return -1
+	}
+	if ms.s[si:si+len(capStr)] != capStr {
+		return -1
+	}
+	return ms.match(si+len(capStr), pp+2)
+}
+
+// matchGreedy handles * (minCount=0) and + (minCount=1).
+func (ms *matchState) matchGreedy(si, pp int, elem patternElem, minCount int) int {
+	count := 0
+	for si+count < len(ms.s) && elem.matches(ms.s[si+count]) {
+		count++
+	}
+	for count >= minCount {
+		res := ms.match(si+count, pp)
+		if res != -1 {
+			return res
+		}
+		count--
+	}
+	return -1
+}
+
+// matchLazy handles - (non-greedy zero or more).
+func (ms *matchState) matchLazy(si, pp int, elem patternElem) int {
+	for {
+		res := ms.match(si, pp)
+		if res != -1 {
+			return res
+		}
+		if si >= len(ms.s) || !elem.matches(ms.s[si]) {
+			return -1
+		}
+		si++
+	}
+}
+
+// --- Public API ---
+
+// luaMatchAt tries to match pattern at exactly position pos (0-based) in s.
+// Returns (endPos, captures, true) on match, or (0, nil, false) on failure.
+func luaMatchAt(s, pattern string, pos int) (int, []captureValue, bool) {
+	ms := &matchState{s: s, p: pattern}
+	end := ms.match(pos, 0)
+	if end == -1 {
+		return 0, nil, false
+	}
+	return end, ms.getCaptures(), true
+}
+
+// luaMatchFrom searches for first match of pattern in s starting from init (1-based).
+// Handles ^-anchor and negative init. Returns (start0, end0, captures, found).
+// start0 and end0 are 0-based; end0 is exclusive.
+func luaMatchFrom(s, pattern string, init int) (int, int, []captureValue, bool) {
 	if init < 0 {
 		init = len(s) + init + 1
 	}
@@ -15,280 +302,63 @@ func luaMatch(s, pattern string, init int) []string {
 		init = 1
 	}
 	if init > len(s)+1 {
-		return nil
+		return 0, 0, nil, false
 	}
 
-	// Handle anchored patterns
 	anchored := false
-	if len(pattern) > 0 && pattern[0] == '^' {
+	searchPat := pattern
+	if len(searchPat) > 0 && searchPat[0] == '^' {
 		anchored = true
-		pattern = pattern[1:]
+		searchPat = searchPat[1:]
 	}
 
-	// Try match at each position
-	start := init - 1 // convert to 0-based
+	start0 := init - 1
 	if anchored {
-		caps := matchPattern(s, start, pattern, 0)
-		if caps != nil {
-			return caps.captures(s)
+		end, caps, ok := luaMatchAt(s, searchPat, start0)
+		if ok {
+			return start0, end, caps, true
 		}
+		return 0, 0, nil, false
+	}
+
+	for i := start0; i <= len(s); i++ {
+		end, caps, ok := luaMatchAt(s, searchPat, i)
+		if ok {
+			return i, end, caps, true
+		}
+	}
+	return 0, 0, nil, false
+}
+
+// matchWithPos holds match result with position info, used by gsub/gmatch/find.
+type matchWithPos struct {
+	start               int            // 0-based start
+	end                 int            // 0-based end (exclusive)
+	captures            []captureValue // captured groups
+	hasExplicitCaptures bool           // true when pattern had () groups
+}
+
+// luaMatchWithPos returns match info including positions.
+// Searches from init (1-based) forward.
+func luaMatchWithPos(s, pattern string, init int) *matchWithPos {
+	start, end, caps, found := luaMatchFrom(s, pattern, init)
+	if !found {
 		return nil
 	}
-
-	for i := start; i <= len(s); i++ {
-		caps := matchPattern(s, i, pattern, 0)
-		if caps != nil {
-			return caps.captures(s)
-		}
+	hasExplicit := len(caps) > 0
+	if !hasExplicit {
+		caps = []captureValue{{str: s[start:end]}}
 	}
-	return nil
-}
-
-// matchResult holds the match state
-type matchResult struct {
-	start int        // Start of match
-	end   int        // End of match (exclusive)
-	caps  []capture  // Captured groups
-}
-
-type capture struct {
-	start int
-	end   int
-}
-
-func (m *matchResult) captures(s string) []string {
-	if len(m.caps) == 0 {
-		// No captures, return the whole match
-		return []string{s[m.start:m.end]}
-	}
-	result := make([]string, len(m.caps))
-	for i, c := range m.caps {
-		result[i] = s[c.start:c.end]
-	}
-	return result
-}
-
-// matchPattern tries to match pattern at position pos in s.
-// Returns matchResult on success, nil on failure.
-func matchPattern(s string, pos int, pattern string, patPos int) *matchResult {
-	// Handle end of pattern
-	if patPos >= len(pattern) {
-		return &matchResult{start: pos, end: pos}
-	}
-
-	// Handle $ anchor at end
-	if pattern[patPos] == '$' && patPos == len(pattern)-1 {
-		if pos == len(s) {
-			return &matchResult{start: pos, end: pos}
-		}
-		return nil
-	}
-
-	// Handle capture group start
-	if pattern[patPos] == '(' {
-		// Find the matching close paren
-		depth := 1
-		closePos := patPos + 1
-		for closePos < len(pattern) && depth > 0 {
-			if pattern[closePos] == '(' {
-				depth++
-			} else if pattern[closePos] == ')' {
-				depth--
-			} else if pattern[closePos] == '%' && closePos+1 < len(pattern) {
-				closePos++ // skip escaped char
-			}
-			closePos++
-		}
-		if depth != 0 {
-			// Unbalanced parens
-			return nil
-		}
-		closePos-- // back to the ')'
-
-		// Match the inner pattern
-		innerPattern := pattern[patPos+1 : closePos]
-		inner := matchPattern(s, pos, innerPattern, 0)
-		if inner == nil {
-			return nil
-		}
-
-		// Continue with rest of pattern
-		rest := matchPattern(s, inner.end, pattern, closePos+1)
-		if rest == nil {
-			return nil
-		}
-
-		// Build result with this capture
-		result := &matchResult{
-			start: pos,
-			end:   rest.end,
-			caps:  make([]capture, 0, 1+len(inner.caps)+len(rest.caps)),
-		}
-		result.caps = append(result.caps, capture{start: pos, end: inner.end})
-		result.caps = append(result.caps, inner.caps...)
-		result.caps = append(result.caps, rest.caps...)
-		return result
-	}
-
-	// Handle balanced pattern %bxy
-	if pattern[patPos] == '%' && patPos+1 < len(pattern) && pattern[patPos+1] == 'b' {
-		if patPos+3 >= len(pattern) {
-			return nil // need two characters after %b
-		}
-		open := pattern[patPos+2]
-		close := pattern[patPos+3]
-		if pos >= len(s) || s[pos] != open {
-			return nil
-		}
-		depth := 1
-		i := pos + 1
-		for i < len(s) && depth > 0 {
-			if s[i] == open {
-				depth++
-			} else if s[i] == close {
-				depth--
-			}
-			i++
-		}
-		if depth != 0 {
-			return nil
-		}
-		// Matched balanced substring s[pos:i], continue with rest of pattern
-		result := matchPattern(s, i, pattern, patPos+4)
-		if result != nil {
-			result.start = pos
-		}
-		return result
-	}
-
-	// Handle frontier pattern %f[set]
-	if pattern[patPos] == '%' && patPos+1 < len(pattern) && pattern[patPos+1] == 'f' {
-		if patPos+2 >= len(pattern) || pattern[patPos+2] != '[' {
-			return nil
-		}
-		set, setLen := parseCharSetAt(pattern, patPos+2)
-		if set == nil {
-			return nil
-		}
-
-		// Get prev and curr bytes
-		var prev byte = 0
-		if pos > 0 {
-			prev = s[pos-1]
-		}
-		var curr byte = 0
-		if pos < len(s) {
-			curr = s[pos]
-		}
-
-		// Frontier: curr matches set, prev does not
-		if set.matches(curr) && !set.matches(prev) {
-			// Zero-width: continue matching at same position
-			result := matchPattern(s, pos, pattern, patPos+2+setLen)
-			if result != nil {
-				result.start = pos
-			}
-			return result
-		}
-		return nil
-	}
-
-	// Get the current pattern element
-	elem, elemLen := getPatternElem(pattern, patPos)
-	if elem == nil {
-		return nil
-	}
-
-	// Check for repetition modifier
-	modifier := byte(0)
-	modPos := patPos + elemLen
-	if modPos < len(pattern) {
-		switch pattern[modPos] {
-		case '*', '+', '-', '?':
-			modifier = pattern[modPos]
-			elemLen++
-		}
-	}
-
-	switch modifier {
-	case '*':
-		// Greedy zero or more
-		return matchStar(s, pos, pattern, patPos+elemLen, elem)
-	case '+':
-		// Greedy one or more
-		if pos >= len(s) || !elem.matches(s[pos]) {
-			return nil
-		}
-		result := matchStar(s, pos+1, pattern, patPos+elemLen, elem)
-		if result != nil {
-			result.start = pos
-		}
-		return result
-	case '-':
-		// Non-greedy zero or more
-		return matchMinus(s, pos, pattern, patPos+elemLen, elem)
-	case '?':
-		// Optional
-		if pos < len(s) && elem.matches(s[pos]) {
-			result := matchPattern(s, pos+1, pattern, patPos+elemLen)
-			if result != nil {
-				result.start = pos
-				return result
-			}
-		}
-		return matchPattern(s, pos, pattern, patPos+elemLen)
-	default:
-		// Single match required
-		if pos >= len(s) {
-			return nil
-		}
-		if !elem.matches(s[pos]) {
-			return nil
-		}
-		result := matchPattern(s, pos+1, pattern, patPos+elemLen)
-		if result != nil {
-			result.start = pos
-		}
-		return result
+	return &matchWithPos{
+		start:               start,
+		end:                 end,
+		captures:            caps,
+		hasExplicitCaptures: hasExplicit,
 	}
 }
 
-// matchStar handles greedy * and + repetition
-func matchStar(s string, pos int, pattern string, patPos int, elem patternElem) *matchResult {
-	// First, eat as many matches as possible
-	end := pos
-	for end < len(s) && elem.matches(s[end]) {
-		end++
-	}
+// --- Pattern element types ---
 
-	// Then try to match the rest, backtracking as needed
-	for i := end; i >= pos; i-- {
-		result := matchPattern(s, i, pattern, patPos)
-		if result != nil {
-			result.start = pos
-			return result
-		}
-	}
-	return nil
-}
-
-// matchMinus handles non-greedy - repetition
-func matchMinus(s string, pos int, pattern string, patPos int, elem patternElem) *matchResult {
-	// Try to match the rest first, then consume more
-	for i := pos; i <= len(s); i++ {
-		result := matchPattern(s, i, pattern, patPos)
-		if result != nil {
-			result.start = pos
-			return result
-		}
-		if i >= len(s) || !elem.matches(s[i]) {
-			break
-		}
-	}
-	return nil
-}
-
-// patternElem represents a single pattern element
 type patternElem interface {
 	matches(b byte) bool
 }
@@ -332,7 +402,6 @@ func (c classChar) matches(b byte) bool {
 	case 'z':
 		matched = b == 0
 	default:
-		// Unknown class, treat as literal
 		matched = b == c.class
 	}
 	if c.neg {
@@ -342,7 +411,7 @@ func (c classChar) matches(b byte) bool {
 }
 
 type charSet struct {
-	elems []patternElem // individual matchers (classChar, literalChar, rangeChar)
+	elems []patternElem
 	neg   bool
 }
 
@@ -368,7 +437,7 @@ func (r rangeChar) matches(b byte) bool {
 	return b >= r.low && b <= r.high
 }
 
-// getPatternElem returns the pattern element at patPos and its length
+// getPatternElem returns the pattern element at patPos and its length.
 func getPatternElem(pattern string, patPos int) (patternElem, int) {
 	if patPos >= len(pattern) {
 		return nil, 0
@@ -376,25 +445,21 @@ func getPatternElem(pattern string, patPos int) (patternElem, int) {
 
 	ch := pattern[patPos]
 
-	// Escaped character
 	if ch == '%' {
 		if patPos+1 >= len(pattern) {
-			return nil, 0
+			panic("malformed pattern (ends with '%')")
 		}
 		next := pattern[patPos+1]
-		// Check for character class
 		switch next {
 		case 'a', 'd', 's', 'w', 'l', 'u', 'c', 'p', 'x', 'z':
 			return classChar{class: next, neg: false}, 2
 		case 'A', 'D', 'S', 'W', 'L', 'U', 'C', 'P', 'X', 'Z':
-			return classChar{class: next + 32, neg: true}, 2 // lowercase
+			return classChar{class: next + 32, neg: true}, 2
 		default:
-			// Escaped literal
 			return literalChar{ch: next}, 2
 		}
 	}
 
-	// Character set [...]
 	if ch == '[' {
 		set, setLen := parseCharSetAt(pattern, patPos)
 		if set == nil {
@@ -403,17 +468,13 @@ func getPatternElem(pattern string, patPos int) (patternElem, int) {
 		return set, setLen
 	}
 
-	// Any character
 	if ch == '.' {
 		return anyChar{}, 1
 	}
 
-	// Literal character
 	return literalChar{ch: ch}, 1
 }
 
-// parseCharSetAt parses a [...] character set starting at pattern[patPos] == '['
-// Returns the charSet and the total length consumed from the pattern.
 func parseCharSetAt(pattern string, patPos int) (*charSet, int) {
 	neg := false
 	start := patPos + 1
@@ -436,7 +497,6 @@ func parseCharSetAt(pattern string, patPos int) (*charSet, int) {
 	return &charSet{elems: elems, neg: neg}, end - patPos + 1
 }
 
-// parseCharSetElems parses the contents of a [...] set into a list of matchers.
 func parseCharSetElems(set string) []patternElem {
 	var elems []patternElem
 	i := 0
@@ -463,34 +523,11 @@ func parseCharSetElems(set string) []patternElem {
 	return elems
 }
 
-func isLetter(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
-}
-
-func isDigit(b byte) bool {
-	return b >= '0' && b <= '9'
-}
-
-func isSpace(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f' || b == '\v'
-}
-
-func isLower(b byte) bool {
-	return b >= 'a' && b <= 'z'
-}
-
-func isUpper(b byte) bool {
-	return b >= 'A' && b <= 'Z'
-}
-
-func isControl(b byte) bool {
-	return b < 32 || b == 127
-}
-
-func isPunct(b byte) bool {
-	return unicode.IsPunct(rune(b))
-}
-
-func isHex(b byte) bool {
-	return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
-}
+func isLetter(b byte) bool  { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
+func isDigit(b byte) bool   { return b >= '0' && b <= '9' }
+func isSpace(b byte) bool   { return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f' || b == '\v' }
+func isLower(b byte) bool   { return b >= 'a' && b <= 'z' }
+func isUpper(b byte) bool   { return b >= 'A' && b <= 'Z' }
+func isControl(b byte) bool { return b < 32 || b == 127 }
+func isPunct(b byte) bool   { return unicode.IsPunct(rune(b)) }
+func isHex(b byte) bool     { return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') }

@@ -648,6 +648,14 @@ func (vm *VM) execute() ([]Value, error) {
 				} else {
 					vm.stack[frame.base+a] = NewFloat(-v.AsFloat())
 				}
+			} else if v.IsString() {
+				if i, ok := v.ToInt(); ok {
+					vm.stack[frame.base+a] = NewInt(-i)
+				} else if n, ok := v.ToNumber(); ok {
+					vm.stack[frame.base+a] = NewFloat(-n)
+				} else {
+					return nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v.Type())
+				}
 			} else if mm := vm.getMetafield(v, "__unm"); !mm.IsNil() {
 				result, err := vm.callMetamethod(mm, v, v)
 				if err != nil {
