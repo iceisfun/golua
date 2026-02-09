@@ -144,9 +144,9 @@ assert_eq(math.ult(0, 1), true)
 
 assert_eq(math.type(1), "integer")
 assert_eq(math.type(1.0), "float")
-assert_eq(math.type("x"), nil)     -- non-number returns nil (not false)
-assert_eq(math.type(true), nil)
-assert_eq(math.type(nil), nil)
+assert_eq(math.type("x"), false)   -- non-number returns false (Lua 5.4)
+assert_eq(math.type(true), false)
+assert_eq(math.type(nil), false)
 
 --------------------------------------------------------------------------------
 -- math.abs

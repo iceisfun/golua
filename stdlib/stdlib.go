@@ -188,7 +188,9 @@ func luaError(v *vm.VM) int {
 func luaPcall(v *vm.VM) int {
 	fn := v.Get(1)
 	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		panic("bad argument #1 to 'pcall' (function expected)")
+		v.Set(0, vm.False)
+		v.Set(1, vm.NewString("attempt to call a "+fn.Type()+" value"))
+		return 2
 	}
 
 	// Collect additional arguments
@@ -219,10 +221,14 @@ func luaXpcall(v *vm.VM) int {
 	fn := v.Get(1)
 	msgh := v.Get(2)
 	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		panic("bad argument #1 to 'xpcall' (function expected)")
+		v.Set(0, vm.False)
+		v.Set(1, vm.NewString("attempt to call a "+fn.Type()+" value"))
+		return 2
 	}
 	if !msgh.IsFunction() && !msgh.IsNativeFunc() {
-		panic("bad argument #2 to 'xpcall' (function expected)")
+		v.Set(0, vm.False)
+		v.Set(1, vm.NewString("attempt to call a "+msgh.Type()+" value"))
+		return 2
 	}
 
 	// Collect extra arguments (after fn and msgh)

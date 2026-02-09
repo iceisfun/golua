@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"time"
@@ -118,6 +119,9 @@ func mathFloor(v *vm.VM) int {
 func mathFmod(v *vm.VM) int {
 	x := getNumber(v, 1, "fmod")
 	y := getNumber(v, 2, "fmod")
+	if y == 0 {
+		panic("attempt to perform 'n%0'")
+	}
 	v.Set(0, vm.NewFloat(math.Mod(x, y)))
 	return 1
 }
@@ -185,6 +189,11 @@ func mathMin(v *vm.VM) int {
 
 func mathModf(v *vm.VM) int {
 	n := getNumber(v, 1, "modf")
+	if math.IsInf(n, 0) {
+		v.Set(0, vm.NewFloat(n))
+		v.Set(1, vm.NewFloat(0))
+		return 2
+	}
 	i, f := math.Modf(n)
 	v.Set(0, vm.NewInt(int64(i)))
 	v.Set(1, vm.NewFloat(f))
@@ -206,12 +215,16 @@ func mathRandomClosure(rng *rand.Rand) vm.NativeFunc {
 			// random() -> [0, 1)
 			v.Set(0, vm.NewFloat(rng.Float64()))
 		case 1:
+			// random(0) -> full-range random integer (Lua 5.4)
 			// random(n) -> [1, n]
 			upper := getInt(v, 1, "random")
-			if upper < 1 {
+			if upper == 0 {
+				v.Set(0, vm.NewInt(int64(rng.Uint64())))
+			} else if upper < 1 {
 				panic("bad argument #1 to 'random' (interval is empty)")
+			} else {
+				v.Set(0, vm.NewInt(randRange(rng, 1, upper)))
 			}
-			v.Set(0, vm.NewInt(randRange(rng, 1, upper)))
 		default:
 			// random(m, n) -> [m, n]
 			lower := getInt(v, 1, "random")
@@ -305,7 +318,7 @@ func mathTointeger(v *vm.VM) int {
 func mathType(v *vm.VM) int {
 	val := v.Get(1)
 	if !val.IsNumber() {
-		v.Set(0, vm.Nil)
+		v.Set(0, vm.False)
 	} else if val.IsInt() {
 		v.Set(0, vm.NewString("integer"))
 	} else {
@@ -326,5 +339,5 @@ func getNumber(v *vm.VM, idx int, fname string) float64 {
 	if n, ok := val.ToNumber(); ok {
 		return n
 	}
-	panic("bad argument #1 to '" + fname + "' (number expected)")
+	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, val.Type()))
 }
