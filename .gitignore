@@ -18,6 +18,7 @@
 # Claude
 CLAUDE.md
 .claude/
+proposed_tests/
 
 # Testing
 a.lua

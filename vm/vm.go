@@ -50,6 +50,10 @@ type VM struct {
 	ctx        context.Context // nil = no cancellation checking
 	limits     Limits          // zero values = no limit
 	instrCount int64           // only tracked when MaxInstructions > 0
+
+	// Output capture
+	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout
+	outputLines   *[]string // Shared captured output buffer (pointer for coroutine sharing)
 }
 
 // callFrame represents a function call on the call stack.
@@ -208,6 +212,8 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		chanProvider:  parent.chanProvider,
 		ctx:           parent.ctx,
 		limits:        parent.limits,
+		captureOutput: parent.captureOutput,
+		outputLines:   parent.outputLines,
 	}
 }
 
