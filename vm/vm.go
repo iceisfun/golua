@@ -2217,6 +2217,38 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 	return fmt.Errorf("'__newindex' chain too long; possible loop")
 }
 
+// TableGetInt retrieves t[key] with __index metamethod support.
+func (vm *VM) TableGetInt(t LuaTable, key int) (Value, error) {
+	return vm.tableGetInt(t, key)
+}
+
+// TableSetInt sets t[key]=value with __newindex metamethod support.
+func (vm *VM) TableSetInt(t LuaTable, key int, value Value) error {
+	return vm.tableSetInt(t, key, value)
+}
+
+// ObjLen returns #v with __len metamethod support.
+func (vm *VM) ObjLen(val Value) (int, error) {
+	if val.IsString() {
+		return len(val.AsString()), nil
+	}
+	mm := vm.getMetafield(val, "__len")
+	if !mm.IsNil() {
+		res, err := vm.callMetamethod(mm, val, Nil)
+		if err != nil {
+			return 0, err
+		}
+		if i, ok := res.ToInt(); ok {
+			return int(i), nil
+		}
+		return 0, fmt.Errorf("'__len' must return an integer")
+	}
+	if val.IsTable() {
+		return val.AsTable().Len(), nil
+	}
+	return 0, fmt.Errorf("attempt to get length of a %s value", val.Type())
+}
+
 // callMetamethod calls a metamethod with 2 arguments and returns the first result
 func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {
 	if fn.IsFunction() {

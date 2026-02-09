@@ -1,6 +1,8 @@
 package stdlib
 
 import (
+	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -24,37 +26,71 @@ func openTable(v *vm.VM) {
 	v.SetGlobal("unpack", vm.NewNativeFunc(tableUnpack))
 }
 
+// tableGetTable extracts a table from argument idx, panicking with a standard error if not a table.
+func tableGetTable(v *vm.VM, idx int, fname string) vm.LuaTable {
+	val := v.Get(idx)
+	if val.IsTable() {
+		return val.AsTable()
+	}
+	panic(fmt.Sprintf("bad argument #%d to '%s' (table expected, got %s)", idx, fname, val.Type()))
+}
+
+// tableObjLen returns #val via metamethod-aware ObjLen, panicking on error.
+func tableObjLen(v *vm.VM, val vm.Value) int {
+	length, err := v.ObjLen(val)
+	if err != nil {
+		panic(err.Error())
+	}
+	return length
+}
+
+// tableGetInt reads t[key] via metamethod-aware TableGetInt, panicking on error.
+func tableGetIdx(v *vm.VM, t vm.LuaTable, key int) vm.Value {
+	val, err := v.TableGetInt(t, key)
+	if err != nil {
+		panic(err.Error())
+	}
+	return val
+}
+
+// tableSetIdx writes t[key]=value via metamethod-aware TableSetInt, panicking on error.
+func tableSetIdx(v *vm.VM, t vm.LuaTable, key int, value vm.Value) {
+	err := v.TableSetInt(t, key, value)
+	if err != nil {
+		panic(err.Error())
+	}
+}
+
 // table.concat(list [, sep [, i [, j]]])
 func tableConcat(v *vm.VM) int {
-	tbl := v.Get(1).AsTable()
-	if tbl == nil {
-		panic("bad argument #1 to 'concat' (table expected)")
-	}
+	tbl := tableGetTable(v, 1, "concat")
 
 	sep := ""
 	if !v.Get(2).IsNil() {
 		sep = getString(v, 2, "concat")
 	}
 
+	length := tableObjLen(v, v.Get(1))
+
 	i := int64(1)
 	if !v.Get(3).IsNil() {
 		i = getInt(v, 3, "concat")
 	}
 
-	j := int64(tbl.Len())
+	j := int64(length)
 	if !v.Get(4).IsNil() {
 		j = getInt(v, 4, "concat")
 	}
 
 	var parts []string
 	for idx := i; idx <= j; idx++ {
-		val := tbl.Get(vm.NewInt(idx))
+		val := tableGetIdx(v, tbl, int(idx))
 		if val.IsString() {
 			parts = append(parts, val.AsString())
 		} else if val.IsNumber() {
 			parts = append(parts, val.String())
 		} else {
-			panic("invalid value (nil) at index " + val.String() + " in table for 'concat'")
+			panic(fmt.Sprintf("invalid value (nil) at index %d in table for 'concat'", idx))
 		}
 	}
 
@@ -64,57 +100,63 @@ func tableConcat(v *vm.VM) int {
 
 // table.insert(list, [pos,] value)
 func tableInsert(v *vm.VM) int {
-	tbl := v.Get(1).AsTable()
-	if tbl == nil {
-		panic("bad argument #1 to 'insert' (table expected)")
-	}
+	tbl := tableGetTable(v, 1, "insert")
 
 	n := v.ArgCount()
-	length := tbl.Len()
+	length := tableObjLen(v, v.Get(1))
 
 	if n == 2 {
 		// table.insert(list, value) - append to end
-		tbl.Set(vm.NewInt(int64(length+1)), v.Get(2))
+		tableSetIdx(v, tbl, length+1, v.Get(2))
 	} else if n >= 3 {
 		// table.insert(list, pos, value)
 		pos := int(getInt(v, 2, "insert"))
 		val := v.Get(3)
 
+		if pos < 1 || pos > length+1 {
+			panic(fmt.Sprintf("bad argument #2 to 'insert' (position out of bounds)"))
+		}
+
 		// Shift elements up
 		for i := length; i >= pos; i-- {
-			tbl.Set(vm.NewInt(int64(i+1)), tbl.Get(vm.NewInt(int64(i))))
+			elem := tableGetIdx(v, tbl, i)
+			tableSetIdx(v, tbl, i+1, elem)
 		}
-		tbl.Set(vm.NewInt(int64(pos)), val)
+		tableSetIdx(v, tbl, pos, val)
 	}
 
 	return 0
 }
 
 // table.remove(list [, pos])
+// Lua 5.4 semantics: pos defaults to #list. If pos != #list, validate 1 <= pos <= #list.
 func tableRemove(v *vm.VM) int {
-	tbl := v.Get(1).AsTable()
-	if tbl == nil {
-		panic("bad argument #1 to 'remove' (table expected)")
-	}
+	tbl := tableGetTable(v, 1, "remove")
 
-	length := tbl.Len()
+	length := tableObjLen(v, v.Get(1))
 	pos := length
 	if !v.Get(2).IsNil() {
 		pos = int(getInt(v, 2, "remove"))
 	}
 
-	if pos < 1 || pos > length {
-		v.Set(0, vm.Nil)
-		return 1
+	// Lua 5.4: validate only when pos != length
+	if pos != length {
+		if pos < 1 || pos > length {
+			panic("bad argument #2 to 'remove' (position out of range)")
+		}
 	}
 
-	removed := tbl.Get(vm.NewInt(int64(pos)))
+	// Get the value being removed
+	removed := tableGetIdx(v, tbl, pos)
 
 	// Shift elements down
 	for i := pos; i < length; i++ {
-		tbl.Set(vm.NewInt(int64(i)), tbl.Get(vm.NewInt(int64(i+1))))
+		elem := tableGetIdx(v, tbl, i+1)
+		tableSetIdx(v, tbl, i, elem)
 	}
-	tbl.Set(vm.NewInt(int64(length)), vm.Nil)
+	if length > 0 {
+		tableSetIdx(v, tbl, length, vm.Nil)
+	}
 
 	v.Set(0, removed)
 	return 1
@@ -122,20 +164,17 @@ func tableRemove(v *vm.VM) int {
 
 // table.sort(list [, comp])
 func tableSort(v *vm.VM) int {
-	tbl := v.Get(1).AsTable()
-	if tbl == nil {
-		panic("bad argument #1 to 'sort' (table expected)")
-	}
+	tbl := tableGetTable(v, 1, "sort")
 
-	length := tbl.Len()
+	length := tableObjLen(v, v.Get(1))
 	if length <= 1 {
 		return 0
 	}
 
-	// Extract values into slice
+	// Extract values into slice via __index
 	values := make([]vm.Value, length)
 	for i := 1; i <= length; i++ {
-		values[i-1] = tbl.Get(vm.NewInt(int64(i)))
+		values[i-1] = tableGetIdx(v, tbl, i)
 	}
 
 	comp := v.Get(2)
@@ -168,9 +207,9 @@ func tableSort(v *vm.VM) int {
 		}
 	}
 
-	// Put values back
+	// Put values back via __newindex
 	for i := 1; i <= length; i++ {
-		tbl.Set(vm.NewInt(int64(i)), values[i-1])
+		tableSetIdx(v, tbl, i, values[i-1])
 	}
 
 	return 0
@@ -178,24 +217,24 @@ func tableSort(v *vm.VM) int {
 
 // table.unpack(list [, i [, j]])
 func tableUnpack(v *vm.VM) int {
-	tbl := v.Get(1).AsTable()
-	if tbl == nil {
-		panic("bad argument #1 to 'unpack' (table expected)")
-	}
+	tbl := tableGetTable(v, 1, "unpack")
+
+	length := tableObjLen(v, v.Get(1))
 
 	i := int64(1)
 	if !v.Get(2).IsNil() {
 		i = getInt(v, 2, "unpack")
 	}
 
-	j := int64(tbl.Len())
+	j := int64(length)
 	if !v.Get(3).IsNil() {
 		j = getInt(v, 3, "unpack")
 	}
 
 	count := 0
 	for idx := i; idx <= j; idx++ {
-		v.Set(count, tbl.Get(vm.NewInt(idx)))
+		val := tableGetIdx(v, tbl, int(idx))
+		v.Set(count, val)
 		count++
 	}
 	return count
@@ -217,33 +256,50 @@ func tablePack(v *vm.VM) int {
 
 // table.move(a1, f, e, t [,a2])
 func tableMove(v *vm.VM) int {
-	a1 := v.Get(1).AsTable()
-	if a1 == nil {
-		panic("bad argument #1 to 'move' (table expected)")
-	}
+	a1 := tableGetTable(v, 1, "move")
 
-	f := int(getInt(v, 2, "move"))
-	e := int(getInt(v, 3, "move"))
-	t := int(getInt(v, 4, "move"))
+	f := getInt(v, 2, "move")
+	e := getInt(v, 3, "move")
+	tt := getInt(v, 4, "move")
 
 	a2 := a1
 	if !v.Get(5).IsNil() {
-		a2 = v.Get(5).AsTable()
-		if a2 == nil {
-			panic("bad argument #5 to 'move' (table expected)")
-		}
+		a2 = tableGetTable(v, 5, "move")
 	}
 
 	if f <= e {
+		// Check interval too large
+		if f < 0 && e > 0 && e-f < 0 {
+			// overflow in e-f
+			panic("too many elements to move (interval too large)")
+		}
 		count := e - f + 1
-		if t > f {
+		if count < 0 {
+			panic("too many elements to move (interval too large)")
+		}
+
+		// Check destination overflow: tt + (e - f) must not wrap
+		if e-f >= 0 {
+			dest_end := tt + (e - f)
+			if (e-f > 0) && (dest_end < tt) {
+				panic("destination wrap around")
+			}
+			// Also check against math.MaxInt64
+			if tt > 0 && e-f > math.MaxInt64-tt {
+				panic("destination wrap around")
+			}
+		}
+
+		if tt > f {
 			// Copy backwards to avoid overwriting
 			for i := count - 1; i >= 0; i-- {
-				a2.Set(vm.NewInt(int64(t+i)), a1.Get(vm.NewInt(int64(f+i))))
+				val := tableGetIdx(v, a1, int(f+i))
+				tableSetIdx(v, a2, int(tt+i), val)
 			}
 		} else {
-			for i := 0; i < count; i++ {
-				a2.Set(vm.NewInt(int64(t+i)), a1.Get(vm.NewInt(int64(f+i))))
+			for i := int64(0); i < count; i++ {
+				val := tableGetIdx(v, a1, int(f+i))
+				tableSetIdx(v, a2, int(tt+i), val)
 			}
 		}
 	}
