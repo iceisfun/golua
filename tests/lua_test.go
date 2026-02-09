@@ -142,14 +142,34 @@ func compileLua(name, source string) (*compiler.Proto, error) {
 	return compiler.Compile(name, block)
 }
 
-// TestProposed runs proposed test files from ../proposed_tests/ using the
-// doctest harness. These files use --> comments to specify expected output:
+// TestDoctest runs doctest-style Lua files from tests/doctest/.
+// These files use --> comments to specify expected print() output:
 //
 //	--> =exact output    (exact match after tab-joining print args)
 //	--> ~regex pattern   (regex match against the output line)
 //
-// The harness captures all print() output and validates it against directives
-// in order. Lines without --> are not checked.
+// The harness captures all print() output via WithCaptureOutput and validates
+// it against directives in order. Lines without --> are not checked.
+func TestDoctest(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("doctest", "*.lua"))
+	if err != nil || len(files) == 0 {
+		t.Skip("No doctest files found in doctest/")
+	}
+
+	for _, file := range files {
+		file := file
+		name := strings.TrimSuffix(filepath.Base(file), ".lua")
+
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			runLuaDoctest(t, file)
+		})
+	}
+}
+
+// TestProposed runs proposed test files from ../proposed_tests/ using the
+// doctest harness. This is a staging area for new tests before they are
+// promoted to tests/doctest/. Skipped if no files exist.
 func TestProposed(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "proposed_tests", "*.lua"))
 	if err != nil || len(files) == 0 {
