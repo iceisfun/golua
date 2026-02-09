@@ -1,8 +1,10 @@
 package tests
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -138,6 +140,145 @@ func compileLua(name, source string) (*compiler.Proto, error) {
 		return nil, err
 	}
 	return compiler.Compile(name, block)
+}
+
+// TestProposed runs proposed test files from ../proposed_tests/ using the
+// doctest harness. These files use --> comments to specify expected output:
+//
+//	--> =exact output    (exact match after tab-joining print args)
+//	--> ~regex pattern   (regex match against the output line)
+//
+// The harness captures all print() output and validates it against directives
+// in order. Lines without --> are not checked.
+func TestProposed(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "proposed_tests", "*.lua"))
+	if err != nil || len(files) == 0 {
+		t.Skip("No proposed test files found")
+	}
+
+	for _, file := range files {
+		file := file
+		name := strings.TrimSuffix(filepath.Base(file), ".lua")
+
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			runLuaDoctest(t, file)
+		})
+	}
+}
+
+// directive represents one --> expected-output comment.
+type directive struct {
+	line    int    // source line number (1-based)
+	exact   bool   // true for =exact, false for ~regex
+	pattern string // the expected text or regex
+}
+
+// parseDirectives extracts --> directives from Lua source.
+func parseDirectives(source string) []directive {
+	var dirs []directive
+	for i, line := range strings.Split(source, "\n") {
+		// Look for --> anywhere in the line (typically in a comment)
+		idx := strings.Index(line, "-->")
+		if idx == -1 {
+			continue
+		}
+		rest := strings.TrimSpace(line[idx+3:])
+		if len(rest) == 0 {
+			continue
+		}
+		switch rest[0] {
+		case '=':
+			dirs = append(dirs, directive{line: i + 1, exact: true, pattern: rest[1:]})
+		case '~':
+			dirs = append(dirs, directive{line: i + 1, exact: false, pattern: rest[1:]})
+		default:
+			dirs = append(dirs, directive{line: i + 1, exact: true, pattern: rest})
+		}
+	}
+	return dirs
+}
+
+// runLuaDoctest compiles and runs a Lua file, capturing print() output
+// via WithCaptureOutput and validating it against --> directives in the source.
+func runLuaDoctest(t *testing.T, filename string) {
+	t.Helper()
+
+	source, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatalf("Failed to read %s: %v", filename, err)
+	}
+
+	dirs := parseDirectives(string(source))
+	if len(dirs) == 0 {
+		t.Fatalf("No --> directives found in %s", filename)
+	}
+
+	proto, err := compileLua(filename, string(source))
+	if err != nil {
+		t.Fatalf("Compilation failed: %v", err)
+	}
+
+	// Create VM with output capture enabled
+	v := vm.New(vm.WithCaptureOutput(true))
+	stdlib.Open(v)
+
+	// Run
+	var runErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				runErr, _ = r.(error)
+				if runErr == nil {
+					runErr = fmt.Errorf("%v", r)
+				}
+			}
+		}()
+		_, runErr = v.Run(proto)
+	}()
+
+	// Validate captured output against directives (even if there was a runtime error)
+	outputLines := v.OutputLines()
+
+	if runErr != nil {
+		t.Errorf("Runtime error (after %d output lines): %v", len(outputLines), runErr)
+	}
+
+	if len(outputLines) < len(dirs) {
+		t.Errorf("Expected at least %d output lines, got %d", len(dirs), len(outputLines))
+		for i, line := range outputLines {
+			t.Logf("  output[%d]: %q", i, line)
+		}
+	}
+
+	for i, dir := range dirs {
+		if i >= len(outputLines) {
+			t.Errorf("Line %d: missing output for directive %q", dir.line, dir.pattern)
+			continue
+		}
+		got := outputLines[i]
+		if dir.exact {
+			if got != dir.pattern {
+				t.Errorf("Line %d: output mismatch\n  want: %q\n  got:  %q", dir.line, dir.pattern, got)
+			}
+		} else {
+			re, err := regexp.Compile(dir.pattern)
+			if err != nil {
+				t.Errorf("Line %d: invalid regex %q: %v", dir.line, dir.pattern, err)
+				continue
+			}
+			if !re.MatchString(got) {
+				t.Errorf("Line %d: output does not match pattern\n  pattern: %s\n  got:     %q", dir.line, dir.pattern, got)
+			}
+		}
+	}
+
+	if len(outputLines) > len(dirs) {
+		t.Errorf("Got %d extra output lines beyond %d directives", len(outputLines)-len(dirs), len(dirs))
+		for i := len(dirs); i < len(outputLines); i++ {
+			t.Logf("  extra[%d]: %q", i, outputLines[i])
+		}
+	}
 }
 
 // BenchmarkLuaFiles allows benchmarking individual test files.

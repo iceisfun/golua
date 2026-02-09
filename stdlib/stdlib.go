@@ -31,6 +31,10 @@ func Open(v *vm.VM) {
 	v.SetGlobal("setmetatable", vm.NewNativeFunc(luaSetmetatable))
 	v.SetGlobal("collectgarbage", vm.NewNativeFunc(luaCollectgarbage))
 
+	// Output inspection (for testing)
+	v.SetGlobal("_lastoutput", vm.NewNativeFunc(luaLastOutput))
+	v.SetGlobal("_outputlines", vm.NewNativeFunc(luaOutputLines))
+
 	// _G points to the globals table
 	v.SetGlobal("_G", vm.NewTable(v.Globals()))
 
@@ -81,8 +85,25 @@ func luaPrint(v *vm.VM) int {
 	for i := 1; i <= n; i++ {
 		parts = append(parts, valueToString(v.Get(i)))
 	}
-	fmt.Println(strings.Join(parts, "\t"))
+	v.Print(strings.Join(parts, "\t"))
 	return 0
+}
+
+// _lastoutput() returns the most recent captured output line (requires WithCaptureOutput).
+func luaLastOutput(v *vm.VM) int {
+	v.Set(0, vm.NewString(v.LastOutput()))
+	return 1
+}
+
+// _outputlines() returns a table of all captured output lines (requires WithCaptureOutput).
+func luaOutputLines(v *vm.VM) int {
+	lines := v.OutputLines()
+	t := vm.NewEmptyTable()
+	for i, line := range lines {
+		t.SetInt(i+1, vm.NewString(line))
+	}
+	v.Set(0, vm.NewTable(t))
+	return 1
 }
 
 // assert(v [, message])

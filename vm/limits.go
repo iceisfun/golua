@@ -1,6 +1,9 @@
 package vm
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // DefaultMaxMetaDepth is the default __index/__newindex chain depth limit,
 // matching Lua 5.4's MAXTAGLOOP. This is a safety bound to prevent infinite
@@ -42,5 +45,51 @@ func WithMaxMetaDepth(n int) VMOption {
 		} else {
 			v.limits.MaxMetaDepth = n
 		}
+	}
+}
+
+// WithCaptureOutput returns a VMOption that enables output capture.
+// When enabled, Print() appends to an internal buffer instead of writing to stdout.
+// Use OutputLines() to retrieve captured output.
+func WithCaptureOutput(capture bool) VMOption {
+	return func(v *VM) {
+		v.captureOutput = capture
+		if capture && v.outputLines == nil {
+			buf := make([]string, 0, 64)
+			v.outputLines = &buf
+		}
+	}
+}
+
+// Print writes a line to captured output (if capture is enabled) or stdout.
+// This is intended to be called by the stdlib print implementation.
+func (vm *VM) Print(line string) {
+	if vm.captureOutput && vm.outputLines != nil {
+		*vm.outputLines = append(*vm.outputLines, line)
+		return
+	}
+	fmt.Println(line)
+}
+
+// OutputLines returns all captured output lines.
+func (vm *VM) OutputLines() []string {
+	if vm.outputLines == nil {
+		return nil
+	}
+	return *vm.outputLines
+}
+
+// LastOutput returns the most recent captured output line, or "" if none.
+func (vm *VM) LastOutput() string {
+	if vm.outputLines == nil || len(*vm.outputLines) == 0 {
+		return ""
+	}
+	return (*vm.outputLines)[len(*vm.outputLines)-1]
+}
+
+// ClearOutput clears all captured output lines.
+func (vm *VM) ClearOutput() {
+	if vm.outputLines != nil {
+		*vm.outputLines = (*vm.outputLines)[:0]
 	}
 }
