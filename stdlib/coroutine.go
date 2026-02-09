@@ -48,6 +48,7 @@ func openCoroutine(v *vm.VM) {
 	co.SetString("running", vm.NewNativeFunc(coRunning))
 	co.SetString("wrap", vm.NewNativeFunc(coWrap))
 	co.SetString("isyieldable", vm.NewNativeFunc(coIsYieldable))
+	co.SetString("close", vm.NewNativeFunc(coClose))
 
 	v.SetGlobal("coroutine", vm.NewTable(co))
 
@@ -423,6 +424,82 @@ func coWrap(v *vm.VM) int {
 	})
 
 	v.Set(0, wrapper)
+	return 1
+}
+
+// coroutine.close(co) -> ok [, errmsg]
+func coClose(v *vm.VM) int {
+	coVal := v.Get(1)
+	if coVal.IsNil() {
+		panic("bad argument #1 to 'close' (value expected)")
+	}
+	if !coVal.IsTable() {
+		panic("bad argument #1 to 'close' (thread expected)")
+	}
+
+	coTable := coVal.AsTable()
+	idVal := coTable.Get(vm.NewString("__coroutine_id"))
+	if idVal.IsNil() {
+		panic("bad argument #1 to 'close' (thread expected)")
+	}
+
+	id, _ := idVal.ToInt()
+
+	// Cannot close the running (main) thread
+	if int(id) == v.CoroutineID() {
+		panic("cannot close a running coroutine")
+	}
+
+	coroutinesMu.Lock()
+	co := coroutines[int(id)]
+	coroutinesMu.Unlock()
+
+	if co == nil {
+		// Already dead/collected — that's fine
+		v.Set(0, vm.True)
+		return 1
+	}
+
+	co.mu.Lock()
+	status := co.status
+	co.mu.Unlock()
+
+	if status == "running" {
+		panic("cannot close a running coroutine")
+	}
+
+	if status == "dead" {
+		v.Set(0, vm.True)
+		return 1
+	}
+
+	// Mark as dead and clean up
+	co.mu.Lock()
+	co.status = "dead"
+	co.mu.Unlock()
+
+	// Remove from global map
+	coroutinesMu.Lock()
+	delete(coroutines, int(id))
+	coroutinesMu.Unlock()
+
+	// If the coroutine goroutine is blocked on resumeCh, unblock it
+	// by closing the channel. The goroutine will panic and exit via
+	// the deferred recover in runCoroutine.
+	if co.started {
+		// Send a nil signal and let the goroutine drain
+		// Close resumeCh so the goroutine unblocks and exits
+		select {
+		case co.resumeCh <- nil:
+			// Goroutine will receive nil args and likely panic,
+			// which is caught by the deferred recover in runCoroutine
+		default:
+		}
+		// Wait for the goroutine to finish
+		<-co.doneCh
+	}
+
+	v.Set(0, vm.True)
 	return 1
 }
 
