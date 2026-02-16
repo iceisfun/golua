@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/iceisfun/golua/compiler"
@@ -81,6 +82,39 @@ func TestTimeTickExplicitKey(t *testing.T) {
 		-- different name is independent
 		assert(time.tick("other", 100000) == true)
 	`, "test_time_tick_explicit")
+}
+
+func TestTimeTickKeyLimit(t *testing.T) {
+	p := vm.NewDefaultTimeProvider()
+	// Fill up to the 10,000 key limit
+	for i := 0; i < 10000; i++ {
+		key := fmt.Sprintf("key_%d", i)
+		if !p.Tick(key, 999999999) {
+			t.Fatalf("tick %d should have returned true", i)
+		}
+	}
+	// 10,001st key should be rejected
+	if p.Tick("overflow", 999999999) {
+		t.Fatal("tick beyond limit should return false")
+	}
+	// Existing keys still work
+	if !p.Tick("key_0", 0) {
+		t.Fatal("existing key should still tick")
+	}
+}
+
+func TestTimeTickKeyTruncation(t *testing.T) {
+	p := vm.NewDefaultTimeProvider()
+	long := string(make([]byte, 1000)) // 1000 zero bytes
+	// First call succeeds (truncated to 512)
+	if !p.Tick(long, 999999999) {
+		t.Fatal("first tick with long key should return true")
+	}
+	// Same prefix matches (both truncate to the same 512 bytes)
+	long2 := string(make([]byte, 2000))
+	if p.Tick(long2, 999999999) {
+		t.Fatal("same truncated key should return false")
+	}
 }
 
 func TestTimeNotAvailableWithoutProvider(t *testing.T) {

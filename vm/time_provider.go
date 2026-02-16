@@ -33,14 +33,31 @@ func (p *DefaultTimeProvider) Now() int64 {
 	return time.Now().UnixMilli()
 }
 
+const (
+	maxTickKeys   = 10000
+	maxTickKeyLen = 512
+)
+
 // Tick returns true if at least ms milliseconds have elapsed since the
 // last true for this key. First call for a key always returns true.
+// Keys longer than 512 bytes are truncated. Once 10,000 distinct keys
+// exist, new keys are silently ignored (returns false).
 func (p *DefaultTimeProvider) Tick(key string, ms int64) bool {
+	if len(key) > maxTickKeyLen {
+		key = key[:maxTickKeyLen]
+	}
 	now := time.Now().UnixMilli()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	last, ok := p.ticks[key]
-	if !ok || now-last >= ms {
+	if !ok {
+		if len(p.ticks) >= maxTickKeys {
+			return false
+		}
+		p.ticks[key] = now
+		return true
+	}
+	if now-last >= ms {
 		p.ticks[key] = now
 		return true
 	}
