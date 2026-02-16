@@ -46,6 +46,9 @@ type VM struct {
 	// Channel provider support
 	chanProvider LuaChanProvider // Provider for channel operations (optional)
 
+	// Time provider support
+	timeProvider LuaTimeProvider // Provider for time operations (optional)
+
 	// Execution control
 	ctx        context.Context // nil = no cancellation checking
 	limits     Limits          // zero values = no limit
@@ -220,6 +223,7 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		osProvider:    parent.osProvider,
 		debugProvider: parent.debugProvider,
 		chanProvider:  parent.chanProvider,
+		timeProvider:  parent.timeProvider,
 		ctx:           parent.ctx,
 		limits:        parent.limits,
 		captureOutput: parent.captureOutput,
@@ -2610,6 +2614,16 @@ func (vm *VM) SetChanProvider(provider LuaChanProvider) {
 // ChanProvider returns the current channel provider, or nil if none is set.
 func (vm *VM) ChanProvider() LuaChanProvider {
 	return vm.chanProvider
+}
+
+// SetTimeProvider sets the time provider for this VM.
+func (vm *VM) SetTimeProvider(provider LuaTimeProvider) {
+	vm.timeProvider = provider
+}
+
+// TimeProvider returns the current time provider, or nil if none is set.
+func (vm *VM) TimeProvider() LuaTimeProvider {
+	return vm.timeProvider
 }
 
 // SetContext sets the context for cooperative cancellation.

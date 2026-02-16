@@ -76,6 +76,9 @@ func Open(v *vm.VM) {
 
 	// Glob library (Go-style pattern matching)
 	openGlob(v)
+
+	// Time library (only if TimeProvider is set)
+	openTime(v)
 }
 
 // print(...)
