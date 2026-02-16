@@ -22,6 +22,7 @@ A Lua 5.4 interpreter written in Go, with experimental 5.5 features. Pure Go, ze
 - Sandboxed IO via `LuaIoProvider` (includes `JailedIoProvider` for read-only, directory-confined access)
 - Sandboxed OS via `LuaOsProvider` (includes `DefaultOsProvider` with optional env filtering)
 - Capability-gated channels for Go↔Lua message passing via `LuaChanProvider`
+- Millisecond-precision timing via `LuaTimeProvider` (`time.now`, `time.since`, `time.tick`)
 - Context cancellation and execution limits (call depth, stack, instructions)
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
 - Single static binary when compiled
@@ -76,6 +77,7 @@ See the `examples/` directory for complete examples:
 - **[table](examples/table/)** - LuaTable interface and deterministic iteration
 - **[chan](examples/chan/)** - Go↔Lua channels with chan.select ([go_to_lua](examples/chan/go_to_lua/), [lua_to_go](examples/chan/lua_to_go/), [multi_go_to_lua](examples/chan/multi_go_to_lua/))
 - **[glob](examples/glob/)** - Go-style case-insensitive pattern matching from Go and Lua
+- **[time](examples/time/)** - Millisecond timing: now, since, and periodic tick
 
 ## Go Interop
 
@@ -237,6 +239,38 @@ Lua API:
 
 The `chan` table is **absent by default** (`chan == nil`). It only appears when the host sets a `LuaChanProvider` before calling `stdlib.Open()`. Channels from different providers are rejected by `chan.select` (VM boundary safety). The convenience function `stdlib.ProvideChan(v)` sets up a `DefaultChanProvider` and opens the module in one call.
 
+### Time (Non-Standard)
+
+Millisecond-precision timing for benchmarking and periodic triggers:
+
+```go
+v := vm.New()
+v.SetTimeProvider(vm.NewDefaultTimeProvider())
+stdlib.Open(v)
+```
+
+```lua
+local start = time.now()           -- current time in ms
+-- ... work ...
+print(time.since(start) .. "ms")   -- elapsed ms
+
+-- periodic trigger: true once per interval, false otherwise
+for i = 1, math.huge do
+    if time.tick(1000) then print("once per second") end
+end
+
+-- explicit key (shared across callsites)
+if time.tick("heartbeat", 500) then send_heartbeat() end
+```
+
+| Function | Description |
+|---|---|
+| `time.now()` | Current time in milliseconds (integer) |
+| `time.since(t)` | Milliseconds elapsed since `t` |
+| `time.tick([name,] ms)` | Returns `true` once per `ms` interval, `false` otherwise |
+
+When `name` is omitted, `time.tick` auto-keys by callsite (`source:line`), so each call location gets an independent timer. The `time` table is **absent by default** and only appears when the host sets a `LuaTimeProvider`.
+
 ### LuaTable Interface
 
 Tables implement the `LuaTable` interface, which is the contract used by the VM and stdlib:
@@ -272,28 +306,29 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 | `os` | `LuaOsProvider` | OS functions: clock, time, date, getenv (absent by default) |
 | `debug` | `LuaDebugProvider` | Diagnostic-only: traceback, stackdepth, where (absent by default) |
 | `chan` | `LuaChanProvider` | Go↔Lua message passing channels (absent by default) |
+| `time` | `LuaTimeProvider` | Millisecond timing: now, since, periodic tick (absent by default) |
 
 ## Security Model
 
 GoLua is sandboxed by default. The VM starts with no access to the host system. Capabilities are granted explicitly by the host via providers.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   Host (Go)                     │
-│                                                 │
-│   ┌───────────┐  ┌───────────┐  ┌────────────┐  │
-│   │IoProvider │  │OsProvider │  │ChanProvider│  │
-│   │(optional) │  │(optional) │  │(optional)  │  │
-│   └─────┬─────┘  └─────┬─────┘  └─────┬──────┘  │
-│         │              │              │         │
-│   ┌─────▼──────────────▼──────────────▼──────┐  │
-│   │              VM  (sandbox)               │  │
-│   │                                          │  │
-│   │  string, math, table, coroutine, glob    │  │
-│   │  io*, os*, debug*, chan*                 │  │
-│   │                     (* = provider-gated) │  │
-│   └──────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                         Host (Go)                          │
+│                                                            │
+│   ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐  │
+│   │IoProvider│ │OsProvider│ │ChanProvider│ │TimeProvider│  │
+│   │(optional)│ │(optional)│ │(optional)  │ │(optional)  │  │
+│   └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬──────┘  │
+│        │            │             │              │         │
+│   ┌────▼────────────▼─────────────▼──────────────▼──────┐  │
+│   │                  VM  (sandbox)                      │  │
+│   │                                                     │  │
+│   │  string, math, table, coroutine, glob               │  │
+│   │  io*, os*, debug*, chan*, time*                     │  │
+│   │                          (* = provider-gated)       │  │
+│   └─────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
 ```
 
 - No filesystem access unless explicitly provided
