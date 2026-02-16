@@ -52,6 +52,37 @@ func TestTimeSince(t *testing.T) {
 	`, "test_time_since")
 }
 
+func TestTimeTickFirstCallTrue(t *testing.T) {
+	runLuaWithTime(t, `
+		-- first call for a key always returns true
+		assert(time.tick("test_key", 100000) == true, "first tick should be true")
+		-- immediate second call should be false (interval not elapsed)
+		assert(time.tick("test_key", 100000) == false, "second tick should be false")
+	`, "test_time_tick_first")
+}
+
+func TestTimeTickAutoKey(t *testing.T) {
+	runLuaWithTime(t, `
+		-- auto-keyed by callsite: two different lines get independent keys
+		local a = time.tick(100000)
+		local b = time.tick(100000)
+		-- both are first calls at their respective callsites
+		assert(a == true, "first auto tick should be true")
+		assert(b == true, "different callsite should also be true")
+	`, "test_time_tick_auto")
+}
+
+func TestTimeTickExplicitKey(t *testing.T) {
+	runLuaWithTime(t, `
+		-- explicit name shares state regardless of callsite
+		assert(time.tick("shared", 100000) == true)
+		assert(time.tick("shared", 100000) == false)
+
+		-- different name is independent
+		assert(time.tick("other", 100000) == true)
+	`, "test_time_tick_explicit")
+}
+
 func TestTimeNotAvailableWithoutProvider(t *testing.T) {
 	block, err := parser.Parse("test", `
 		assert(time == nil, "time should not be available without provider")

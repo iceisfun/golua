@@ -12,6 +12,7 @@ func openTime(v *vm.VM) {
 	timeTable := vm.NewEmptyTable()
 	timeTable.SetString("now", vm.NewNativeFunc(makeTimeNow(provider)))
 	timeTable.SetString("since", vm.NewNativeFunc(makeTimeSince(provider)))
+	timeTable.SetString("tick", vm.NewNativeFunc(makeTimeTick(provider)))
 	v.SetGlobal("time", vm.NewTable(timeTable))
 }
 
@@ -30,6 +31,33 @@ func makeTimeSince(provider vm.LuaTimeProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		t := getInt(v, 1, "time.since")
 		v.Set(0, vm.NewInt(provider.Now()-t))
+		return 1
+	}
+}
+
+// makeTimeTick creates the time.tick([name,] ms) function.
+// Returns true once per ms interval, false otherwise.
+// If name is omitted, the callsite (source:line) is used as the key.
+func makeTimeTick(provider vm.LuaTimeProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		arg1 := v.Get(1)
+		var key string
+		var ms int64
+
+		if arg1.IsString() {
+			// time.tick("name", ms)
+			key = arg1.AsString()
+			ms = getInt(v, 2, "time.tick")
+		} else {
+			// time.tick(ms) — use callsite as key
+			ms = getInt(v, 1, "time.tick")
+			key = v.GetSourceLocation(1)
+			if key == "" {
+				key = "tick"
+			}
+		}
+
+		v.Set(0, vm.NewBool(provider.Tick(key, ms)))
 		return 1
 	}
 }
