@@ -879,6 +879,11 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 			}
 		}
 		c.compileExprToReg(val, base+i)
+		// Reset freeReg to reclaim temporaries (same fix as compileFuncCall)
+		fs.freeReg = base + i + 1
+		if fs.freeReg > fs.maxReg {
+			fs.maxReg = fs.freeReg
+		}
 	}
 	fs.emit(ABC(OP_RETURN, base, len(s.Values)+1, 0, 0), line)
 }
@@ -1843,11 +1848,13 @@ func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, 
 		}
 		argReg := base + 1 + i
 		c.compileExprToReg(arg, argReg)
-		if argReg >= fs.freeReg {
-			fs.freeReg = argReg + 1
-			if fs.freeReg > fs.maxReg {
-				fs.maxReg = fs.freeReg
-			}
+		// Reset freeReg to reclaim any temporaries used by the expression
+		// (e.g., inner function call arguments). Without this, the last
+		// multi-ret argument would start at an inflated freeReg, leaving
+		// a gap of stale values that the outer B=0 call picks up.
+		fs.freeReg = argReg + 1
+		if fs.freeReg > fs.maxReg {
+			fs.maxReg = fs.freeReg
 		}
 	}
 
@@ -1888,11 +1895,10 @@ func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults i
 		}
 		argReg := base + 2 + i
 		c.compileExprToReg(arg, argReg)
-		if argReg >= fs.freeReg {
-			fs.freeReg = argReg + 1
-			if fs.freeReg > fs.maxReg {
-				fs.maxReg = fs.freeReg
-			}
+		// Reset freeReg to reclaim temporaries (same fix as compileFuncCall)
+		fs.freeReg = argReg + 1
+		if fs.freeReg > fs.maxReg {
+			fs.maxReg = fs.freeReg
 		}
 	}
 
