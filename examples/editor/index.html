@@ -15,7 +15,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 #run-btn kbd { font-size: 11px; opacity: 0.7; margin-left: 6px; }
 #editor-wrap { flex: 1; min-height: 0; }
 #output-panel { height: 180px; background: #1e1e1e; border-top: 2px solid #0e639c; display: flex; flex-direction: column; }
-#output-header { padding: 6px 16px; font-size: 12px; font-weight: 600; background: #252526; color: #ddd; }
+#output-header { padding: 6px 16px; font-size: 12px; font-weight: 600; background: #252526; color: #ddd; display: flex; justify-content: space-between; align-items: center; }
+#copy-btn { background: none; border: none; color: #888; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 3px; }
+#copy-btn:hover { color: #ddd; background: #333; }
 #output { flex: 1; overflow: auto; padding: 8px 16px; font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
 #output.error { color: #f48771; }
 </style>
@@ -27,7 +29,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 </div>
 <div id="editor-wrap"></div>
 <div id="output-panel">
-  <div id="output-header">Output</div>
+  <div id="output-header"><span>Output</span><button id="copy-btn" title="Copy output">&#x2398;</button></div>
   <div id="output"></div>
 </div>
 
@@ -86,6 +88,16 @@ require(["vs/editor/editor.main"], function () {
 
   // Ctrl+Enter shortcut
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runCode(model));
+
+  // Copy output
+  document.getElementById("copy-btn").addEventListener("click", () => {
+    const text = document.getElementById("output").textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById("copy-btn");
+      btn.textContent = "\u2714";
+      setTimeout(() => btn.innerHTML = "&#x2398;", 1500);
+    });
+  });
 });
 
 async function runCheck(model) {
