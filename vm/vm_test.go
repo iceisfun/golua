@@ -1010,4 +1010,272 @@ func TestTailCallOptimization(t *testing.T) {
 	}
 }
 
+// ──────────────────────────────────────────────────────────────
+// Stack management: vm.top restoration and native call stale data
+// ──────────────────────────────────────────────────────────────
+
+// runWithStdlib creates a VM with essential stdlib functions for stack tests.
+func runWithStdlib(t *testing.T, source string) []Value {
+	t.Helper()
+	block, err := parser.Parse("<test>", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile("<test>", block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	v := New()
+	// table.concat
+	tblLib := NewEmptyTable()
+	tblLib.SetString("concat", NewNativeFunc(func(v *VM) int {
+		tbl := v.Get(1).AsTable()
+		sep := ""
+		if !v.Get(2).IsNil() {
+			sep = v.Get(2).AsString()
+		}
+		length := tbl.Len()
+		i := int64(1)
+		if !v.Get(3).IsNil() {
+			i = v.Get(3).AsInt()
+		}
+		j := int64(length)
+		if !v.Get(4).IsNil() {
+			j = v.Get(4).AsInt()
+		}
+		var parts []string
+		for idx := i; idx <= j; idx++ {
+			val := tbl.Get(NewInt(idx))
+			parts = append(parts, val.AsString())
+		}
+		v.Set(0, NewString(strings.Join(parts, sep)))
+		return 1
+	}))
+	v.SetGlobal("table", NewTable(tblLib))
+
+	// pcall
+	v.SetGlobal("pcall", NewNativeFunc(func(v *VM) int {
+		fn := v.Get(1)
+		argc := v.ArgCount()
+		args := make([]Value, argc-1)
+		for i := 2; i <= argc; i++ {
+			args[i-2] = v.Get(i)
+		}
+		results, err := v.ProtectedCall(fn, args)
+		if err != nil {
+			v.Set(0, False)
+			if le, ok := err.(*LuaError); ok {
+				v.Set(1, le.Value)
+			} else {
+				v.Set(1, NewString(err.Error()))
+			}
+			return 2
+		}
+		v.Set(0, True)
+		for i, r := range results {
+			v.Set(i+1, r)
+		}
+		return 1 + len(results)
+	}))
+
+	// tostring (with __tostring metamethod support)
+	v.SetGlobal("tostring", NewNativeFunc(func(v *VM) int {
+		val := v.Get(1)
+		if val.IsTable() {
+			if mt := val.AsTable().Metatable(); mt != nil {
+				if ts := mt.Get(NewString("__tostring")); !ts.IsNil() {
+					results, err := v.ProtectedCall(ts, []Value{val})
+					if err != nil {
+						panic(err)
+					}
+					if len(results) > 0 {
+						v.Set(0, results[0])
+					} else {
+						v.Set(0, NewString("nil"))
+					}
+					return 1
+				}
+			}
+		}
+		v.Set(0, NewString(val.String()))
+		return 1
+	}))
+
+	// setmetatable
+	v.SetGlobal("setmetatable", NewNativeFunc(func(v *VM) int {
+		tbl := v.Get(1).AsTable()
+		mt := v.Get(2)
+		if mt.IsNil() {
+			tbl.SetMetatable(nil)
+		} else {
+			tbl.SetMetatable(mt.AsTable())
+		}
+		v.Set(0, NewTable(tbl))
+		return 1
+	}))
+
+	// ipairs
+	v.SetGlobal("ipairs", NewNativeFunc(func(v *VM) int {
+		tbl := v.Get(1).AsTable()
+		idx := int64(0)
+		v.Set(0, NewNativeFunc(func(v *VM) int {
+			idx++
+			val := tbl.Get(NewInt(idx))
+			if val.IsNil() {
+				return 0
+			}
+			v.Set(0, NewInt(idx))
+			v.Set(1, val)
+			return 2
+		}))
+		v.Set(1, v.Get(1))
+		v.Set(2, NewInt(0))
+		return 3
+	}))
+
+	// type
+	v.SetGlobal("type", NewNativeFunc(func(v *VM) int {
+		v.Set(0, NewString(v.Get(1).Type()))
+		return 1
+	}))
+
+	results, runErr := v.Run(proto)
+	if runErr != nil {
+		t.Fatalf("runtime error: %v", runErr)
+	}
+	return results
+}
+
+// TestStackPcallThenConcat verifies that pcall doesn't leave stale data
+// visible to table.concat's optional arguments via tail call.
+func TestStackPcallThenConcat(t *testing.T) {
+	results := runWithStdlib(t, `
+		local function f()
+			local ok = pcall(function() return 1 end)
+			return table.concat({"a", "b"}, ".")
+		end
+		return f()
+	`)
+	if len(results) != 1 || results[0].AsString() != "a.b" {
+		t.Fatalf("expected 'a.b', got %v", results)
+	}
+}
+
+// TestStackRecursiveTostring verifies deeply nested __tostring calls work
+// when tostring uses ProtectedCall and table.concat is called via tail call.
+func TestStackRecursiveTostring(t *testing.T) {
+	results := runWithStdlib(t, `
+		local function make_node(name, children)
+			return setmetatable({name = name, children = children or {}}, {
+				__tostring = function(self)
+					local parts = {self.name}
+					for _, child in ipairs(self.children) do
+						parts[#parts + 1] = tostring(child)
+					end
+					return table.concat(parts, ".")
+				end
+			})
+		end
+		local tree = make_node("a", {
+			make_node("b", {make_node("d"), make_node("e")}),
+			make_node("c")
+		})
+		return tostring(tree)
+	`)
+	if len(results) != 1 || results[0].AsString() != "a.b.d.e.c" {
+		t.Fatalf("expected 'a.b.d.e.c', got %v", results)
+	}
+}
+
+// TestStackInlineNestedCalls verifies that inline nested function calls
+// (which use c=0 CALL + SETLIST bytecode patterns) don't corrupt vm.top.
+func TestStackInlineNestedCalls(t *testing.T) {
+	results := runWithStdlib(t, `
+		local function make_node(name, children)
+			return setmetatable({name = name, children = children or {}}, {
+				__tostring = function(self)
+					local parts = {self.name}
+					for _, child in ipairs(self.children) do
+						parts[#parts + 1] = tostring(child)
+					end
+					return table.concat(parts, ".")
+				end
+			})
+		end
+		-- Inline creation: make_node("a", {make_node("b", {make_node("d")})})
+		-- This generates c=0 CALL + SETLIST bytecode that lowers vm.top
+		local parent = make_node("a", {make_node("b")})
+		local p = tostring(parent)
+		local deep = make_node("a2", {make_node("b2", {make_node("d2")})})
+		local d = tostring(deep)
+		return p, d
+	`)
+	if len(results) != 2 || results[0].AsString() != "a.b" || results[1].AsString() != "a2.b2.d2" {
+		t.Fatalf("expected 'a.b','a2.b2.d2', got %v", results)
+	}
+}
+
+// TestStackProtectedCallZeroArgs verifies that ProtectedCall with zero args
+// correctly reports ArgCount() == 0 to the called native function.
+func TestStackProtectedCallZeroArgs(t *testing.T) {
+	block, err := parser.Parse("<test>", "return pcall(get_argc)")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile("<test>", block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	v := New()
+	v.SetGlobal("pcall", NewNativeFunc(func(v *VM) int {
+		fn := v.Get(1)
+		argc := v.ArgCount()
+		args := make([]Value, argc-1)
+		for i := 2; i <= argc; i++ {
+			args[i-2] = v.Get(i)
+		}
+		results, err := v.ProtectedCall(fn, args)
+		if err != nil {
+			v.Set(0, False)
+			v.Set(1, NewString(err.Error()))
+			return 2
+		}
+		v.Set(0, True)
+		for i, r := range results {
+			v.Set(i+1, r)
+		}
+		return 1 + len(results)
+	}))
+	v.SetGlobal("get_argc", NewNativeFunc(func(v *VM) int {
+		v.Set(0, NewInt(int64(v.ArgCount())))
+		return 1
+	}))
+	results, err := v.Run(proto)
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	// pcall(get_argc) → true, 0 (zero args passed to get_argc)
+	if len(results) < 2 || !results[0].AsBool() || results[1].AsInt() != 0 {
+		t.Fatalf("expected true,0 got %v", results)
+	}
+}
+
+// TestStackNestedPcall verifies that nested pcall (ProtectedCall calling
+// ProtectedCall) correctly manages stack frames.
+func TestStackNestedPcall(t *testing.T) {
+	results := runWithStdlib(t, `
+		local ok, r = pcall(function()
+			local ok2, r2 = pcall(function()
+				return table.concat({"x", "y"}, "-")
+			end)
+			return r2 .. "!" .. table.concat({"a", "b"}, ".")
+		end)
+		return ok, r
+	`)
+	if len(results) < 2 || !results[0].AsBool() || results[1].AsString() != "x-y!a.b" {
+		t.Fatalf("expected true,'x-y!a.b', got %v", results)
+	}
+}
+
 // Value and Table unit tests live in value_test.go and table_test.go respectively.

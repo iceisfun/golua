@@ -69,6 +69,7 @@ type callFrame struct {
 	varargPos  int      // Stack position where varargs start
 	numVararg  int      // Number of varargs
 	isTailCall bool     // True if this was a tail call
+	argc       int      // Argument count for native functions (-1 = use vm.top)
 }
 
 // New creates a new VM with an empty global environment.
@@ -160,21 +161,23 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		for i, arg := range args {
 			vm.stack[base+1+i] = arg
 		}
-		vm.top = base + 1 + len(args)
 
 		// Clear any slots beyond the arguments to prevent stale data from affecting
 		// optional argument checks (e.g., if !v.Get(5).IsNil())
-		clearEnd := vm.top + 4
+		clearStart := base + 1 + len(args)
+		clearEnd := clearStart + 4
 		if clearEnd > len(vm.stack) {
 			clearEnd = len(vm.stack)
 		}
-		for i := vm.top; i < clearEnd; i++ {
+		for i := clearStart; i < clearEnd; i++ {
 			vm.stack[i] = Nil
 		}
 
 		// Push a call frame so Get/Set/ArgCount work correctly
+		// argc stored so ArgCount doesn't depend on vm.top
 		vm.callStack = append(vm.callStack, callFrame{
 			base: base,
+			argc: len(args),
 		})
 
 		// Call native function
@@ -332,6 +335,7 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		isVararg:  proto.IsVarArg,
 		varargPos: varargPos,
 		numVararg: numVararg,
+		argc:      -1, // Lua frames use vm.top for ArgCount
 	}
 	vm.callStack = append(vm.callStack, frame)
 
@@ -1002,6 +1006,7 @@ func (vm *VM) execute() ([]Value, error) {
 					// Reuse the frame
 					frame.closure = closure
 					frame.pc = 0
+					frame.argc = -1 // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
 
 					// Set up parameters
@@ -1043,7 +1048,20 @@ func (vm *VM) execute() ([]Value, error) {
 					for i, arg := range args {
 						vm.stack[frame.base+1+i] = arg
 					}
-					vm.top = frame.base + 1 + len(args)
+					frame.argc = len(args)
+
+					// Clear slots beyond the arguments to prevent stale register
+					// data from being seen as optional arguments by native functions
+					// (e.g., table.concat checking v.Get(3) for optional start index)
+					clearStart := frame.base + 1 + len(args)
+					clearEnd := clearStart + 4
+					if clearEnd > len(vm.stack) {
+						clearEnd = len(vm.stack)
+					}
+					for i := clearStart; i < clearEnd; i++ {
+						vm.stack[i] = Nil
+					}
+
 					// The current frame already exists, just call the native function
 					// vm.Base() will correctly return frame.base
 					nResults := nf(vm)
@@ -1235,6 +1253,7 @@ func (vm *VM) execute() ([]Value, error) {
 				// Push temporary call frame for native function
 				nativeFrame := callFrame{
 					base: nativeBase,
+					argc: 2, // iterator always called with (state, ctrl)
 				}
 				vm.callStack = append(vm.callStack, nativeFrame)
 
@@ -1714,34 +1733,44 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 		copy(args, vm.stack[frame.base+a+1:frame.base+a+b])
 	}
 
+	// Restore vm.top to the calling frame's proper level. A previous CALL with
+	// c=0 (variable results) may have lowered vm.top to indicate the result count.
+	// We must restore it AFTER collecting b=0 args (which reads vm.top) but BEFORE
+	// dispatching any calls, so that vm.call gets the correct base position and
+	// native functions that call ProtectedCall won't overlap with caller registers.
+	frameTop := frame.base + frame.closure.Proto.MaxStack
+	vm.top = frameTop
+
 	var results []Value
 	var err error
 
 	if fn.IsFunction() {
-		// Set vm.top so the new frame starts after the function and its arguments
-		// This prevents the nested call from overwriting caller's registers
-		vm.top = frame.base + a + len(args) + 1
+		// vm.top is at frameTop, so vm.call will place the new frame right after
+		// the calling frame's full register space. Args are copied into a slice
+		// so they're safe regardless of where the new frame starts.
 		results, err = vm.call(fn.AsClosure(), args, c-1)
 	} else if fn.IsNativeFunc() {
 		// Set up for native function
-		// Push a temporary call frame so vm.Base() works correctly for native functions
+		// Push a temporary call frame so vm.Base() works correctly for native functions.
+		// We keep vm.top at its current value (past the calling Lua frame's registers)
+		// so that if the native function calls back into Lua via ProtectedCall,
+		// the new Lua frame won't overlap with the caller's register space.
+		// ArgCount uses the stored argc instead of computing from vm.top.
 		nativeBase := frame.base + a
 		nativeFrame := callFrame{
 			base: nativeBase,
+			argc: len(args),
 		}
 		vm.callStack = append(vm.callStack, nativeFrame)
 
-		// Set vm.top for the native function (args start at base+1)
-		oldTop := vm.top
-		vm.top = nativeBase + 1 + len(args)
-
-		// Clear any slots beyond the arguments to prevent stale data from affecting
+		// Clear slots beyond the arguments to prevent stale data from affecting
 		// optional argument checks (e.g., if !v.Get(3).IsNil())
-		clearEnd := nativeBase + 1 + len(args) + 4 // Clear a few extra slots
+		clearStart := nativeBase + 1 + len(args)
+		clearEnd := clearStart + 4
 		if clearEnd > len(vm.stack) {
 			clearEnd = len(vm.stack)
 		}
-		for i := vm.top; i < clearEnd; i++ {
+		for i := clearStart; i < clearEnd; i++ {
 			vm.stack[i] = Nil
 		}
 
@@ -1749,9 +1778,8 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 		results = make([]Value, nResults)
 		copy(results, vm.stack[nativeBase:nativeBase+nResults])
 
-		// Pop the native frame and restore top
+		// Pop the native frame
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]
-		vm.top = oldTop
 	} else {
 		// Check for __call metamethod
 		mm := vm.getMetafield(fn, "__call")
@@ -1765,8 +1793,7 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 		copy(newArgs[1:], args)
 
 		if mm.IsFunction() {
-			// Set vm.top to protect caller's registers (same as the normal Function path)
-			vm.top = frame.base + a + len(newArgs) + 1
+			// Keep vm.top at current value (same approach as the normal Function path)
 			results, err = vm.call(mm.AsClosure(), newArgs, c-1)
 		} else if mm.IsNativeFunc() {
 			// Set up stack for native metamethod call
@@ -1779,17 +1806,16 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 				vm.stack[nativeBase+1+i] = arg
 			}
 
-			nativeFrame := callFrame{base: nativeBase}
+			nativeFrame := callFrame{base: nativeBase, argc: len(newArgs)}
 			vm.callStack = append(vm.callStack, nativeFrame)
-			oldTop := vm.top
-			vm.top = nativeBase + 1 + len(newArgs)
 
 			// Clear slots beyond args to prevent stale data
-			clearEnd := vm.top + 4
+			clearStart := nativeBase + 1 + len(newArgs)
+			clearEnd := clearStart + 4
 			if clearEnd > len(vm.stack) {
 				clearEnd = len(vm.stack)
 			}
-			for i := vm.top; i < clearEnd; i++ {
+			for i := clearStart; i < clearEnd; i++ {
 				vm.stack[i] = Nil
 			}
 
@@ -1798,7 +1824,6 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 			copy(results, vm.stack[nativeBase:nativeBase+nResults])
 
 			vm.callStack = vm.callStack[:len(vm.callStack)-1]
-			vm.top = oldTop
 		} else {
 			return nil, fmt.Errorf("attempt to call a %s value", mm.Type())
 		}
@@ -1933,6 +1958,9 @@ func (vm *VM) ArgCount() int {
 		return 0
 	}
 	frame := &vm.callStack[len(vm.callStack)-1]
+	if frame.argc >= 0 {
+		return frame.argc
+	}
 	return vm.top - frame.base - 1
 }
 
