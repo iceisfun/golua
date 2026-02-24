@@ -10,6 +10,28 @@ import (
 	"github.com/iceisfun/golua/token"
 )
 
+// ParsePartial parses the given Lua source and returns a partial AST block
+// alongside any error. Unlike Parse, it never returns a nil block — on error,
+// the block contains all statements that were successfully parsed before the
+// first error.
+func ParsePartial(source, input string) (*ast.Block, error) {
+	p := &parser{
+		lex:    lexer.New(source, input),
+		source: source,
+	}
+	if err := p.advance(); err != nil {
+		return &ast.Block{Start: token.Pos{Source: source, Line: 1, Column: 1}}, err
+	}
+	block := p.parseBlock()
+	if p.err != nil {
+		return block, p.err
+	}
+	if p.tok.Type != token.EOS {
+		return block, p.errorf("unexpected symbol near '%s'", p.tok.Literal)
+	}
+	return block, nil
+}
+
 // Parse parses the given Lua source and returns the top-level block.
 func Parse(source, input string) (*ast.Block, error) {
 	p := &parser{
@@ -77,8 +99,7 @@ func (p *parser) errorf(format string, args ...any) error {
 	if p.err != nil {
 		return p.err
 	}
-	msg := fmt.Sprintf(format, args...)
-	p.err = fmt.Errorf("%s: %s", p.tok.Pos, msg)
+	p.err = &token.PosError{Pos: p.tok.Pos, Msg: fmt.Sprintf(format, args...)}
 	return p.err
 }
 

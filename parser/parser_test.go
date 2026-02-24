@@ -361,3 +361,68 @@ func TestErrorBadExprStmt(t *testing.T) {
 	// A bare name that isn't a call hits "unexpected expression statement"
 	expectError(t, "x", "unexpected expression statement")
 }
+
+// ---------------------------------------------------------------------------
+// ParsePartial tests
+// ---------------------------------------------------------------------------
+
+func TestParsePartialValid(t *testing.T) {
+	block, err := ParsePartial("test", "local x = 1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if block == nil {
+		t.Fatal("block should not be nil")
+	}
+	if len(block.Stmts) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(block.Stmts))
+	}
+}
+
+func TestParsePartialError(t *testing.T) {
+	block, err := ParsePartial("test", "local x = 1\nif true then")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if block == nil {
+		t.Fatal("block should not be nil on error")
+	}
+	// The local statement should have parsed successfully.
+	if len(block.Stmts) < 1 {
+		t.Errorf("expected at least 1 statement in partial block, got %d", len(block.Stmts))
+	}
+}
+
+func TestParsePartialEmpty(t *testing.T) {
+	block, err := ParsePartial("test", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if block == nil {
+		t.Fatal("block should not be nil")
+	}
+	if len(block.Stmts) != 0 {
+		t.Fatalf("expected 0 statements, got %d", len(block.Stmts))
+	}
+}
+
+func TestParsePartialLexerError(t *testing.T) {
+	block, err := ParsePartial("test", "local x = 'unterminated")
+	if err == nil {
+		t.Fatal("expected error for unterminated string")
+	}
+	if block == nil {
+		t.Fatal("block should not be nil on lexer error")
+	}
+}
+
+func TestParsePartialBlockNeverNil(t *testing.T) {
+	// Even with an immediate lex error, block must not be nil.
+	block, err := ParsePartial("test", "'bad")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if block == nil {
+		t.Fatal("block must never be nil")
+	}
+}

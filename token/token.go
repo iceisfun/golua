@@ -145,6 +145,14 @@ func (p Pos) String() string {
 	return fmt.Sprintf("%s:%d:%d", p.Source, p.Line, p.Column)
 }
 
+// PosError is an error with an associated source position.
+type PosError struct {
+	Pos Pos
+	Msg string
+}
+
+func (e *PosError) Error() string { return fmt.Sprintf("%s: %s", e.Pos, e.Msg) }
+
 // Token is a single lexical token with its type, value, and position.
 type Token struct {
 	Type    Type

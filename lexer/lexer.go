@@ -75,8 +75,7 @@ func (l *Lexer) currentPos() token.Pos {
 
 // errorf creates a lexer error at the current position.
 func (l *Lexer) errorf(format string, args ...any) error {
-	pos := l.currentPos()
-	return fmt.Errorf("%s: %s", pos, fmt.Sprintf(format, args...))
+	return &token.PosError{Pos: l.currentPos(), Msg: fmt.Sprintf(format, args...)}
 }
 
 // incLine handles newline sequences: \n, \r, \n\r, \r\n.
@@ -245,8 +244,10 @@ func (l *Lexer) scanLongString(buf *strings.Builder, sep int) error {
 			if buf == nil {
 				kind = "comment"
 			}
-			return fmt.Errorf("%s:%d:1: unfinished long %s (starting at line %d)",
-				l.source, l.line, kind, startLine)
+			return &token.PosError{
+				Pos: token.Pos{Source: l.source, Line: l.line, Column: 1},
+				Msg: fmt.Sprintf("unfinished long %s (starting at line %d)", kind, startLine),
+			}
 
 		case ']':
 			closeSep := l.scanSep()
@@ -556,10 +557,11 @@ func (l *Lexer) scanBinaryNumber(pos token.Pos, buf *strings.Builder) (token.Tok
 	// Must have at least one binary digit.
 	if l.current != '0' && l.current != '1' {
 		if isAlpha(l.current) || isDigit(l.current) {
-			return token.Token{}, fmt.Errorf("%s: malformed number '%s%c'",
-				pos, buf.String(), l.current)
+			return token.Token{}, &token.PosError{Pos: pos,
+				Msg: fmt.Sprintf("malformed number '%s%c'", buf.String(), l.current)}
 		}
-		return token.Token{}, fmt.Errorf("%s: malformed number '%s'", pos, buf.String())
+		return token.Token{}, &token.PosError{Pos: pos,
+			Msg: fmt.Sprintf("malformed number '%s'", buf.String())}
 	}
 
 	for l.current == '0' || l.current == '1' {
@@ -569,14 +571,15 @@ func (l *Lexer) scanBinaryNumber(pos token.Pos, buf *strings.Builder) (token.Tok
 
 	// Reject trailing digits or letters (e.g. 0b102, 0b10abc).
 	if isAlpha(l.current) || isDigit(l.current) {
-		return token.Token{}, fmt.Errorf("%s: malformed number '%s%c'",
-			pos, buf.String(), l.current)
+		return token.Token{}, &token.PosError{Pos: pos,
+			Msg: fmt.Sprintf("malformed number '%s%c'", buf.String(), l.current)}
 	}
 
 	raw := buf.String()
 	ival, err := parseInt(raw)
 	if err != nil {
-		return token.Token{}, fmt.Errorf("%s: malformed number '%s'", pos, raw)
+		return token.Token{}, &token.PosError{Pos: pos,
+			Msg: fmt.Sprintf("malformed number '%s'", raw)}
 	}
 	return token.Token{
 		Type:    token.INT,
@@ -624,8 +627,8 @@ func (l *Lexer) scanNumberBody(pos token.Pos, buf *strings.Builder, isHex bool) 
 
 	// Check for letter touching numeral (e.g. "123abc")
 	if isAlpha(l.current) {
-		return token.Token{}, fmt.Errorf("%s: malformed number '%s%c'",
-			pos, buf.String(), l.current)
+		return token.Token{}, &token.PosError{Pos: pos,
+			Msg: fmt.Sprintf("malformed number '%s%c'", buf.String(), l.current)}
 	}
 
 	raw := buf.String()
@@ -633,7 +636,8 @@ func (l *Lexer) scanNumberBody(pos token.Pos, buf *strings.Builder, isHex bool) 
 	if isFloat {
 		val, err := parseFloat(raw)
 		if err != nil {
-			return token.Token{}, fmt.Errorf("%s: malformed number '%s'", pos, raw)
+			return token.Token{}, &token.PosError{Pos: pos,
+				Msg: fmt.Sprintf("malformed number '%s'", raw)}
 		}
 		return token.Token{
 			Type:    token.FLOAT,
@@ -648,7 +652,8 @@ func (l *Lexer) scanNumberBody(pos token.Pos, buf *strings.Builder, isHex bool) 
 		// Integer overflow: fall back to float (matches Lua behaviour).
 		fval, ferr := parseFloat(raw)
 		if ferr != nil {
-			return token.Token{}, fmt.Errorf("%s: malformed number '%s'", pos, raw)
+			return token.Token{}, &token.PosError{Pos: pos,
+				Msg: fmt.Sprintf("malformed number '%s'", raw)}
 		}
 		return token.Token{
 			Type:    token.FLOAT,

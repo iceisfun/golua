@@ -80,3 +80,20 @@ func TestTokenString(t *testing.T) {
 		t.Errorf("EOS token String() = %q, want %q", got, "<eof>")
 	}
 }
+
+func TestPosError(t *testing.T) {
+	e := &PosError{
+		Pos: Pos{Source: "test.lua", Line: 5, Column: 10},
+		Msg: "unexpected symbol",
+	}
+	want := "test.lua:5:10: unexpected symbol"
+	if got := e.Error(); got != want {
+		t.Errorf("PosError.Error() = %q, want %q", got, want)
+	}
+
+	// Verify it satisfies the error interface.
+	var err error = e
+	if err.Error() != want {
+		t.Errorf("error interface: got %q, want %q", err.Error(), want)
+	}
+}
