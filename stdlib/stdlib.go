@@ -212,11 +212,6 @@ func luaError(v *vm.VM) int {
 // pcall(f [, arg1, ...])
 func luaPcall(v *vm.VM) int {
 	fn := v.Get(1)
-	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		v.Set(0, vm.False)
-		v.Set(1, vm.NewString("attempt to call a "+fn.Type()+" value"))
-		return 2
-	}
 
 	// Collect additional arguments
 	argc := v.ArgCount()
@@ -226,6 +221,7 @@ func luaPcall(v *vm.VM) int {
 	}
 
 	// Call the function with error protection
+	// ProtectedCall handles __call metamethods for tables
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {
 		v.Set(0, vm.False)
@@ -250,11 +246,6 @@ func luaPcall(v *vm.VM) int {
 func luaXpcall(v *vm.VM) int {
 	fn := v.Get(1)
 	msgh := v.Get(2)
-	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		v.Set(0, vm.False)
-		v.Set(1, vm.NewString("attempt to call a "+fn.Type()+" value"))
-		return 2
-	}
 	if !msgh.IsFunction() && !msgh.IsNativeFunc() {
 		v.Set(0, vm.False)
 		v.Set(1, vm.NewString("attempt to call a "+msgh.Type()+" value"))

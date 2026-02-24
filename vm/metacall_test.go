@@ -725,3 +725,199 @@ func TestMetaCallNativeErrorPropagation(t *testing.T) {
 		t.Errorf("expected error containing 'native boom', got: %v", err)
 	}
 }
+
+// ──────────────────────────────────────────────────────────────
+// pcall / xpcall with __call metamethod tests
+// ──────────────────────────────────────────────────────────────
+
+// runLuaCallableWithPcall extends runLuaCallable by also registering
+// pcall and xpcall as globals, mirroring stdlib behavior.
+func runLuaCallableWithPcall(t *testing.T, source string) ([]Value, error) {
+	t.Helper()
+	block, err := parser.Parse("<test>", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile("<test>", block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	v := New()
+	v.SetGlobal("setmetatable", NewNativeFunc(func(v *VM) int {
+		tbl := v.Get(1).AsTable()
+		mt := v.Get(2)
+		if mt.IsNil() {
+			tbl.SetMetatable(nil)
+		} else {
+			tbl.SetMetatable(mt.AsTable())
+		}
+		v.Set(0, NewTable(tbl))
+		return 1
+	}))
+	v.SetGlobal("error", NewNativeFunc(func(v *VM) int {
+		panic(&LuaError{Value: v.Get(1)})
+	}))
+	v.SetGlobal("pcall", NewNativeFunc(func(v *VM) int {
+		fn := v.Get(1)
+		argc := v.ArgCount()
+		args := make([]Value, argc-1)
+		for i := 2; i <= argc; i++ {
+			args[i-2] = v.Get(i)
+		}
+		results, err := v.ProtectedCall(fn, args)
+		if err != nil {
+			v.Set(0, False)
+			if le, ok := err.(*LuaError); ok {
+				v.Set(1, le.Value)
+			} else {
+				v.Set(1, NewString(err.Error()))
+			}
+			return 2
+		}
+		v.Set(0, True)
+		for i, r := range results {
+			v.Set(i+1, r)
+		}
+		return 1 + len(results)
+	}))
+	v.SetGlobal("xpcall", NewNativeFunc(func(v *VM) int {
+		fn := v.Get(1)
+		msgh := v.Get(2)
+		if !msgh.IsFunction() && !msgh.IsNativeFunc() {
+			v.Set(0, False)
+			v.Set(1, NewString("attempt to call a "+msgh.Type()+" value"))
+			return 2
+		}
+		argc := v.ArgCount()
+		args := make([]Value, argc-2)
+		for i := 3; i <= argc; i++ {
+			args[i-3] = v.Get(i)
+		}
+		results, err := v.ProtectedCall(fn, args)
+		if err != nil {
+			var errVal Value
+			if le, ok := err.(*LuaError); ok {
+				errVal = le.Value
+			} else {
+				errVal = NewString(err.Error())
+			}
+			handlerResults, handlerErr := v.ProtectedCall(msgh, []Value{errVal})
+			v.Set(0, False)
+			if handlerErr != nil {
+				v.Set(1, NewString(handlerErr.Error()))
+			} else if len(handlerResults) > 0 {
+				v.Set(1, handlerResults[0])
+			} else {
+				v.Set(1, Nil)
+			}
+			return 2
+		}
+		v.Set(0, True)
+		for i, r := range results {
+			v.Set(i+1, r)
+		}
+		return 1 + len(results)
+	}))
+	results, err := v.Run(proto)
+	return results, err
+}
+
+// TestMetaCallPcallDirect verifies pcall works with a __call table.
+func TestMetaCallPcallDirect(t *testing.T) {
+	results, err := runLuaCallableWithPcall(t, `
+		local callable = setmetatable({}, {
+			__call = function(self, a, b)
+				return a + 1, b + 1
+			end
+		})
+		return pcall(callable, 10, 20)
+	`)
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results (true, 11, 21), got %d: %v", len(results), results)
+	}
+	if !results[0].AsBool() {
+		t.Errorf("expected pcall to return true, got %v", results[0])
+	}
+	if results[1].AsInt() != 11 {
+		t.Errorf("expected 11, got %v", results[1])
+	}
+	if results[2].AsInt() != 21 {
+		t.Errorf("expected 21, got %v", results[2])
+	}
+}
+
+// TestMetaCallPcallDirectError verifies pcall catches errors from __call tables.
+func TestMetaCallPcallDirectError(t *testing.T) {
+	results, err := runLuaCallableWithPcall(t, `
+		local callable = setmetatable({}, {
+			__call = function(self)
+				error("boom")
+			end
+		})
+		return pcall(callable)
+	`)
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d: %v", len(results), results)
+	}
+	if results[0].AsBool() {
+		t.Errorf("expected pcall to return false, got true")
+	}
+	if !strings.Contains(results[1].AsString(), "boom") {
+		t.Errorf("expected error containing 'boom', got %v", results[1])
+	}
+}
+
+// TestMetaCallXpcallDirect verifies xpcall works with a __call table.
+func TestMetaCallXpcallDirect(t *testing.T) {
+	results, err := runLuaCallableWithPcall(t, `
+		local callable = setmetatable({}, {
+			__call = function(self, a, b)
+				return a + 1, b + 1
+			end
+		})
+		local function handler(err) return err end
+		return xpcall(callable, handler, 10, 20)
+	`)
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results (true, 11, 21), got %d: %v", len(results), results)
+	}
+	if !results[0].AsBool() {
+		t.Errorf("expected xpcall to return true, got %v", results[0])
+	}
+	if results[1].AsInt() != 11 {
+		t.Errorf("expected 11, got %v", results[1])
+	}
+	if results[2].AsInt() != 21 {
+		t.Errorf("expected 21, got %v", results[2])
+	}
+}
+
+// TestMetaCallPcallNonCallable verifies pcall still returns false for
+// truly non-callable values (not a panic).
+func TestMetaCallPcallNonCallable(t *testing.T) {
+	results, err := runLuaCallableWithPcall(t, `
+		return pcall(42)
+	`)
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d: %v", len(results), results)
+	}
+	if results[0].AsBool() {
+		t.Errorf("expected pcall(42) to return false, got true")
+	}
+	if !strings.Contains(results[1].AsString(), "attempt to call") {
+		t.Errorf("expected 'attempt to call' error, got %v", results[1])
+	}
+}
