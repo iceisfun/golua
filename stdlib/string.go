@@ -276,9 +276,9 @@ func stringGsub(v *vm.VM) int {
 			if repl.IsString() {
 				replacement = expandReplacement(repl.AsString(), s, pos, end, matchCaps)
 			} else if repl.IsFunction() || repl.IsNativeFunc() {
-				replacement = callGsubFunc(v, repl, matchCaps)
+				replacement = callGsubFunc(v, repl, matchCaps, s[pos:end])
 			} else if repl.IsTable() {
-				replacement = lookupGsubTable(repl, matchCaps)
+				replacement = lookupGsubTable(repl, matchCaps, s[pos:end])
 			}
 
 			result.WriteString(replacement)
@@ -351,7 +351,7 @@ func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureVa
 }
 
 // callGsubFunc calls a function for gsub replacement.
-func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue) string {
+func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch string) string {
 	args := make([]vm.Value, len(captures))
 	for i, cap := range captures {
 		if cap.isPos {
@@ -367,7 +367,7 @@ func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue) string {
 		panic(err.Error())
 	}
 	if len(results) == 0 {
-		return captureStr(captures[0])
+		return wholeMatch
 	}
 
 	ret := results[0]
@@ -376,13 +376,13 @@ func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue) string {
 	} else if ret.IsNumber() {
 		return valueToString(ret)
 	} else if ret.IsNil() || (ret.IsBool() && !ret.AsBool()) {
-		return captureStr(captures[0])
+		return wholeMatch
 	}
 	panic(fmt.Sprintf("invalid replacement value (a %s)", ret.Type()))
 }
 
 // lookupGsubTable looks up a gsub replacement from a table.
-func lookupGsubTable(repl vm.Value, captures []captureValue) string {
+func lookupGsubTable(repl vm.Value, captures []captureValue, wholeMatch string) string {
 	var key vm.Value
 	c := captures[0]
 	if c.isPos {
@@ -396,7 +396,7 @@ func lookupGsubTable(repl vm.Value, captures []captureValue) string {
 	} else if val.IsNumber() {
 		return valueToString(val)
 	} else if val.IsNil() || (val.IsBool() && !val.AsBool()) {
-		return captureStr(captures[0])
+		return wholeMatch
 	}
 	panic(fmt.Sprintf("invalid replacement value (a %s)", val.Type()))
 }

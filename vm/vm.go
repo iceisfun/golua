@@ -1394,6 +1394,12 @@ func (vm *VM) ensureStack(n int) {
 	}
 }
 
+// EnsureStack grows the stack so that index n is valid.
+// Native functions should call this before writing to high stack indices.
+func (vm *VM) EnsureStack(n int) {
+	vm.ensureStack(n)
+}
+
 func (vm *VM) constToValue(c compiler.Value) Value {
 	switch c.Type {
 	case compiler.ValNil:

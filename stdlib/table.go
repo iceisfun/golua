@@ -231,6 +231,11 @@ func tableUnpack(v *vm.VM) int {
 		j = getInt(v, 3, "unpack")
 	}
 
+	n := int(j - i + 1)
+	if n > 0 {
+		v.EnsureStack(v.Base() + n)
+	}
+
 	count := 0
 	for idx := i; idx <= j; idx++ {
 		val := tableGetIdx(v, tbl, int(idx))

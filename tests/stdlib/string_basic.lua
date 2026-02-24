@@ -132,6 +132,21 @@ local r8 = string.gsub("abc", "%a", function(c)
 end)
 assert_eq(r8, "AbC")
 
+-- Function returning false with MULTIPLE captures preserves whole match
+-- Bug: captures[0] was returned (first capture) instead of the whole match
+local r8b = string.gsub("a1b2c3", "(%a)(%d)", function(letter, digit)
+    if tonumber(digit) > 1 then return letter .. "[" .. digit .. "]" end
+    return false
+end)
+assert_eq(r8b, "a1b[2]c[3]", "gsub false return with multi-captures")
+
+-- Function returning nil with MULTIPLE captures preserves whole match
+local r8c = string.gsub("x9y8", "(%a)(%d)", function(letter, digit)
+    if tonumber(digit) > 8 then return letter:upper() .. digit end
+    return nil
+end)
+assert_eq(r8c, "X9y8", "gsub nil return with multi-captures")
+
 -- Function with max replacement
 local r9, n9 = string.gsub("aaa", "a", function() return "b" end, 2)
 assert_eq(r9, "bba")

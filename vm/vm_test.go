@@ -1278,4 +1278,81 @@ func TestStackNestedPcall(t *testing.T) {
 	}
 }
 
+// TestUnpackLargeTable verifies that table.unpack can handle tables larger
+// than MaxStack (256) without panicking.
+func TestUnpackLargeTable(t *testing.T) {
+	// Create a table with 500 elements and try to unpack it.
+	// This should grow the stack rather than panic with index out of range.
+	v := New()
+
+	// Register table.unpack as a native function
+	tblLib := NewEmptyTable()
+	tblLib.SetString("unpack", NewNativeFunc(func(vm *VM) int {
+		tbl := vm.Get(1).AsTable()
+		length := tbl.Len()
+		i := 1
+		if !vm.Get(2).IsNil() {
+			i = int(vm.Get(2).AsInt())
+		}
+		j := length
+		if !vm.Get(3).IsNil() {
+			j = int(vm.Get(3).AsInt())
+		}
+		n := j - i + 1
+		if n > 0 {
+			vm.EnsureStack(vm.Base() + n)
+		}
+		count := 0
+		for idx := i; idx <= j; idx++ {
+			vm.Set(count, tbl.Get(NewInt(int64(idx))))
+			count++
+		}
+		return count
+	}))
+	v.SetGlobal("table", NewTable(tblLib))
+
+	// Build a 500-element table
+	big := NewEmptyTable()
+	for i := 1; i <= 500; i++ {
+		big.SetInt(i, NewInt(int64(i)))
+	}
+	v.SetGlobal("big", NewTable(big))
+
+	// This should NOT panic
+	block, err := parser.Parse("<test>", `
+		local vals = {table.unpack(big)}
+		local sum = 0
+		for i = 1, #vals do
+			sum = sum + vals[i]
+		end
+		return sum
+	`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile("<test>", block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	// Catch panics — the bug is a panic, not an error
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("unpack panicked (stack overflow): %v", r)
+		}
+	}()
+
+	results, err := v.Run(proto)
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if len(results) < 1 {
+		t.Fatal("expected a result")
+	}
+	sum := results[0].AsInt()
+	if sum != 125250 {
+		t.Fatalf("expected sum 125250, got %d", sum)
+	}
+}
+
 // Value and Table unit tests live in value_test.go and table_test.go respectively.
