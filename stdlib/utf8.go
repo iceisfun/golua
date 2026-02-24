@@ -136,6 +136,9 @@ func luaUtf8Codepoint(v *vm.VM) int {
 	start := i - 1
 	end := j // inclusive end in 0-indexed = j-1+1 = j
 
+	// Upper-bound estimate: at most (end - start) codepoints
+	v.EnsureStack(v.Base() + (end - start))
+
 	n := 0
 	for p := start; p < end; {
 		r, size := utf8.DecodeRuneInString(s[p:])

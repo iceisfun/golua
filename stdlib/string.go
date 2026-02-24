@@ -141,6 +141,10 @@ func stringByte(v *vm.VM) int {
 		end = len(s)
 	}
 
+	n := end - start + 1
+	if n > 0 {
+		v.EnsureStack(v.Base() + n)
+	}
 	count := 0
 	for idx := start; idx <= end; idx++ {
 		v.Set(count, vm.NewInt(int64(s[idx-1])))

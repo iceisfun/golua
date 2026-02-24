@@ -171,6 +171,7 @@ func makeFileRead(f vm.LuaFile) vm.NativeFunc {
 		}
 
 		// Process each format argument (args start at index 2)
+		v.EnsureStack(v.Base() + n)
 		results := 0
 		for i := 2; i <= n+1; i++ {
 			arg := v.Get(i)

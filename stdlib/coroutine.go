@@ -164,6 +164,7 @@ func coResume(v *vm.VM) int {
 	// Wait for yield or completion
 	select {
 	case results := <-co.yieldCh:
+		v.EnsureStack(v.Base() + 1 + len(results))
 		v.Set(0, vm.True)
 		for i, r := range results {
 			v.Set(i+1, r)
@@ -186,6 +187,7 @@ func coResume(v *vm.VM) int {
 			return 2
 		}
 
+		v.EnsureStack(v.Base() + 1 + len(result))
 		v.Set(0, vm.True)
 		for i, r := range result {
 			v.Set(i+1, r)
@@ -301,6 +303,7 @@ func coYield(v *vm.VM) int {
 	}
 
 	// Return the resume args
+	v.EnsureStack(v.Base() + len(args))
 	for i, arg := range args {
 		v.Set(i, arg)
 	}
@@ -412,6 +415,7 @@ func coWrap(v *vm.VM) int {
 		// Wait for yield or completion
 		select {
 		case results := <-co.yieldCh:
+			v.EnsureStack(v.Base() + len(results))
 			for i, r := range results {
 				v.Set(i, r)
 			}
@@ -427,6 +431,7 @@ func coWrap(v *vm.VM) int {
 				panic(err)
 			}
 
+			v.EnsureStack(v.Base() + len(result))
 			for i, r := range result {
 				v.Set(i, r)
 			}

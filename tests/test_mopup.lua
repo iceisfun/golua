@@ -311,6 +311,30 @@ local f2_ok, f2_val = coroutine.resume(final_co)
 check("deep_integration_finish", f2_ok and f2_val == "final_done")
 
 -- ============================================================
+-- 15. UTF8.CODEPOINT LARGE RANGE (STACK PRESSURE)
+-- ============================================================
+local ucp_ok, ucp_err = pcall(function()
+    local s = string.rep("A", 500)
+    local vals = {utf8.codepoint(s, 1, #s)}
+    local sum = 0
+    for i = 1, #vals do sum = sum + vals[i] end
+    return sum, #vals
+end)
+check("utf8_codepoint_500", ucp_ok and ucp_err == 32500)
+
+-- ============================================================
+-- 16. STRING.BYTE LARGE RANGE (STACK PRESSURE)
+-- ============================================================
+local sb_ok, sb_err = pcall(function()
+    local s = string.rep("B", 500)
+    local vals = {string.byte(s, 1, #s)}
+    local sum = 0
+    for i = 1, #vals do sum = sum + vals[i] end
+    return sum, #vals
+end)
+check("string_byte_500", sb_ok and sb_err == 33000) -- 'B' = 66, 500*66 = 33000
+
+-- ============================================================
 -- SCOREBOARD
 -- ============================================================
 print("=====================================")

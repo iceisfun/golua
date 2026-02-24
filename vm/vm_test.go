@@ -1355,4 +1355,84 @@ func TestUnpackLargeTable(t *testing.T) {
 	}
 }
 
+// TestStringByteLarge verifies that string.byte can return more than MaxStack
+// (256) values without panicking due to stack overflow.
+func TestStringByteLarge(t *testing.T) {
+	v := New()
+
+	// Register string.byte as a native function
+	strLib := NewEmptyTable()
+	strLib.SetString("byte", NewNativeFunc(func(vm *VM) int {
+		s := vm.Get(1).AsString()
+		i := int64(1)
+		if !vm.Get(2).IsNil() {
+			i = vm.Get(2).AsInt()
+		}
+		j := i
+		if !vm.Get(3).IsNil() {
+			j = vm.Get(3).AsInt()
+		}
+		start := int(i)
+		end := int(j)
+		if start < 1 {
+			start = 1
+		}
+		if end > len(s) {
+			end = len(s)
+		}
+		n := end - start + 1
+		if n > 0 {
+			vm.EnsureStack(vm.Base() + n)
+		}
+		count := 0
+		for idx := start; idx <= end; idx++ {
+			vm.Set(count, NewInt(int64(s[idx-1])))
+			count++
+		}
+		return count
+	}))
+	v.SetGlobal("string", NewTable(strLib))
+
+	// Build a 500-byte string
+	s := strings.Repeat("A", 500)
+	v.SetGlobal("s", NewString(s))
+
+	block, err := parser.Parse("<test>", `
+		local vals = {string.byte(s, 1, #s)}
+		local sum = 0
+		for i = 1, #vals do
+			sum = sum + vals[i]
+		end
+		return sum, #vals
+	`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile("<test>", block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("string.byte panicked (stack overflow): %v", r)
+		}
+	}()
+
+	results, err := v.Run(proto)
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatal("expected 2 results")
+	}
+	// 'A' = 65, 500 * 65 = 32500
+	if results[0].AsInt() != 32500 {
+		t.Fatalf("expected sum 32500, got %d", results[0].AsInt())
+	}
+	if results[1].AsInt() != 500 {
+		t.Fatalf("expected 500 values, got %d", results[1].AsInt())
+	}
+}
+
 // Value and Table unit tests live in value_test.go and table_test.go respectively.

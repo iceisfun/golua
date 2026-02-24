@@ -252,6 +252,7 @@ func luaPcall(v *vm.VM) int {
 	}
 
 	// Success: return true followed by all results
+	v.EnsureStack(v.Base() + 1 + len(results))
 	v.Set(0, vm.True)
 	for i, r := range results {
 		v.Set(i+1, r)
@@ -298,6 +299,7 @@ func luaXpcall(v *vm.VM) int {
 	}
 
 	// Success: return true followed by all results
+	v.EnsureStack(v.Base() + 1 + len(results))
 	v.Set(0, vm.True)
 	for i, r := range results {
 		v.Set(i+1, r)
@@ -415,6 +417,9 @@ func luaSelect(v *vm.VM) int {
 	}
 
 	// Return values from index i onwards
+	if c := n - 1 - int(i) + 1; c > 0 {
+		v.EnsureStack(v.Base() + c)
+	}
 	count := 0
 	for j := int(i); j <= n-1; j++ {
 		v.Set(count, v.Get(j+1))
