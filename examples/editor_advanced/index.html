@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GoLua Editor</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1e1e1e; color: #ccc; height: 100vh; display: flex; flex-direction: column; }
+#topbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: #252526; border-bottom: 1px solid #333; }
+#topbar h1 { font-size: 14px; font-weight: 600; color: #ddd; }
+#run-btn { background: #0e639c; color: #fff; border: none; padding: 6px 16px; border-radius: 3px; cursor: pointer; font-size: 13px; }
+#run-btn:hover { background: #1177bb; }
+#run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+#run-btn kbd { font-size: 11px; opacity: 0.7; margin-left: 6px; }
+#editor-wrap { flex: 1; min-height: 0; }
+#output-panel { height: 180px; background: #1e1e1e; border-top: 2px solid #0e639c; display: flex; flex-direction: column; }
+#output-header { padding: 6px 16px; font-size: 12px; font-weight: 600; background: #252526; color: #ddd; }
+#output { flex: 1; overflow: auto; padding: 8px 16px; font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+#output.error { color: #f48771; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <h1>GoLua Editor</h1>
+  <button id="run-btn">Run<kbd>Ctrl+Enter</kbd></button>
+</div>
+<div id="editor-wrap"></div>
+<div id="output-panel">
+  <div id="output-header">Output</div>
+  <div id="output"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+<script>
+const DOC_URI = "editor://main.lua";
+
+const STARTER = `-- Welcome to the GoLua Editor!
+-- Edit this code and see live diagnostics.
+-- Press Ctrl+Enter or click Run to execute.
+
+local function greet(name)
+    return "Hello, " .. name .. "!"
+end
+
+print(greet("World"))
+
+-- Try some math
+for i = 1, 5 do
+    print(string.format("  %d^2 = %d", i, i * i))
+end
+
+-- Tables
+local colors = {"red", "green", "blue"}
+for i, c in ipairs(colors) do
+    print(string.format("  %d: %s", i, c))
+end
+`;
+
+// JSON-RPC 2.0 helper
+let rpcId = 0;
+async function rpcCall(method, params) {
+  const res = await fetch("/api/rpc", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.result;
+}
+
+require.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs" } });
+require(["vs/editor/editor.main"], function () {
+  const editor = monaco.editor.create(document.getElementById("editor-wrap"), {
+    value: STARTER,
+    language: "lua",
+    theme: "vs-dark",
+    minimap: { enabled: false },
+    fontSize: 14,
+    lineNumbers: "on",
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+  });
+
+  const model = editor.getModel();
+
+  // --- Completion provider ---
+  monaco.languages.registerCompletionItemProvider("lua", {
+    triggerCharacters: [".", ":"],
+    provideCompletionItems: async function (model, position) {
+      const lineText = model.getLineContent(position.lineNumber);
+      try {
+        const result = await rpcCall("textDocument/completion", {
+          uri: DOC_URI,
+          line: position.lineNumber,
+          col: position.column,
+          lineText: lineText,
+        });
+        const items = (result && result.items) || [];
+        return {
+          suggestions: items.map(function (item) {
+            return {
+              label: item.label,
+              kind: item.kind,
+              detail: item.detail || "",
+              insertText: item.insertText || item.label,
+              sortText: item.sortText || item.label,
+              range: getWordRange(model, position),
+            };
+          }),
+        };
+      } catch (e) {
+        console.error("completion error:", e);
+        return { suggestions: [] };
+      }
+    },
+  });
+
+  // --- Hover provider ---
+  monaco.languages.registerHoverProvider("lua", {
+    provideHover: async function (model, position) {
+      try {
+        const result = await rpcCall("textDocument/hover", {
+          uri: DOC_URI,
+          line: position.lineNumber,
+          col: position.column,
+        });
+        if (!result || !result.contents) return null;
+        return {
+          contents: [{ value: result.contents }],
+        };
+      } catch (e) {
+        console.error("hover error:", e);
+        return null;
+      }
+    },
+  });
+
+  // --- Diagnostics via didChange ---
+  let changeTimer = null;
+  model.onDidChangeContent(function () {
+    clearTimeout(changeTimer);
+    changeTimer = setTimeout(function () { sendDidChange(model); }, 300);
+  });
+
+  // --- Initialize + didOpen ---
+  rpcCall("initialize", {}).then(function () {
+    return rpcCall("textDocument/didOpen", {
+      uri: DOC_URI,
+      version: 1,
+      text: model.getValue(),
+    });
+  }).then(function (result) {
+    applyDiagnostics(model, result);
+  });
+
+  // --- Run ---
+  var runBtn = document.getElementById("run-btn");
+  runBtn.addEventListener("click", function () { runCode(model); });
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, function () { runCode(model); });
+});
+
+let docVersion = 1;
+
+async function sendDidChange(model) {
+  try {
+    const result = await rpcCall("textDocument/didChange", {
+      uri: DOC_URI,
+      version: ++docVersion,
+      text: model.getValue(),
+    });
+    applyDiagnostics(model, result);
+  } catch (e) {
+    console.error("didChange failed:", e);
+  }
+}
+
+function applyDiagnostics(model, result) {
+  if (!result) return;
+  const diags = result.diagnostics || [];
+  const markers = diags.map(function (d) {
+    return {
+      severity: d.severity,
+      message: d.message,
+      startLineNumber: d.startLineNumber,
+      startColumn: d.startColumn,
+      endLineNumber: d.endLineNumber,
+      endColumn: d.endColumn + 1,
+    };
+  });
+  monaco.editor.setModelMarkers(model, "golua", markers);
+}
+
+function getWordRange(model, position) {
+  var word = model.getWordUntilPosition(position);
+  return {
+    startLineNumber: position.lineNumber,
+    endLineNumber: position.lineNumber,
+    startColumn: word.startColumn,
+    endColumn: position.column,
+  };
+}
+
+async function runCode(model) {
+  var outputEl = document.getElementById("output");
+  var runBtn = document.getElementById("run-btn");
+
+  runBtn.disabled = true;
+  outputEl.textContent = "Running...";
+  outputEl.className = "";
+
+  try {
+    var res = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: model.getValue() }),
+    });
+    var data = await res.json();
+
+    if (data.error) {
+      outputEl.className = "error";
+      outputEl.textContent = data.output ? data.output + "\n" + data.error : data.error;
+    } else {
+      outputEl.className = "";
+      outputEl.textContent = data.output || "(no output)";
+    }
+  } catch (e) {
+    outputEl.className = "error";
+    outputEl.textContent = "Request failed: " + e.message;
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
