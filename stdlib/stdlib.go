@@ -134,6 +134,23 @@ func luaType(v *vm.VM) int {
 // tostring(v)
 func luaToString(v *vm.VM) int {
 	val := v.Get(1)
+	// Check for __tostring metamethod on tables
+	if val.IsTable() {
+		if mt := val.AsTable().Metatable(); mt != nil {
+			if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+				results, err := v.ProtectedCall(ts, []vm.Value{val})
+				if err != nil {
+					panic(err)
+				}
+				if len(results) > 0 {
+					v.Set(0, results[0])
+				} else {
+					v.Set(0, vm.NewString("nil"))
+				}
+				return 1
+			}
+		}
+	}
 	v.Set(0, vm.NewString(valueToString(val)))
 	return 1
 }
