@@ -117,6 +117,57 @@ func TestTimeTickKeyTruncation(t *testing.T) {
 	}
 }
 
+func TestTimeOnceFirstCallTrue(t *testing.T) {
+	runLuaWithTime(t, `
+		-- first call returns true
+		assert(time.once("test_key") == true, "first once should be true")
+		-- second call returns false
+		assert(time.once("test_key") == false, "second once should be false")
+		-- third call still false
+		assert(time.once("test_key") == false, "third once should be false")
+	`, "test_time_once_first")
+}
+
+func TestTimeOnceAutoKey(t *testing.T) {
+	runLuaWithTime(t, `
+		-- auto-keyed by callsite: different lines get independent state
+		local a = time.once()
+		local b = time.once()
+		assert(a == true, "first auto once should be true")
+		assert(b == true, "different callsite should also be true")
+	`, "test_time_once_auto")
+}
+
+func TestTimeOnceExplicitKey(t *testing.T) {
+	runLuaWithTime(t, `
+		-- explicit name shares state regardless of callsite
+		assert(time.once("shared") == true)
+		assert(time.once("shared") == false)
+
+		-- different name is independent
+		assert(time.once("other") == true)
+	`, "test_time_once_explicit")
+}
+
+func TestTimeOnceKeyLimit(t *testing.T) {
+	p := vm.NewDefaultTimeProvider()
+	// Fill up to the 10,000 key limit
+	for i := 0; i < 10000; i++ {
+		key := fmt.Sprintf("once_%d", i)
+		if !p.Once(key) {
+			t.Fatalf("once %d should have returned true", i)
+		}
+	}
+	// 10,001st key should be rejected
+	if p.Once("overflow") {
+		t.Fatal("once beyond limit should return false")
+	}
+	// Existing keys still return false (already fired)
+	if p.Once("once_0") {
+		t.Fatal("existing key should return false on second call")
+	}
+}
+
 func TestTimeNotAvailableWithoutProvider(t *testing.T) {
 	block, err := parser.Parse("test", `
 		assert(time == nil, "time should not be available without provider")

@@ -1,4 +1,4 @@
-// Example: High-resolution timing with time.now(), time.since(), and time.tick()
+// Example: High-resolution timing with time.now(), time.since(), time.tick(), and time.once()
 //
 // This is a non-standard extension. The time library provides
 // millisecond-precision timing for benchmarking, elapsed-time
@@ -43,6 +43,18 @@ func main() {
 			end
 		end
 		print("total ticks:", ticks)
+		print()
+
+		-- time.once() returns true on first call, false thereafter
+		-- useful for one-time initialization inside loops
+		local inits = 0
+		for i = 1, 5 do
+			if time.once() then
+				inits = inits + 1
+				print("initialized at i=" .. i)
+			end
+		end
+		print("init count:", inits) -- always 1
 	`
 
 	block, err := parser.Parse("example", source)

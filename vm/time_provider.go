@@ -13,18 +13,24 @@ type LuaTimeProvider interface {
 	// Tick returns true once per interval (ms) for the given key,
 	// false otherwise. Used for periodic logic in hot paths.
 	Tick(key string, ms int64) bool
+
+	// Once returns true on the first call for a given key, false
+	// on all subsequent calls. Used for one-time initialization.
+	Once(key string) bool
 }
 
 // DefaultTimeProvider uses Go's time package.
 type DefaultTimeProvider struct {
 	mu    sync.Mutex
 	ticks map[string]int64
+	onces map[string]bool
 }
 
 // NewDefaultTimeProvider creates a time provider.
 func NewDefaultTimeProvider() *DefaultTimeProvider {
 	return &DefaultTimeProvider{
 		ticks: make(map[string]int64),
+		onces: make(map[string]bool),
 	}
 }
 
@@ -62,4 +68,23 @@ func (p *DefaultTimeProvider) Tick(key string, ms int64) bool {
 		return true
 	}
 	return false
+}
+
+// Once returns true on the first call for a given key, false on all
+// subsequent calls. Keys longer than 512 bytes are truncated. Once
+// 10,000 distinct keys exist, new keys are silently ignored (returns false).
+func (p *DefaultTimeProvider) Once(key string) bool {
+	if len(key) > maxTickKeyLen {
+		key = key[:maxTickKeyLen]
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.onces[key] {
+		return false
+	}
+	if len(p.onces) >= maxTickKeys {
+		return false
+	}
+	p.onces[key] = true
+	return true
 }
