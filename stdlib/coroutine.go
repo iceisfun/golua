@@ -177,7 +177,12 @@ func coResume(v *vm.VM) int {
 
 		if err != nil {
 			v.Set(0, vm.False)
-			v.Set(1, vm.NewString(err.Error()))
+			// Preserve the original Lua error value if available
+			if le, ok := err.(*vm.LuaError); ok {
+				v.Set(1, le.Value)
+			} else {
+				v.Set(1, vm.NewString(err.Error()))
+			}
 			return 2
 		}
 
@@ -198,7 +203,14 @@ func runCoroutine(co *Coroutine) {
 	defer func() {
 		if r := recover(); r != nil {
 			co.mu.Lock()
-			co.err = fmt.Errorf("%v", r)
+			// Preserve *LuaError so resume can return the original Lua value
+			if le, ok := r.(*vm.LuaError); ok {
+				co.err = le
+			} else if err, ok := r.(error); ok {
+				co.err = err
+			} else {
+				co.err = fmt.Errorf("%v", r)
+			}
 			co.status = "dead"
 			co.mu.Unlock()
 		}
@@ -411,7 +423,8 @@ func coWrap(v *vm.VM) int {
 			co.mu.Unlock()
 
 			if err != nil {
-				panic(err.Error())
+				// Preserve the original error (including *LuaError)
+				panic(err)
 			}
 
 			for i, r := range result {
