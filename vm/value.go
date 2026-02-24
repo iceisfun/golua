@@ -410,3 +410,35 @@ func (v Value) LessEqual(other Value) (bool, bool) {
 	}
 	return false, false
 }
+
+// LuaError wraps a Lua Value as a Go error so that error() can propagate
+// arbitrary Lua values (tables, numbers, etc.) through panic/recover
+// and pcall/xpcall can return the original value instead of a string.
+type LuaError struct {
+	Value Value
+}
+
+func (e *LuaError) Error() string {
+	return ValueToString(e.Value)
+}
+
+// ValueToString converts a Value to its string representation.
+func ValueToString(val Value) string {
+	switch {
+	case val.IsNil():
+		return "nil"
+	case val.IsBool():
+		if val.AsBool() {
+			return "true"
+		}
+		return "false"
+	case val.IsInt():
+		return fmt.Sprintf("%d", val.AsInt())
+	case val.IsFloat():
+		return fmt.Sprintf("%g", val.AsFloat())
+	case val.IsString():
+		return val.AsString()
+	default:
+		return fmt.Sprintf("%s: %p", val.Type(), val.ptr)
+	}
+}

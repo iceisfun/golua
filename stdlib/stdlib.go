@@ -200,12 +200,13 @@ func luaError(v *vm.VM) int {
 		level = getInt(v, 2, "error")
 	}
 
+	// For string messages with level > 0, prepend source location
 	if level > 0 && msg.IsString() {
 		if loc := v.GetSourceLocation(int(level)); loc != "" {
-			panic(loc + ": " + msg.AsString())
+			msg = vm.NewString(loc + ": " + msg.AsString())
 		}
 	}
-	panic(valueToString(msg))
+	panic(&vm.LuaError{Value: msg})
 }
 
 // pcall(f [, arg1, ...])
@@ -228,7 +229,12 @@ func luaPcall(v *vm.VM) int {
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {
 		v.Set(0, vm.False)
-		v.Set(1, vm.NewString(err.Error()))
+		// Preserve the original Lua error value if available
+		if le, ok := err.(*vm.LuaError); ok {
+			v.Set(1, le.Value)
+		} else {
+			v.Set(1, vm.NewString(err.Error()))
+		}
 		return 2
 	}
 
@@ -264,8 +270,14 @@ func luaXpcall(v *vm.VM) int {
 
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {
-		// Call message handler with the error
-		handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{vm.NewString(err.Error())})
+		// Pass the original Lua error value to the message handler
+		var errVal vm.Value
+		if le, ok := err.(*vm.LuaError); ok {
+			errVal = le.Value
+		} else {
+			errVal = vm.NewString(err.Error())
+		}
+		handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{errVal})
 		v.Set(0, vm.False)
 		if handlerErr != nil {
 			v.Set(1, vm.NewString(handlerErr.Error()))

@@ -125,7 +125,12 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%v", r)
+			// Preserve LuaError so pcall/xpcall can return the original Lua value
+			if le, ok := r.(*LuaError); ok {
+				err = le
+			} else {
+				err = fmt.Errorf("%v", r)
+			}
 			results = nil
 			// Restore VM state
 			vm.top = savedTop
