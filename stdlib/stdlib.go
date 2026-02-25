@@ -383,13 +383,16 @@ func luaIpairs(v *vm.VM) int {
 		panic("bad argument #1 to 'ipairs' (table expected)")
 	}
 
-	// ipairs iterator
+	// ipairs iterator — uses metamethod-aware access so __index is honored
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
 		t := v.Get(1).AsTable()
 		i := v.Get(2)
 		idx, _ := i.ToInt()
 		idx++
-		val := t.Get(vm.NewInt(idx))
+		val, err := v.TableGetInt(t, int(idx))
+		if err != nil {
+			panic(err)
+		}
 		if val.IsNil() {
 			v.Set(0, vm.Nil)
 			return 1

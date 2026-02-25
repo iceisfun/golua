@@ -1362,3 +1362,90 @@ func TestPairs_MixedArrayAndHash(t *testing.T) {
 		t.Errorf("expected 4 visited entries, got %v", results[0])
 	}
 }
+
+// ---- pairs/ipairs metamethod tests ----
+
+func TestPairs_PairsMetamethod(t *testing.T) {
+	// __pairs should override default iteration
+	results := mustRun(t, `
+		local called = 0
+		local t = setmetatable({}, {
+			__pairs = function(self)
+				called = called + 1
+				local keys = {"a", "b"}
+				local i = 0
+				return function()
+					i = i + 1
+					if keys[i] then return keys[i], i end
+				end, self, nil
+			end
+		})
+		local sum = 0
+		for k, v in pairs(t) do sum = sum + v end
+		return called, sum
+	`)
+	if results[0].AsInt() != 1 {
+		t.Errorf("__pairs should be called once, got %v", results[0])
+	}
+	if results[1].AsInt() != 3 {
+		t.Errorf("expected sum=3, got %v", results[1])
+	}
+}
+
+func TestIpairs_IndexMetamethod(t *testing.T) {
+	// ipairs should honor __index metamethod
+	results := mustRun(t, `
+		local t = setmetatable({}, {
+			__index = function(_, k)
+				if k >= 1 and k <= 3 then return k * 100 end
+				return nil
+			end
+		})
+		local sum = 0
+		local count = 0
+		for i, v in ipairs(t) do
+			sum = sum + v
+			count = count + 1
+		end
+		return count, sum
+	`)
+	if results[0].AsInt() != 3 {
+		t.Errorf("expected 3 iterations, got %v", results[0])
+	}
+	if results[1].AsInt() != 600 {
+		t.Errorf("expected sum=600, got %v", results[1])
+	}
+}
+
+func TestIpairs_IndexMetamethodTable(t *testing.T) {
+	// ipairs should honor __index as a table (not just function)
+	results := mustRun(t, `
+		local backing = {10, 20, 30}
+		local t = setmetatable({}, {__index = backing})
+		local sum = 0
+		for i, v in ipairs(t) do sum = sum + v end
+		return sum
+	`)
+	if results[0].AsInt() != 60 {
+		t.Errorf("expected sum=60, got %v", results[0])
+	}
+}
+
+func TestIpairs_StopsAtNil(t *testing.T) {
+	// ipairs must stop at the first nil even with __index
+	results := mustRun(t, `
+		local t = setmetatable({}, {
+			__index = function(_, k)
+				if k == 1 then return 10 end
+				if k == 3 then return 30 end  -- gap at 2
+				return nil
+			end
+		})
+		local count = 0
+		for i, v in ipairs(t) do count = count + 1 end
+		return count
+	`)
+	if results[0].AsInt() != 1 {
+		t.Errorf("ipairs should stop at nil gap, got %v iterations", results[0])
+	}
+}
