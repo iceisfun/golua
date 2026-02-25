@@ -349,9 +349,24 @@ func luaCollectgarbage(v *vm.VM) int {
 
 // pairs(t)
 func luaPairs(v *vm.VM) int {
-	tbl := v.Get(1).AsTable()
+	arg := v.Get(1)
+	tbl := arg.AsTable()
 	if tbl == nil {
 		panic("bad argument #1 to 'pairs' (table expected)")
+	}
+
+	// Check for __pairs metamethod
+	if mt := tbl.Metatable(); mt != nil {
+		if mp := mt.Get(vm.NewString("__pairs")); !mp.IsNil() {
+			results, err := v.ProtectedCall(mp, []vm.Value{arg})
+			if err != nil {
+				panic(err)
+			}
+			for i, r := range results {
+				v.Set(i, r)
+			}
+			return len(results)
+		}
 	}
 
 	// Return next, t, nil
