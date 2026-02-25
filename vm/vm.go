@@ -113,7 +113,7 @@ func (vm *VM) Run(proto *compiler.Proto) ([]Value, error) {
 		}
 	}
 
-	return vm.call(closure, nil, -1)
+	return vm.ProtectedCall(NewFunction(closure), nil)
 }
 
 // ProtectedCall calls a function in protected mode, catching any errors.
