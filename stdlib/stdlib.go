@@ -3,6 +3,7 @@ package stdlib
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -609,6 +610,22 @@ func valueToString(val vm.Value) string {
 		}
 		return "false"
 	case val.IsNumber():
+		if val.IsInt() {
+			return val.String()
+		}
+		f := val.AsFloat()
+		if math.IsInf(f, 1) {
+			return "inf"
+		}
+		if math.IsInf(f, -1) {
+			return "-inf"
+		}
+		if math.IsNaN(f) {
+			if math.Signbit(f) {
+				return "-nan"
+			}
+			return "nan"
+		}
 		return val.String()
 	case val.IsString():
 		return val.AsString()
