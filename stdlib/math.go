@@ -117,10 +117,19 @@ func mathFloor(v *vm.VM) int {
 }
 
 func mathFmod(v *vm.VM) int {
+	v1 := v.Get(1)
+	v2 := v.Get(2)
 	x := getNumber(v, 1, "fmod")
 	y := getNumber(v, 2, "fmod")
 	if y == 0 {
 		panic("attempt to perform 'n%0'")
+	}
+	if v1.IsInt() && v2.IsInt() {
+		// Integer fmod: preserve integer type
+		a := v1.AsInt()
+		b := v2.AsInt()
+		v.Set(0, vm.NewInt(a%b))
+		return 1
 	}
 	v.Set(0, vm.NewFloat(math.Mod(x, y)))
 	return 1
@@ -303,7 +312,7 @@ func mathTan(v *vm.VM) int {
 
 func mathTointeger(v *vm.VM) int {
 	val := v.Get(1)
-	if !val.IsNumber() {
+	if !val.IsNumber() && !val.IsString() {
 		v.Set(0, vm.Nil)
 		return 1
 	}
@@ -318,7 +327,7 @@ func mathTointeger(v *vm.VM) int {
 func mathType(v *vm.VM) int {
 	val := v.Get(1)
 	if !val.IsNumber() {
-		v.Set(0, vm.False)
+		v.Set(0, vm.Nil)
 	} else if val.IsInt() {
 		v.Set(0, vm.NewString("integer"))
 	} else {

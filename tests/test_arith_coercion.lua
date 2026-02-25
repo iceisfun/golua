@@ -32,5 +32,7 @@ assert("2.4" // 2 == 1, "float-str // int")
 -- Non-numeric string should error
 assert(not pcall(function() return "a" + "1" end), "non-numeric str + should error")
 
--- Integer division of float strings by zero gives infinity (float coercion path)
-assert(("8" // "0") == math.huge, "str // 0 gives inf")
+-- Integer strings divided by zero raise an error (integer coercion path per Lua 5.4)
+assert(not pcall(function() return "8" // "0" end), "int-str // 0 should error")
+-- Float string division by zero gives infinity
+assert(("8.0" // "0.0") == math.huge, "float-str // 0.0 gives inf")

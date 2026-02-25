@@ -637,7 +637,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sc := inst.SC()
 			v := vm.stack[frame.base+b]
 			if i, ok := v.ToInt(); ok {
-				vm.stack[frame.base+a] = NewInt(i >> uint(sc))
+				vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
 			} else {
 				return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
 			}
@@ -1434,6 +1434,18 @@ func (vm *VM) getRK(frame *callFrame, c, k int) Value {
 }
 
 func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
+	// Coerce string operands to numeric values (preserving integer type)
+	if v1.IsString() {
+		if nv, ok := StringToNumericValue(v1.AsString()); ok {
+			v1 = nv
+		}
+	}
+	if v2.IsString() {
+		if nv, ok := StringToNumericValue(v2.AsString()); ok {
+			v2 = nv
+		}
+	}
+
 	// Integer fast path: both operands are int
 	if v1.IsInt() && v2.IsInt() && op != compiler.OP_DIV && op != compiler.OP_POW {
 		i1, i2 := v1.AsInt(), v2.AsInt()
@@ -1679,11 +1691,11 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 			if i2 >= 0 {
 				result = i1 << uint(i2)
 			} else {
-				result = i1 >> uint(-i2)
+				result = int64(uint64(i1) >> uint(-i2))
 			}
 		case compiler.OP_SHR:
 			if i2 >= 0 {
-				result = i1 >> uint(i2)
+				result = int64(uint64(i1) >> uint(i2))
 			} else {
 				result = i1 << uint(-i2)
 			}
@@ -1893,10 +1905,15 @@ func (vm *VM) closeUpvalues(level int) {
 	vm.openUpvalues = remaining
 
 	// Call __close metamethod on TBC variables in reverse order
-	// (most recently declared first)
-	remainingTBC := vm.tbcVars[:0]
-	for i := len(vm.tbcVars) - 1; i >= 0; i-- {
-		idx := vm.tbcVars[i]
+	// (most recently declared first).
+	// We must snapshot tbcVars and use a separate slice for survivors because
+	// callCloseMetamethod may re-enter closeUpvalues (via the callee's
+	// OP_RETURN), and the nested call would corrupt a shared backing array.
+	snapshot := make([]int, len(vm.tbcVars))
+	copy(snapshot, vm.tbcVars)
+	var remainingTBC []int
+	for i := len(snapshot) - 1; i >= 0; i-- {
+		idx := snapshot[i]
 		if idx >= level {
 			vm.callCloseMetamethod(idx)
 		} else {
@@ -2500,19 +2517,21 @@ func (vm *VM) getMetafield(v Value, key string) Value {
 }
 
 // GetSourceLocation returns "source:line" for the given call stack level.
-// Level 1 = the current Lua function, level 2 = its caller, etc.
-// Returns "" if the level is out of range or the frame is a native function.
+// Level 1 = the caller of the current function, level 2 = its caller, etc.
+// Returns "" if the level is out of range or the frame at that level is native.
 func (vm *VM) GetSourceLocation(level int) string {
-	// callStack index: len-1 is the native error() frame, len-2 is the Lua caller at level 1
-	// We skip native frames when counting levels.
+	// callStack: len-1 is the current native frame (error()), we start from len-2.
+	// Count all frames (native and Lua) to match Lua 5.4 level semantics.
+	// If the frame at the target level is native (no Lua source), return "".
+	idx := len(vm.callStack) - 2 // skip error() itself
 	count := 0
-	for i := len(vm.callStack) - 1; i >= 0; i-- {
-		frame := vm.callStack[i]
-		if frame.closure == nil {
-			continue // skip native frames
-		}
+	for idx >= 0 {
 		count++
 		if count == level {
+			frame := vm.callStack[idx]
+			if frame.closure == nil {
+				return "" // native frame has no source
+			}
 			proto := frame.closure.Proto
 			pc := frame.pc - 1
 			if pc < 0 {
@@ -2523,6 +2542,7 @@ func (vm *VM) GetSourceLocation(level int) string {
 			}
 			return proto.Source
 		}
+		idx--
 	}
 	return ""
 }

@@ -3,8 +3,8 @@
 -- float with integer value
 assert(math.tointeger(56.0) == 56, "tointeger(56.0)")
 
--- string input: Lua 5.4 returns nil for strings (no coercion)
-assert(math.tointeger("-123") == nil, "tointeger('-123') should be nil in Lua 5.4")
+-- string input: Lua 5.4 coerces strings via lua_tointegerx
+assert(math.tointeger("-123") == -123, "tointeger('-123') should be -123")
 
 -- table input
 assert(math.tointeger({}) == nil, "tointeger({}) should be nil")

@@ -41,6 +41,15 @@ func luaLoad(v *vm.VM) int {
 	if !v.Get(2).IsNil() {
 		chunkName = v.Get(2).AsString()
 	}
+	// Format chunkname for source display per Lua 5.4 conventions:
+	// "=xxx" → "xxx" (literal), "@xxx" → "xxx" (filename), else → [string "xxx"]
+	if len(chunkName) > 0 && chunkName[0] == '=' {
+		chunkName = chunkName[1:]
+	} else if len(chunkName) > 0 && chunkName[0] == '@' {
+		chunkName = chunkName[1:]
+	} else {
+		chunkName = fmt.Sprintf(`[string "%s"]`, chunkName)
+	}
 	mode := "bt"
 	if !v.Get(3).IsNil() {
 		m := v.Get(3)
@@ -85,9 +94,7 @@ func luaLoad(v *vm.VM) int {
 		}
 		source = string(builder)
 	} else {
-		v.Set(0, vm.Nil)
-		v.Set(1, vm.NewString("bad argument #1 to 'load' (string or function expected)"))
-		return 2
+		panic(fmt.Sprintf("bad argument #1 to 'load' (function expected, got %s)", chunk.Type()))
 	}
 
 	if !strings.Contains(mode, "t") {

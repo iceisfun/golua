@@ -456,6 +456,10 @@ func luaNext(v *vm.VM) int {
 	}
 	key := v.Get(2)
 	nextK, nextV := tbl.Next(key)
+	if nextK.IsNil() {
+		v.Set(0, vm.Nil)
+		return 1
+	}
 	v.Set(0, nextK)
 	v.Set(1, nextV)
 	return 2

@@ -1238,11 +1238,11 @@ func TestProbe_MathType(t *testing.T) {
 	if results[1].AsString() != "float" {
 		t.Errorf("math.type(3.14): got %q", results[1].AsString())
 	}
-	if results[2].ToBool() {
-		t.Errorf("math.type('42'): should be false, got %v", results[2])
+	if !results[2].IsNil() {
+		t.Errorf("math.type('42'): should be nil, got %v", results[2])
 	}
-	if results[3].ToBool() {
-		t.Errorf("math.type(nil): should be false, got %v", results[3])
+	if !results[3].IsNil() {
+		t.Errorf("math.type(nil): should be nil, got %v", results[3])
 	}
 }
 
@@ -1259,8 +1259,8 @@ func TestProbe_MathTointeger(t *testing.T) {
 	if !results[2].IsNil() {
 		t.Errorf("tointeger(42.5): got %v, expected nil", results[2])
 	}
-	if !results[3].IsNil() {
-		t.Errorf("tointeger('42'): got %v, expected nil", results[3])
+	if results[3].AsInt() != 42 {
+		t.Errorf("tointeger('42'): got %v, expected 42", results[3])
 	}
 }
 

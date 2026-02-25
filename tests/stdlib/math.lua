@@ -97,9 +97,11 @@ assert_eq(math.tointeger(0.0), 0)
 assert_eq(math.tointeger(-3.0), -3)
 assert_eq(math.tointeger(-3.5), nil)
 
--- NOTE: In standard Lua 5.4, math.tointeger("5") returns nil (no coercion).
--- This implementation currently coerces string-to-number; tracked for future fix.
--- assert_eq(math.tointeger("5"), nil)
+-- Lua 5.4's lua_tointegerx coerces strings to numbers
+assert_eq(math.tointeger("5"), 5)
+assert_eq(math.tointeger("5.0"), 5)
+assert_eq(math.tointeger("5.5"), nil)
+assert_eq(math.tointeger("hello"), nil)
 
 --------------------------------------------------------------------------------
 -- math.maxinteger / math.mininteger
@@ -144,9 +146,9 @@ assert_eq(math.ult(0, 1), true)
 
 assert_eq(math.type(1), "integer")
 assert_eq(math.type(1.0), "float")
-assert_eq(math.type("x"), false)   -- non-number returns false (Lua 5.4)
-assert_eq(math.type(true), false)
-assert_eq(math.type(nil), false)
+assert_eq(math.type("x"), nil)   -- non-number returns nil (Lua 5.4)
+assert_eq(math.type(true), nil)
+assert_eq(math.type(nil), nil)
 
 --------------------------------------------------------------------------------
 -- math.abs

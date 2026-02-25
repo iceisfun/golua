@@ -166,6 +166,34 @@ func (v Value) AsNativeFunc() NativeFunc {
 	return nil
 }
 
+// StringToNumericValue converts a string to a numeric Value, preserving the
+// integer/float distinction based on the string format.
+func StringToNumericValue(s string) (Value, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return Nil, false
+	}
+	// Try hex integer
+	if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
+		if i, err := strconv.ParseInt(s[2:], 16, 64); err == nil {
+			return NewInt(i), true
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return NewFloat(f), true
+		}
+		return Nil, false
+	}
+	// Try decimal integer
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return NewInt(i), true
+	}
+	// Try float
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return NewFloat(f), true
+	}
+	return Nil, false
+}
+
 // ToNumber attempts to convert the value to a number.
 // Returns (number, true) on success, (0, false) on failure.
 func (v Value) ToNumber() (float64, bool) {
@@ -262,7 +290,7 @@ func (v Value) String() string {
 		if f == math.Trunc(f) && !math.IsInf(f, 0) && math.Abs(f) < 1e14 {
 			return fmt.Sprintf("%.1f", f)
 		}
-		return fmt.Sprintf("%g", f)
+		return fmt.Sprintf("%.14g", f)
 	case typeString:
 		return v.ptr.(string)
 	case typeTable:

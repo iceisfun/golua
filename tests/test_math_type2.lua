@@ -1,8 +1,8 @@
 -- test_math_type2: math.type edge cases
 
--- non-number types return false (not nil) per Lua 5.4
-assert(math.type("123") == false, "math.type('123') should be false")
-assert(math.type(nil) == false, "math.type(nil) should be false")
+-- non-number types return nil per Lua 5.4
+assert(math.type("123") == nil, "math.type('123') should be nil")
+assert(math.type(nil) == nil, "math.type(nil) should be nil")
 
 -- number types
 assert(math.type(123) == "integer", "math.type(123)")

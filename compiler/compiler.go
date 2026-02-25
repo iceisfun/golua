@@ -343,6 +343,22 @@ func (c *compiler) leaveScope(line int) {
 	scope := fs.scopes[len(fs.scopes)-1]
 	fs.scopes = fs.scopes[:len(fs.scopes)-1]
 
+	// Emit OP_CLOSE if this scope has any to-be-closed variables.
+	// This closes upvalues and calls __close metamethods.
+	if fs.nActVar > scope.nLocals {
+		hasClose := false
+		start := len(fs.locals) - (fs.nActVar - scope.nLocals)
+		for i := start; i < len(fs.locals); i++ {
+			if fs.locals[i].attrib == "close" {
+				hasClose = true
+				break
+			}
+		}
+		if hasClose {
+			fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), line)
+		}
+	}
+
 	// Remove locals from this scope
 	for len(fs.locals) > 0 && fs.nActVar > scope.nLocals {
 		loc := &fs.locals[len(fs.locals)-1]
