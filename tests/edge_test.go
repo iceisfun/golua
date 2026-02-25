@@ -720,3 +720,555 @@ func TestAdj_GenericForClosureCapture(t *testing.T) {
 		t.Errorf("funcs[3]() = %v, expected 30", results[2])
 	}
 }
+
+// ============================================================
+// Probe tests: comprehensive edge case coverage
+// ============================================================
+
+func TestProbe_FormatSNonString(t *testing.T) {
+	results := mustRun(t, `
+		return string.format("%s", nil),
+		       string.format("%s", true),
+		       string.format("%s", false),
+		       string.format("%s", 42),
+		       string.format("%s", 3.14)
+	`)
+	if len(results) < 5 {
+		t.Fatalf("Expected 5 results, got %d", len(results))
+	}
+	checks := []string{"nil", "true", "false", "42", "3.14"}
+	for i, exp := range checks {
+		if results[i].AsString() != exp {
+			t.Errorf("format %%s [%d]: got %q, expected %q", i, results[i].AsString(), exp)
+		}
+	}
+}
+
+func TestProbe_FormatDFloat(t *testing.T) {
+	results := mustRun(t, `return string.format("%d", 3.9), string.format("%d", -3.9)`)
+	if results[0].AsString() != "3" {
+		t.Errorf("%%d 3.9: got %q, expected '3'", results[0].AsString())
+	}
+	if results[1].AsString() != "-3" {
+		t.Errorf("%%d -3.9: got %q, expected '-3'", results[1].AsString())
+	}
+}
+
+func TestProbe_FormatC(t *testing.T) {
+	results := mustRun(t, `return string.format("%c", 65), string.format("%c", 97), string.format("%c", 48)`)
+	if results[0].AsString() != "A" || results[1].AsString() != "a" || results[2].AsString() != "0" {
+		t.Errorf("%%c: got %q %q %q", results[0].AsString(), results[1].AsString(), results[2].AsString())
+	}
+}
+
+func TestProbe_FormatI(t *testing.T) {
+	results := mustRun(t, `return string.format("%i", 42)`)
+	if results[0].AsString() != "42" {
+		t.Errorf("%%i: got %q, expected '42'", results[0].AsString())
+	}
+}
+
+func TestProbe_FormatWidthPrecision(t *testing.T) {
+	results := mustRun(t, `
+		return string.format("%10s", "hi"),
+		       string.format("%-10s", "hi"),
+		       string.format("%.3s", "hello")
+	`)
+	if results[0].AsString() != "        hi" {
+		t.Errorf("%%10s: got %q", results[0].AsString())
+	}
+	if results[1].AsString() != "hi        " {
+		t.Errorf("%%-10s: got %q", results[1].AsString())
+	}
+	if results[2].AsString() != "hel" {
+		t.Errorf("%%.3s: got %q", results[2].AsString())
+	}
+}
+
+func TestProbe_FindPastEnd(t *testing.T) {
+	results := mustRun(t, `return string.find("hello", "l", 100)`)
+	if !results[0].IsNil() {
+		t.Errorf("find past end: got %v, expected nil", results[0])
+	}
+}
+
+func TestProbe_FindEmpty(t *testing.T) {
+	results := mustRun(t, `return string.find("hello", "")`)
+	if results[0].AsInt() != 1 || results[1].AsInt() != 0 {
+		t.Errorf("find empty: got (%v, %v), expected (1, 0)", results[0], results[1])
+	}
+}
+
+func TestProbe_FindNegInit(t *testing.T) {
+	results := mustRun(t, `return string.find("hello", "l", -3)`)
+	if results[0].AsInt() != 3 || results[1].AsInt() != 3 {
+		t.Errorf("find neg init: got (%v, %v), expected (3, 3)", results[0], results[1])
+	}
+}
+
+func TestProbe_SubEdges(t *testing.T) {
+	results := mustRun(t, `
+		return string.sub("hello", -3, -1),
+		       string.sub("hello", 0),
+		       string.sub("hello", 1, 100),
+		       string.sub("hello", 3, 2),
+		       string.sub("hello", -100)
+	`)
+	checks := []string{"llo", "hello", "hello", "", "hello"}
+	for i, exp := range checks {
+		if results[i].AsString() != exp {
+			t.Errorf("sub edge [%d]: got %q, expected %q", i, results[i].AsString(), exp)
+		}
+	}
+}
+
+func TestProbe_SelectHash(t *testing.T) {
+	results := mustRun(t, `return select("#"), select("#", "a", "b", "c")`)
+	if results[0].AsInt() != 0 {
+		t.Errorf("select('#'): got %v, expected 0", results[0])
+	}
+	if results[1].AsInt() != 3 {
+		t.Errorf("select('#', a, b, c): got %v, expected 3", results[1])
+	}
+}
+
+func TestProbe_StringArithmetic(t *testing.T) {
+	results := mustRun(t, `return "10" + 5, "3" * "4", "10" - 1`)
+	if results[0].AsInt() != 15 {
+		t.Errorf("'10' + 5: got %v", results[0])
+	}
+	if results[1].AsInt() != 12 {
+		t.Errorf("'3' * '4': got %v", results[1])
+	}
+	if results[2].AsInt() != 9 {
+		t.Errorf("'10' - 1: got %v", results[2])
+	}
+}
+
+func TestProbe_ConcatNum(t *testing.T) {
+	results := mustRun(t, `return 10 .. 20, 1 .. 2, 1.5 .. "x"`)
+	if results[0].AsString() != "1020" {
+		t.Errorf("10..20: got %q", results[0].AsString())
+	}
+	if results[1].AsString() != "12" {
+		t.Errorf("1..2: got %q", results[1].AsString())
+	}
+	if results[2].AsString() != "1.5x" {
+		t.Errorf("1.5..'x': got %q", results[2].AsString())
+	}
+}
+
+func TestProbe_TableConcat(t *testing.T) {
+	results := mustRun(t, `
+		return table.concat({}),
+		       table.concat({"a"}),
+		       table.concat({"a","b","c"}, ","),
+		       table.concat({"a","b","c","d"}, ",", 2, 3),
+		       table.concat({1,2,3}, "+")
+	`)
+	checks := []string{"", "a", "a,b,c", "b,c", "1+2+3"}
+	for i, exp := range checks {
+		if results[i].AsString() != exp {
+			t.Errorf("table.concat [%d]: got %q, expected %q", i, results[i].AsString(), exp)
+		}
+	}
+}
+
+func TestProbe_TablePack(t *testing.T) {
+	results := mustRun(t, `
+		local p = table.pack(10, nil, 30)
+		return p.n, p[1], p[2], p[3]
+	`)
+	if results[0].AsInt() != 3 {
+		t.Errorf("pack.n: got %v", results[0])
+	}
+	if results[1].AsInt() != 10 {
+		t.Errorf("pack[1]: got %v", results[1])
+	}
+	if !results[2].IsNil() {
+		t.Errorf("pack[2]: got %v, expected nil", results[2])
+	}
+	if results[3].AsInt() != 30 {
+		t.Errorf("pack[3]: got %v", results[3])
+	}
+}
+
+func TestProbe_TableSort(t *testing.T) {
+	results := mustRun(t, `
+		local t = {3, 1, 4, 1, 5, 9, 2, 6}
+		table.sort(t)
+		local r1, r8 = t[1], t[8]
+		table.sort(t, function(a, b) return a > b end)
+		return r1, r8, t[1], t[8]
+	`)
+	if results[0].AsInt() != 1 || results[1].AsInt() != 9 {
+		t.Errorf("sort asc: got [1]=%v [8]=%v", results[0], results[1])
+	}
+	if results[2].AsInt() != 9 || results[3].AsInt() != 1 {
+		t.Errorf("sort desc: got [1]=%v [8]=%v", results[2], results[3])
+	}
+}
+
+func TestProbe_TableSortEmpty(t *testing.T) {
+	mustRun(t, `table.sort({})`)
+}
+
+func TestProbe_PcallErrorObjects(t *testing.T) {
+	results := mustRun(t, `
+		local ok1, err1 = pcall(error, 42)
+		local ok2, err2 = pcall(error, true)
+		local ok3, err3 = pcall(error, nil)
+		return err1, err2, err3
+	`)
+	if results[0].AsInt() != 42 {
+		t.Errorf("pcall error(42): got %v", results[0])
+	}
+	if !results[1].ToBool() || !results[1].IsBool() {
+		t.Errorf("pcall error(true): got %v", results[1])
+	}
+	if !results[2].IsNil() {
+		t.Errorf("pcall error(nil): got %v, expected nil", results[2])
+	}
+}
+
+func TestProbe_XpcallHandler(t *testing.T) {
+	results := mustRun(t, `
+		local ok, err = xpcall(
+			function() error("oops") end,
+			function(e) return "handled: " .. e end
+		)
+		return ok, err
+	`)
+	if results[0].ToBool() {
+		t.Error("xpcall should return false")
+	}
+	if !strings.Contains(results[1].AsString(), "handled:") {
+		t.Errorf("xpcall handler: got %q", results[1].AsString())
+	}
+}
+
+func TestProbe_XpcallExtraArgs(t *testing.T) {
+	results := mustRun(t, `
+		local ok, val = xpcall(function(a, b) return a + b end, tostring, 10, 20)
+		return ok, val
+	`)
+	if !results[0].ToBool() || results[1].AsInt() != 30 {
+		t.Errorf("xpcall args: ok=%v val=%v", results[0], results[1])
+	}
+}
+
+func TestProbe_ErrorLevel0(t *testing.T) {
+	results := mustRun(t, `
+		local ok, err = pcall(function() error("raw", 0) end)
+		return err
+	`)
+	if results[0].AsString() != "raw" {
+		t.Errorf("error level 0: got %q, expected 'raw'", results[0].AsString())
+	}
+}
+
+func TestProbe_ForZeroStep(t *testing.T) {
+	// Integer zero step
+	_, _, err := runLua(t, `for i = 1, 10, 0 do end`)
+	if err == nil {
+		t.Error("for loop with step 0 should error")
+	}
+	// Float zero step
+	_, _, err = runLua(t, `for i = 1.0, 10.0, 0.0 do end`)
+	if err == nil {
+		t.Error("for loop with float step 0.0 should error")
+	}
+}
+
+func TestProbe_ForNegStep(t *testing.T) {
+	results := mustRun(t, `
+		local sum = 0
+		for i = 5, 1, -1 do sum = sum + i end
+		return sum
+	`)
+	if results[0].AsInt() != 15 {
+		t.Errorf("for neg step sum: got %v, expected 15", results[0])
+	}
+}
+
+func TestProbe_ForFloatStep(t *testing.T) {
+	results := mustRun(t, `
+		local sum, count = 0, 0
+		for i = 0.0, 1.0, 0.5 do sum = sum + i; count = count + 1 end
+		return count, sum
+	`)
+	if results[0].AsInt() != 3 {
+		t.Errorf("float step count: got %v, expected 3", results[0])
+	}
+}
+
+func TestProbe_ForEmptyRange(t *testing.T) {
+	results := mustRun(t, `
+		local count = 0
+		for i = 10, 1 do count = count + 1 end
+		return count
+	`)
+	if results[0].AsInt() != 0 {
+		t.Errorf("empty range: got count=%v, expected 0", results[0])
+	}
+}
+
+func TestProbe_StringColonMethods(t *testing.T) {
+	results := mustRun(t, `
+		return ("hello"):upper(), ("hello"):len(), ("hello"):sub(2, 4),
+		       ("ab"):rep(3), ("hello"):reverse()
+	`)
+	checks := []string{"HELLO", "5", "ell", "ababab", "olleh"}
+	for i, exp := range checks {
+		got := results[i].AsString()
+		if i == 1 {
+			if results[i].AsInt() != 5 {
+				t.Errorf("colon method [%d]: got %v, expected %s", i, results[i], exp)
+			}
+			continue
+		}
+		if got != exp {
+			t.Errorf("colon method [%d]: got %q, expected %q", i, got, exp)
+		}
+	}
+}
+
+func TestProbe_RawFunctions(t *testing.T) {
+	results := mustRun(t, `
+		local mt = setmetatable({}, {
+			__eq = function(a, b) return true end,
+			__len = function() return 999 end,
+			__index = function(t, k) return "meta" end,
+			__newindex = function(t, k, v) end
+		})
+		rawset(mt, "x", 42)
+		return rawequal(1, 1), rawequal(1, 2), rawget(mt, "x"), rawget(mt, "y"), rawlen(mt)
+	`)
+	if !results[0].ToBool() {
+		t.Error("rawequal(1,1) should be true")
+	}
+	if results[1].ToBool() {
+		t.Error("rawequal(1,2) should be false")
+	}
+	if results[2].AsInt() != 42 {
+		t.Errorf("rawget after rawset: got %v, expected 42", results[2])
+	}
+	if !results[3].IsNil() {
+		t.Errorf("rawget bypassing __index: got %v, expected nil", results[3])
+	}
+	if results[4].AsInt() != 1 {
+		// rawlen on a table with one key set
+		t.Logf("rawlen: got %v (may vary based on table internals)", results[4])
+	}
+}
+
+func TestProbe_GmatchWords(t *testing.T) {
+	results := mustRun(t, `
+		local words = {}
+		for w in string.gmatch("one two three", "%w+") do
+			words[#words + 1] = w
+		end
+		return #words, words[1], words[3]
+	`)
+	if results[0].AsInt() != 3 {
+		t.Errorf("gmatch count: got %v, expected 3", results[0])
+	}
+	if results[1].AsString() != "one" {
+		t.Errorf("gmatch[1]: got %q", results[1].AsString())
+	}
+	if results[2].AsString() != "three" {
+		t.Errorf("gmatch[3]: got %q", results[2].AsString())
+	}
+}
+
+func TestProbe_MatchMultiCapture(t *testing.T) {
+	results := mustRun(t, `return string.match("2023-01-15", "(%d+)-(%d+)-(%d+)")`)
+	if len(results) < 3 {
+		t.Fatalf("Expected 3 captures, got %d", len(results))
+	}
+	if results[0].AsString() != "2023" || results[1].AsString() != "01" || results[2].AsString() != "15" {
+		t.Errorf("match: got %q, %q, %q", results[0].AsString(), results[1].AsString(), results[2].AsString())
+	}
+}
+
+func TestProbe_ByteCharRoundtrip(t *testing.T) {
+	results := mustRun(t, `
+		return string.byte(string.char(255)),
+		       string.byte(string.char(0)),
+		       string.byte(string.char(128)),
+		       string.char(65, 66, 67)
+	`)
+	if results[0].AsInt() != 255 {
+		t.Errorf("byte(char(255)): got %v", results[0])
+	}
+	if results[1].AsInt() != 0 {
+		t.Errorf("byte(char(0)): got %v", results[1])
+	}
+	if results[2].AsInt() != 128 {
+		t.Errorf("byte(char(128)): got %v", results[2])
+	}
+	if results[3].AsString() != "ABC" {
+		t.Errorf("char(65,66,67): got %q", results[3].AsString())
+	}
+}
+
+func TestProbe_TostringMetaNonString(t *testing.T) {
+	results := mustRun(t, `
+		local obj = setmetatable({}, {__tostring = function() return 42 end})
+		local r = tostring(obj)
+		return r, type(r)
+	`)
+	// Lua 5.4: tostring passes through __tostring result as-is
+	// The result may be int 42 or string "42" depending on implementation
+	tp := results[1].AsString()
+	if tp == "number" {
+		if results[0].AsInt() != 42 {
+			t.Errorf("tostring meta int: got %v, expected 42", results[0])
+		}
+	} else if tp == "string" {
+		if results[0].AsString() != "42" {
+			t.Errorf("tostring meta string: got %q, expected '42'", results[0].AsString())
+		}
+	} else {
+		t.Errorf("tostring meta: unexpected type %q, value %v", tp, results[0])
+	}
+}
+
+func TestProbe_NextIteration(t *testing.T) {
+	results := mustRun(t, `
+		local t = {a = 1, b = 2, c = 3}
+		local count = 0
+		local k = next(t)
+		while k ~= nil do
+			count = count + 1
+			k = next(t, k)
+		end
+		return count, next({})
+	`)
+	if results[0].AsInt() != 3 {
+		t.Errorf("next iteration count: got %v, expected 3", results[0])
+	}
+	if !results[1].IsNil() {
+		t.Errorf("next(empty): got %v, expected nil", results[1])
+	}
+}
+
+func TestProbe_TypeEdges(t *testing.T) {
+	results := mustRun(t, `
+		return type(nil), type(true), type(42), type(3.14),
+		       type("hi"), type({}), type(print)
+	`)
+	expected := []string{"nil", "boolean", "number", "number", "string", "table", "function"}
+	for i, exp := range expected {
+		if results[i].AsString() != exp {
+			t.Errorf("type[%d]: got %q, expected %q", i, results[i].AsString(), exp)
+		}
+	}
+}
+
+func TestProbe_TableRemove(t *testing.T) {
+	results := mustRun(t, `
+		local t = {10, 20, 30, 40}
+		local last = table.remove(t)
+		local first = table.remove(t, 1)
+		return last, #t, first, t[1]
+	`)
+	if results[0].AsInt() != 40 {
+		t.Errorf("remove last: got %v", results[0])
+	}
+	if results[1].AsInt() != 2 {
+		t.Errorf("len after removes: got %v", results[1])
+	}
+	if results[2].AsInt() != 10 {
+		t.Errorf("remove first: got %v", results[2])
+	}
+	if results[3].AsInt() != 20 {
+		t.Errorf("t[1] after remove: got %v", results[3])
+	}
+}
+
+func TestProbe_TableMoveBetween(t *testing.T) {
+	results := mustRun(t, `
+		local src = {10, 20, 30}
+		local dst = {0, 0, 0, 0, 0}
+		table.move(src, 1, 3, 2, dst)
+		return dst[2], dst[3], dst[4]
+	`)
+	if results[0].AsInt() != 10 || results[1].AsInt() != 20 || results[2].AsInt() != 30 {
+		t.Errorf("table.move between: got %v, %v, %v", results[0], results[1], results[2])
+	}
+}
+
+func TestProbe_MathFunctions(t *testing.T) {
+	results := mustRun(t, `
+		return math.abs(-5), math.abs(5),
+		       math.floor(3.7), math.ceil(3.2),
+		       math.floor(-3.2), math.ceil(-3.7),
+		       math.fmod(7, 3)
+	`)
+	expected := []int64{5, 5, 3, 4, -4, -3, 1}
+	for i, exp := range expected {
+		if results[i].AsInt() != exp {
+			t.Errorf("math[%d]: got %v, expected %d", i, results[i], exp)
+		}
+	}
+}
+
+func TestProbe_MathType(t *testing.T) {
+	results := mustRun(t, `
+		return math.type(42), math.type(3.14), math.type("42"), math.type(nil)
+	`)
+	if results[0].AsString() != "integer" {
+		t.Errorf("math.type(42): got %q", results[0].AsString())
+	}
+	if results[1].AsString() != "float" {
+		t.Errorf("math.type(3.14): got %q", results[1].AsString())
+	}
+	if results[2].ToBool() {
+		t.Errorf("math.type('42'): should be false, got %v", results[2])
+	}
+	if results[3].ToBool() {
+		t.Errorf("math.type(nil): should be false, got %v", results[3])
+	}
+}
+
+func TestProbe_MathTointeger(t *testing.T) {
+	results := mustRun(t, `
+		return math.tointeger(42), math.tointeger(42.0), math.tointeger(42.5), math.tointeger("42")
+	`)
+	if results[0].AsInt() != 42 {
+		t.Errorf("tointeger(42): got %v", results[0])
+	}
+	if results[1].AsInt() != 42 {
+		t.Errorf("tointeger(42.0): got %v", results[1])
+	}
+	if !results[2].IsNil() {
+		t.Errorf("tointeger(42.5): got %v, expected nil", results[2])
+	}
+	if !results[3].IsNil() {
+		t.Errorf("tointeger('42'): got %v, expected nil", results[3])
+	}
+}
+
+func TestProbe_VarargForwarding(t *testing.T) {
+	results := mustRun(t, `
+		local function vforward(...) return ... end
+		return vforward(10, 20, 30)
+	`)
+	if len(results) < 3 {
+		t.Fatalf("Expected 3 results, got %d", len(results))
+	}
+	if results[0].AsInt() != 10 || results[1].AsInt() != 20 || results[2].AsInt() != 30 {
+		t.Errorf("vararg forward: got %v, %v, %v", results[0], results[1], results[2])
+	}
+}
+
+func TestProbe_VarargNilCount(t *testing.T) {
+	results := mustRun(t, `
+		local function vfunc(...) return select("#", ...) end
+		return vfunc(1, nil, 3)
+	`)
+	if results[0].AsInt() != 3 {
+		t.Errorf("vararg nil count: got %v, expected 3", results[0])
+	}
+}

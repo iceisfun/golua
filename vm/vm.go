@@ -1184,6 +1184,9 @@ func (vm *VM) execute() ([]Value, error) {
 				initI := init.AsInt()
 				limitI := limit.AsInt()
 				stepI := step.AsInt()
+				if stepI == 0 {
+					return nil, fmt.Errorf("'for' step is zero")
+				}
 				vm.stack[frame.base+a] = NewInt(initI)
 				vm.stack[frame.base+a+1] = NewInt(limitI)
 				vm.stack[frame.base+a+2] = NewInt(stepI)
@@ -1207,6 +1210,9 @@ func (vm *VM) execute() ([]Value, error) {
 				stepF, ok3 := step.ToNumber()
 				if !ok1 || !ok2 || !ok3 {
 					return nil, fmt.Errorf("'for' limit must be a number")
+				}
+				if stepF == 0 {
+					return nil, fmt.Errorf("'for' step is zero")
 				}
 				vm.stack[frame.base+a] = NewFloat(initF)
 				vm.stack[frame.base+a+1] = NewFloat(limitF)
