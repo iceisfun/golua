@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -168,10 +169,9 @@ func luaToNumber(v *vm.VM) int {
 		if bi < 2 || bi > 36 {
 			panic("bad argument #2 to 'tonumber' (base out of range)")
 		}
-		// Lua semantics: with explicit base, only strings are converted.
+		// Lua semantics: with explicit base, first arg must be a string.
 		if !val.IsString() {
-			v.Set(0, vm.Nil)
-			return 1
+			panic(fmt.Sprintf("bad argument #1 to 'tonumber' (string expected, got %s)", val.Type()))
 		}
 		if i, err := strconv.ParseInt(strings.TrimSpace(val.AsString()), int(bi), 64); err == nil {
 			v.Set(0, vm.NewInt(i))
@@ -189,30 +189,63 @@ func luaToNumber(v *vm.VM) int {
 
 	if val.IsString() {
 		trimmed := strings.TrimSpace(val.AsString())
-		// Lua 5.4: base-10 tonumber accepts 0x/0X hex prefix
-		if len(trimmed) >= 2 && trimmed[0] == '0' && (trimmed[1] == 'x' || trimmed[1] == 'X') {
-			if i, err := strconv.ParseInt(trimmed[2:], 16, 64); err == nil {
-				v.Set(0, vm.NewInt(i))
-				return 1
-			}
+		if trimmed == "" {
+			v.Set(0, vm.Nil)
+			return 1
 		}
-		// If the string looks like a pure integer (no '.', 'e', 'E', 'n', 'N'),
-		// try integer parsing first to preserve int64 precision
-		isIntLike := true
-		for _, c := range trimmed {
-			if c == '.' || c == 'e' || c == 'E' || c == 'n' || c == 'N' {
-				isIntLike = false
+		// Lua does not accept underscore separators in tonumber input.
+		if strings.ContainsRune(trimmed, '_') {
+			v.Set(0, vm.Nil)
+			return 1
+		}
+		// Lua rejects textual inf/nan tokens in tonumber input.
+		lower := strings.ToLower(trimmed)
+		switch lower {
+		case "inf", "+inf", "-inf", "nan", "+nan", "-nan":
+			v.Set(0, vm.Nil)
+			return 1
+		}
+
+		// Signed/unsigned hex integer forms (e.g. -0x10, +0XFF).
+		sign := int64(1)
+		body := trimmed
+		if len(body) > 0 && (body[0] == '+' || body[0] == '-') {
+			if body[0] == '-' {
+				sign = -1
+			}
+			body = body[1:]
+		}
+		// Lua 5.4: base-10 tonumber accepts 0x/0X hex prefix
+		if len(body) >= 2 && body[0] == '0' && (body[1] == 'x' || body[1] == 'X') {
+			hex := body[2:]
+			if hex != "" && !strings.ContainsAny(hex, ".pP") {
+				if i, err := strconv.ParseInt(hex, 16, 64); err == nil {
+					v.Set(0, vm.NewInt(sign*i))
+					return 1
+				}
+			}
+			// Hex float forms (e.g. 0x1p4, -0x1p4) are handled by ParseFloat below.
+		}
+		// If the string looks like a pure decimal integer, try integer parsing first
+		// to preserve int64 precision.
+		isDecIntLike := true
+		for i, c := range trimmed {
+			if i == 0 && (c == '+' || c == '-') {
+				continue
+			}
+			if c < '0' || c > '9' {
+				isDecIntLike = false
 				break
 			}
 		}
-		if isIntLike {
+		if isDecIntLike {
 			if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
 				v.Set(0, vm.NewInt(i))
 				return 1
 			}
 		}
 		// Try float
-		if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
+		if f, err := strconv.ParseFloat(trimmed, 64); err == nil || errors.Is(err, strconv.ErrRange) {
 			v.Set(0, vm.NewFloat(f))
 			return 1
 		}
