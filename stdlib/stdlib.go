@@ -163,54 +163,57 @@ func luaToNumber(v *vm.VM) int {
 	val := v.Get(1)
 	base := v.Get(2)
 
+	if !base.IsNil() {
+		bi := getInt(v, 2, "tonumber")
+		if bi < 2 || bi > 36 {
+			panic("bad argument #2 to 'tonumber' (base out of range)")
+		}
+		// Lua semantics: with explicit base, only strings are converted.
+		if !val.IsString() {
+			v.Set(0, vm.Nil)
+			return 1
+		}
+		if i, err := strconv.ParseInt(strings.TrimSpace(val.AsString()), int(bi), 64); err == nil {
+			v.Set(0, vm.NewInt(i))
+			return 1
+		}
+
+		v.Set(0, vm.Nil)
+		return 1
+	}
+
 	if val.IsNumber() {
 		v.Set(0, val)
 		return 1
 	}
 
 	if val.IsString() {
-		s := val.AsString()
-		b := 10
-		if !base.IsNil() {
-			if bi, ok := base.ToInt(); ok {
-				b = int(bi)
-			}
-		}
-
-		if b == 10 {
-			trimmed := strings.TrimSpace(s)
-			// Lua 5.4: base-10 tonumber accepts 0x/0X hex prefix
-			if len(trimmed) >= 2 && trimmed[0] == '0' && (trimmed[1] == 'x' || trimmed[1] == 'X') {
-				if i, err := strconv.ParseInt(trimmed[2:], 16, 64); err == nil {
-					v.Set(0, vm.NewInt(i))
-					return 1
-				}
-			}
-			// If the string looks like a pure integer (no '.', 'e', 'E', 'n', 'N'),
-			// try integer parsing first to preserve int64 precision
-			isIntLike := true
-			for _, c := range trimmed {
-				if c == '.' || c == 'e' || c == 'E' || c == 'n' || c == 'N' {
-					isIntLike = false
-					break
-				}
-			}
-			if isIntLike {
-				if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-					v.Set(0, vm.NewInt(i))
-					return 1
-				}
-			}
-			// Try float
-			if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
-				v.Set(0, vm.NewFloat(f))
+		trimmed := strings.TrimSpace(val.AsString())
+		// Lua 5.4: base-10 tonumber accepts 0x/0X hex prefix
+		if len(trimmed) >= 2 && trimmed[0] == '0' && (trimmed[1] == 'x' || trimmed[1] == 'X') {
+			if i, err := strconv.ParseInt(trimmed[2:], 16, 64); err == nil {
+				v.Set(0, vm.NewInt(i))
 				return 1
 			}
 		}
-
-		// Try integer with base
-		if i, err := strconv.ParseInt(strings.TrimSpace(s), b, 64); err == nil {
-			v.Set(0, vm.NewInt(i))
+		// If the string looks like a pure integer (no '.', 'e', 'E', 'n', 'N'),
+		// try integer parsing first to preserve int64 precision
+		isIntLike := true
+		for _, c := range trimmed {
+			if c == '.' || c == 'e' || c == 'E' || c == 'n' || c == 'N' {
+				isIntLike = false
+				break
+			}
+		}
+		if isIntLike {
+			if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+				v.Set(0, vm.NewInt(i))
+				return 1
+			}
+		}
+		// Try float
+		if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			v.Set(0, vm.NewFloat(f))
 			return 1
 		}
 	}
