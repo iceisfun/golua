@@ -69,17 +69,29 @@ func stringSub(v *vm.VM) int {
 	return 1
 }
 
-// string.upper(s)
+// string.upper(s) — ASCII-only, byte-level (Lua strings are byte sequences)
 func stringUpper(v *vm.VM) int {
 	s := getString(v, 1, "upper")
-	v.Set(0, vm.NewString(strings.ToUpper(s)))
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'a' && c <= 'z' {
+			b[i] = c - 32
+		}
+	}
+	v.Set(0, vm.NewString(string(b)))
 	return 1
 }
 
-// string.lower(s)
+// string.lower(s) — ASCII-only, byte-level (Lua strings are byte sequences)
 func stringLower(v *vm.VM) int {
 	s := getString(v, 1, "lower")
-	v.Set(0, vm.NewString(strings.ToLower(s)))
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 32
+		}
+	}
+	v.Set(0, vm.NewString(string(b)))
 	return 1
 }
 
@@ -111,11 +123,11 @@ func stringRep(v *vm.VM) int {
 // string.reverse(s)
 func stringReverse(v *vm.VM) int {
 	s := getString(v, 1, "reverse")
-	runes := []rune(s)
-	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
-		runes[i], runes[j] = runes[j], runes[i]
+	b := []byte(s)
+	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
 	}
-	v.Set(0, vm.NewString(string(runes)))
+	v.Set(0, vm.NewString(string(b)))
 	return 1
 }
 

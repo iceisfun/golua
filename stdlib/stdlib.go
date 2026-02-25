@@ -121,6 +121,9 @@ func luaAssert(v *vm.VM) int {
 	}
 	// Return all arguments
 	n := v.ArgCount()
+	for i := 1; i <= n; i++ {
+		v.Set(i-1, v.Get(i))
+	}
 	return n
 }
 
@@ -176,6 +179,13 @@ func luaToNumber(v *vm.VM) int {
 
 		if b == 10 {
 			trimmed := strings.TrimSpace(s)
+			// Lua 5.4: base-10 tonumber accepts 0x/0X hex prefix
+			if len(trimmed) >= 2 && trimmed[0] == '0' && (trimmed[1] == 'x' || trimmed[1] == 'X') {
+				if i, err := strconv.ParseInt(trimmed[2:], 16, 64); err == nil {
+					v.Set(0, vm.NewInt(i))
+					return 1
+				}
+			}
 			// If the string looks like a pure integer (no '.', 'e', 'E', 'n', 'N'),
 			// try integer parsing first to preserve int64 precision
 			isIntLike := true
@@ -509,6 +519,12 @@ func luaSetmetatable(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
 		panic("bad argument #1 to 'setmetatable' (table expected)")
+	}
+	// Check __metatable protection on existing metatable
+	if existingMT := tbl.Metatable(); existingMT != nil {
+		if !existingMT.Get(vm.NewString("__metatable")).IsNil() {
+			panic("cannot change a protected metatable")
+		}
 	}
 	mt := v.Get(2)
 	if mt.IsNil() {

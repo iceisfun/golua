@@ -1079,10 +1079,9 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	// Body
 	c.compileBlock(s.Body)
 
-	// Close any upvalues created in the loop body before looping back.
-	// This ensures each iteration gets its own closed upvalue copy.
-	// The loop body locals start at base+4 (after init, limit, step, i).
-	fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), line)
+	// Close upvalues at the loop variable (base+3) and above before looping back.
+	// This ensures each iteration gets its own closed upvalue copy of i.
+	fs.emit(ABC(OP_CLOSE, base+3, 0, 0, 0), line)
 
 	// FORLOOP — jumps back to just after FORPREP
 	loopPC := fs.emit(ABx(OP_FORLOOP, base, 0), line)
@@ -1176,6 +1175,10 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 
 	// Body
 	c.compileBlock(s.Body)
+
+	// Close upvalues at the loop variables (base+4) and above before next iteration.
+	// This ensures each iteration gets its own closed upvalue copy.
+	fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), line)
 
 	// TFORCALL — calls the iterator
 	tforCallPC := fs.emit(ABC(OP_TFORCALL, base, 0, nVars, 0), line)

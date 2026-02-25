@@ -388,7 +388,14 @@ func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 				return token.Token{}, err
 			}
 			if ch != -2 { // -2 is sentinel for \z (skip whitespace, write nothing)
-				buf.WriteRune(ch)
+				if ch <= 0xFF {
+					// Byte-level escapes (\xNN, \DDD, \a, \n, etc.)
+					// must produce exact byte values, not UTF-8 re-encoding.
+					buf.WriteByte(byte(ch))
+				} else {
+					// Only \u{XXXX} can produce values > 255 (Unicode codepoints).
+					buf.WriteRune(ch)
+				}
 			}
 		default:
 			buf.WriteRune(l.current)
