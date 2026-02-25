@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -593,59 +594,168 @@ func luaFormatValues(format string, vals []vm.Value) string {
 		switch specChar {
 		case 'd', 'i':
 			goSpec := spec + "d"
-			if val.IsInt() {
-				result.WriteString(fmt.Sprintf(goSpec, val.AsInt()))
-			} else if n, ok := val.ToNumber(); ok {
-				result.WriteString(fmt.Sprintf(goSpec, int64(n)))
+			if i, ok := val.ToInt(); ok {
+				result.WriteString(fmt.Sprintf(goSpec, i))
+			} else if _, ok := val.ToNumber(); ok {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number has no integer representation)", argIdx+1))
 			} else {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
 		case 'u':
 			goSpec := spec + "d"
-			if val.IsInt() {
-				result.WriteString(fmt.Sprintf(goSpec, uint64(val.AsInt())))
-			} else if n, ok := val.ToNumber(); ok {
-				result.WriteString(fmt.Sprintf(goSpec, uint64(n)))
+			if i, ok := val.ToInt(); ok {
+				result.WriteString(fmt.Sprintf(goSpec, uint64(i)))
+			} else if _, ok := val.ToNumber(); ok {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number has no integer representation)", argIdx+1))
 			} else {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
 		case 'o', 'x', 'X':
 			goSpec := spec + string(specChar)
-			if val.IsInt() {
-				result.WriteString(fmt.Sprintf(goSpec, uint64(val.AsInt())))
-			} else if n, ok := val.ToNumber(); ok {
-				result.WriteString(fmt.Sprintf(goSpec, uint64(n)))
+			if i, ok := val.ToInt(); ok {
+				result.WriteString(fmt.Sprintf(goSpec, uint64(i)))
+			} else if _, ok := val.ToNumber(); ok {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number has no integer representation)", argIdx+1))
 			} else {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
-		case 'e', 'E', 'f', 'F', 'g', 'G', 'a', 'A':
+		case 'e', 'E', 'f', 'g', 'G':
 			goSpec := spec + string(specChar)
 			if n, ok := val.ToNumber(); ok {
-				result.WriteString(fmt.Sprintf(goSpec, n))
+				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
+					result.WriteString(special)
+				} else {
+					result.WriteString(fmt.Sprintf(goSpec, n))
+				}
 			} else {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
+		case 'a', 'A':
+			// Go's fmt package does not support %a/%A for floats.
+			if n, ok := val.ToNumber(); ok {
+				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
+					result.WriteString(special)
+				} else {
+					s := strconv.FormatFloat(n, 'x', -1, 64)
+					s = normalizeHexExponent(s)
+					if specChar == 'A' {
+						s = strings.ToUpper(s)
+					}
+					result.WriteString(fmt.Sprintf(spec+"s", s))
+				}
+			} else {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
+			}
+		case 'F':
+			panic("invalid conversion '%F' to 'format'")
 		case 's':
 			goSpec := spec + "s"
 			result.WriteString(fmt.Sprintf(goSpec, valueToString(val)))
 		case 'q':
 			result.WriteString(luaQuote(val))
 		case 'c':
-			if val.IsInt() {
-				result.WriteString(string(rune(val.AsInt())))
-			} else if n, ok := val.ToNumber(); ok {
-				result.WriteString(string(rune(int64(n))))
+			if i, ok := val.ToInt(); ok {
+				// Lua %c writes one byte (C unsigned char semantics).
+				result.WriteByte(byte(i))
+			} else if _, ok := val.ToNumber(); ok {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (number has no integer representation)", argIdx+1))
 			} else {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
 		case 'p':
 			result.WriteString(luaPointerFormat(val))
 		default:
-			result.WriteString(spec + string(specChar))
+			panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", specChar))
 		}
 	}
 
 	return result.String()
+}
+
+// normalizeHexExponent rewrites strconv hex-float exponents (+00, -04, ...)
+// to Lua-style minimal exponents (+0, -4, ...).
+func normalizeHexExponent(s string) string {
+	p := strings.LastIndexAny(s, "pP")
+	if p == -1 || p+1 >= len(s) {
+		return s
+	}
+	signIdx := p + 1
+	sign := ""
+	if s[signIdx] == '+' || s[signIdx] == '-' {
+		sign = s[signIdx : signIdx+1]
+		signIdx++
+	}
+	if signIdx >= len(s) {
+		return s
+	}
+	digits := s[signIdx:]
+	trimmed := strings.TrimLeft(digits, "0")
+	if trimmed == "" {
+		trimmed = "0"
+	}
+	return s[:p+1] + sign + trimmed
+}
+
+func formatSpecialFloat(spec string, specChar byte, n float64) (string, bool) {
+	if !math.IsInf(n, 0) && !math.IsNaN(n) {
+		return "", false
+	}
+
+	upper := specChar == 'E' || specChar == 'G' || specChar == 'A'
+	var token string
+	if math.IsNaN(n) {
+		if upper {
+			token = "-NAN"
+		} else {
+			token = "-nan"
+		}
+	} else if math.IsInf(n, -1) {
+		if upper {
+			token = "-INF"
+		} else {
+			token = "-inf"
+		}
+	} else {
+		if upper {
+			token = "INF"
+		} else {
+			token = "inf"
+		}
+		if strings.Contains(spec, "+") {
+			token = "+" + token
+		}
+	}
+
+	width, left := parseFormatWidth(spec)
+	if width > len(token) {
+		pad := strings.Repeat(" ", width-len(token))
+		if left {
+			token += pad
+		} else {
+			token = pad + token
+		}
+	}
+	return token, true
+}
+
+func parseFormatWidth(spec string) (width int, left bool) {
+	i := 1 // skip '%'
+	for i < len(spec) && strings.ContainsRune("#0- +", rune(spec[i])) {
+		if spec[i] == '-' {
+			left = true
+		}
+		i++
+	}
+	start := i
+	for i < len(spec) && spec[i] >= '0' && spec[i] <= '9' {
+		i++
+	}
+	if i > start {
+		if w, err := strconv.Atoi(spec[start:i]); err == nil {
+			width = w
+		}
+	}
+	return width, left
 }
 
 // luaQuote implements Lua's %q format for proper Lua-parseable quoting.

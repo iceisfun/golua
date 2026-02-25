@@ -745,12 +745,26 @@ func TestProbe_FormatSNonString(t *testing.T) {
 }
 
 func TestProbe_FormatDFloat(t *testing.T) {
-	results := mustRun(t, `return string.format("%d", 3.9), string.format("%d", -3.9)`)
-	if results[0].AsString() != "3" {
-		t.Errorf("%%d 3.9: got %q, expected '3'", results[0].AsString())
+	results := mustRun(t, `
+		local ok1, err1 = pcall(function() return string.format("%d", 3.9) end)
+		local ok2, err2 = pcall(function() return string.format("%d", -3.9) end)
+		local ok3, s3 = pcall(function() return string.format("%d", 3.0) end)
+		return ok1, tostring(err1), ok2, tostring(err2), ok3, s3
+	`)
+	if results[0].ToBool() {
+		t.Error("string.format integer spec with 3.9 should fail")
 	}
-	if results[1].AsString() != "-3" {
-		t.Errorf("%%d -3.9: got %q, expected '-3'", results[1].AsString())
+	if !strings.Contains(results[1].AsString(), "number has no integer representation") {
+		t.Errorf("unexpected %%d 3.9 error: %q", results[1].AsString())
+	}
+	if results[2].ToBool() {
+		t.Error("string.format integer spec with -3.9 should fail")
+	}
+	if !strings.Contains(results[3].AsString(), "number has no integer representation") {
+		t.Errorf("unexpected %%d -3.9 error: %q", results[3].AsString())
+	}
+	if !results[4].ToBool() || results[5].AsString() != "3" {
+		t.Errorf("%%d with 3.0 should succeed as '3', got ok=%v val=%q", results[4], results[5].AsString())
 	}
 }
 

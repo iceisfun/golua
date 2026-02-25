@@ -231,7 +231,19 @@ func tableUnpack(v *vm.VM) int {
 		j = getInt(v, 3, "unpack")
 	}
 
-	n := int(j - i + 1)
+	if j < i {
+		return 0
+	}
+	// Match Lua behavior: reject pathological ranges that would produce an
+	// impractically large number of return values.
+	if i < 0 && j > 0 && j-i < 0 {
+		panic("too many results to unpack")
+	}
+	n64 := j - i + 1
+	if n64 <= 0 || n64 > math.MaxInt32 {
+		panic("too many results to unpack")
+	}
+	n := int(n64)
 	if n > 0 {
 		v.EnsureStack(v.Base() + n)
 	}
