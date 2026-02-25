@@ -319,7 +319,7 @@ func (t *Table) Next(key Value) (Value, Value) {
 			return Nil, Nil
 		}
 	}
-	return Nil, Nil
+	panic("invalid key to 'next'")
 }
 
 // nextArrayEntry returns the first non-nil array entry at or after index start

@@ -89,11 +89,16 @@ func TestNextNoDuplicateFinalKey(t *testing.T) {
 		t.Errorf("expected (nil, nil) after last key, got (%v, %v)", k2, v2)
 	}
 
-	// Calling Next again with nil key that was "not found" should also be nil
-	k3, v3 := tbl.Next(NewString("nonexistent"))
-	if !k3.IsNil() || !v3.IsNil() {
-		t.Errorf("expected (nil, nil) for nonexistent key, got (%v, %v)", k3, v3)
-	}
+	// Calling Next again with a key that is "not found" must panic in Lua 5.4+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Errorf("expected panic for nonexistent key, but got none")
+		} else if msg, ok := r.(string); !ok || msg != "invalid key to 'next'" {
+			t.Errorf("expected panic %q, got %v", "invalid key to 'next'", r)
+		}
+	}()
+	tbl.Next(NewString("nonexistent"))
 }
 
 // TestDeleteAndIteration verifies iteration correctness after deleting a key.
