@@ -146,12 +146,15 @@ func luaToString(v *vm.VM) int {
 				if err != nil {
 					panic(err)
 				}
-				if len(results) > 0 {
-					v.Set(0, results[0])
-				} else {
-					v.Set(0, vm.NewString("nil"))
+				if len(results) == 0 {
+					panic("'__tostring' must return a string")
 				}
-				return 1
+				ret := results[0]
+				if ret.IsString() || ret.IsNumber() {
+					v.Set(0, vm.NewString(valueToString(ret)))
+					return 1
+				}
+				panic("'__tostring' must return a string")
 			}
 		}
 	}
