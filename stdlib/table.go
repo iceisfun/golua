@@ -178,16 +178,26 @@ func tableSort(v *vm.VM) int {
 	}
 
 	comp := v.Get(2)
+	var sortErr error
 
 	if comp.IsNil() {
 		// Default comparison: a < b
 		sort.Slice(values, func(i, j int) bool {
+			if sortErr != nil {
+				return false
+			}
 			lt, ok := values[i].LessThan(values[j])
-			return ok && lt
+			if !ok {
+				sortErr = fmt.Errorf("attempt to compare %s with %s", values[i].Type(), values[j].Type())
+				return false
+			}
+			return lt
 		})
 	} else {
+		if !comp.IsFunction() && !comp.IsNativeFunc() {
+			panic(fmt.Sprintf("bad argument #2 to 'sort' (function expected, got %s)", comp.Type()))
+		}
 		// Custom comparator: call the Lua function for each comparison
-		var sortErr error
 		sort.Slice(values, func(i, j int) bool {
 			if sortErr != nil {
 				return false // abort: don't reorder after error
@@ -202,9 +212,9 @@ func tableSort(v *vm.VM) int {
 			}
 			return results[0].ToBool()
 		})
-		if sortErr != nil {
-			panic(sortErr.Error())
-		}
+	}
+	if sortErr != nil {
+		panic(sortErr.Error())
 	}
 
 	// Put values back via __newindex
