@@ -339,7 +339,7 @@ func luaXpcall(v *vm.VM) int {
 		handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{errVal})
 		v.Set(0, vm.False)
 		if handlerErr != nil {
-			v.Set(1, vm.NewString(handlerErr.Error()))
+			v.Set(1, vm.NewString("error in error handling"))
 		} else if len(handlerResults) > 0 {
 			v.Set(1, handlerResults[0])
 		} else {

@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/iceisfun/golua/compiler"
 	"github.com/iceisfun/golua/parser"
@@ -40,7 +41,15 @@ func luaLoad(v *vm.VM) int {
 	if !v.Get(2).IsNil() {
 		chunkName = v.Get(2).AsString()
 	}
-	// mode := "bt" - we ignore this, we only support text mode
+	mode := "bt"
+	if !v.Get(3).IsNil() {
+		m := v.Get(3)
+		if m.IsString() || m.IsNumber() {
+			mode = valueToString(m)
+		} else {
+			panic(fmt.Sprintf("bad argument #3 to 'load' (string expected, got %s)", m.Type()))
+		}
+	}
 	env := v.Get(4)
 
 	// Get the source code
@@ -60,7 +69,14 @@ func luaLoad(v *vm.VM) int {
 			if len(results) == 0 || results[0].IsNil() {
 				break
 			}
-			s := results[0].AsString()
+			var s string
+			if results[0].IsString() || results[0].IsNumber() {
+				s = valueToString(results[0])
+			} else {
+				v.Set(0, vm.Nil)
+				v.Set(1, vm.NewString("reader function must return a string"))
+				return 2
+			}
 			if s == "" {
 				break
 			}
@@ -70,6 +86,12 @@ func luaLoad(v *vm.VM) int {
 	} else {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString("bad argument #1 to 'load' (string or function expected)"))
+		return 2
+	}
+
+	if !strings.Contains(mode, "t") {
+		v.Set(0, vm.Nil)
+		v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a text chunk (mode is '%s')", mode)))
 		return 2
 	}
 
@@ -114,7 +136,15 @@ func luaLoadfile(v *vm.VM) int {
 		return 2
 	}
 
-	// mode := "bt" - we ignore this, we only support text mode
+	mode := "bt"
+	if !v.Get(2).IsNil() {
+		m := v.Get(2)
+		if m.IsString() || m.IsNumber() {
+			mode = valueToString(m)
+		} else {
+			panic(fmt.Sprintf("bad argument #2 to 'loadfile' (string expected, got %s)", m.Type()))
+		}
+	}
 	env := v.Get(3)
 
 	// Load the source via the code provider
@@ -123,6 +153,12 @@ func luaLoadfile(v *vm.VM) int {
 	if err != nil {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(err.Error()))
+		return 2
+	}
+
+	if !strings.Contains(mode, "t") {
+		v.Set(0, vm.Nil)
+		v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a text chunk (mode is '%s')", mode)))
 		return 2
 	}
 
