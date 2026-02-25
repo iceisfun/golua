@@ -14,13 +14,15 @@ package vm
 // Next() skips nil-valued array entries so that pairs() iteration never
 // exposes holes to Lua code.
 //
-// The hash part uses delete-on-nil: setting a hash key to nil removes
-// the entry from both the map and the ordered keys slice. There are no
-// tombstone values in the hash part.
+// The hash part uses tombstone-on-nil: setting a hash key to nil removes
+// the entry from the map but leaves the key in the ordered keys slice as
+// a dead key. This allows ongoing pairs() iteration to skip over deleted
+// entries without losing position. Dead keys are revived on re-insertion.
 type Table struct {
 	array     []Value
 	hash      map[any]Value
-	keys      []any // insertion-ordered hash keys
+	keys      []any // insertion-ordered hash keys (may contain dead keys)
+	deadKeys  int   // count of keys in t.keys not in t.hash
 	metatable LuaTable
 }
 
@@ -67,25 +69,46 @@ func hashKey(v Value) any {
 }
 
 // setHash inserts, updates, or deletes a hash entry while keeping the
-// ordered keys slice in sync.
+// ordered keys slice in sync. Deleted keys are left in t.keys as dead
+// entries (tombstones) so that ongoing pairs() iteration can skip over
+// them without losing position.
 func (t *Table) setHash(k any, value Value) {
 	if value.IsNil() {
 		if _, exists := t.hash[k]; exists {
 			delete(t.hash, k)
-			t.removeKey(k)
+			// Leave key in t.keys as a dead entry for iteration safety.
+			t.deadKeys++
 		}
 	} else {
 		if _, exists := t.hash[k]; !exists {
-			t.keys = append(t.keys, k)
+			// Check if key already exists as a dead entry in t.keys.
+			revived := false
+			if t.deadKeys > 0 {
+				for _, hk := range t.keys {
+					if hk == k {
+						t.deadKeys--
+						revived = true
+						break
+					}
+				}
+			}
+			if !revived {
+				t.keys = append(t.keys, k)
+			}
 		}
 		t.hash[k] = value
 	}
 }
 
 // removeKey removes a key from the ordered keys slice.
+// Used by rehashToArray when moving keys from hash to array part.
 func (t *Table) removeKey(k any) {
 	for i, existing := range t.keys {
 		if existing == k {
+			// If this was a dead key, update the counter.
+			if _, alive := t.hash[k]; !alive {
+				t.deadKeys--
+			}
 			t.keys = append(t.keys[:i], t.keys[i+1:]...)
 			return
 		}
@@ -259,10 +282,9 @@ func (t *Table) Next(key Value) (Value, Value) {
 		if kv, vv, ok := t.nextArrayEntry(0); ok {
 			return kv, vv
 		}
-		// First hash entry
-		if len(t.keys) > 0 {
-			k := t.keys[0]
-			return keyToValue(k), t.hash[k]
+		// First live hash entry
+		if kv, vv, ok := t.firstLiveHashEntry(); ok {
+			return kv, vv
 		}
 		return Nil, Nil
 	}
@@ -275,21 +297,24 @@ func (t *Table) Next(key Value) (Value, Value) {
 				return kv, vv
 			}
 			// No more non-nil array entries, start hash
-			if len(t.keys) > 0 {
-				k := t.keys[0]
-				return keyToValue(k), t.hash[k]
+			if kv, vv, ok := t.firstLiveHashEntry(); ok {
+				return kv, vv
 			}
 			return Nil, Nil
 		}
 	}
 
-	// In hash part — find current key in ordered keys, return the next one
+	// In hash part — find current key in ordered keys, return the next live one.
+	// The key may be dead (deleted during iteration) but still present in t.keys.
 	k := hashKey(key)
 	for i, hk := range t.keys {
 		if hk == k {
-			if i+1 < len(t.keys) {
-				nextK := t.keys[i+1]
-				return keyToValue(nextK), t.hash[nextK]
+			// Found key (live or dead) — advance to next live key
+			for j := i + 1; j < len(t.keys); j++ {
+				nextK := t.keys[j]
+				if v, alive := t.hash[nextK]; alive {
+					return keyToValue(nextK), v
+				}
 			}
 			return Nil, Nil
 		}
@@ -303,6 +328,17 @@ func (t *Table) nextArrayEntry(start int) (Value, Value, bool) {
 	for j := start; j < len(t.array); j++ {
 		if !t.array[j].IsNil() {
 			return NewInt(int64(j + 1)), t.array[j], true
+		}
+	}
+	return Nil, Nil, false
+}
+
+// firstLiveHashEntry returns the first live (non-dead) hash entry, skipping
+// tombstones left by deletions during iteration.
+func (t *Table) firstLiveHashEntry() (Value, Value, bool) {
+	for _, k := range t.keys {
+		if v, alive := t.hash[k]; alive {
+			return keyToValue(k), v, true
 		}
 	}
 	return Nil, Nil, false
@@ -338,8 +374,10 @@ func (t *Table) ForEach(fn func(key, value Value) bool) {
 		}
 	}
 	for _, k := range t.keys {
-		if !fn(keyToValue(k), t.hash[k]) {
-			return
+		if v, alive := t.hash[k]; alive {
+			if !fn(keyToValue(k), v) {
+				return
+			}
 		}
 	}
 }

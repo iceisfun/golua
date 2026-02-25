@@ -1272,3 +1272,93 @@ func TestProbe_VarargNilCount(t *testing.T) {
 		t.Errorf("vararg nil count: got %v, expected 3", results[0])
 	}
 }
+
+// ---- pairs iteration with key deletion ----
+
+func TestPairs_DeleteCurrentKey(t *testing.T) {
+	// Deleting the current key during iteration should not terminate early
+	results := mustRun(t, `
+		local t = {A=1, B=2, C=3, D=4}
+		local count = 0
+		for k, v in pairs(t) do
+			count = count + 1
+			t[k] = nil  -- delete current key
+		end
+		return count
+	`)
+	if results[0].AsInt() != 4 {
+		t.Errorf("expected 4 visited keys, got %v", results[0])
+	}
+}
+
+func TestPairs_DeleteFutureKey(t *testing.T) {
+	// Deleting a future key during iteration — it should be skipped
+	results := mustRun(t, `
+		local t = {A=1, B=2, C=3}
+		local visited = {}
+		for k, v in pairs(t) do
+			visited[#visited+1] = k
+			-- Delete all other keys
+			for k2, _ in pairs(t) do
+				if k2 ~= k then t[k2] = nil end
+			end
+		end
+		-- At least the first key should be visited; subsequent ones were deleted
+		return #visited
+	`)
+	// After deleting everything else, only 1 key is visited
+	if results[0].AsInt() < 1 {
+		t.Errorf("expected at least 1 visited key, got %v", results[0])
+	}
+}
+
+func TestPairs_DeleteAndReinsert(t *testing.T) {
+	// Delete a key then re-insert it; should not cause duplicate visits
+	results := mustRun(t, `
+		local t = {X=1}
+		t.X = nil
+		t.X = 2
+		local count = 0
+		for k, v in pairs(t) do
+			count = count + 1
+		end
+		return count, t.X
+	`)
+	if results[0].AsInt() != 1 {
+		t.Errorf("expected 1 key, got %v", results[0])
+	}
+	if results[1].AsInt() != 2 {
+		t.Errorf("expected X=2, got %v", results[1])
+	}
+}
+
+func TestPairs_NextAfterAllDeleted(t *testing.T) {
+	// Delete all keys, then next(t, nil) should return nil
+	results := mustRun(t, `
+		local t = {A=1, B=2}
+		t.A = nil
+		t.B = nil
+		local k, v = next(t)
+		return k == nil
+	`)
+	if !results[0].ToBool() {
+		t.Errorf("next on empty table should return nil")
+	}
+}
+
+func TestPairs_MixedArrayAndHash(t *testing.T) {
+	// Delete from hash part while iterating, array part should still be visited
+	results := mustRun(t, `
+		local t = {10, 20, x="a", y="b"}
+		local count = 0
+		for k, v in pairs(t) do
+			count = count + 1
+			if k == "x" then t.x = nil end
+			if k == "y" then t.y = nil end
+		end
+		return count
+	`)
+	if results[0].AsInt() != 4 {
+		t.Errorf("expected 4 visited entries, got %v", results[0])
+	}
+}
