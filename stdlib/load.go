@@ -51,6 +51,7 @@ func luaLoad(v *vm.VM) int {
 		}
 	}
 	env := v.Get(4)
+	hasEnv := v.ArgCount() >= 4
 
 	// Get the source code
 	var source string
@@ -96,7 +97,7 @@ func luaLoad(v *vm.VM) int {
 	}
 
 	// Parse and compile
-	fn, errMsg := compileChunk(v, source, chunkName, env)
+	fn, errMsg := compileChunk(v, source, chunkName, env, hasEnv)
 	if errMsg != "" {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(errMsg))
@@ -146,6 +147,7 @@ func luaLoadfile(v *vm.VM) int {
 		}
 	}
 	env := v.Get(3)
+	hasEnv := v.ArgCount() >= 3
 
 	// Load the source via the code provider
 	ctx := v.CallerContext()
@@ -163,7 +165,7 @@ func luaLoadfile(v *vm.VM) int {
 	}
 
 	// Parse and compile
-	fn, errMsg := compileChunk(v, string(source), chunkName, env)
+	fn, errMsg := compileChunk(v, string(source), chunkName, env, hasEnv)
 	if errMsg != "" {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(errMsg))
@@ -242,8 +244,9 @@ func luaDofile(v *vm.VM) int {
 }
 
 // compileChunk parses and compiles Lua source, returning a function value.
-// If env is non-nil, it's used as the environment for the chunk.
-func compileChunk(v *vm.VM, source, chunkName string, env vm.Value) (vm.Value, string) {
+// If hasEnv is true, env is bound to the chunk's _ENV upvalue even when it is nil
+// or non-table; otherwise globals are used.
+func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool) (vm.Value, string) {
 	// Parse
 	block, parseErr := parser.Parse(chunkName, source)
 	if parseErr != nil {
@@ -262,8 +265,8 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value) (vm.Value, s
 	// Set up _ENV upvalue
 	if len(proto.Upvalues) > 0 {
 		closure.Upvalues[0] = &vm.Upvalue{}
-		if !env.IsNil() && env.IsTable() {
-			// Use provided environment
+		if hasEnv {
+			// Use provided environment value exactly as passed.
 			closure.Upvalues[0].SetClosed(env)
 		} else {
 			// Use global environment
