@@ -133,16 +133,30 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				err = fmt.Errorf("%v", r)
 			}
 			results = nil
-			// Restore VM state
-			vm.top = savedTop
+			// Restore call stack (but NOT vm.top yet — __close handlers need
+			// the stack pointer past the TBC variables to avoid overwriting them)
 			if len(vm.callStack) > savedCallStackLen {
 				vm.callStack = vm.callStack[:savedCallStackLen]
 			}
-			// Close TBC variables that were created during the failed call
-			for i := len(vm.tbcVars) - 1; i >= savedTbcLen; i-- {
-				vm.callCloseMetamethod(vm.tbcVars[i])
-			}
+			// Close TBC variables that were created during the failed call.
+			// Remove them from tbcVars BEFORE calling __close to prevent
+			// double-close: the handler's OP_RETURN calls closeUpvalues which
+			// would find the same entry still in tbcVars.
+			tbcToClose := make([]int, len(vm.tbcVars)-savedTbcLen)
+			copy(tbcToClose, vm.tbcVars[savedTbcLen:])
 			vm.tbcVars = vm.tbcVars[:savedTbcLen]
+			// Extract the Lua error value to pass to __close handlers
+			var errVal Value
+			if le, ok := r.(*LuaError); ok {
+				errVal = le.Value
+			} else {
+				errVal = NewString(fmt.Sprintf("%v", r))
+			}
+			for i := len(tbcToClose) - 1; i >= 0; i-- {
+				vm.callCloseMetamethod(tbcToClose[i], errVal)
+			}
+			// Now restore vm.top after __close handlers are done
+			vm.top = savedTop
 			// Close upvalues
 			for i := len(vm.openUpvalues) - 1; i >= savedOpenUpvaluesLen; i-- {
 				vm.openUpvalues[i].Close()
@@ -626,8 +640,13 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
 			v := vm.stack[frame.base+b]
-			if i, ok := v.ToInt(); ok {
-				vm.stack[frame.base+a] = NewInt(int64(sc) << uint(i))
+			// Lua 5.4: bitwise ops do NOT coerce strings
+			if !v.IsString() {
+				if i, ok := v.ToInt(); ok {
+					vm.stack[frame.base+a] = NewInt(int64(sc) << uint(i))
+				} else {
+					return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+				}
 			} else {
 				return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
 			}
@@ -636,8 +655,13 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
 			v := vm.stack[frame.base+b]
-			if i, ok := v.ToInt(); ok {
-				vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
+			// Lua 5.4: bitwise ops do NOT coerce strings
+			if !v.IsString() {
+				if i, ok := v.ToInt(); ok {
+					vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
+				} else {
+					return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+				}
 			} else {
 				return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
 			}
@@ -698,16 +722,24 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_BNOT:
 			a, b := inst.A(), inst.B()
 			v := vm.stack[frame.base+b]
-			if i, ok := v.ToInt(); ok {
-				vm.stack[frame.base+a] = NewInt(^i)
-			} else if mm := vm.getMetafield(v, "__bnot"); !mm.IsNil() {
-				result, err := vm.callMetamethod(mm, v, v)
-				if err != nil {
-					return nil, err
+			// Lua 5.4: bitwise ops do NOT coerce strings
+			done := false
+			if !v.IsString() {
+				if i, ok := v.ToInt(); ok {
+					vm.stack[frame.base+a] = NewInt(^i)
+					done = true
 				}
-				vm.stack[frame.base+a] = result
-			} else {
-				return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+			}
+			if !done {
+				if mm := vm.getMetafield(v, "__bnot"); !mm.IsNil() {
+					result, err := vm.callMetamethod(mm, v, v)
+					if err != nil {
+						return nil, err
+					}
+					vm.stack[frame.base+a] = result
+				} else {
+					return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+				}
 			}
 
 		case compiler.OP_NOT:
@@ -1686,8 +1718,15 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 }
 
 func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
-	i1, ok1 := v1.ToInt()
-	i2, ok2 := v2.ToInt()
+	// Lua 5.4: bitwise ops do NOT coerce strings (unlike arithmetic)
+	var i1, i2 int64
+	var ok1, ok2 bool
+	if !v1.IsString() {
+		i1, ok1 = v1.ToInt()
+	}
+	if !v2.IsString() {
+		i2, ok2 = v2.ToInt()
+	}
 	if ok1 && ok2 {
 		var result int64
 		switch op {
@@ -1726,8 +1765,15 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 }
 
 func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
-	i1, ok1 := v.ToInt()
-	i2, ok2 := kv.ToInt()
+	// Lua 5.4: bitwise ops do NOT coerce strings
+	var i1, i2 int64
+	var ok1, ok2 bool
+	if !v.IsString() {
+		i1, ok1 = v.ToInt()
+	}
+	if !kv.IsString() {
+		i2, ok2 = kv.ToInt()
+	}
 	if ok1 && ok2 {
 		var result int64
 		switch op {
@@ -1925,7 +1971,7 @@ func (vm *VM) closeUpvalues(level int) {
 	for i := len(snapshot) - 1; i >= 0; i-- {
 		idx := snapshot[i]
 		if idx >= level {
-			vm.callCloseMetamethod(idx)
+			vm.callCloseMetamethod(idx, Nil)
 		} else {
 			remainingTBC = append(remainingTBC, idx)
 		}
@@ -1937,8 +1983,9 @@ func (vm *VM) closeUpvalues(level int) {
 	vm.tbcVars = remainingTBC
 }
 
-// callCloseMetamethod calls the __close metamethod on a TBC variable
-func (vm *VM) callCloseMetamethod(stackIdx int) {
+// callCloseMetamethod calls the __close metamethod on a TBC variable.
+// errVal is the error object (Nil for normal exit, the Lua error value on error paths).
+func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 	val := vm.stack[stackIdx]
 	if !val.IsTable() {
 		return
@@ -1952,8 +1999,7 @@ func (vm *VM) callCloseMetamethod(stackIdx int) {
 	if closeFunc.IsNil() {
 		return
 	}
-	// Call __close(val, nil) - second arg is error value (nil for normal exit)
-	vm.callMetamethod(closeFunc, val, Nil)
+	vm.callMetamethod(closeFunc, val, errVal)
 }
 
 // Stack access for native functions

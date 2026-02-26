@@ -88,7 +88,12 @@ func mathAtan(v *vm.VM) int {
 
 func mathCeil(v *vm.VM) int {
 	n := getNumber(v, 1, "ceil")
-	v.Set(0, vm.NewInt(int64(math.Ceil(n))))
+	f := math.Ceil(n)
+	if !math.IsNaN(f) && !math.IsInf(f, 0) && f >= -9223372036854775808 && f < 9223372036854775808 {
+		v.Set(0, vm.NewInt(int64(f)))
+	} else {
+		v.Set(0, vm.NewFloat(f))
+	}
 	return 1
 }
 
@@ -112,7 +117,12 @@ func mathExp(v *vm.VM) int {
 
 func mathFloor(v *vm.VM) int {
 	n := getNumber(v, 1, "floor")
-	v.Set(0, vm.NewInt(int64(math.Floor(n))))
+	f := math.Floor(n)
+	if !math.IsNaN(f) && !math.IsInf(f, 0) && f >= -9223372036854775808 && f < 9223372036854775808 {
+		v.Set(0, vm.NewInt(int64(f)))
+	} else {
+		v.Set(0, vm.NewFloat(f))
+	}
 	return 1
 }
 
@@ -204,7 +214,11 @@ func mathModf(v *vm.VM) int {
 		return 2
 	}
 	i, f := math.Modf(n)
-	v.Set(0, vm.NewInt(int64(i)))
+	if !math.IsNaN(i) && i >= -9223372036854775808 && i < 9223372036854775808 {
+		v.Set(0, vm.NewInt(int64(i)))
+	} else {
+		v.Set(0, vm.NewFloat(i))
+	}
 	v.Set(1, vm.NewFloat(f))
 	return 2
 }

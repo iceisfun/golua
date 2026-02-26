@@ -2,6 +2,7 @@
 package vm
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -187,8 +188,8 @@ func StringToNumericValue(s string) (Value, bool) {
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return NewInt(i), true
 	}
-	// Try float
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
+	// Try float (accept ErrRange for overflow → ±Inf, matching Lua 5.4 coercion)
+	if f, err := strconv.ParseFloat(s, 64); err == nil || errors.Is(err, strconv.ErrRange) {
 		return NewFloat(f), true
 	}
 	return Nil, false
@@ -207,8 +208,8 @@ func (v Value) ToNumber() (float64, bool) {
 		if s == "" {
 			return 0, false
 		}
-		// Try parsing as float (which also handles integers)
-		if f, err := strconv.ParseFloat(s, 64); err == nil {
+		// Try parsing as float (accept ErrRange for overflow → ±Inf)
+		if f, err := strconv.ParseFloat(s, 64); err == nil || errors.Is(err, strconv.ErrRange) {
 			return f, true
 		}
 		// Try parsing hex (0x prefix)
@@ -249,7 +250,8 @@ func (v Value) ToInt() (int64, bool) {
 			}
 		}
 		// Try as float, then check if it's a whole number
-		if f, err := strconv.ParseFloat(s, 64); err == nil {
+		// Accept ErrRange (overflow → ±Inf) but Inf won't pass the int check below
+		if f, err := strconv.ParseFloat(s, 64); err == nil || errors.Is(err, strconv.ErrRange) {
 			i := int64(f)
 			if float64(i) == f {
 				return i, true
