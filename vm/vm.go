@@ -2377,24 +2377,17 @@ func (vm *VM) equal(v1, v2 Value) (bool, error) {
 	}
 
 	// 3. Userdata/Table check for __eq
-	// Only if both are tables or both are full userdata (we don't have full userdata yet)
+	// Lua 5.4: try left operand's __eq first, then right's.
 	if v1.IsTable() && v2.IsTable() {
-		// Get metamethods
-		op := "__eq"
-		mm1 := vm.getMetafield(v1, op)
-		mm2 := vm.getMetafield(v2, op)
-
-		// They must share the same metamethod logic
-		if mm1.IsNil() || mm2.IsNil() {
-			return false, nil
+		mm := vm.getMetafield(v1, "__eq")
+		if mm.IsNil() {
+			mm = vm.getMetafield(v2, "__eq")
 		}
-		// In Lua 5.3+, it checks if they are the same function/value?
-		// "if not metamethod(a) or metamethod(a) ~= metamethod(b)"
-		if !mm1.Equal(mm2) {
+		if mm.IsNil() {
 			return false, nil
 		}
 
-		res, err := vm.callMetamethod(mm1, v1, v2)
+		res, err := vm.callMetamethod(mm, v1, v2)
 		if err != nil {
 			return false, err
 		}

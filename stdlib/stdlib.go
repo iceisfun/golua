@@ -604,6 +604,29 @@ func luaSetmetatable(v *vm.VM) int {
 	return 1
 }
 
+// tolstring resolves __tostring metamethods, matching luaL_tolstring.
+func tolstring(v *vm.VM, val vm.Value) string {
+	if val.IsTable() {
+		if mt := val.AsTable().Metatable(); mt != nil {
+			if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+				results, err := v.ProtectedCall(ts, []vm.Value{val})
+				if err != nil {
+					panic(err)
+				}
+				if len(results) == 0 {
+					panic("'__tostring' must return a string")
+				}
+				ret := results[0]
+				if ret.IsString() || ret.IsNumber() {
+					return valueToString(ret)
+				}
+				panic("'__tostring' must return a string")
+			}
+		}
+	}
+	return valueToString(val)
+}
+
 func valueToString(val vm.Value) string {
 	switch {
 	case val.IsNil():

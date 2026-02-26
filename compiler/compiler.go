@@ -54,10 +54,11 @@ const noJump = -1
 // ---------------------------------------------------------------------------
 
 type localVar struct {
-	name    string
-	reg     int
-	startPC int
-	attrib  string // "", "const", "close"
+	name     string
+	reg      int
+	startPC  int
+	attrib   string // "", "const", "close"
+	captured bool   // true if captured as an upvalue by an inner closure
 }
 
 type scopeInfo struct {
@@ -278,6 +279,15 @@ func (fs *funcState) lookupLocal(name string) (int, bool) {
 	return 0, false
 }
 
+func (fs *funcState) markCaptured(name string) {
+	for i := len(fs.locals) - 1; i >= 0; i-- {
+		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
+			fs.locals[i].captured = true
+			return
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Upvalues
 // ---------------------------------------------------------------------------
@@ -316,6 +326,7 @@ func (c *compiler) resolveUpvalue(fs *funcState, name string) (int, bool) {
 	}
 	// Is it a local in the parent?
 	if reg, ok := fs.parent.lookupLocal(name); ok {
+		fs.parent.markCaptured(name)
 		return fs.addUpvalue(name, true, reg), true
 	}
 	// Is it an upvalue in the parent?
@@ -343,18 +354,18 @@ func (c *compiler) leaveScope(line int) {
 	scope := fs.scopes[len(fs.scopes)-1]
 	fs.scopes = fs.scopes[:len(fs.scopes)-1]
 
-	// Emit OP_CLOSE if this scope has any to-be-closed variables.
+	// Emit OP_CLOSE if this scope has any to-be-closed or captured variables.
 	// This closes upvalues and calls __close metamethods.
 	if fs.nActVar > scope.nLocals {
-		hasClose := false
+		needClose := false
 		start := len(fs.locals) - (fs.nActVar - scope.nLocals)
 		for i := start; i < len(fs.locals); i++ {
-			if fs.locals[i].attrib == "close" {
-				hasClose = true
+			if fs.locals[i].attrib == "close" || fs.locals[i].captured {
+				needClose = true
 				break
 			}
 		}
-		if hasClose {
+		if needClose {
 			fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), line)
 		}
 	}
@@ -984,6 +995,13 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	// Body
 	c.compileBlock(s.Body)
 
+	// Close upvalues for body locals before jumping back.
+	// This ensures each iteration gets its own closed upvalue copy.
+	scope := fs.scopes[len(fs.scopes)-1]
+	if fs.nActVar > scope.nLocals {
+		fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), line)
+	}
+
 	// Jump back to condition
 	backJump := fs.emitJump(line)
 	offset := loopStart - (fs.pc()) // negative
@@ -1006,17 +1024,25 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 
 	c.compileBlock(s.Body)
 
-	// Test condition — exit when true, repeat when false
+	// Evaluate condition (may reference body locals)
 	condLine := s.Cond.Pos().Line
 	reg := fs.freeReg
 	c.compileExprToReg(s.Cond, reg)
-	fs.emit(ABC(OP_TEST, reg, 0, 0, 1), condLine)    // skip next if truthy (continue loop)
-	exitJump := fs.emitJump(condLine)                  // jump out (cond is true, stop repeating)
-	backJump := fs.emitJump(condLine)                  // jump back (cond is false, repeat)
+
+	// Close upvalues for body locals. OP_CLOSE captures values but does
+	// not clear stack slots, so the condition result in reg remains valid.
+	scope := fs.scopes[len(fs.scopes)-1]
+	if fs.nActVar > scope.nLocals {
+		fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), condLine)
+	}
+
+	// If condition is falsy, jump back (keep looping)
+	fs.emit(ABC(OP_TEST, reg, 0, 0, 0), condLine) // skip next if truthy → exit
+	backJump := fs.emitJump(condLine)              // jump back (cond is false)
 	offset := loopStart - fs.pc()
 	fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 
-	c.patchJump(exitJump)
+	// Fall through here when condition is true (exit loop)
 	c.leaveScope(line)
 }
 
