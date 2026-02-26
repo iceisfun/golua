@@ -220,7 +220,8 @@ func luaDofile(v *vm.VM) int {
 	}
 
 	// Compile
-	proto, compileErr := compiler.Compile(chunkName, block)
+	proto, compileErr := compiler.Compile(chunkName, block,
+		compiler.WithLimits(v.GetLimits().CompilerLimits))
 	if compileErr != nil {
 		panic(fmt.Sprintf("compile error: %v", compileErr))
 	}
@@ -261,7 +262,8 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool)
 	}
 
 	// Compile
-	proto, compileErr := compiler.Compile(chunkName, block)
+	proto, compileErr := compiler.Compile(chunkName, block,
+		compiler.WithLimits(v.GetLimits().CompilerLimits))
 	if compileErr != nil {
 		return vm.Nil, fmt.Sprintf("compile error: %v", compileErr)
 	}

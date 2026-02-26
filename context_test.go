@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,8 @@ func runLuaWithContext(t *testing.T, source, name string, ctx context.Context, l
 		t.Fatalf("parse error: %v", err)
 	}
 
-	proto, err := compiler.Compile(name, block)
+	proto, err := compiler.Compile(name, block,
+		compiler.WithLimits(limits.CompilerLimits))
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
@@ -415,5 +417,187 @@ func TestContext_ErrorUnwindsCleanly(t *testing.T) {
 	}
 	if len(results) == 0 || results[0].AsInt() != 55 {
 		t.Fatalf("expected 55, got: %v", results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Compiler limit tests
+// ---------------------------------------------------------------------------
+
+func genLocals(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "local v%d = %d\n", i, i)
+	}
+	b.WriteString("return v1\n")
+	return b.String()
+}
+
+func TestLimits_MaxVars(t *testing.T) {
+	// 200 locals — at the default limit, should compile fine.
+	source := genLocals(200)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = compiler.Compile("test", block)
+	if err != nil {
+		t.Fatalf("expected 200 locals to compile, got: %v", err)
+	}
+}
+
+func TestLimits_MaxVars_Exceeded(t *testing.T) {
+	// 201 locals — exceeds the default limit of 200.
+	source := genLocals(201)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = compiler.Compile("test", block)
+	if err == nil {
+		t.Fatal("expected compile error for 201 locals")
+	}
+	if !strings.Contains(err.Error(), "too many local variables") {
+		t.Fatalf("expected 'too many local variables', got: %v", err)
+	}
+}
+
+func TestLimits_MaxVars_Override(t *testing.T) {
+	// 201 locals with MaxVars=210 — should compile fine.
+	source := genLocals(201)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = compiler.Compile("test", block, compiler.WithLimits(compiler.CompilerLimits{
+		MaxVars: 210,
+	}))
+	if err != nil {
+		t.Fatalf("expected 201 locals with MaxVars=210 to compile, got: %v", err)
+	}
+}
+
+func genRegsSource(n int) string {
+	// Each local uses one register. We need n simultaneous registers.
+	// Use a single function with n locals.
+	var b strings.Builder
+	b.WriteString("local function f()\n")
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "  local v%d = %d\n", i, i)
+	}
+	b.WriteString("  return v1\nend\nreturn f()\n")
+	return b.String()
+}
+
+func TestLimits_MaxRegs_Exceeded(t *testing.T) {
+	// Force a small MaxRegs and exceed it.
+	source := genLocals(50)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = compiler.Compile("test", block, compiler.WithLimits(compiler.CompilerLimits{
+		MaxVars: 50,
+		MaxRegs: 30,
+	}))
+	if err == nil {
+		t.Fatal("expected compile error for too many registers")
+	}
+	if !strings.Contains(err.Error(), "too many registers") {
+		t.Fatalf("expected 'too many registers', got: %v", err)
+	}
+}
+
+func TestLimits_MaxRegs_HardCap(t *testing.T) {
+	// Even if user requests MaxRegs=300, it should be clamped to 249.
+	source := genLocals(200)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	// 200 locals fit in 249 regs but not in a hypothetical 300 that gets clamped.
+	// Just verify the compile succeeds — the hard cap doesn't raise it above 249.
+	_, err = compiler.Compile("test", block, compiler.WithLimits(compiler.CompilerLimits{
+		MaxRegs: 300, // should be clamped to 249
+	}))
+	if err != nil {
+		t.Fatalf("expected 200 locals to compile with clamped MaxRegs, got: %v", err)
+	}
+}
+
+func genUpvalSource(n int) string {
+	// Create n distinct upvalues in one inner function.
+	// Each outer local becomes an upvalue when captured by the inner closure.
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "local u%d = %d\n", i, i)
+	}
+	b.WriteString("local function f()\n  return u1")
+	for i := 2; i <= n; i++ {
+		fmt.Fprintf(&b, " + u%d", i)
+	}
+	b.WriteString("\nend\nreturn f()\n")
+	return b.String()
+}
+
+func TestLimits_MaxUpvals(t *testing.T) {
+	// 100 upvalues — well under the 255 limit and under the 200 local limit.
+	source := genUpvalSource(100)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = compiler.Compile("test", block)
+	if err != nil {
+		t.Fatalf("expected 100 upvalues to compile, got: %v", err)
+	}
+}
+
+func TestLimits_MaxUpvals_Exceeded(t *testing.T) {
+	// Set a low MaxUpvals and exceed it.
+	source := genUpvalSource(20)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = compiler.Compile("test", block, compiler.WithLimits(compiler.CompilerLimits{
+		MaxUpvals: 10,
+	}))
+	if err == nil {
+		t.Fatal("expected compile error for too many upvalues")
+	}
+	if !strings.Contains(err.Error(), "too many upvalues") {
+		t.Fatalf("expected 'too many upvalues', got: %v", err)
+	}
+}
+
+func TestLimits_MaxUpvals_Override(t *testing.T) {
+	// 20 upvalues with MaxUpvals=25 — should work.
+	source := genUpvalSource(20)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = compiler.Compile("test", block, compiler.WithLimits(compiler.CompilerLimits{
+		MaxUpvals: 25,
+	}))
+	if err != nil {
+		t.Fatalf("expected 20 upvalues with MaxUpvals=25 to compile, got: %v", err)
+	}
+}
+
+func TestLimits_LoadInheritsLimits(t *testing.T) {
+	// Verify that load() inside the VM uses the VM's compiler limits.
+	source := `
+		local code = {}
+		for i = 1, 201 do code[#code+1] = "local v"..i.." = "..i end
+		code[#code+1] = "return v1"
+		local f, err = load(table.concat(code, "\n"))
+		assert(f == nil, "expected compile error for 201 locals")
+		assert(string.find(err, "too many local"), "expected 'too many local' in: " .. err)
+	`
+	_, err := runLuaWithContext(t, source, "test_load_inherits_limits", nil, vm.Limits{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

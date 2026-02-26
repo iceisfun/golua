@@ -11,8 +11,12 @@ import (
 // ---------------------------------------------------------------------------
 
 // Compile compiles a parsed block (chunk) into a top-level function prototype.
-func Compile(source string, block *ast.Block) (*Proto, error) {
-	c := &compiler{}
+func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, error) {
+	cfg := compileConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	c := &compiler{limits: cfg.limits.effective()}
 	p := c.compileChunk(source, block)
 	if c.err != nil {
 		return nil, c.err
@@ -83,6 +87,7 @@ type pendingGoto struct {
 }
 
 type funcState struct {
+	c       *compiler // backpointer to compiler (for limits and error reporting)
 	proto   *Proto
 	parent  *funcState
 	freeReg int
@@ -102,8 +107,9 @@ type funcState struct {
 // ---------------------------------------------------------------------------
 
 type compiler struct {
-	fs  *funcState
-	err error
+	fs     *funcState
+	err    error
+	limits CompilerLimits
 }
 
 func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
@@ -118,6 +124,7 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 
 func (c *compiler) newFuncState(source string, parent *funcState) *funcState {
 	fs := &funcState{
+		c: c,
 		proto: &Proto{
 			Source: source,
 		},
@@ -184,6 +191,9 @@ func (fs *funcState) reserveReg() int {
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
+	if fs.freeReg > fs.c.limits.MaxRegs {
+		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
+	}
 	return r
 }
 
@@ -192,6 +202,9 @@ func (fs *funcState) reserveRegs(n int) int {
 	fs.freeReg += n
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
+	}
+	if fs.freeReg > fs.c.limits.MaxRegs {
+		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
 	}
 	return base
 }
@@ -327,7 +340,22 @@ func (fs *funcState) stringConstant(s string) int {
 // Local variables
 // ---------------------------------------------------------------------------
 
+// checkVarLimit checks that adding count new locals won't exceed the limit.
+func (fs *funcState) checkVarLimit(count int) {
+	if fs.nActVar+count > fs.c.limits.MaxVars {
+		fs.c.error(nil, "too many local variables (limit is %d)", fs.c.limits.MaxVars)
+	}
+}
+
+// checkRegLimit checks that the current freeReg doesn't exceed the register limit.
+func (fs *funcState) checkRegLimit() {
+	if fs.freeReg > fs.c.limits.MaxRegs {
+		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
+	}
+}
+
 func (fs *funcState) addLocal(name string, attrib string) int {
+	fs.checkVarLimit(1)
 	reg := fs.reserveReg()
 	fs.locals = append(fs.locals, localVar{
 		name:    name,
@@ -379,6 +407,10 @@ func (fs *funcState) addUpvalue(name string, inStack bool, index int) int {
 		return idx
 	}
 	idx := len(fs.upvalues)
+	if idx >= fs.c.limits.MaxUpvals {
+		fs.c.error(nil, "too many upvalues (limit is %d)", fs.c.limits.MaxUpvals)
+		return 0
+	}
 	fs.upvalues = append(fs.upvalues, UpvalDesc{
 		Name:    name,
 		InStack: inStack,
@@ -677,7 +709,9 @@ func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
+	fs.checkRegLimit()
 
+	fs.checkVarLimit(nNames)
 	baseIdx := len(fs.locals)
 	for i, name := range s.Names {
 		attrib := ""
@@ -1175,9 +1209,11 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
+	fs.checkRegLimit()
 
 	// Add internal for loop variables as hidden locals to protect their registers
 	// This ensures freeReg won't be reset below base+4 during the loop body
+	fs.checkVarLimit(4)
 	fs.locals = append(fs.locals,
 		localVar{name: "(for state)", reg: base, startPC: fs.pc()},
 		localVar{name: "(for state)", reg: base + 1, startPC: fs.pc()},
@@ -1266,6 +1302,7 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), line)
 
 	// Add internal for-in variables as hidden locals to protect their registers
+	fs.checkVarLimit(4 + len(s.Names))
 	fs.locals = append(fs.locals,
 		localVar{name: "(for state)", reg: base, startPC: fs.pc()},
 		localVar{name: "(for state)", reg: base + 1, startPC: fs.pc()},
@@ -1289,6 +1326,7 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		})
 		fs.nActVar++
 	}
+	fs.checkRegLimit()
 
 	// Body
 	c.compileBlock(s.Body)
@@ -1435,6 +1473,7 @@ func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 	line := s.P.Line
 
 	// Register the local first (allows recursion)
+	fs.checkVarLimit(1)
 	localIdx := len(fs.locals)
 	reg := fs.freeReg
 	fs.locals = append(fs.locals, localVar{
@@ -1447,6 +1486,7 @@ func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
+	fs.checkRegLimit()
 	_ = localIdx
 
 	protoIdx := c.compileFunc(s.Func, line)
@@ -1516,6 +1556,7 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	fs.enterScope(false)
 
 	// Parameters are local variables
+	fs.checkVarLimit(len(fe.Params))
 	for _, param := range fe.Params {
 		reg := fs.freeReg
 		fs.locals = append(fs.locals, localVar{
@@ -1529,6 +1570,7 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 			fs.maxReg = fs.freeReg
 		}
 	}
+	fs.checkRegLimit()
 
 	// Vararg prep
 	if fe.VarArg {
