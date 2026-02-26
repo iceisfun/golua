@@ -240,10 +240,28 @@ func (t *Table) rehashToArray() {
 }
 
 // Len returns the length of the table (# operator).
-// For array-like tables, this is the largest n such that t[n] is non-nil
-// and t[n+1] is nil.
+// It returns a "border": an index n where t[n] is non-nil and t[n+1] is nil,
+// or 0 when t[1] is nil. This matches Lua 5.4's luaH_getn.
 func (t *Table) Len() int {
-	return len(t.array)
+	n := len(t.array)
+	if n == 0 {
+		return 0
+	}
+	// Fast path: last element is non-nil → the border is at the end.
+	if !t.array[n-1].IsNil() {
+		return n
+	}
+	// Binary search for a border in [0, n).
+	lo, hi := 0, n
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		if t.array[mid-1].IsNil() {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return lo
 }
 
 // Delete removes a key from the table.

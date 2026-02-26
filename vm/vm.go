@@ -1327,11 +1327,21 @@ func (vm *VM) execute() ([]Value, error) {
 
 			// offset is the starting index (1-based for first batch)
 			// Indices set are: offset, offset+1, ..., offset+n-1
-			// Fast path: OP_SETLIST always follows OP_NEWTABLE, so table is always *Table
+			// Fast path: OP_SETLIST always follows OP_NEWTABLE, so table is always *Table.
+			// Write directly into the array part including nils so that table
+			// constructors like {nil, "a"} produce a correctly-sized array.
 			if ct, ok := tbl.(*Table); ok {
-				for i := 0; i < n; i++ {
-					ct.SetInt(offset+i, vm.stack[frame.base+a+1+i])
+				needed := offset + n - 1 // last 1-based index
+				if needed > len(ct.array) {
+					newArr := make([]Value, needed)
+					copy(newArr, ct.array)
+					ct.array = newArr
 				}
+				for i := 0; i < n; i++ {
+					ct.array[offset-1+i] = vm.stack[frame.base+a+1+i]
+				}
+				// Move any consecutive hash entries that now belong in array.
+				ct.rehashToArray()
 			} else {
 				for i := 0; i < n; i++ {
 					tbl.Set(NewInt(int64(offset+i)), vm.stack[frame.base+a+1+i])
