@@ -186,6 +186,11 @@ v.SetLimits(vm.Limits{
     MaxStackSlots:   10000,   // Bound memory growth
     MaxInstructions: 1000000, // Bound CPU (checkpoint visits)
     MaxMetaDepth:    500,     // Limit __index/__newindex chain depth (default: 2000)
+    CompilerLimits: compiler.CompilerLimits{
+        MaxVars:   200, // Max locals per function (default: 200)
+        MaxRegs:   249, // Max registers per function (default: 249, hard cap: 249)
+        MaxUpvals: 255, // Max upvalues per function (default: 255, hard cap: 255)
+    },
 })
 
 // Or configure metatable depth independently
@@ -196,6 +201,8 @@ v.SetMaxMetaDepth(500) // runtime setter equivalent
 The VM checks for cancellation at backedges (loop iterations), function calls, and tail calls. No per-instruction overhead is added unless `MaxInstructions` is set. Context and limits are inherited by coroutine VMs. Errors from limits are catchable by `pcall`.
 
 `MaxMetaDepth` bounds the length of `__index` and `__newindex` table-to-table chains to prevent infinite loops from metatable cycles. The default is 2000, matching Lua 5.4's `MAXTAGLOOP`. A value of 0 means "use the default". Function metamethods are not affected by this limit.
+
+`CompilerLimits` enforces Lua 5.4 compile-time limits on locals, registers, and upvalues per function. These apply to `load()` and `dofile()` calls within the VM. Zero values use Lua 5.4 defaults. Limits can also be passed directly to `compiler.Compile()` via `compiler.WithLimits()`.
 
 ### Channels (Go↔Lua Message Passing)
 
