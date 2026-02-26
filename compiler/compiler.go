@@ -207,6 +207,81 @@ func (fs *funcState) pc() int {
 	return len(fs.proto.Code)
 }
 
+// emitGetTabUp emits OP_GETTABUP or, when kIdx > MaxArgC, a fallback
+// sequence (GETUPVAL + LOADK + GETTABLE) that avoids 8-bit overflow.
+func (fs *funcState) emitGetTabUp(reg, upIdx, kIdx int, line int) {
+	if kIdx <= MaxArgC {
+		fs.emit(ABC(OP_GETTABUP, reg, upIdx, kIdx, 0), line)
+		return
+	}
+	saved := fs.freeReg
+	tmpEnv := fs.reserveReg()
+	tmpKey := fs.reserveReg()
+	fs.emit(ABC(OP_GETUPVAL, tmpEnv, upIdx, 0, 0), line)
+	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.emit(ABC(OP_GETTABLE, reg, tmpEnv, tmpKey, 0), line)
+	fs.freeReg = saved
+}
+
+// emitGetField emits OP_GETFIELD or, when kIdx > MaxArgC, a fallback
+// sequence (LOADK + GETTABLE).
+func (fs *funcState) emitGetField(reg, tableReg, kIdx int, line int) {
+	if kIdx <= MaxArgC {
+		fs.emit(ABC(OP_GETFIELD, reg, tableReg, kIdx, 0), line)
+		return
+	}
+	saved := fs.freeReg
+	tmpKey := fs.reserveReg()
+	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.emit(ABC(OP_GETTABLE, reg, tableReg, tmpKey, 0), line)
+	fs.freeReg = saved
+}
+
+// emitSetTabUp emits OP_SETTABUP or, when kIdx > MaxArgC, a fallback
+// sequence (GETUPVAL + LOADK + SETTABLE).
+func (fs *funcState) emitSetTabUp(upIdx, kIdx, valReg int, line int) {
+	if kIdx <= MaxArgC {
+		fs.emit(ABC(OP_SETTABUP, upIdx, kIdx, valReg, 0), line)
+		return
+	}
+	saved := fs.freeReg
+	tmpEnv := fs.reserveReg()
+	tmpKey := fs.reserveReg()
+	fs.emit(ABC(OP_GETUPVAL, tmpEnv, upIdx, 0, 0), line)
+	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.emit(ABC(OP_SETTABLE, tmpEnv, tmpKey, valReg, 0), line)
+	fs.freeReg = saved
+}
+
+// emitSetField emits OP_SETFIELD or, when kIdx > MaxArgC, a fallback
+// sequence (LOADK + SETTABLE).
+func (fs *funcState) emitSetField(tableReg, kIdx, valReg int, line int) {
+	if kIdx <= MaxArgC {
+		fs.emit(ABC(OP_SETFIELD, tableReg, kIdx, valReg, 0), line)
+		return
+	}
+	saved := fs.freeReg
+	tmpKey := fs.reserveReg()
+	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.emit(ABC(OP_SETTABLE, tableReg, tmpKey, valReg, 0), line)
+	fs.freeReg = saved
+}
+
+// emitSelf emits OP_SELF or, when kIdx > MaxArgC, a fallback
+// sequence (MOVE + LOADK + GETTABLE).
+func (fs *funcState) emitSelf(base, objReg, kIdx int, line int) {
+	if kIdx <= MaxArgC {
+		fs.emit(ABC(OP_SELF, base, objReg, kIdx, 0), line)
+		return
+	}
+	saved := fs.freeReg
+	fs.emit(ABC(OP_MOVE, base+1, objReg, 0, 0), line)
+	tmpKey := fs.reserveReg()
+	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.emit(ABC(OP_GETTABLE, base, objReg, tmpKey, 0), line)
+	fs.freeReg = saved
+}
+
 func (fs *funcState) addConstant(v Value) int {
 	// Deduplicate constants
 	for i, existing := range fs.proto.Constants {
@@ -756,7 +831,7 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		valReg := fs.reserveReg()
 		c.compileExprToReg(value, valReg)
 		fieldK := fs.stringConstant(t.Field)
-		fs.emit(ABC(OP_SETFIELD, tableReg, fieldK, valReg, 0), line)
+		fs.emitSetField(tableReg, fieldK, valReg, line)
 		fs.freeReg = tableReg
 
 	case *ast.IndexExpr:
@@ -792,13 +867,13 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 		// Global: _ENV[name]
 		envUV := c.resolveEnv()
 		nameK := fs.stringConstant(t.Name)
-		fs.emit(ABC(OP_SETTABUP, envUV, nameK, srcReg, 0), line)
+		fs.emitSetTabUp(envUV, nameK, srcReg, line)
 
 	case *ast.FieldExpr:
 		tableReg := fs.reserveReg()
 		c.compileExprToReg(t.Table, tableReg)
 		fieldK := fs.stringConstant(t.Field)
-		fs.emit(ABC(OP_SETFIELD, tableReg, fieldK, srcReg, 0), line)
+		fs.emitSetField(tableReg, fieldK, srcReg, line)
 		fs.freeReg = tableReg
 
 	case *ast.IndexExpr:
@@ -820,7 +895,7 @@ func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 	nameK := fs.stringConstant(name)
 	tempReg := fs.reserveReg()
 	c.compileExprToReg(value, tempReg)
-	fs.emit(ABC(OP_SETTABUP, envUV, nameK, tempReg, 0), line)
+	fs.emitSetTabUp(envUV, nameK, tempReg, line)
 	fs.freeReg = tempReg
 }
 
@@ -1340,7 +1415,7 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 		} else {
 			envUV := c.resolveEnv()
 			nameK := fs.stringConstant(name.Name)
-			fs.emit(ABC(OP_SETTABUP, envUV, nameK, reg, 0), line)
+			fs.emitSetTabUp(envUV, nameK, reg, line)
 		}
 
 	case *ast.FieldExpr:
@@ -1348,7 +1423,7 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 		tableReg := fs.reserveReg()
 		c.compileExprToReg(name.Table, tableReg)
 		fieldK := fs.stringConstant(name.Field)
-		fs.emit(ABC(OP_SETFIELD, tableReg, fieldK, reg, 0), line)
+		fs.emitSetField(tableReg, fieldK, reg, line)
 		fs.freeReg = tableReg
 	}
 
@@ -1393,7 +1468,7 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 		if i < len(s.Values) {
 			reg := fs.reserveReg()
 			c.compileExprToReg(s.Values[i], reg)
-			fs.emit(ABC(OP_SETTABUP, envUV, nameK, reg, 0), line)
+			fs.emitSetTabUp(envUV, nameK, reg, line)
 			fs.freeReg = reg
 		}
 	}
@@ -1409,7 +1484,7 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 
 	envUV := c.resolveEnv()
 	nameK := fs.stringConstant(s.Name.Name)
-	fs.emit(ABC(OP_SETTABUP, envUV, nameK, reg, 0), line)
+	fs.emitSetTabUp(envUV, nameK, reg, line)
 
 	fs.freeReg = reg
 }
@@ -1635,7 +1710,7 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 	// If there's a local _ENV, look up via that table instead of upvalues/globals
 	if envReg, ok := fs.lookupLocal("_ENV"); ok {
 		nameK := fs.stringConstant(e.Name)
-		fs.emit(ABC(OP_GETFIELD, reg, envReg, nameK, 0), e.P.Line)
+		fs.emitGetField(reg, envReg, nameK, e.P.Line)
 		return
 	}
 
@@ -1648,7 +1723,7 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 	// Global: _ENV[name]
 	envUV := c.resolveEnv()
 	nameK := fs.stringConstant(e.Name)
-	fs.emit(ABC(OP_GETTABUP, reg, envUV, nameK, 0), e.P.Line)
+	fs.emitGetTabUp(reg, envUV, nameK, e.P.Line)
 }
 
 // ---------------------------------------------------------------------------
@@ -1920,7 +1995,7 @@ func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults i
 	objReg := fs.reserveReg()
 	c.compileExprToReg(e.Object, objReg)
 	methodK := fs.stringConstant(e.Method)
-	fs.emit(ABC(OP_SELF, base, objReg, methodK, 0), line)
+	fs.emitSelf(base, objReg, methodK, line)
 
 	// Make sure base+1 is allocated
 	if base+1 >= fs.freeReg {
@@ -2048,14 +2123,14 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 				valReg := fs.reserveReg()
 				c.compileExprToReg(f.Value, valReg)
 				kIdx := fs.stringConstant(key.Value)
-				fs.emit(ABC(OP_SETFIELD, reg, kIdx, valReg, 0), line)
+				fs.emitSetField(reg, kIdx, valReg, line)
 				fs.freeReg = valReg
 			case *ast.NameExpr:
 				// name = value in table constructor
 				valReg := fs.reserveReg()
 				c.compileExprToReg(f.Value, valReg)
 				kIdx := fs.stringConstant(key.Name)
-				fs.emit(ABC(OP_SETFIELD, reg, kIdx, valReg, 0), line)
+				fs.emitSetField(reg, kIdx, valReg, line)
 				fs.freeReg = valReg
 			default:
 				keyReg := fs.reserveReg()
@@ -2106,7 +2181,7 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 	tableReg := fs.reserveReg()
 	c.compileExprToReg(e.Table, tableReg)
 	fieldK := fs.stringConstant(e.Field)
-	fs.emit(ABC(OP_GETFIELD, reg, tableReg, fieldK, 0), e.P.Line)
+	fs.emitGetField(reg, tableReg, fieldK, e.P.Line)
 	fs.freeReg = tableReg
 }
 
