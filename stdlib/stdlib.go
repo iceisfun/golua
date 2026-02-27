@@ -134,6 +134,9 @@ func luaAssert(v *vm.VM) int {
 
 // type(v)
 func luaType(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'type' (value expected)")
+	}
 	val := v.Get(1)
 	v.Set(0, vm.NewString(val.Type()))
 	return 1
@@ -141,6 +144,9 @@ func luaType(v *vm.VM) int {
 
 // tostring(v)
 func luaToString(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'tostring' (value expected)")
+	}
 	val := v.Get(1)
 	// Check for __tostring metamethod on tables
 	if val.IsTable() {
@@ -168,6 +174,9 @@ func luaToString(v *vm.VM) int {
 
 // tonumber(e [, base])
 func luaToNumber(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'tonumber' (value expected)")
+	}
 	val := v.Get(1)
 	base := v.Get(2)
 
@@ -399,42 +408,41 @@ func luaCollectgarbage(v *vm.VM) int {
 // pairs(t)
 func luaPairs(v *vm.VM) int {
 	arg := v.Get(1)
-	tbl := arg.AsTable()
-	if tbl == nil {
-		panic("bad argument #1 to 'pairs' (table expected)")
-	}
 
-	// Check for __pairs metamethod
-	if mt := tbl.Metatable(); mt != nil {
-		if mp := mt.Get(vm.NewString("__pairs")); !mp.IsNil() {
-			results, err := v.ProtectedCall(mp, []vm.Value{arg})
-			if err != nil {
-				panic(err)
+	// Check for __pairs metamethod (only on tables)
+	if arg.IsTable() {
+		tbl := arg.AsTable()
+		if mt := tbl.Metatable(); mt != nil {
+			if mp := mt.Get(vm.NewString("__pairs")); !mp.IsNil() {
+				results, err := v.ProtectedCall(mp, []vm.Value{arg})
+				if err != nil {
+					panic(err)
+				}
+				for i, r := range results {
+					v.Set(i, r)
+				}
+				return len(results)
 			}
-			for i, r := range results {
-				v.Set(i, r)
-			}
-			return len(results)
 		}
 	}
 
-	// Return next, t, nil
+	// Return next, t, nil — next will validate the table arg
 	v.Set(0, vm.NewNativeFunc(luaNext))
-	v.Set(1, vm.NewTable(tbl))
+	v.Set(1, arg)
 	v.Set(2, vm.Nil)
 	return 3
 }
 
 // ipairs(t)
 func luaIpairs(v *vm.VM) int {
-	tbl := v.Get(1).AsTable()
-	if tbl == nil {
-		panic("bad argument #1 to 'ipairs' (table expected)")
-	}
+	arg := v.Get(1)
 
 	// ipairs iterator — uses metamethod-aware access so __index is honored
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
 		t := v.Get(1).AsTable()
+		if t == nil {
+			panic(fmt.Sprintf("bad argument #1 to 'ipairs' (table expected, got %s)", v.Get(1).Type()))
+		}
 		i := v.Get(2)
 		idx, _ := i.ToInt()
 		idx++
@@ -452,7 +460,7 @@ func luaIpairs(v *vm.VM) int {
 	})
 
 	v.Set(0, iter)
-	v.Set(1, vm.NewTable(tbl))
+	v.Set(1, arg)
 	v.Set(2, vm.NewInt(0))
 	return 3
 }
@@ -535,6 +543,9 @@ func luaRawset(v *vm.VM) int {
 
 // rawequal(v1, v2)
 func luaRawequal(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'rawequal' (value expected)")
+	}
 	v1 := v.Get(1)
 	v2 := v.Get(2)
 	v.Set(0, vm.NewBool(v1.Equal(v2)))
@@ -557,6 +568,9 @@ func luaRawlen(v *vm.VM) int {
 
 // getmetatable(object)
 func luaGetmetatable(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'getmetatable' (value expected)")
+	}
 	val := v.Get(1)
 	if val.IsTable() {
 		mt := val.AsTable().Metatable()

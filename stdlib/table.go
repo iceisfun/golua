@@ -213,7 +213,20 @@ func tableSort(v *vm.VM) int {
 			if len(results) == 0 {
 				return false
 			}
-			return results[0].ToBool()
+			if results[0].ToBool() {
+				// Anti-symmetry check: comp(a,b) and comp(b,a) cannot both be true
+				revResults, revErr := v.ProtectedCall(comp, []vm.Value{values[j], values[i]})
+				if revErr != nil {
+					sortErr = revErr
+					return false
+				}
+				if len(revResults) > 0 && revResults[0].ToBool() {
+					sortErr = fmt.Errorf("invalid order function for sorting")
+					return false
+				}
+				return true
+			}
+			return false
 		})
 	}
 	if sortErr != nil {

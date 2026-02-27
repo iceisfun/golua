@@ -151,7 +151,15 @@ func mathLog(v *vm.VM) int {
 		v.Set(0, vm.NewFloat(math.Log(x)))
 	} else {
 		base := getNumber(v, 2, "log")
-		v.Set(0, vm.NewFloat(math.Log(x)/math.Log(base)))
+		var result float64
+		if base == 10.0 {
+			result = math.Log10(x)
+		} else if base == 2.0 {
+			result = math.Log2(x)
+		} else {
+			result = math.Log(x) / math.Log(base)
+		}
+		v.Set(0, vm.NewFloat(result))
 	}
 	return 1
 }
@@ -325,6 +333,9 @@ func mathTan(v *vm.VM) int {
 }
 
 func mathTointeger(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'math.tointeger' (value expected)")
+	}
 	val := v.Get(1)
 	if !val.IsNumber() && !val.IsString() {
 		v.Set(0, vm.Nil)
@@ -339,6 +350,9 @@ func mathTointeger(v *vm.VM) int {
 }
 
 func mathType(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'math.type' (value expected)")
+	}
 	val := v.Get(1)
 	if !val.IsNumber() {
 		v.Set(0, vm.Nil)
