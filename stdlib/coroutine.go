@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/iceisfun/golua/vm"
@@ -250,7 +251,14 @@ func runCoroutine(co *Coroutine) {
 	co.mu.Unlock()
 
 	// Wait for first resume args
-	args := <-co.resumeCh
+	args, ok := <-co.resumeCh
+	if !ok {
+		// Channel closed by coClose before first resume completed
+		co.mu.Lock()
+		co.status = "dead"
+		co.mu.Unlock()
+		return
+	}
 
 	// Call the function
 	var results []vm.Value
@@ -309,7 +317,11 @@ func coYield(v *vm.VM) int {
 	yieldCh <- values
 
 	// Wait for resume - mark as running when we get it
-	args := <-resumeCh
+	args, ok := <-resumeCh
+	if !ok {
+		// Channel closed by coClose — terminate this coroutine cleanly
+		runtime.Goexit()
+	}
 
 	// Check for context cancellation after waking
 	if ctx := v.Context(); ctx != nil {
@@ -542,18 +554,10 @@ func coClose(v *vm.VM) int {
 	coroutinesMu.Unlock()
 
 	// If the coroutine goroutine is blocked on resumeCh, unblock it
-	// by closing the channel. The goroutine will panic and exit via
-	// the deferred recover in runCoroutine.
+	// by closing the channel. coYield detects the closed channel and
+	// calls runtime.Goexit() to terminate the goroutine cleanly.
 	if co.started {
-		// Send a nil signal and let the goroutine drain
-		// Close resumeCh so the goroutine unblocks and exits
-		select {
-		case co.resumeCh <- nil:
-			// Goroutine will receive nil args and likely panic,
-			// which is caught by the deferred recover in runCoroutine
-		default:
-		}
-		// Wait for the goroutine to finish
+		close(co.resumeCh)
 		<-co.doneCh
 	}
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -185,7 +186,17 @@ func StringToNumericValue(s string) (Value, bool) {
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
 			return NewFloat(f), true
 		}
+		if f, ok := ParseHexFloat(s); ok {
+			return NewFloat(f), true
+		}
 		return Nil, false
+	}
+	// Handle signed hex (e.g. -0x1, +0xA.8)
+	if len(s) > 3 && (s[0] == '+' || s[0] == '-') &&
+		s[1] == '0' && (s[2] == 'x' || s[2] == 'X') {
+		if f, ok := ParseHexFloat(s); ok {
+			return NewFloat(f), true
+		}
 	}
 	// Try decimal integer
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
@@ -219,6 +230,9 @@ func (v Value) ToNumber() (float64, bool) {
 		if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
 			if i, err := strconv.ParseInt(s[2:], 16, 64); err == nil {
 				return float64(i), true
+			}
+			if f, ok := ParseHexFloat(s); ok {
+				return f, true
 			}
 		}
 		return 0, false
@@ -387,8 +401,10 @@ func (v Value) Equal(other Value) bool {
 		return v.num == other.num
 	case typeString:
 		return v.ptr.(string) == other.ptr.(string)
-	case typeTable, typeFunction, typeNativeFunc:
+	case typeTable, typeFunction:
 		return v.ptr == other.ptr
+	case typeNativeFunc:
+		return reflect.ValueOf(v.ptr).Pointer() == reflect.ValueOf(other.ptr).Pointer()
 	default:
 		return false
 	}
@@ -457,6 +473,109 @@ type LuaError struct {
 
 func (e *LuaError) Error() string {
 	return ValueToString(e.Value)
+}
+
+// ParseHexFloat parses a hex float string like "0x.1", "0xA.8", "0x.1p4".
+// Lua 5.4 allows hex floats without the mandatory 'p' exponent that Go requires.
+func ParseHexFloat(s string) (float64, bool) {
+	// Handle optional sign
+	sign := 1.0
+	body := s
+	if len(body) > 0 && (body[0] == '+' || body[0] == '-') {
+		if body[0] == '-' {
+			sign = -1.0
+		}
+		body = body[1:]
+	}
+	// Strip 0x/0X prefix
+	if len(body) < 2 || body[0] != '0' || (body[1] != 'x' && body[1] != 'X') {
+		return 0, false
+	}
+	body = body[2:]
+	if len(body) == 0 {
+		return 0, false
+	}
+
+	// Split into integer.fraction and optional pExponent
+	var intPart, fracPart string
+	var expPart string
+	pIdx := strings.IndexAny(body, "pP")
+	if pIdx >= 0 {
+		expPart = body[pIdx+1:]
+		body = body[:pIdx]
+	}
+	dotIdx := strings.IndexByte(body, '.')
+	if dotIdx >= 0 {
+		intPart = body[:dotIdx]
+		fracPart = body[dotIdx+1:]
+	} else {
+		intPart = body
+	}
+
+	// Must have at least one hex digit somewhere
+	if intPart == "" && fracPart == "" {
+		return 0, false
+	}
+
+	// Parse integer part
+	var value float64
+	for _, c := range intPart {
+		d := hexDigit(c)
+		if d < 0 {
+			return 0, false
+		}
+		value = value*16 + float64(d)
+	}
+
+	// Parse fractional part
+	if fracPart != "" {
+		mult := 1.0 / 16.0
+		for _, c := range fracPart {
+			d := hexDigit(c)
+			if d < 0 {
+				return 0, false
+			}
+			value += float64(d) * mult
+			mult /= 16.0
+		}
+	}
+
+	// Parse binary exponent
+	if expPart != "" {
+		expSign := 1
+		if len(expPart) > 0 && (expPart[0] == '+' || expPart[0] == '-') {
+			if expPart[0] == '-' {
+				expSign = -1
+			}
+			expPart = expPart[1:]
+		}
+		if expPart == "" {
+			return 0, false
+		}
+		exp := 0
+		for _, c := range expPart {
+			if c < '0' || c > '9' {
+				return 0, false
+			}
+			exp = exp*10 + int(c-'0')
+		}
+		value *= math.Pow(2, float64(expSign*exp))
+	}
+
+	return sign * value, true
+}
+
+func hexDigit(c rune) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	default:
+		return -1
+	}
 }
 
 // ValueToString converts a Value to its string representation.

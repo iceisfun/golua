@@ -93,6 +93,8 @@ func luaLoad(v *vm.VM) int {
 			builder = append(builder, s...)
 		}
 		source = string(builder)
+	} else if chunk.IsNumber() {
+		source = valueToString(chunk)
 	} else {
 		panic(fmt.Sprintf("bad argument #1 to 'load' (function expected, got %s)", chunk.Type()))
 	}

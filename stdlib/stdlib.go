@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,7 @@ func Open(v *vm.VM) {
 	v.SetGlobal("getmetatable", vm.NewNativeFunc(luaGetmetatable))
 	v.SetGlobal("setmetatable", vm.NewNativeFunc(luaSetmetatable))
 	v.SetGlobal("collectgarbage", vm.NewNativeFunc(luaCollectgarbage))
+	v.SetGlobal("warn", vm.NewNativeFunc(luaWarn))
 
 	// Output inspection (for testing)
 	v.SetGlobal("_lastoutput", vm.NewNativeFunc(luaLastOutput))
@@ -119,9 +121,20 @@ func luaAssert(v *vm.VM) int {
 	val := v.Get(1)
 	if !val.ToBool() {
 		if v.ArgCount() < 2 {
-			panic("assertion failed!")
+			msg := "assertion failed!"
+			if loc := v.GetSourceLocation(1); loc != "" {
+				msg = loc + ": " + msg
+			}
+			panic(&vm.LuaError{Value: vm.NewString(msg)})
 		}
 		msg := v.Get(2)
+		if msg.IsString() {
+			s := msg.AsString()
+			if loc := v.GetSourceLocation(1); loc != "" {
+				s = loc + ": " + s
+			}
+			panic(&vm.LuaError{Value: vm.NewString(s)})
+		}
 		panic(&vm.LuaError{Value: msg})
 	}
 	// Return all arguments
@@ -246,7 +259,11 @@ func luaToNumber(v *vm.VM) int {
 					return 1
 				}
 			}
-			// Hex float forms (e.g. 0x1p4, -0x1p4) are handled by ParseFloat below.
+			// Hex float forms (e.g. 0x1p4, 0x.1, 0xA.8) — try ParseHexFloat
+			if f, ok := vm.ParseHexFloat(trimmed); ok {
+				v.Set(0, vm.NewFloat(f))
+				return 1
+			}
 		}
 		// If the string looks like a pure decimal integer, try integer parsing first
 		// to preserve int64 precision.
@@ -403,6 +420,44 @@ func luaCollectgarbage(v *vm.VM) int {
 	default:
 		panic(fmt.Sprintf("bad argument #1 to 'collectgarbage' (invalid option '%s')", opt))
 	}
+}
+
+var warningEnabled = true
+
+// warn(msg1 [, msg2, ...])
+func luaWarn(v *vm.VM) int {
+	argc := v.ArgCount()
+	if argc < 1 {
+		panic("bad argument #1 to 'warn' (string expected, got no value)")
+	}
+	first := v.Get(1)
+	if !first.IsString() {
+		panic(fmt.Sprintf("bad argument #1 to 'warn' (string expected, got %s)", first.Type()))
+	}
+	s := first.AsString()
+	if len(s) > 0 && s[0] == '@' {
+		switch s {
+		case "@off":
+			warningEnabled = false
+		case "@on":
+			warningEnabled = true
+		}
+		return 0
+	}
+	if warningEnabled {
+		var buf strings.Builder
+		buf.WriteString("Lua warning: ")
+		buf.WriteString(s)
+		for i := 2; i <= argc; i++ {
+			arg := v.Get(i)
+			if !arg.IsString() {
+				panic(fmt.Sprintf("bad argument #%d to 'warn' (string expected, got %s)", i, arg.Type()))
+			}
+			buf.WriteString(arg.AsString())
+		}
+		fmt.Fprintln(os.Stderr, buf.String())
+	}
+	return 0
 }
 
 // pairs(t)
