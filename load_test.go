@@ -256,3 +256,154 @@ func TestLoadfile_NotFound(t *testing.T) {
 	`
 	runLuaSourceWithProvider(t, source, "test_loadfile_not_found", provider)
 }
+
+// MockProvider is an in-memory code provider for testing dofile without filesystem access.
+type MockProvider struct {
+	files map[string]string
+	caps  vm.LuaLoaderCaps
+}
+
+func (p *MockProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+	src, ok := p.files[name]
+	if !ok {
+		return nil, "", fmt.Errorf("cannot open '%s': no such file", name)
+	}
+	return []byte(src), "@" + name, nil
+}
+
+func (p *MockProvider) Capabilities() vm.LuaLoaderCaps {
+	return p.caps
+}
+
+func newMockProvider(files map[string]string) *MockProvider {
+	return &MockProvider{
+		files: files,
+		caps:  vm.LuaLoaderCaps{AllowDofile: true, AllowLoadfile: true},
+	}
+}
+
+func TestDofile_MockProvider(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"hello.lua": `return "hello"`,
+	})
+	source := `
+		local r = dofile("hello.lua")
+		assert(r == "hello", "expected 'hello', got " .. tostring(r))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_MultipleReturnsMock(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"multi.lua": `return 1, 2, 3`,
+	})
+	source := `
+		local a, b, c = dofile("multi.lua")
+		assert(a == 1 and b == 2 and c == 3,
+			string.format("expected 1,2,3 got %s,%s,%s", tostring(a), tostring(b), tostring(c)))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_RuntimeError(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"err.lua": `error("boom")`,
+	})
+	source := `
+		local ok, err = pcall(dofile, "err.lua")
+		assert(not ok, "expected failure")
+		assert(type(err) == "string", "expected string error, got " .. type(err))
+		assert(err:find("boom"), "expected 'boom' in error: " .. tostring(err))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_ErrorValuePreserved(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"tbl_err.lua": `error({msg="bad"})`,
+	})
+	source := `
+		local ok, err = pcall(dofile, "tbl_err.lua")
+		assert(not ok, "expected failure")
+		assert(type(err) == "table", "expected table error, got " .. type(err))
+		assert(err.msg == "bad", "expected err.msg=='bad', got " .. tostring(err.msg))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_ProviderError(t *testing.T) {
+	provider := newMockProvider(map[string]string{}) // no files
+	source := `
+		local ok, err = pcall(dofile, "missing.lua")
+		assert(not ok, "expected failure")
+		assert(type(err) == "string", "expected string error")
+		assert(err:find("cannot open"), "expected 'cannot open' in: " .. tostring(err))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_SyntaxError(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"bad.lua": `return 1 +`,
+	})
+	source := `
+		local ok, err = pcall(dofile, "bad.lua")
+		assert(not ok, "expected failure")
+		assert(type(err) == "string", "expected string error")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_NoProvider(t *testing.T) {
+	// Without a provider, dofile should not be registered
+	source := `
+		assert(dofile == nil, "expected dofile to be nil without provider")
+	`
+	runLuaSource(t, source, "test")
+}
+
+func TestDofile_NotPermitted(t *testing.T) {
+	provider := &MockProvider{
+		files: map[string]string{"x.lua": "return 1"},
+		caps:  vm.LuaLoaderCaps{AllowDofile: false, AllowLoadfile: true},
+	}
+	source := `
+		assert(dofile == nil, "expected dofile to be nil when not permitted")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_NestedMock(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"inner.lua": `return 10`,
+		"outer.lua": `return dofile("inner.lua") * 3`,
+	})
+	source := `
+		local r = dofile("outer.lua")
+		assert(r == 30, "expected 30, got " .. tostring(r))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_ProviderReceivesPath(t *testing.T) {
+	// Verify the provider receives the exact filename argument
+	provider := newMockProvider(map[string]string{
+		"some/path/file.lua": `return "ok"`,
+	})
+	source := `
+		local r = dofile("some/path/file.lua")
+		assert(r == "ok", "expected 'ok', got " .. tostring(r))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_Shebang(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"shebang.lua": "#!/usr/bin/lua\nreturn 42",
+	})
+	source := `
+		local r = dofile("shebang.lua")
+		assert(r == 42, "expected 42, got " .. tostring(r))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}

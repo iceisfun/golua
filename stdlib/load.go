@@ -213,24 +213,10 @@ func luaDofile(v *vm.VM) int {
 		panic(err.Error())
 	}
 
-	// Parse
-	block, parseErr := parser.Parse(chunkName, string(source))
-	if parseErr != nil {
-		panic(fmt.Sprintf("syntax error: %v", parseErr))
-	}
-
-	// Compile
-	proto, compileErr := compiler.Compile(chunkName, block,
-		compiler.WithLimits(v.GetLimits().CompilerLimits))
-	if compileErr != nil {
-		panic(fmt.Sprintf("compile error: %v", compileErr))
-	}
-
-	// Create closure with _ENV pointing to globals
-	closure := vm.NewClosure(proto)
-	if len(proto.Upvalues) > 0 {
-		closure.Upvalues[0] = &vm.Upvalue{}
-		closure.Upvalues[0].SetClosed(vm.NewTable(v.Globals()))
+	// Reuse compileChunk with shebang stripping (like loadfile)
+	fn, errMsg := compileChunk(v, string(source), chunkName, vm.Nil, false, true)
+	if errMsg != "" {
+		panic(errMsg)
 	}
 
 	// Save and set chunk name
@@ -239,8 +225,12 @@ func luaDofile(v *vm.VM) int {
 	defer v.SetChunkName(oldChunkName)
 
 	// Execute
-	results, runErr := v.ProtectedCall(vm.NewFunction(closure), nil)
+	results, runErr := v.ProtectedCall(fn, nil)
 	if runErr != nil {
+		// Preserve LuaError so pcall(dofile, ...) returns the original value
+		if luaErr, ok := runErr.(*vm.LuaError); ok {
+			panic(luaErr)
+		}
 		panic(runErr.Error())
 	}
 
