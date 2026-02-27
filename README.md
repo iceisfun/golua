@@ -400,6 +400,8 @@ go run ./cmd/luac script.lua
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design)
 - No standard Lua debug library (diagnostic-only `debug.traceback`, `debug.stackdepth`, `debug.where` available via `LuaDebugProvider`)
+- No binary chunk loading — `load(string.dump(f))` round-tripping is not supported. This would require implementing a binary chunk loader, which is out of scope.
+- GC behavior differs from C Lua — golua delegates garbage collection entirely to Go's runtime GC. We do not attempt to match the deterministic step/generational behavior of C Lua's collector. Guarantees: correctness, eventual finalization, weak table cleanup, and no resurrection invariant violations. `collectgarbage("collect")` triggers `runtime.GC()` but Go's GC timing is non-deterministic, so tests that depend on exact finalization order or count may not pass.
 
 ## Contributing
 

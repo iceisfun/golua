@@ -1,6 +1,13 @@
+-- BROKEN: Binary chunk loading is out of scope.
+-- golua does not implement a binary chunk loader; this would require
+-- building a full deserializer for Lua's binary format. string.dump()
+-- produces output but load() cannot consume it. This is a deliberate
+-- limitation — see README.md.
+--
+-- Original bugs:
 -- Bug 1: load() cannot load binary chunks produced by string.dump()
 -- Bug 2: load() with binary chunk in mode "t" gives wrong error message
--- Bug 3: load() incorrectly strips shebang (#!) from string arguments
+-- Bug 3: load() incorrectly strips shebang (#!) from string arguments (FIXED)
 
 -- Test 1: load(string.dump(f)) should work for round-tripping
 local f = function() return 42 end
