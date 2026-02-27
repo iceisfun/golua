@@ -342,5 +342,5 @@ print(string.format("RESULTS: %d passed, %d failed, %d total",
     pass, fail, pass + fail))
 print("=====================================")
 if fail == 0 then
-    print("VM STATUS: BATTLE-HARDENED")
+    print("VM STATUS: PASS")
 end

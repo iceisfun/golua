@@ -836,6 +836,18 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_TBC:
 			// Mark variable as to-be-closed
 			a := inst.A()
+			val := vm.stack[frame.base+a]
+			// Validate: nil and false are always OK; otherwise must have __close
+			if !val.IsNil() && !(val.IsBool() && !val.AsBool()) {
+				if val.IsTable() {
+					mt := val.AsTable().Metatable()
+					if mt == nil || mt.Get(metaClose).IsNil() {
+						return nil, fmt.Errorf("variable is assigned a non-closable value")
+					}
+				} else {
+					return nil, fmt.Errorf("variable is assigned a non-closable value")
+				}
+			}
 			vm.tbcVars = append(vm.tbcVars, frame.base+a)
 
 		case compiler.OP_JMP:
@@ -1317,6 +1329,23 @@ func (vm *VM) execute() ([]Value, error) {
 				// Pop native frame and restore top
 				vm.callStack = vm.callStack[:len(vm.callStack)-1]
 				vm.top = oldTop
+			} else if fn.IsTable() {
+				// Check for __call metamethod
+				mt := fn.AsTable().Metatable()
+				if mt != nil {
+					callMM := mt.Get(metaCall)
+					if !callMM.IsNil() {
+						// Call __call(self, state, ctrl)
+						results, err = vm.ProtectedCall(callMM, []Value{fn, state, ctrl})
+						if err != nil {
+							return nil, err
+						}
+					} else {
+						return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+					}
+				} else {
+					return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+				}
 			} else {
 				return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
 			}
@@ -2104,7 +2133,8 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 			return vm.callMetamethod(index, NewTable(t), key)
 		}
 
-		return Nil, nil
+		// __index is another value — chain through its metatable
+		return vm.indexValue(index, key)
 	}
 	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
 }
@@ -2139,7 +2169,8 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 			return vm.callMetamethod(index, NewTable(t), NewString(key))
 		}
 
-		return Nil, nil
+		// __index is another value — chain through its metatable
+		return vm.indexValue(index, NewString(key))
 	}
 	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
 }
@@ -2174,9 +2205,36 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 			return vm.callMetamethod(index, NewTable(t), NewInt(int64(key)))
 		}
 
-		return Nil, nil
+		// __index is another value — chain through its metatable
+		return vm.indexValue(index, NewInt(int64(key)))
 	}
 	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
+}
+
+// indexValue tries to index a non-table value by looking up its metatable.
+// For example, if __index is a string, this chains through the string metatable.
+func (vm *VM) indexValue(val Value, key Value) (Value, error) {
+	// Get the metatable for this value type
+	var mt LuaTable
+	if val.IsString() {
+		mt = vm.stringMeta
+	} else if val.IsTable() {
+		mt = val.AsTable().Metatable()
+	}
+	if mt == nil {
+		return Nil, fmt.Errorf("attempt to index a %s value", val.Type())
+	}
+	index := mt.Get(metaIndex)
+	if index.IsNil() {
+		return Nil, fmt.Errorf("attempt to index a %s value", val.Type())
+	}
+	if index.IsTable() {
+		return vm.tableGet(index.AsTable(), key)
+	}
+	if index.IsFunction() || index.IsNativeFunc() {
+		return vm.callMetamethod(index, val, key)
+	}
+	return Nil, fmt.Errorf("attempt to index a %s value", val.Type())
 }
 
 // tableSet sets a value in a table, handling __newindex metamethod
@@ -2215,8 +2273,8 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 			return err
 		}
 
-		t.Set(key, value)
-		return nil
+		// __newindex is a non-table, non-function value — error
+		return fmt.Errorf("'__newindex' is not a table or function")
 	}
 	return fmt.Errorf("'__newindex' chain too long; possible loop")
 }
@@ -2258,8 +2316,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 			return err
 		}
 
-		t.Set(keyVal, value)
-		return nil
+		return fmt.Errorf("'__newindex' is not a table or function")
 	}
 	return fmt.Errorf("'__newindex' chain too long; possible loop")
 }
@@ -2301,8 +2358,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 			return err
 		}
 
-		t.Set(keyVal, value)
-		return nil
+		return fmt.Errorf("'__newindex' is not a table or function")
 	}
 	return fmt.Errorf("'__newindex' chain too long; possible loop")
 }

@@ -104,6 +104,9 @@ func (v Value) Type() string {
 	case typeString:
 		return "string"
 	case typeTable:
+		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
+			return "thread"
+		}
 		return "table"
 	case typeFunction, typeNativeFunc:
 		return "function"
@@ -297,6 +300,9 @@ func (v Value) String() string {
 	case typeString:
 		return v.ptr.(string)
 	case typeTable:
+		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
+			return fmt.Sprintf("thread: %p", v.ptr)
+		}
 		return fmt.Sprintf("table: %p", v.ptr)
 	case typeFunction:
 		return fmt.Sprintf("function: %p", v.ptr)

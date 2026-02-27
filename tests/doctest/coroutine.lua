@@ -9,7 +9,7 @@ do
     local co = coroutine.create(cof)
 
     print(pcall(coroutine.resume, {}))
-    --> ~true\tfalse\t.*thread expected
+    --> ~false\t.*thread expected
 
     print("out", coroutine.resume(co, 1))
     print("out", coroutine.resume(co, "two"))
@@ -31,7 +31,7 @@ end
 
 -- Check the main coroutine is correctly identified
 print(coroutine.running())
---> ~^table:.*\ttrue$
+--> ~^thread:.*\ttrue$
 
 do
     -- Check the main coroutine is not yieldable
@@ -62,7 +62,7 @@ do
 
     print(coroutine.resume(co))
     --> =yieldable	true
-    --> ~^true\ttable:.*\tfalse$
+    --> ~^true\tthread:.*\tfalse$
 end
 
 -- Test error in coroutine

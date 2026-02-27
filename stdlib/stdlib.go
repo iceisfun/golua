@@ -666,7 +666,11 @@ func valueToString(val vm.Value) string {
 	case val.IsString():
 		return val.AsString()
 	case val.IsTable():
-		return fmt.Sprintf("table: %p", val.AsTable())
+		tbl := val.AsTable()
+		if t, ok := tbl.(*vm.Table); ok && t.IsThread() {
+			return fmt.Sprintf("thread: %p", tbl)
+		}
+		return fmt.Sprintf("table: %p", tbl)
 	case val.IsFunction():
 		return fmt.Sprintf("function: %p", val.AsClosure())
 	case val.IsNativeFunc():

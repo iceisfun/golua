@@ -24,7 +24,14 @@ type Table struct {
 	keys      []any // insertion-ordered hash keys (may contain dead keys)
 	deadKeys  int   // count of keys in t.keys not in t.hash
 	metatable LuaTable
+	isThread  bool  // true if this table represents a coroutine thread
 }
+
+// SetThread marks this table as a coroutine thread.
+func (t *Table) SetThread(v bool) { t.isThread = v }
+
+// IsThread returns whether this table represents a coroutine thread.
+func (t *Table) IsThread() bool { return t.isThread }
 
 // NewEmptyTable creates a new empty table.
 func NewEmptyTable() *Table {

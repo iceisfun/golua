@@ -56,6 +56,7 @@ func openCoroutine(v *vm.VM) {
 	// returns a stable, non-nil identity for the main thread.
 	mainThread := vm.NewEmptyTable()
 	mainThread.SetString("__coroutine_id", vm.NewInt(0))
+	mainThread.SetThread(true)
 	v.SetThreadObj(vm.NewTable(mainThread))
 }
 
@@ -88,6 +89,7 @@ func coCreate(v *vm.VM) int {
 	// Create a table to represent the coroutine (with metatable for type identification)
 	coTable := vm.NewEmptyTable()
 	coTable.SetString("__coroutine_id", vm.NewInt(int64(id)))
+	coTable.SetThread(true)
 
 	threadVal := vm.NewTable(coTable)
 	co.thread = threadVal
@@ -100,17 +102,13 @@ func coCreate(v *vm.VM) int {
 func coResume(v *vm.VM) int {
 	coVal := v.Get(1)
 	if !coVal.IsTable() {
-		v.Set(0, vm.False)
-		v.Set(1, vm.NewString("bad argument #1 to 'resume' (thread expected)"))
-		return 2
+		panic(fmt.Sprintf("bad argument #1 to 'resume' (thread expected, got %s)", coVal.Type()))
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		v.Set(0, vm.False)
-		v.Set(1, vm.NewString("bad argument #1 to 'resume' (thread expected)"))
-		return 2
+		panic("bad argument #1 to 'resume' (thread expected)")
 	}
 
 	id, _ := idVal.ToInt()
@@ -147,6 +145,18 @@ func coResume(v *vm.VM) int {
 		args[i-2] = v.Get(i)
 	}
 
+	// Set caller's status to "normal" while the resumed coroutine runs
+	callerID := v.CoroutineID()
+	if callerID != 0 {
+		coroutinesMu.Lock()
+		if caller := coroutines[callerID]; caller != nil {
+			caller.mu.Lock()
+			caller.status = "normal"
+			caller.mu.Unlock()
+		}
+		coroutinesMu.Unlock()
+	}
+
 	// Start the goroutine if this is the first resume
 	co.mu.Lock()
 	if !co.started {
@@ -161,9 +171,23 @@ func coResume(v *vm.VM) int {
 	// Send args to the coroutine
 	co.resumeCh <- args
 
+	// restoreCallerStatus restores the caller's coroutine status to "running"
+	restoreCallerStatus := func() {
+		if callerID != 0 {
+			coroutinesMu.Lock()
+			if caller := coroutines[callerID]; caller != nil {
+				caller.mu.Lock()
+				caller.status = "running"
+				caller.mu.Unlock()
+			}
+			coroutinesMu.Unlock()
+		}
+	}
+
 	// Wait for yield or completion
 	select {
 	case results := <-co.yieldCh:
+		restoreCallerStatus()
 		v.EnsureStack(v.Base() + 1 + len(results))
 		v.Set(0, vm.True)
 		for i, r := range results {
@@ -171,6 +195,7 @@ func coResume(v *vm.VM) int {
 		}
 		return 1 + len(results)
 	case <-co.doneCh:
+		restoreCallerStatus()
 		co.mu.Lock()
 		err := co.err
 		result := co.result
@@ -194,6 +219,7 @@ func coResume(v *vm.VM) int {
 		}
 		return 1 + len(result)
 	case <-ctxDone(v):
+		restoreCallerStatus()
 		v.Set(0, vm.False)
 		v.Set(1, vm.NewString("execution interrupted: "+v.Context().Err().Error()))
 		return 2
@@ -364,6 +390,7 @@ func coWrap(v *vm.VM) int {
 	// Create a thread table for this coroutine (for coroutine.running inside it)
 	coTable := vm.NewEmptyTable()
 	coTable.SetString("__coroutine_id", vm.NewInt(int64(id)))
+	coTable.SetThread(true)
 
 	co := &Coroutine{
 		id:       id,
@@ -487,6 +514,19 @@ func coClose(v *vm.VM) int {
 	}
 
 	if status == "dead" {
+		// Error-dead coroutines return false + error
+		co.mu.Lock()
+		coErr := co.err
+		co.mu.Unlock()
+		if coErr != nil {
+			v.Set(0, vm.False)
+			if le, ok := coErr.(*vm.LuaError); ok {
+				v.Set(1, le.Value)
+			} else {
+				v.Set(1, vm.NewString(coErr.Error()))
+			}
+			return 2
+		}
 		v.Set(0, vm.True)
 		return 1
 	}

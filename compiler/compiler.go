@@ -382,6 +382,19 @@ func (fs *funcState) lookupLocal(name string) (int, bool) {
 	return 0, false
 }
 
+func (fs *funcState) needsClose(fromLocal int) bool {
+	start := len(fs.locals) - (fs.nActVar - fromLocal)
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(fs.locals); i++ {
+		if fs.locals[i].attrib == "close" || fs.locals[i].captured {
+			return true
+		}
+	}
+	return false
+}
+
 func (fs *funcState) isConst(name string) bool {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
 		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
@@ -1298,18 +1311,19 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// Reserve 4 control registers: iterator, state, control, closing
 	base := fs.freeReg
 
-	// Compile iterator expressions into base, base+1, base+2
+	// Compile iterator expressions into base, base+1, base+2, base+3
+	// The 4th value (base+3) is the to-be-closed variable per Lua 5.4
 	nIter := len(s.Iters)
 	if nIter == 1 && isMultiRet(s.Iters[0]) {
-		// Single multi-return expression (e.g., pairs(t)) - ask for 3 results
-		c.compileExprMultiRet(s.Iters[0], 3)
-		fs.freeReg = base + 3
+		// Single multi-return expression (e.g., pairs(t)) - ask for 4 results
+		c.compileExprMultiRet(s.Iters[0], 4)
+		fs.freeReg = base + 4
 		if fs.freeReg > fs.maxReg {
 			fs.maxReg = fs.freeReg
 		}
 	} else {
 		for i, iter := range s.Iters {
-			if i < 3 {
+			if i < 4 {
 				c.compileExprToReg(iter, base+i)
 				fs.freeReg = base + i + 1
 				if fs.freeReg > fs.maxReg {
@@ -1318,7 +1332,7 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 			}
 		}
 		// Fill missing with nil
-		for i := nIter; i < 3; i++ {
+		for i := nIter; i < 4; i++ {
 			fs.emit(ABC(OP_LOADNIL, base+i, 0, 0, 0), line)
 			fs.freeReg = base + i + 1
 			if fs.freeReg > fs.maxReg {
@@ -1326,13 +1340,13 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 			}
 		}
 	}
-
-	// Closing value (base+3) — nil
-	fs.emit(ABC(OP_LOADNIL, base+3, 0, 0, 0), line)
 	fs.freeReg = base + 4
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
+
+	// Mark base+3 as to-be-closed (the 4th return from iterator factory)
+	fs.emit(ABC(OP_TBC, base+3, 0, 0, 0), line)
 
 	// TFORPREP
 	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), line)
@@ -1343,7 +1357,7 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		localVar{name: "(for state)", reg: base, startPC: fs.pc()},
 		localVar{name: "(for state)", reg: base + 1, startPC: fs.pc()},
 		localVar{name: "(for state)", reg: base + 2, startPC: fs.pc()},
-		localVar{name: "(for state)", reg: base + 3, startPC: fs.pc()},
+		localVar{name: "(for state)", reg: base + 3, startPC: fs.pc(), attrib: "close"},
 	)
 	fs.nActVar += 4
 
@@ -1399,6 +1413,10 @@ func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 	if scope == nil {
 		c.error(s, "break outside loop")
 		return
+	}
+	// Emit OP_CLOSE if there are close/captured locals being exited
+	if fs.needsClose(scope.nLocals) {
+		fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), s.P.Line)
 	}
 	jpc := fs.emitJump(s.P.Line)
 	scope.breakList = fs.concatJumpList(scope.breakList, jpc)
