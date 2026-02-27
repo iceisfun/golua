@@ -103,6 +103,9 @@ func tableInsert(v *vm.VM) int {
 	tbl := tableGetTable(v, 1, "insert")
 
 	n := v.ArgCount()
+	if n < 2 || n > 3 {
+		panic("wrong number of arguments to 'insert'")
+	}
 	length := tableObjLen(v, v.Get(1))
 
 	if n == 2 {
@@ -181,14 +184,14 @@ func tableSort(v *vm.VM) int {
 	var sortErr error
 
 	if comp.IsNil() {
-		// Default comparison: a < b
+		// Default comparison: a < b (via metamethod-aware CompareLT)
 		sort.Slice(values, func(i, j int) bool {
 			if sortErr != nil {
 				return false
 			}
-			lt, ok := values[i].LessThan(values[j])
-			if !ok {
-				sortErr = fmt.Errorf("attempt to compare %s with %s", values[i].Type(), values[j].Type())
+			lt, err := v.CompareLT(values[i], values[j])
+			if err != nil {
+				sortErr = err
 				return false
 			}
 			return lt

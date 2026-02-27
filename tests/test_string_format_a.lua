@@ -16,8 +16,8 @@ assert(prec2 == "0x1.80p+0",
 
 -- %.4a of pi
 local prec4 = string.format("%.4a", math.pi)
-assert(prec4 == "0x1.921fp+1",
-  "expected '0x1.921fp+1', got '" .. prec4 .. "'")
+assert(prec4 == "0x1.9220p+1",
+  "expected '0x1.9220p+1', got '" .. prec4 .. "'")
 
 -- %.0a should round
 local prec0 = string.format("%.0a", 1.5)

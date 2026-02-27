@@ -88,7 +88,7 @@ func luaPrint(v *vm.VM) int {
 	n := v.ArgCount()
 	var parts []string
 	for i := 1; i <= n; i++ {
-		parts = append(parts, valueToString(v.Get(i)))
+		parts = append(parts, tolstring(v, v.Get(i)))
 	}
 	v.Print(strings.Join(parts, "\t"))
 	return 0
@@ -113,13 +113,16 @@ func luaOutputLines(v *vm.VM) int {
 
 // assert(v [, message])
 func luaAssert(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'assert' (value expected)")
+	}
 	val := v.Get(1)
 	if !val.ToBool() {
 		msg := v.Get(2)
 		if msg.IsNil() {
 			panic("assertion failed!")
 		}
-		panic(valueToString(msg))
+		panic(&vm.LuaError{Value: msg})
 	}
 	// Return all arguments
 	n := v.ArgCount()
@@ -278,10 +281,13 @@ func luaError(v *vm.VM) int {
 
 // pcall(f [, arg1, ...])
 func luaPcall(v *vm.VM) int {
+	argc := v.ArgCount()
+	if argc < 1 {
+		panic("bad argument #1 to 'pcall' (value expected)")
+	}
 	fn := v.Get(1)
 
 	// Collect additional arguments
-	argc := v.ArgCount()
 	args := make([]vm.Value, argc-1)
 	for i := 2; i <= argc; i++ {
 		args[i-2] = v.Get(i)
@@ -315,9 +321,7 @@ func luaXpcall(v *vm.VM) int {
 	fn := v.Get(1)
 	msgh := v.Get(2)
 	if !msgh.IsFunction() && !msgh.IsNativeFunc() {
-		v.Set(0, vm.False)
-		v.Set(1, vm.NewString("attempt to call a "+msgh.Type()+" value"))
-		return 2
+		panic(fmt.Sprintf("bad argument #2 to 'xpcall' (function expected, got %s)", msgh.Type()))
 	}
 
 	// Collect extra arguments (after fn and msgh)

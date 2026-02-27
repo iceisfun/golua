@@ -855,6 +855,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if eq != (k == 1) {
 				frame.pc++
 			}
@@ -867,6 +868,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if lt != (k == 1) {
 				frame.pc++
 			}
@@ -879,6 +881,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if le != (k == 1) {
 				frame.pc++
 			}
@@ -891,6 +894,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if eq != (k == 1) {
 				frame.pc++
 			}
@@ -910,6 +914,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if eq != (k == 1) {
 				frame.pc++
 			}
@@ -2451,6 +2456,11 @@ func (vm *VM) equal(v1, v2 Value) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// CompareLT performs a less-than comparison, honoring __lt metamethods.
+func (vm *VM) CompareLT(v1, v2 Value) (bool, error) {
+	return vm.lessThan(v1, v2)
 }
 
 // lessThan checks for less than, handling __lt metamethod

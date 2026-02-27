@@ -2,7 +2,6 @@ package stdlib
 
 import (
 	"fmt"
-	"unicode"
 )
 
 const luaMaxCaptures = 32
@@ -388,7 +387,7 @@ func (c classChar) matches(b byte) bool {
 	case 's':
 		matched = isSpace(b)
 	case 'w':
-		matched = isLetter(b) || isDigit(b) || b == '_'
+		matched = isLetter(b) || isDigit(b)
 	case 'l':
 		matched = isLower(b)
 	case 'u':
@@ -483,6 +482,10 @@ func parseCharSetAt(pattern string, patPos int) (*charSet, int) {
 		start++
 	}
 	end := start
+	// ] at start of set is literal (Lua 5.4 spec)
+	if end < len(pattern) && pattern[end] == ']' {
+		end++
+	}
 	for end < len(pattern) && pattern[end] != ']' {
 		if pattern[end] == '%' && end+1 < len(pattern) {
 			end += 2
@@ -491,7 +494,7 @@ func parseCharSetAt(pattern string, patPos int) (*charSet, int) {
 		}
 	}
 	if end >= len(pattern) {
-		return nil, 0
+		panic("malformed pattern (missing ']')")
 	}
 	elems := parseCharSetElems(pattern[start:end])
 	return &charSet{elems: elems, neg: neg}, end - patPos + 1
@@ -529,5 +532,10 @@ func isSpace(b byte) bool   { return b == ' ' || b == '\t' || b == '\n' || b == 
 func isLower(b byte) bool   { return b >= 'a' && b <= 'z' }
 func isUpper(b byte) bool   { return b >= 'A' && b <= 'Z' }
 func isControl(b byte) bool { return b < 32 || b == 127 }
-func isPunct(b byte) bool   { return unicode.IsPunct(rune(b)) }
+func isPunct(b byte) bool {
+	return (b >= 0x21 && b <= 0x2F) || // !"#$%&'()*+,-./
+		(b >= 0x3A && b <= 0x40) || // :;<=>?@
+		(b >= 0x5B && b <= 0x60) || // [\]^_`
+		(b >= 0x7B && b <= 0x7E) // {|}~
+}
 func isHex(b byte) bool     { return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') }

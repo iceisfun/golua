@@ -577,13 +577,15 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 
 		// Parse flags and width/precision
 		spec := "%"
-		for i < len(format) && !strings.ContainsRune("diouxXeEfFgGaAcspq", rune(format[i])) {
+		for i < len(format) && !strings.ContainsRune("diouxXeEfFgGaAcspq%", rune(format[i])) {
+			if !strings.ContainsRune("#0- +.0123456789", rune(format[i])) {
+				panic(fmt.Sprintf("invalid conversion '%%%c'", format[i]))
+			}
 			spec += string(format[i])
 			i++
 		}
 		if i >= len(format) {
-			result.WriteString(spec)
-			break
+			panic(fmt.Sprintf("invalid conversion '%s'", spec))
 		}
 
 		// Validate width and precision (Lua 5.4: must be < 100)
@@ -626,7 +628,12 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
 		case 'e', 'E', 'f', 'g', 'G':
-			goSpec := spec + string(specChar)
+			goSpec := spec
+			// C default precision for %g/%G is 6; Go uses shortest-unique
+			if (specChar == 'g' || specChar == 'G') && !strings.Contains(spec, ".") {
+				goSpec = goSpec + ".6"
+			}
+			goSpec = goSpec + string(specChar)
 			if n, ok := val.ToNumber(); ok {
 				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
 					result.WriteString(special)
@@ -642,12 +649,26 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
 					result.WriteString(special)
 				} else {
-					s := strconv.FormatFloat(n, 'x', -1, 64)
-					s = normalizeHexExponent(s)
+					prec := -1 // default: shortest
+					if dotIdx := strings.IndexByte(spec, '.'); dotIdx >= 0 {
+						if p, err := strconv.Atoi(spec[dotIdx+1:]); err == nil {
+							prec = p
+						}
+					}
+					// Strip precision from spec for width/flags only
+					widthSpec := spec
+					if dotIdx := strings.IndexByte(widthSpec, '.'); dotIdx >= 0 {
+						widthSpec = widthSpec[:dotIdx]
+					}
+					s := formatHexFloat(n, prec)
 					if specChar == 'A' {
 						s = strings.ToUpper(s)
 					}
-					result.WriteString(fmt.Sprintf(spec+"s", s))
+					if widthSpec != "%" {
+						result.WriteString(fmt.Sprintf(widthSpec+"s", s))
+					} else {
+						result.WriteString(s)
+					}
 				}
 			} else {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
@@ -658,7 +679,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			goSpec := spec + "s"
 			result.WriteString(fmt.Sprintf(goSpec, tolstring(v, val)))
 		case 'q':
-			result.WriteString(luaQuote(val))
+			result.WriteString(luaQuote(val, argIdx+1))
 		case 'c':
 			if i, ok := val.ToInt(); ok {
 				// Lua %c writes one byte (C unsigned char semantics).
@@ -700,6 +721,108 @@ func normalizeHexExponent(s string) string {
 		trimmed = "0"
 	}
 	return s[:p+1] + sign + trimmed
+}
+
+// formatHexFloat formats a float64 as a C-compatible hex float with the given
+// precision (number of hex digits after the decimal point). Unlike Go's
+// strconv.FormatFloat which renormalizes on carry, this preserves C-style
+// output where the leading digit can be > 1 after rounding.
+func formatHexFloat(f float64, prec int) string {
+	// Get the full-precision representation from Go
+	full := strconv.FormatFloat(f, 'x', -1, 64)
+	full = normalizeHexExponent(full)
+
+	if prec < 0 {
+		return full
+	}
+
+	// Parse components
+	neg := false
+	s := full
+	if s[0] == '-' {
+		neg = true
+		s = s[1:]
+	}
+	s = s[2:] // skip "0x"
+
+	pIdx := strings.IndexByte(s, 'p')
+	mantStr := s[:pIdx]
+	expStr := s[pIdx+1:]
+	exp, _ := strconv.Atoi(expStr)
+
+	// Parse leading digit and hex fraction digits
+	lead := hexCharToInt(mantStr[0])
+	var digits []int
+	if dotIdx := strings.IndexByte(mantStr, '.'); dotIdx >= 0 {
+		for i := dotIdx + 1; i < len(mantStr); i++ {
+			digits = append(digits, hexCharToInt(mantStr[i]))
+		}
+	}
+
+	// Pad to at least prec+1 digits for rounding
+	for len(digits) <= prec {
+		digits = append(digits, 0)
+	}
+
+	// Round at position prec
+	if prec < len(digits) {
+		roundDigit := digits[prec]
+		digits = digits[:prec]
+		if roundDigit >= 8 { // >= 0.5 in hex
+			carry := 1
+			for i := len(digits) - 1; i >= 0 && carry > 0; i-- {
+				digits[i] += carry
+				if digits[i] > 15 {
+					digits[i] = 0
+				} else {
+					carry = 0
+				}
+			}
+			if carry > 0 {
+				lead += carry
+				// Don't renormalize — C-style keeps the larger lead digit
+			}
+		}
+	}
+
+	// Build output
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+	b.WriteString("0x")
+	b.WriteByte(intToHexChar(lead))
+	if prec > 0 {
+		b.WriteByte('.')
+		for i := 0; i < prec; i++ {
+			if i < len(digits) {
+				b.WriteByte(intToHexChar(digits[i]))
+			} else {
+				b.WriteByte('0')
+			}
+		}
+	}
+	fmt.Fprintf(&b, "p%+d", exp)
+	return b.String()
+}
+
+func hexCharToInt(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return 0
+}
+
+func intToHexChar(v int) byte {
+	if v < 10 {
+		return byte('0' + v)
+	}
+	return byte('a' + v - 10)
 }
 
 func formatSpecialFloat(spec string, specChar byte, n float64) (string, bool) {
@@ -797,7 +920,7 @@ func validateFormatWidthPrec(spec string) {
 }
 
 // luaQuote implements Lua's %q format for proper Lua-parseable quoting.
-func luaQuote(val vm.Value) string {
+func luaQuote(val vm.Value, argIdx int) string {
 	if val.IsNil() {
 		return "nil"
 	}
@@ -818,10 +941,19 @@ func luaQuote(val vm.Value) string {
 		if math.IsNaN(f) {
 			return "(0/0)"
 		}
-		return fmt.Sprintf("%.17g", f)
+		// Use hex float format for exact roundtrip (matches Lua 5.4)
+		s := strconv.FormatFloat(f, 'x', -1, 64)
+		return normalizeHexExponent(s)
 	}
 	if val.IsInt() {
-		return fmt.Sprintf("%d", val.AsInt())
+		i := val.AsInt()
+		if i == math.MinInt64 {
+			return "0x8000000000000000"
+		}
+		return fmt.Sprintf("%d", i)
+	}
+	if !val.IsString() {
+		panic(fmt.Sprintf("bad argument #%d to 'format' (value has no literal form)", argIdx))
 	}
 	// String quoting — matches Lua 5.4 addquoted (lstrlib.c)
 	s := valueToString(val)

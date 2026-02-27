@@ -1683,6 +1683,9 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		c.compileExprToReg(e.Inner, reg)
 
 	case *ast.VarArgExpr:
+		if !fs.proto.IsVarArg {
+			c.error(e, "cannot use '...' outside a vararg function")
+		}
 		fs.emit(ABC(OP_VARARG, reg, 0, 2, 0), e.P.Line) // C=2 → 1 result
 
 	default:
@@ -1717,6 +1720,9 @@ func (c *compiler) compileExprMultiRet(expr ast.Expr, n int) {
 		return
 
 	case *ast.VarArgExpr:
+		if !fs.proto.IsVarArg {
+			c.error(e, "cannot use '...' outside a vararg function")
+		}
 		vc := 0
 		if n > 0 {
 			vc = n + 1
