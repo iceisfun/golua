@@ -180,8 +180,14 @@ func luaToNumber(v *vm.VM) int {
 		if !val.IsString() {
 			panic(fmt.Sprintf("bad argument #1 to 'tonumber' (string expected, got %s)", val.Type()))
 		}
-		if i, err := strconv.ParseInt(strings.TrimSpace(val.AsString()), int(bi), 64); err == nil {
+		s := strings.TrimSpace(val.AsString())
+		if i, err := strconv.ParseInt(s, int(bi), 64); err == nil {
 			v.Set(0, vm.NewInt(i))
+			return 1
+		}
+		// Try unsigned — Lua 5.4 wraps values > INT64_MAX to signed
+		if u, err := strconv.ParseUint(s, int(bi), 64); err == nil {
+			v.Set(0, vm.NewInt(int64(u)))
 			return 1
 		}
 

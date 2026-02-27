@@ -16,7 +16,7 @@ import (
 // first error.
 func ParsePartial(source, input string) (*ast.Block, error) {
 	p := &parser{
-		lex:    lexer.New(source, input),
+		lex:    lexer.New(source, input, true),
 		source: source,
 	}
 	if err := p.advance(); err != nil {
@@ -33,9 +33,14 @@ func ParsePartial(source, input string) (*ast.Block, error) {
 }
 
 // Parse parses the given Lua source and returns the top-level block.
-func Parse(source, input string) (*ast.Block, error) {
+// An optional third argument controls shebang stripping (default true).
+func Parse(source, input string, stripShebang ...bool) (*ast.Block, error) {
+	strip := true
+	if len(stripShebang) > 0 {
+		strip = stripShebang[0]
+	}
 	p := &parser{
-		lex:    lexer.New(source, input),
+		lex:    lexer.New(source, input, strip),
 		source: source,
 	}
 	if err := p.advance(); err != nil {

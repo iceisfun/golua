@@ -1164,23 +1164,30 @@ func (vm *VM) execute() ([]Value, error) {
 				idx := vm.stack[frame.base+a].AsInt()
 				limit := vm.stack[frame.base+a+1].AsInt()
 				step := stepVal.AsInt()
-				idx += step
-				vm.stack[frame.base+a] = NewInt(idx)
-				if step >= 0 {
-					if idx <= limit {
-						if err := vm.CheckInterrupt(); err != nil {
-							return nil, err
-						}
-						frame.pc -= bx + 1
-						vm.stack[frame.base+a+3] = NewInt(idx)
-					}
+				// Check for overflow before adding step
+				if step > 0 && idx > math.MaxInt64-step {
+					// Would overflow — exit loop
+				} else if step < 0 && idx < math.MinInt64-step {
+					// Would underflow — exit loop
 				} else {
-					if idx >= limit {
-						if err := vm.CheckInterrupt(); err != nil {
-							return nil, err
+					idx += step
+					vm.stack[frame.base+a] = NewInt(idx)
+					if step >= 0 {
+						if idx <= limit {
+							if err := vm.CheckInterrupt(); err != nil {
+								return nil, err
+							}
+							frame.pc -= bx + 1
+							vm.stack[frame.base+a+3] = NewInt(idx)
 						}
-						frame.pc -= bx + 1
-						vm.stack[frame.base+a+3] = NewInt(idx)
+					} else {
+						if idx >= limit {
+							if err := vm.CheckInterrupt(); err != nil {
+								return nil, err
+							}
+							frame.pc -= bx + 1
+							vm.stack[frame.base+a+3] = NewInt(idx)
+						}
 					}
 				}
 			} else {

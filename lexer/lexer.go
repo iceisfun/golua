@@ -25,7 +25,8 @@ type Lexer struct {
 
 // New creates a new Lexer for the given source text.
 // sourceName is used in error messages (e.g. a filename).
-func New(source, input string) *Lexer {
+// If stripShebang is true, a leading '#' line is skipped (for file loading).
+func New(source, input string, stripShebang bool) *Lexer {
 	l := &Lexer{
 		source: source,
 		input:  input,
@@ -36,7 +37,7 @@ func New(source, input string) *Lexer {
 	l.readChar()
 	// Match Lua: skip the entire first line if input starts with '#'.
 	// This handles Unix shebangs (#!/usr/bin/lua).
-	if l.current == '#' {
+	if stripShebang && l.current == '#' {
 		for l.current != eof && !isNewline(l.current) {
 			l.readChar()
 		}

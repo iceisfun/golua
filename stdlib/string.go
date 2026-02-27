@@ -264,7 +264,11 @@ func stringGsub(v *vm.VM) int {
 	}
 	maxRepl := -1
 	if v.ArgCount() >= 4 && !v.Get(4).IsNil() {
-		maxRepl = int(getInt(v, 4, "gsub"))
+		n := int(getInt(v, 4, "gsub"))
+		if n < 0 {
+			n = 0
+		}
+		maxRepl = n
 	}
 
 	// Handle anchor
@@ -342,7 +346,10 @@ func stringGsub(v *vm.VM) int {
 func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureValue) string {
 	var result strings.Builder
 	for i := 0; i < len(repl); i++ {
-		if repl[i] == '%' && i+1 < len(repl) {
+		if repl[i] == '%' {
+			if i+1 >= len(repl) {
+				panic("invalid use of '%' in replacement string")
+			}
 			next := repl[i+1]
 			if next >= '0' && next <= '9' {
 				idx := int(next - '0')
@@ -365,6 +372,7 @@ func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureVa
 				i++
 				continue
 			}
+			panic(fmt.Sprintf("invalid use of '%%%c' in replacement string", next))
 		}
 		result.WriteByte(repl[i])
 	}
@@ -385,7 +393,7 @@ func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch str
 	// Use ProtectedCall but re-panic on error (Lua propagates gsub function errors)
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 	if len(results) == 0 {
 		return wholeMatch

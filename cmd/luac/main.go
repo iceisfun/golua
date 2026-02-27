@@ -95,7 +95,7 @@ func run(source, input string) {
 
 func dumpTokens(source, input string) {
 	fmt.Println("--- Tokens ---")
-	lex := lexer.New(source, input)
+	lex := lexer.New(source, input, true)
 	for {
 		tok, err := lex.Next()
 		if err != nil {

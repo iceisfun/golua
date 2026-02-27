@@ -382,6 +382,25 @@ func (fs *funcState) lookupLocal(name string) (int, bool) {
 	return 0, false
 }
 
+func (fs *funcState) isConst(name string) bool {
+	for i := len(fs.locals) - 1; i >= 0; i-- {
+		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
+			return fs.locals[i].attrib == "const"
+		}
+	}
+	return false
+}
+
+func (c *compiler) isConstUpvalue(fs *funcState, name string) bool {
+	if fs.parent == nil {
+		return false
+	}
+	if fs.parent.isConst(name) {
+		return true
+	}
+	return c.isConstUpvalue(fs.parent, name)
+}
+
 func (fs *funcState) markCaptured(name string) {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
 		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
@@ -827,6 +846,10 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 	case *ast.NameExpr:
 		// Local?
 		if reg, ok := fs.lookupLocal(t.Name); ok {
+			if fs.isConst(t.Name) {
+				c.error(target, "attempt to assign to const variable '%s'", t.Name)
+				return
+			}
 			// For function calls, we need to use a temporary register because
 			// compileFuncCall places the function into the target register before
 			// evaluating arguments. If those arguments reference this variable,
@@ -850,6 +873,11 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		}
 		// Upvalue?
 		if idx, ok := c.resolveUpvalue(fs, t.Name); ok {
+			_ = idx
+			if c.isConstUpvalue(fs, t.Name) {
+				c.error(target, "attempt to assign to const variable '%s'", t.Name)
+				return
+			}
 			tempReg := fs.reserveReg()
 			c.compileExprToReg(value, tempReg)
 			fs.emit(ABC(OP_SETUPVAL, tempReg, idx, 0, 0), line)
@@ -889,12 +917,20 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 	switch t := target.(type) {
 	case *ast.NameExpr:
 		if reg, ok := fs.lookupLocal(t.Name); ok {
+			if fs.isConst(t.Name) {
+				c.error(target, "attempt to assign to const variable '%s'", t.Name)
+				return
+			}
 			if reg != srcReg {
 				fs.emit(ABC(OP_MOVE, reg, srcReg, 0, 0), line)
 			}
 			return
 		}
 		if idx, ok := c.resolveUpvalue(fs, t.Name); ok {
+			if c.isConstUpvalue(fs, t.Name) {
+				c.error(target, "attempt to assign to const variable '%s'", t.Name)
+				return
+			}
 			fs.emit(ABC(OP_SETUPVAL, srcReg, idx, 0, 0), line)
 			return
 		}
@@ -1400,6 +1436,15 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 
 func (c *compiler) compileLabelStmt(s *ast.LabelStmt) {
 	fs := c.fs
+
+	// Check for duplicate label in current scope
+	scope := fs.scopes[len(fs.scopes)-1]
+	for _, lbl := range fs.labels[scope.firstLabel:] {
+		if lbl.name == s.Name {
+			c.error(s, "label '%s' already defined on line %d", s.Name, lbl.line)
+			return
+		}
+	}
 
 	fs.labels = append(fs.labels, labelInfo{
 		name:    s.Name,

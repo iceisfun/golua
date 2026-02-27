@@ -171,8 +171,8 @@ func luaLoadfile(v *vm.VM) int {
 		return 2
 	}
 
-	// Parse and compile
-	fn, errMsg := compileChunk(v, string(source), chunkName, env, hasEnv)
+	// Parse and compile (loadfile should strip shebangs)
+	fn, errMsg := compileChunk(v, string(source), chunkName, env, hasEnv, true)
 	if errMsg != "" {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(errMsg))
@@ -254,9 +254,13 @@ func luaDofile(v *vm.VM) int {
 // compileChunk parses and compiles Lua source, returning a function value.
 // If hasEnv is true, env is bound to the chunk's _ENV upvalue even when it is nil
 // or non-table; otherwise globals are used.
-func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool) (vm.Value, string) {
+func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool, stripShebang ...bool) (vm.Value, string) {
+	strip := false
+	if len(stripShebang) > 0 {
+		strip = stripShebang[0]
+	}
 	// Parse
-	block, parseErr := parser.Parse(chunkName, source)
+	block, parseErr := parser.Parse(chunkName, source, strip)
 	if parseErr != nil {
 		return vm.Nil, fmt.Sprintf("syntax error: %v", parseErr)
 	}

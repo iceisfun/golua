@@ -39,7 +39,7 @@ func tableGetTable(v *vm.VM, idx int, fname string) vm.LuaTable {
 func tableObjLen(v *vm.VM, val vm.Value) int {
 	length, err := v.ObjLen(val)
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 	return length
 }
@@ -48,7 +48,7 @@ func tableObjLen(v *vm.VM, val vm.Value) int {
 func tableGetIdx(v *vm.VM, t vm.LuaTable, key int) vm.Value {
 	val, err := v.TableGetInt(t, key)
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 	return val
 }
@@ -57,7 +57,7 @@ func tableGetIdx(v *vm.VM, t vm.LuaTable, key int) vm.Value {
 func tableSetIdx(v *vm.VM, t vm.LuaTable, key int, value vm.Value) {
 	err := v.TableSetInt(t, key, value)
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
 }
 
@@ -217,7 +217,7 @@ func tableSort(v *vm.VM) int {
 		})
 	}
 	if sortErr != nil {
-		panic(sortErr.Error())
+		panic(sortErr)
 	}
 
 	// Put values back via __newindex

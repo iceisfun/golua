@@ -9,7 +9,7 @@ import (
 // helper to tokenize and check no error
 func mustTokenize(t *testing.T, input string) []token.Token {
 	t.Helper()
-	l := New("test", input)
+	l := New("test", input, true)
 	tokens, err := l.Tokenize()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -81,7 +81,7 @@ func TestHashOperator(t *testing.T) {
 
 func TestShebangSkipped(t *testing.T) {
 	// # at start of input skips the entire first line
-	l := New("test", "#!something\nlocal x")
+	l := New("test", "#!something\nlocal x", true)
 	tok, err := l.Next()
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +310,7 @@ func TestFloats(t *testing.T) {
 }
 
 func TestMalformedNumber(t *testing.T) {
-	l := New("test", "123abc")
+	l := New("test", "123abc", true)
 	_, err := l.Next()
 	if err == nil {
 		t.Fatal("expected error for malformed number")
@@ -327,7 +327,7 @@ func TestMalformedBinaryNumber(t *testing.T) {
 	}
 	for _, input := range cases {
 		t.Run(input, func(t *testing.T) {
-			l := New("test", input)
+			l := New("test", input, true)
 			_, err := l.Next()
 			if err == nil {
 				t.Fatalf("expected error for malformed binary number %q", input)
@@ -390,7 +390,7 @@ func TestStringNewlineEscape(t *testing.T) {
 }
 
 func TestUnfinishedString(t *testing.T) {
-	l := New("test", `"hello`)
+	l := New("test", `"hello`, true)
 	_, err := l.Next()
 	if err == nil {
 		t.Fatal("expected error for unfinished string")
@@ -425,7 +425,7 @@ func TestLongStrings(t *testing.T) {
 }
 
 func TestUnfinishedLongString(t *testing.T) {
-	l := New("test", "[[hello")
+	l := New("test", "[[hello", true)
 	_, err := l.Next()
 	if err == nil {
 		t.Fatal("expected error for unfinished long string")
@@ -568,7 +568,7 @@ func TestShebang(t *testing.T) {
 }
 
 func TestDecimalEscapeTooLarge(t *testing.T) {
-	l := New("test", `"\256"`)
+	l := New("test", `"\256"`, true)
 	_, err := l.Next()
 	if err == nil {
 		t.Fatal("expected error for decimal escape too large")
@@ -576,7 +576,7 @@ func TestDecimalEscapeTooLarge(t *testing.T) {
 }
 
 func TestInvalidEscape(t *testing.T) {
-	l := New("test", `"\q"`)
+	l := New("test", `"\q"`, true)
 	_, err := l.Next()
 	if err == nil {
 		t.Fatal("expected error for invalid escape")

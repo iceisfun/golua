@@ -289,10 +289,11 @@ func (v Value) String() string {
 		return fmt.Sprintf("%d", v.integer)
 	case typeFloat:
 		f := v.num
-		if f == math.Trunc(f) && !math.IsInf(f, 0) && math.Abs(f) < 1e14 {
-			return fmt.Sprintf("%.1f", f)
+		s := fmt.Sprintf("%.14g", f)
+		if !strings.ContainsAny(s, ".eEnNiI") {
+			s += ".0"
 		}
-		return fmt.Sprintf("%.14g", f)
+		return s
 	case typeString:
 		return v.ptr.(string)
 	case typeTable:
