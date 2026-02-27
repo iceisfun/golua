@@ -41,7 +41,7 @@ func Open(v *vm.VM) {
 	v.SetGlobal("_G", vm.NewTable(v.Globals()))
 
 	// _VERSION
-	v.SetGlobal("_VERSION", vm.NewString("Lua 5.5"))
+	v.SetGlobal("_VERSION", vm.NewString("Lua 5.4"))
 
 	// String library
 	openString(v)
@@ -118,10 +118,10 @@ func luaAssert(v *vm.VM) int {
 	}
 	val := v.Get(1)
 	if !val.ToBool() {
-		msg := v.Get(2)
-		if msg.IsNil() {
+		if v.ArgCount() < 2 {
 			panic("assertion failed!")
 		}
+		msg := v.Get(2)
 		panic(&vm.LuaError{Value: msg})
 	}
 	// Return all arguments
@@ -386,8 +386,7 @@ func luaCollectgarbage(v *vm.VM) int {
 		v.Set(0, vm.True)
 		return 1
 	default:
-		v.Set(0, vm.NewInt(0))
-		return 1
+		panic(fmt.Sprintf("bad argument #1 to 'collectgarbage' (invalid option '%s')", opt))
 	}
 }
 

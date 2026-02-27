@@ -34,7 +34,8 @@ func openString(v *vm.VM) {
 	v.SetGlobal("string", vm.NewTable(str))
 
 	// Set string metatable so strings can use method syntax (str:find(...))
-	// The string table itself serves as the __index for strings
+	// __index points to the string table itself
+	str.SetString("__index", vm.NewTable(str))
 	v.SetStringMeta(str)
 }
 
@@ -1045,8 +1046,11 @@ func utf8Len(s string) int {
 // string.dump(function [, strip])
 func stringDump(v *vm.VM) int {
 	val := v.Get(1)
-	if !val.IsFunction() {
+	if !val.IsFunction() && !val.IsNativeFunc() {
 		panic(fmt.Sprintf("bad argument #1 to 'dump' (function expected, got %s)", val.Type()))
+	}
+	if val.IsNativeFunc() {
+		panic("unable to dump given function")
 	}
 	cl := val.AsClosure()
 	strip := false

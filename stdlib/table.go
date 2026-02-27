@@ -90,7 +90,7 @@ func tableConcat(v *vm.VM) int {
 		} else if val.IsNumber() {
 			parts = append(parts, val.String())
 		} else {
-			panic(fmt.Sprintf("invalid value (nil) at index %d in table for 'concat'", idx))
+			panic(fmt.Sprintf("invalid value (%s) at index %d in table for 'concat'", val.Type(), idx))
 		}
 	}
 
