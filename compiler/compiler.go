@@ -84,6 +84,7 @@ type pendingGoto struct {
 	pc      int // jump instruction pc
 	nLocals int // number of locals at goto
 	line    int
+	closePC int // pc of placeholder OP_CLOSE (-1 if none)
 }
 
 type funcState struct {
@@ -1429,11 +1430,9 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 	// Check if label already exists (backward goto)
 	for _, lbl := range fs.labels {
 		if lbl.name == s.Label {
-			// Validate: goto must not jump into scope of a local variable
-			if fs.nActVar > lbl.nLocals {
-				// This is a backward jump; the label had fewer locals,
-				// but we need OP_CLOSE to handle upvalues for locals
-				// being exited. This is valid — we're jumping OUT of scope.
+			// Emit OP_CLOSE if exiting scope with TBC/captured locals
+			if fs.needsClose(lbl.nLocals) {
+				fs.emit(ABC(OP_CLOSE, lbl.nLocals, 0, 0, 0), line)
 			}
 			jpc := fs.emitJump(line)
 			offset := lbl.pc - (jpc + 1)
@@ -1442,13 +1441,20 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 		}
 	}
 
-	// Forward goto — record it
+	// Forward goto — emit placeholder OP_CLOSE and record it.
+	// The OP_CLOSE operand will be patched when the label is resolved.
+	closePC := -1
+	if fs.needsClose(0) {
+		// There are TBC/captured locals somewhere; emit placeholder
+		closePC = fs.emit(ABC(OP_CLOSE, fs.nActVar, 0, 0, 0), line)
+	}
 	jpc := fs.emitJump(line)
 	fs.pendGotos = append(fs.pendGotos, pendingGoto{
 		name:    s.Label,
 		pc:      jpc,
 		nLocals: fs.nActVar,
 		line:    line,
+		closePC: closePC,
 	})
 }
 
@@ -1480,6 +1486,10 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt) {
 				c.error(s, "<goto %s> at line %d jumps into the scope of local variable", pg.name, pg.line)
 				remaining = append(remaining, pg)
 				continue
+			}
+			// Patch placeholder OP_CLOSE if one was emitted
+			if pg.closePC >= 0 && fs.nActVar < pg.nLocals {
+				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(fs.nActVar)
 			}
 			offset := fs.pc() - (pg.pc + 1)
 			fs.proto.Code[pg.pc] = fs.proto.Code[pg.pc].SetSJ(offset)

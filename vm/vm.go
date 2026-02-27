@@ -152,9 +152,21 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			} else {
 				errVal = NewString(fmt.Sprintf("%v", r))
 			}
-			for i := len(tbcToClose) - 1; i >= 0; i-- {
-				vm.callCloseMetamethod(tbcToClose[i], errVal)
-			}
+			// Use callCloseHandlers to protect each __close call individually.
+			// If a handler errors, it replaces err but other handlers still run.
+			func() {
+				defer func() {
+					if closeR := recover(); closeR != nil {
+						// __close error replaces original error
+						if le, ok := closeR.(*LuaError); ok {
+							err = le
+						} else {
+							err = fmt.Errorf("%v", closeR)
+						}
+					}
+				}()
+				vm.callCloseHandlers(tbcToClose, errVal)
+			}()
 			// Now restore vm.top after __close handlers are done
 			vm.top = savedTop
 			// Close upvalues
@@ -2003,25 +2015,72 @@ func (vm *VM) closeUpvalues(level int) {
 
 	// Call __close metamethod on TBC variables in reverse order
 	// (most recently declared first).
-	// We must snapshot tbcVars and use a separate slice for survivors because
-	// callCloseMetamethod may re-enter closeUpvalues (via the callee's
-	// OP_RETURN), and the nested call would corrupt a shared backing array.
-	snapshot := make([]int, len(vm.tbcVars))
-	copy(snapshot, vm.tbcVars)
+	// Remove entries from tbcVars BEFORE calling __close to prevent
+	// double-close if the handler panics (the panic would be caught by
+	// ProtectedCall's recover, which also processes tbcVars).
+	var tbcToClose []int
 	var remainingTBC []int
-	for i := len(snapshot) - 1; i >= 0; i-- {
-		idx := snapshot[i]
+	for _, idx := range vm.tbcVars {
 		if idx >= level {
-			vm.callCloseMetamethod(idx, Nil)
+			tbcToClose = append(tbcToClose, idx)
 		} else {
 			remainingTBC = append(remainingTBC, idx)
 		}
 	}
-	// Reverse remainingTBC to restore original order
-	for i, j := 0, len(remainingTBC)-1; i < j; i, j = i+1, j-1 {
-		remainingTBC[i], remainingTBC[j] = remainingTBC[j], remainingTBC[i]
-	}
 	vm.tbcVars = remainingTBC
+	// Call in reverse order (most recently declared first).
+	// Each call is protected so that errors in __close don't prevent
+	// other handlers from running. The last error is re-raised.
+	vm.callCloseHandlers(tbcToClose, Nil)
+}
+
+// callCloseHandlers calls __close metamethods on a list of TBC variable indices
+// in reverse order. Each call is individually protected so that all handlers run
+// even if one errors. If any handler errors, the last error is re-raised after
+// all handlers have been called.
+func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
+	var lastPanic interface{}
+	for i := len(indices) - 1; i >= 0; i-- {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					lastPanic = r
+					// Update errVal for subsequent handlers (Lua 5.4 behavior:
+					// __close receives the most recent error)
+					if le, ok := r.(*LuaError); ok {
+						errVal = le.Value
+					} else {
+						errVal = NewString(fmt.Sprintf("%v", r))
+					}
+					// Restore call stack in case the panic left it dirty
+					// (the handler's frames should not persist)
+				}
+			}()
+			vm.callCloseMetamethod(indices[i], errVal)
+		}()
+	}
+	if lastPanic != nil {
+		panic(lastPanic)
+	}
+}
+
+// CloseAllTBC closes all to-be-closed variables in the VM.
+// Used when a coroutine is closed externally (coroutine.close).
+func (vm *VM) CloseAllTBC() {
+	if len(vm.tbcVars) == 0 {
+		return
+	}
+	tbcToClose := make([]int, len(vm.tbcVars))
+	copy(tbcToClose, vm.tbcVars)
+	vm.tbcVars = nil
+	// Protect each handler individually; ignore panics since the
+	// coroutine is being terminated anyway.
+	for i := len(tbcToClose) - 1; i >= 0; i-- {
+		func() {
+			defer func() { recover() }()
+			vm.callCloseMetamethod(tbcToClose[i], Nil)
+		}()
+	}
 }
 
 // callCloseMetamethod calls the __close metamethod on a TBC variable.

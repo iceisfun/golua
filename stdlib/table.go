@@ -142,11 +142,18 @@ func tableRemove(v *vm.VM) int {
 		pos = int(getInt(v, 2, "remove"))
 	}
 
-	// Lua 5.4: validate only when pos != length
+	// Lua 5.4: validate only when pos != length (the default)
+	// Valid range: 1 <= pos <= length+1
 	if pos != length {
-		if pos < 1 || pos > length {
+		if pos < 1 || pos > length+1 {
 			panic("bad argument #2 to 'remove' (position out of range)")
 		}
+	}
+
+	// pos beyond array (length+1 case or empty table): return nil, no modification
+	if pos > length {
+		v.Set(0, vm.Nil)
+		return 1
 	}
 
 	// Get the value being removed

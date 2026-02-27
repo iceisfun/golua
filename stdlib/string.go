@@ -258,8 +258,10 @@ func stringGsub(v *vm.VM) int {
 	s := getString(v, 1, "gsub")
 	pattern := getString(v, 2, "gsub")
 	repl := v.Get(3)
-	// Validate replacement type
-	if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() && !repl.IsTable() {
+	// Validate replacement type — Lua 5.4 also accepts numbers (coerced to string)
+	if repl.IsNumber() {
+		repl = vm.NewString(valueToString(repl))
+	} else if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() && !repl.IsTable() {
 		panic(fmt.Sprintf("bad argument #3 to 'gsub' (string/function/table expected, got %s)", repl.Type()))
 	}
 	maxRepl := -1

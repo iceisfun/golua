@@ -187,6 +187,15 @@ func (ms *matchState) matchBalance(si, pp int) int {
 	if si >= len(ms.s) || ms.s[si] != open {
 		return -1
 	}
+	if open == close {
+		// Same char: match from first to next occurrence
+		for i := si + 1; i < len(ms.s); i++ {
+			if ms.s[i] == close {
+				return ms.match(i+1, pp+4)
+			}
+		}
+		return -1
+	}
 	depth := 1
 	i := si + 1
 	for i < len(ms.s) && depth > 0 {

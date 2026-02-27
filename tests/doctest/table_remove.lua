@@ -47,13 +47,13 @@ do
     print(table.remove({}, 0))
     --> =nil
 
-    -- Lua 5.4: table.remove({}, 1) — pos=1 != size=0, validate 1<=1<=0 → error
+    -- Lua 5.4: table.remove({}, 1) — pos=1 = size+1=1, valid → nil
     print(pcall(table.remove, {}, 1))
-    --> ~^false\t.*out of range
+    --> =true	nil
 
-    -- Lua 5.4: table.remove(t, #t+1) — pos=3 != size=2 → validate 1<=3<=2 → error
+    -- Lua 5.4: table.remove(t, #t+1) — pos=3 = size+1=3, valid → nil
     print(pcall(table.remove, t, 3))
-    --> ~^false\t.*out of range
+    --> =true	nil
 
     local tt = {}
     setmetatable(tt, {

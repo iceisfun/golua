@@ -319,7 +319,8 @@ func coYield(v *vm.VM) int {
 	// Wait for resume - mark as running when we get it
 	args, ok := <-resumeCh
 	if !ok {
-		// Channel closed by coClose — terminate this coroutine cleanly
+		// Channel closed by coClose — close TBC vars, then terminate
+		v.CloseAllTBC()
 		runtime.Goexit()
 	}
 
