@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -106,15 +107,16 @@ func (c *LuaChannel) TryRecv() (Value, bool, bool) {
 	}
 }
 
-// Close closes the channel. Panics if already closed.
-func (c *LuaChannel) Close() {
+// Close closes the channel. Returns an error if already closed.
+func (c *LuaChannel) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed.Load() {
-		panic("close of closed channel")
+		return fmt.Errorf("close of closed channel")
 	}
 	c.closed.Store(true)
 	close(c.ch)
+	return nil
 }
 
 // DefaultChanProvider enables all channel capabilities with atomic ID generation.

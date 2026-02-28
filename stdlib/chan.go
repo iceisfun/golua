@@ -144,10 +144,12 @@ func makeChanRecv(luaVM *vm.VM, ch *vm.LuaChannel) vm.NativeFunc {
 	}
 }
 
-// ch:close() - panics if already closed
+// ch:close() - raises Lua error if already closed
 func makeChanClose(ch *vm.LuaChannel) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		ch.Close() // panics if already closed
+		if err := ch.Close(); err != nil {
+			panic(err.Error())
+		}
 		return 0
 	}
 }
