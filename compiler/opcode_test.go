@@ -1,6 +1,9 @@
 package compiler
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestMetamethodTagOrdinals(t *testing.T) {
 	tests := []struct {
@@ -67,11 +70,11 @@ func TestMetamethodTagString(t *testing.T) {
 }
 
 func TestMetamethodTagOutOfRange(t *testing.T) {
-	if got := MetamethodTag(-1).String(); got != "???" {
-		t.Errorf("MetamethodTag(-1).String() = %q, want %q", got, "???")
+	if got := MetamethodTag(-1).String(); got != "MetamethodTag(-1)" {
+		t.Errorf("MetamethodTag(-1).String() = %q, want %q", got, "MetamethodTag(-1)")
 	}
-	if got := MetamethodTag(99).String(); got != "???" {
-		t.Errorf("MetamethodTag(99).String() = %q, want %q", got, "???")
+	if got := MetamethodTag(99).String(); got != "MetamethodTag(99)" {
+		t.Errorf("MetamethodTag(99).String() = %q, want %q", got, "MetamethodTag(99)")
 	}
 }
 
@@ -89,8 +92,8 @@ func TestOpCodeString(t *testing.T) {
 }
 
 func TestOpCodeStringOutOfRange(t *testing.T) {
-	if got := OpCode(255).String(); got != "???" {
-		t.Errorf("OpCode(255).String() = %q, want %q", got, "???")
+	if got := OpCode(255).String(); got != "OpCode(255)" {
+		t.Errorf("OpCode(255).String() = %q, want %q", got, "OpCode(255)")
 	}
 }
 
@@ -114,7 +117,52 @@ func TestOpModeString(t *testing.T) {
 }
 
 func TestOpModeStringOutOfRange(t *testing.T) {
-	if got := OpMode(99).String(); got != "???" {
-		t.Errorf("OpMode(99).String() = %q, want %q", got, "???")
+	if got := OpMode(99).String(); got != "OpMode(99)" {
+		t.Errorf("OpMode(99).String() = %q, want %q", got, "OpMode(99)")
+	}
+}
+
+func TestGetOpModeAllOpcodes(t *testing.T) {
+	for op := OpCode(0); op < NumOps; op++ {
+		mode := GetOpMode(op)
+		if mode > IsJ {
+			t.Errorf("GetOpMode(%s) returned invalid mode %d", op, mode)
+		}
+	}
+}
+
+func TestGetOpModeInvalidPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("GetOpMode(255) did not panic")
+		}
+		msg := fmt.Sprint(r)
+		if msg != "compiler bug: GetOpMode called with invalid opcode 255" {
+			t.Errorf("unexpected panic message: %s", msg)
+		}
+	}()
+	GetOpMode(255)
+}
+
+func TestOpCodeValid(t *testing.T) {
+	for op := OpCode(0); op < NumOps; op++ {
+		if !op.Valid() {
+			t.Errorf("OpCode(%d).Valid() = false, want true", op)
+		}
+	}
+	if NumOps.Valid() {
+		t.Errorf("NumOps.Valid() = true, want false")
+	}
+	if OpCode(255).Valid() {
+		t.Errorf("OpCode(255).Valid() = true, want false")
+	}
+}
+
+func TestInitCompletenessGuard(t *testing.T) {
+	for op := OpCode(0); op < NumOps; op++ {
+		if OpName(op) == "" {
+			t.Errorf("opcode %d has no name registered", op)
+		}
 	}
 }

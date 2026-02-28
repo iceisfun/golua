@@ -21,6 +21,8 @@
 // §3.3.11 (to-be-closed variables).
 package compiler
 
+import "fmt"
+
 // OpCode is a 7-bit Lua VM opcode.
 type OpCode byte
 
@@ -28,17 +30,17 @@ type OpCode byte
 // Each opcode comment shows its format and semantics in Lua register notation.
 // R[x] = register x, K[x] = constant x, UpValue[x] = upvalue x.
 const (
-	OP_MOVE      OpCode = iota // A B     R[A] := R[B]
-	OP_LOADI                   // A sBx   R[A] := sBx
-	OP_LOADF                   // A sBx   R[A] := (float)sBx
-	OP_LOADK                   // A Bx    R[A] := K[Bx]
-	OP_LOADKX                  // A       R[A] := K[extra arg]
-	OP_LOADFALSE               // A       R[A] := false
-	OP_LFALSESKIP              // A       R[A] := false; pc++
-	OP_LOADTRUE                // A       R[A] := true
-	OP_LOADNIL                 // A B     R[A], ..., R[A+B] := nil
-	OP_GETUPVAL                // A B     R[A] := UpValue[B]
-	OP_SETUPVAL                // A B     UpValue[B] := R[A]
+	OP_MOVE       OpCode = iota // A B     R[A] := R[B]
+	OP_LOADI                    // A sBx   R[A] := sBx
+	OP_LOADF                    // A sBx   R[A] := (float)sBx
+	OP_LOADK                    // A Bx    R[A] := K[Bx]
+	OP_LOADKX                   // A       R[A] := K[extra arg]
+	OP_LOADFALSE                // A       R[A] := false
+	OP_LFALSESKIP               // A       R[A] := false; pc++
+	OP_LOADTRUE                 // A       R[A] := true
+	OP_LOADNIL                  // A B     R[A], ..., R[A+B] := nil
+	OP_GETUPVAL                 // A B     R[A] := UpValue[B]
+	OP_SETUPVAL                 // A B     UpValue[B] := R[A]
 
 	OP_GETTABUP // A B C   R[A] := UpValue[B][K[C]:string]
 	OP_GETTABLE // A B C   R[A] := R[B][R[C]]
@@ -142,7 +144,10 @@ const (
 
 	OP_EXTRAARG // Ax     extra argument for previous opcode
 
-	NumOps // sentinel
+	// NumOps is the total number of opcodes. It is a sentinel value used to size
+	// the opProperties table and must remain the final constant in the OpCode
+	// enumeration. Matches Lua 5.4.6 opcode count.
+	NumOps // sentinel → total number of opcodes
 )
 
 // OpMode describes the instruction encoding format. Each opcode has exactly
@@ -174,11 +179,13 @@ func (m OpMode) String() string {
 	case IsJ:
 		return "isJ"
 	default:
-		return "???"
+		return fmt.Sprintf("OpMode(%d)", m)
 	}
 }
 
-// opProperties stores the mode for each opcode.
+// opProperties stores the encoding mode and name for each opcode.
+// Every OpCode in [0, NumOps) must have a non-empty entry. The init()
+// function populates this table and validates completeness.
 var opProperties [NumOps]struct {
 	mode OpMode
 	name string
@@ -282,6 +289,11 @@ func init() {
 			name string
 		}{e.mode, e.name}
 	}
+	for i := 0; i < int(NumOps); i++ {
+		if opProperties[i].name == "" {
+			panic(fmt.Sprintf("compiler bug: opcode %d has no property entry", i))
+		}
+	}
 }
 
 // String returns the human-readable name of an opcode (delegates to OpName).
@@ -294,15 +306,22 @@ func OpName(op OpCode) string {
 	if int(op) < len(opProperties) {
 		return opProperties[op].name
 	}
-	return "???"
+	return fmt.Sprintf("OpCode(%d)", op)
 }
 
 // GetOpMode returns the instruction encoding format for an opcode.
+// Panics if op is not a valid opcode — invalid values indicate corrupted
+// bytecode or a compiler bug.
 func GetOpMode(op OpCode) OpMode {
 	if int(op) < len(opProperties) {
 		return opProperties[op].mode
 	}
-	return IABC
+	panic(fmt.Sprintf("compiler bug: GetOpMode called with invalid opcode %d", op))
+}
+
+// Valid reports whether op is a known opcode (in [0, NumOps)).
+func (op OpCode) Valid() bool {
+	return op < NumOps
 }
 
 // MetamethodTag identifies which metamethod to invoke when operands don't
@@ -333,6 +352,8 @@ const (
 	TM_EQ     // __eq
 )
 
+// metamethodNames must be kept in sync with MetamethodTag constants.
+// Length must equal TM_EQ + 1 (the last tag ordinal plus one).
 var metamethodNames = [...]string{
 	TM_ADD: "__add", TM_SUB: "__sub", TM_MUL: "__mul",
 	TM_MOD: "__mod", TM_POW: "__pow", TM_DIV: "__div",
@@ -348,5 +369,5 @@ func (t MetamethodTag) String() string {
 	if t >= 0 && int(t) < len(metamethodNames) {
 		return metamethodNames[t]
 	}
-	return "???"
+	return fmt.Sprintf("MetamethodTag(%d)", t)
 }
