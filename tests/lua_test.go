@@ -1,12 +1,14 @@
 package tests
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iceisfun/golua/compiler"
 	"github.com/iceisfun/golua/parser"
@@ -219,8 +221,9 @@ func parseDirectives(source string) []directive {
 	return dirs
 }
 
-// runLuaDoctest compiles and runs a Lua file, capturing print() output
-// via WithCaptureOutput and validating it against --> directives in the source.
+// runLuaDoctest compiles and runs a Lua file in a goroutine with timeout,
+// VM limits, and doctest helper functions. Captures print() output via
+// WithCaptureOutput and validates it against --> directives in the source.
 func runLuaDoctest(t *testing.T, filename string) {
 	t.Helper()
 
@@ -239,29 +242,69 @@ func runLuaDoctest(t *testing.T, filename string) {
 		t.Fatalf("Compilation failed: %v", err)
 	}
 
-	// Create VM with output capture enabled
-	v := vm.New(vm.WithCaptureOutput(true))
-	stdlib.Open(v)
+	// Set up context with timeout
+	timeout := defaultDoctestTimeout
+	ctx, cancel := context.WithCancel(context.Background())
+	deadline := time.Now().Add(timeout)
+	timer := time.AfterFunc(timeout, cancel)
 
-	// Run
-	var runErr error
-	func() {
+	cfg := &doctestConfig{
+		defaultTimeout: timeout,
+		deadline:       deadline,
+		cancel:         cancel,
+		timer:          timer,
+	}
+	defer timer.Stop()
+	defer cancel()
+
+	// Create VM with output capture, context, and limits
+	v := vm.New(
+		vm.WithCaptureOutput(true),
+		vm.WithContext(ctx),
+		vm.WithLimits(doctestLimits()),
+	)
+	stdlib.Open(v)
+	registerDoctestHelpers(v, cfg)
+
+	// Run in goroutine with panic recovery
+	resultCh := make(chan doctestResult, 1)
+	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				runErr, _ = r.(error)
-				if runErr == nil {
-					runErr = fmt.Errorf("%v", r)
-				}
+				resultCh <- classifyPanic(r)
 			}
 		}()
-		_, runErr = v.Run(proto)
+		_, runErr := v.Run(proto)
+		if runErr != nil {
+			resultCh <- classifyPanic(runErr)
+		} else {
+			resultCh <- doctestResult{kind: resultSuccess}
+		}
 	}()
 
-	// Validate captured output against directives (even if there was a runtime error)
+	// Wait for result or safety timeout (default + 2s for true deadlocks)
+	var result doctestResult
+	select {
+	case result = <-resultCh:
+		// normal completion
+	case <-time.After(timeout + 2*time.Second):
+		result = doctestResult{
+			kind: resultTimeout,
+			err:  fmt.Errorf("safety timeout: goroutine did not respond after %v", timeout+2*time.Second),
+		}
+	}
+
+	// Validate captured output against directives
 	outputLines := v.OutputLines()
 
-	if runErr != nil {
-		t.Errorf("Runtime error (after %d output lines): %v", len(outputLines), runErr)
+	// Report errors by kind
+	switch result.kind {
+	case resultLuaError:
+		t.Errorf("Runtime error (after %d output lines): %v", len(outputLines), result.err)
+	case resultVMPanic:
+		t.Errorf("VM PANIC (bug): %v", result.err)
+	case resultTimeout:
+		t.Errorf("TIMEOUT: %v", result.err)
 	}
 
 	if len(outputLines) < len(dirs) {
