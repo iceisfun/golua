@@ -197,7 +197,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_GETTABLE:
@@ -215,7 +215,7 @@ func (vm *VM) execute() ([]Value, error) {
 				val := vm.stringMeta.Get(key)
 				vm.stack[frame.base+a] = val
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_GETI:
@@ -228,7 +228,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_GETFIELD:
@@ -246,7 +246,7 @@ func (vm *VM) execute() ([]Value, error) {
 				val := vm.stringMeta.Get(NewString(key))
 				vm.stack[frame.base+a] = val
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_SETTABUP:
@@ -259,7 +259,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_SETTABLE:
@@ -272,7 +272,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_SETI:
@@ -284,7 +284,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_SETFIELD:
@@ -297,7 +297,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_NEWTABLE:
@@ -320,7 +320,7 @@ func (vm *VM) execute() ([]Value, error) {
 				// String method call - use string metatable
 				vm.stack[frame.base+a] = vm.stringMeta.Get(NewString(key))
 			} else {
-				return nil, fmt.Errorf("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
 
 		case compiler.OP_ADDI:
@@ -332,7 +332,7 @@ func (vm *VM) execute() ([]Value, error) {
 			} else if n, ok := v.ToNumber(); ok {
 				vm.stack[frame.base+a] = NewFloat(n + float64(sc))
 			} else {
-				return nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v.Type())
+				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v.Type())
 			}
 
 		case compiler.OP_ADDK, compiler.OP_SUBK, compiler.OP_MULK, compiler.OP_MODK,
@@ -365,10 +365,10 @@ func (vm *VM) execute() ([]Value, error) {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(int64(sc) << uint(i))
 				} else {
-					return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}
 			} else {
-				return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 			}
 
 		case compiler.OP_SHRI:
@@ -380,10 +380,10 @@ func (vm *VM) execute() ([]Value, error) {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
 				} else {
-					return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}
 			} else {
-				return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 			}
 
 		case compiler.OP_ADD, compiler.OP_SUB, compiler.OP_MUL, compiler.OP_MOD,
@@ -427,7 +427,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if n, ok := v.ToNumber(); ok {
 					vm.stack[frame.base+a] = NewFloat(-n)
 				} else {
-					return nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v.Type())
 				}
 			} else if mm := vm.getMetafield(v, "__unm"); !mm.IsNil() {
 				result, err := vm.callMetamethod(mm, v, v)
@@ -436,7 +436,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = result
 			} else {
-				return nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v.Type())
+				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v.Type())
 			}
 
 		case compiler.OP_BNOT:
@@ -458,7 +458,7 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 					vm.stack[frame.base+a] = result
 				} else {
-					return nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}
 			}
 
@@ -486,7 +486,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsTable() {
 					vm.stack[frame.base+a] = NewInt(int64(v.AsTable().Len()))
 				} else {
-					return nil, fmt.Errorf("attempt to get length of a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to get length of a %s value", v.Type())
 				}
 			}
 
@@ -656,7 +656,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
 			if !v.IsNumber() {
-				return nil, fmt.Errorf("attempt to compare %s with number", v.Type())
+				return nil, vm.runtimeError("attempt to compare %s with number", v.Type())
 			}
 			var lt bool
 			if v.IsInt() {
@@ -673,7 +673,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
 			if !v.IsNumber() {
-				return nil, fmt.Errorf("attempt to compare %s with number", v.Type())
+				return nil, vm.runtimeError("attempt to compare %s with number", v.Type())
 			}
 			var le bool
 			if v.IsInt() {
@@ -690,7 +690,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
 			if !v.IsNumber() {
-				return nil, fmt.Errorf("attempt to compare %s with number", v.Type())
+				return nil, vm.runtimeError("attempt to compare %s with number", v.Type())
 			}
 			var gt bool
 			if v.IsInt() {
@@ -707,7 +707,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
 			if !v.IsNumber() {
-				return nil, fmt.Errorf("attempt to compare %s with number", v.Type())
+				return nil, vm.runtimeError("attempt to compare %s with number", v.Type())
 			}
 			var ge bool
 			if v.IsInt() {
@@ -1102,7 +1102,7 @@ func (vm *VM) execute() ([]Value, error) {
 
 			tbl := vm.stack[frame.base+a].AsTable()
 			if tbl == nil {
-				return nil, fmt.Errorf("attempt to index a non-table value")
+				return nil, vm.runtimeError("attempt to index a non-table value")
 			}
 
 			n := vB

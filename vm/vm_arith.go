@@ -1,7 +1,6 @@
 package vm
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/iceisfun/golua/compiler"
@@ -32,7 +31,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 			return NewInt(i1 * i2), nil
 		case compiler.OP_IDIV:
 			if i2 == 0 {
-				return Nil, fmt.Errorf("attempt to perform 'n//0'")
+				return Nil, vm.runtimeError("attempt to perform 'n//0'")
 			}
 			if i2 == -1 {
 				return NewInt(-i1), nil
@@ -45,7 +44,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 			return NewInt(q), nil
 		case compiler.OP_MOD:
 			if i2 == 0 {
-				return Nil, fmt.Errorf("attempt to perform 'n%%0'")
+				return Nil, vm.runtimeError("attempt to perform 'n%%0'")
 			}
 			if i2 == -1 {
 				return NewInt(0), nil
@@ -100,9 +99,9 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 
 	// No metamethod found, report error
 	if !ok1 {
-		return Nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v1.Type())
+		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v1.Type())
 	}
-	return Nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v2.Type())
+	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v2.Type())
 }
 
 func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
@@ -118,7 +117,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 			return NewInt(i1 * i2), nil
 		case compiler.OP_IDIVK:
 			if i2 == 0 {
-				return Nil, fmt.Errorf("attempt to perform 'n//0'")
+				return Nil, vm.runtimeError("attempt to perform 'n//0'")
 			}
 			if i2 == -1 {
 				return NewInt(-i1), nil
@@ -130,7 +129,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 			return NewInt(q), nil
 		case compiler.OP_MODK:
 			if i2 == 0 {
-				return Nil, fmt.Errorf("attempt to perform 'n%%0'")
+				return Nil, vm.runtimeError("attempt to perform 'n%%0'")
 			}
 			if i2 == -1 {
 				return NewInt(0), nil
@@ -182,9 +181,9 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 	}
 
 	if !ok1 {
-		return Nil, fmt.Errorf("attempt to perform arithmetic on a %s value", v.Type())
+		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v.Type())
 	}
-	return Nil, fmt.Errorf("attempt to perform arithmetic on a %s value", kv.Type())
+	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", kv.Type())
 }
 
 // arithMetamethod returns the metamethod name for an arithmetic opcode
@@ -251,9 +250,9 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	}
 
 	if !ok1 {
-		return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v1.Type())
+		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v1.Type())
 	}
-	return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v2.Type())
+	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v2.Type())
 }
 
 func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
@@ -286,9 +285,9 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
 	}
 
 	if !ok1 {
-		return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", v.Type())
+		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 	}
-	return Nil, fmt.Errorf("attempt to perform bitwise operation on a %s value", kv.Type())
+	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", kv.Type())
 }
 
 // bitwiseMetamethod returns the metamethod name for a bitwise opcode

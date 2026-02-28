@@ -121,11 +121,11 @@ func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 		mt = val.AsTable().Metatable()
 	}
 	if mt == nil {
-		return Nil, fmt.Errorf("attempt to index a %s value", val.Type())
+		return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
 	}
 	index := mt.Get(metaIndex)
 	if index.IsNil() {
-		return Nil, fmt.Errorf("attempt to index a %s value", val.Type())
+		return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
 	}
 	if index.IsTable() {
 		return vm.tableGet(index.AsTable(), key)
@@ -133,7 +133,7 @@ func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 	if index.IsFunction() || index.IsNativeFunc() {
 		return vm.callMetamethod(index, val, key)
 	}
-	return Nil, fmt.Errorf("attempt to index a %s value", val.Type())
+	return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
 }
 
 // tableSet sets a value in a table, handling __newindex metamethod
@@ -309,5 +309,5 @@ func (vm *VM) ObjLen(val Value) (int, error) {
 	if val.IsTable() {
 		return val.AsTable().Len(), nil
 	}
-	return 0, fmt.Errorf("attempt to get length of a %s value", val.Type())
+	return 0, vm.runtimeError("attempt to get length of a %s value", val.Type())
 }

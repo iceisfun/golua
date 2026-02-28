@@ -1,7 +1,5 @@
 package vm
 
-import "fmt"
-
 // equal checks for equality, handling __eq metamethod
 func (vm *VM) equal(v1, v2 Value) (bool, error) {
 	// 1. If types are different and not numbers (int/float), false
@@ -62,7 +60,7 @@ func (vm *VM) lessThan(v1, v2 Value) (bool, error) {
 		return res.ToBool(), nil
 	}
 
-	return false, fmt.Errorf("attempt to compare %s with %s", v1.Type(), v2.Type())
+	return false, vm.runtimeError("attempt to compare %s with %s", v1.Type(), v2.Type())
 }
 
 // lessEqual checks for less equal, handling __le metamethod
@@ -104,7 +102,7 @@ func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
 		return !res.ToBool(), nil
 	}
 
-	return false, fmt.Errorf("attempt to compare %s with %s", v1.Type(), v2.Type())
+	return false, vm.runtimeError("attempt to compare %s with %s", v1.Type(), v2.Type())
 }
 
 // concat handles concatenation with __concat support
@@ -136,5 +134,5 @@ func (vm *VM) concat(v1, v2 Value) (Value, error) {
 		return vm.callMetamethod(mm, v1, v2)
 	}
 
-	return Nil, fmt.Errorf("attempt to concatenate a %s value", v1.Type())
+	return Nil, vm.runtimeError("attempt to concatenate a %s value", v1.Type())
 }

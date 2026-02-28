@@ -125,3 +125,106 @@ return ok, err
 		t.Errorf("expected error to contain 'attempt to call a nil value', got: %s", errMsg)
 	}
 }
+
+// expectRuntimeError compiles+runs src and checks the error contains both wantLoc and wantMsg.
+func expectRuntimeError(t *testing.T, filename, src, wantLoc, wantMsg string) {
+	t.Helper()
+	block, err := parser.Parse("test", src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile(filename, block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	v := New()
+	_, err = v.Run(proto)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, wantLoc) {
+		t.Errorf("expected error to contain %q, got: %s", wantLoc, errMsg)
+	}
+	if !strings.Contains(errMsg, wantMsg) {
+		t.Errorf("expected error to contain %q, got: %s", wantMsg, errMsg)
+	}
+}
+
+func TestRuntimeErrorIndexNil(t *testing.T) {
+	expectRuntimeError(t, "idx.lua",
+		"local x = nil\n\nlocal _ = x.foo\n",
+		"idx.lua:3:", "attempt to index a nil value")
+}
+
+func TestRuntimeErrorIndexNumber(t *testing.T) {
+	expectRuntimeError(t, "idx2.lua",
+		"local x = 42\nlocal _ = x.foo\n",
+		"idx2.lua:2:", "attempt to index a number value")
+}
+
+func TestRuntimeErrorIndexSetNil(t *testing.T) {
+	expectRuntimeError(t, "idxset.lua",
+		"local x = nil\n\nx.foo = 1\n",
+		"idxset.lua:3:", "attempt to index a nil value")
+}
+
+func TestRuntimeErrorArithmeticOnNil(t *testing.T) {
+	expectRuntimeError(t, "arith.lua",
+		"local x = nil\nlocal y = x + 1\n",
+		"arith.lua:2:", "attempt to perform arithmetic on a nil value")
+}
+
+func TestRuntimeErrorArithmeticOnString(t *testing.T) {
+	expectRuntimeError(t, "arith2.lua",
+		"local x = \"hello\"\nlocal y = x + 1\n",
+		"arith2.lua:2:", "attempt to perform arithmetic on a string value")
+}
+
+func TestRuntimeErrorArithmeticUnaryOnNil(t *testing.T) {
+	expectRuntimeError(t, "unm.lua",
+		"local x = nil\nlocal y = -x\n",
+		"unm.lua:2:", "attempt to perform arithmetic on a nil value")
+}
+
+func TestRuntimeErrorBitwiseOnNil(t *testing.T) {
+	expectRuntimeError(t, "bit.lua",
+		"local x = nil\nlocal y = x & 1\n",
+		"bit.lua:2:", "attempt to perform bitwise operation on a nil value")
+}
+
+func TestRuntimeErrorBitwiseNotOnNil(t *testing.T) {
+	expectRuntimeError(t, "bnot.lua",
+		"local x = nil\nlocal y = ~x\n",
+		"bnot.lua:2:", "attempt to perform bitwise operation on a nil value")
+}
+
+func TestRuntimeErrorLengthOfNil(t *testing.T) {
+	expectRuntimeError(t, "len.lua",
+		"local x = nil\nlocal y = #x\n",
+		"len.lua:2:", "attempt to get length of a nil value")
+}
+
+func TestRuntimeErrorCompareNilWithNumber(t *testing.T) {
+	expectRuntimeError(t, "cmp.lua",
+		"local x = nil\nif x < 1 then end\n",
+		"cmp.lua:2:", "attempt to compare")
+}
+
+func TestRuntimeErrorConcatenateNil(t *testing.T) {
+	expectRuntimeError(t, "cat.lua",
+		"local x = nil\nlocal y = x .. \"hi\"\n",
+		"cat.lua:2:", "attempt to concatenate a nil value")
+}
+
+func TestRuntimeErrorIntegerFloorDivByZero(t *testing.T) {
+	expectRuntimeError(t, "idiv.lua",
+		"local x = 10\nlocal y = x // 0\n",
+		"idiv.lua:2:", "attempt to perform 'n//0'")
+}
+
+func TestRuntimeErrorIntegerModByZero(t *testing.T) {
+	expectRuntimeError(t, "mod.lua",
+		"local x = 10\nlocal y = x % 0\n",
+		"mod.lua:2:", "attempt to perform 'n%0'")
+}
