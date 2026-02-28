@@ -387,7 +387,9 @@ go test -v ./tests/...  # Verbose output
 
 ```
 ├── ast/           # Abstract syntax tree definitions
+├── check/         # Lua source diagnostics for editor integration
 ├── compiler/      # Bytecode compiler
+├── docs/          # Additional documentation
 ├── glob/          # Go-style glob matching package, diverges from standard lua
 ├── lexer/         # Lexical analyzer
 ├── parser/        # Lua parser
@@ -397,6 +399,7 @@ go test -v ./tests/...  # Verbose output
 ├── tests/         # Lua test files
 ├── examples/      # Usage examples
 └── cmd/
+    ├── ast/       # AST printer/debugger CLI
     ├── lua/       # Lua interpreter CLI
     └── luac/      # Bytecode compiler CLI
 ```
