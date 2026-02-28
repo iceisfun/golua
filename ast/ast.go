@@ -1,4 +1,15 @@
-// Package ast defines the abstract syntax tree for Lua 5.5.
+// Package ast defines the abstract syntax tree (AST) node types produced by
+// the parser and consumed by the compiler.
+//
+// Every node carries a source position (token.Pos) for error reporting.
+// The tree is organized into two interface hierarchies: Expr for expressions
+// and Stmt for statements, both extending the common Node interface.
+//
+// Each concrete node type has a corresponding constructor (e.g. NewIfStmt)
+// that initializes all fields. The AST is semantically neutral — it represents
+// syntactic structure only and carries no type or scope information.
+//
+// Lua 5.4 Reference: §3 – The Language (§3.3 Statements, §3.4 Expressions).
 package ast
 
 import "github.com/iceisfun/golua/token"

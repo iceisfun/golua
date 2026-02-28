@@ -1,4 +1,11 @@
-// Package lexer implements a Lua 5.5 lexical scanner.
+// Package lexer implements a lexical scanner for Lua 5.4 source code.
+//
+// The scanner converts UTF-8 source text into a stream of tokens. It handles
+// all Lua lexical elements including long strings ([[ ]]), nested long comments,
+// escape sequences (\xNN, \u{XXXX}, \z), hex float literals, and optional
+// shebang line stripping.
+//
+// Lua 5.4 Reference: §3.1 – Lexical Conventions.
 package lexer
 
 import (

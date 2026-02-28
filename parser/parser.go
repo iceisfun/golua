@@ -1,5 +1,12 @@
-// Package parser implements a recursive descent parser for Lua 5.5,
-// producing an AST from lexer tokens.
+// Package parser implements a recursive descent parser for Lua 5.4, producing
+// an abstract syntax tree (AST) from source text.
+//
+// The parser uses the lexer to tokenize input and builds an AST following
+// Lua 5.4's grammar with precedence-climbing for expressions. It supports
+// all Lua 5.4 syntax including goto/labels, local attributes (<const>, <close>),
+// and shebang line stripping for script loading.
+//
+// Lua 5.4 Reference: §3 – The Language (§3.3 Statements, §3.4 Expressions).
 package parser
 
 import (

@@ -1,4 +1,11 @@
-// Package token defines Lua token types, keywords, and source positions.
+// Package token defines the lexical token types, keywords, and source positions
+// for a Lua 5.4 implementation.
+//
+// Single-character tokens (operators, delimiters) use their Unicode code point
+// as the token type value. Multi-character operators and keywords start at 256
+// to avoid collisions with the single-character range.
+//
+// Lua 5.4 Reference: §3.1 – Lexical Conventions.
 package token
 
 import "fmt"
@@ -141,6 +148,7 @@ type Pos struct {
 	Column int    // 1-based column number
 }
 
+// String returns the position formatted as "source:line:column".
 func (p Pos) String() string {
 	return fmt.Sprintf("%s:%d:%d", p.Source, p.Line, p.Column)
 }
@@ -151,6 +159,7 @@ type PosError struct {
 	Msg string
 }
 
+// Error returns the error message prefixed with its source position.
 func (e *PosError) Error() string { return fmt.Sprintf("%s: %s", e.Pos, e.Msg) }
 
 // Token is a single lexical token with its type, value, and position.
@@ -162,6 +171,8 @@ type Token struct {
 	Pos     Pos
 }
 
+// String returns a human-readable representation of the token, including
+// its literal value for names, strings, and numbers.
 func (t Token) String() string {
 	switch t.Type {
 	case NAME, STRING:
