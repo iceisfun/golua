@@ -34,6 +34,32 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 // ---------------------------------------------------------------------------
 // exprResult tracks where an expression's value ended up
 // ---------------------------------------------------------------------------
+// FUTURE:
+//
+// tree-shake or refactor exprResult if we introduce an IR layer,
+// basic-block graph?
+//
+// exprResult mirrors Lua 5.4’s expdesc model: a compact, single-pass
+// lowering descriptor used during AST → bytecode emission.
+//
+// The structure intentionally overloads `info` and uses raw patch-list
+// indices (`t`/`f`) for deferred jump resolution. This keeps emission
+// fast and allocation-free, but relies on implicit invariants:
+//
+//   • The meaning of `info` depends strictly on `kind`.
+//   • Only specific kinds may carry pending jump lists.
+//   • Jump lists must be fully resolved before final register placement.
+//   • Certain kinds (e.g. exprCall/exprVarArg/exprRelocate) require
+//     post-processing before being treated as ordinary values.
+//
+// If the compiler evolves beyond single-pass emission (e.g. introduction
+// of an IR layer, basic-block graph, SSA form, or optimization passes),
+// this descriptor will likely need to be formalized or replaced with a
+// more strongly-typed representation.
+//
+// Until then, changes to this type should preserve the current lowering
+// invariants and be validated against short-circuit, call, and vararg
+// edge cases.
 
 // exprKind describes where an expression result resides after compilation.
 type exprKind int
