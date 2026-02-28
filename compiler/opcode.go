@@ -158,6 +158,26 @@ const (
 	IsJ                 // sJ(25) — signed jump offset (JMP)
 )
 
+// String returns the name of the instruction encoding format.
+func (m OpMode) String() string {
+	switch m {
+	case IABC:
+		return "iABC"
+	case IvABC:
+		return "ivABC"
+	case IABx:
+		return "iABx"
+	case IAsBx:
+		return "iAsBx"
+	case IAx:
+		return "iAx"
+	case IsJ:
+		return "isJ"
+	default:
+		return "???"
+	}
+}
+
 // opProperties stores the mode for each opcode.
 var opProperties [NumOps]struct {
 	mode OpMode
@@ -262,6 +282,11 @@ func init() {
 			name string
 		}{e.mode, e.name}
 	}
+}
+
+// String returns the human-readable name of an opcode (delegates to OpName).
+func (op OpCode) String() string {
+	return OpName(op)
 }
 
 // OpName returns the human-readable name of an opcode.

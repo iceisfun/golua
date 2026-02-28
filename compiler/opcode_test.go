@@ -74,3 +74,47 @@ func TestMetamethodTagOutOfRange(t *testing.T) {
 		t.Errorf("MetamethodTag(99).String() = %q, want %q", got, "???")
 	}
 }
+
+func TestOpCodeString(t *testing.T) {
+	// All valid opcodes should have non-empty names.
+	for op := OpCode(0); op < NumOps; op++ {
+		name := op.String()
+		if name == "" {
+			t.Errorf("OpCode(%d).String() returned empty string", op)
+		}
+		if name == "???" {
+			t.Errorf("OpCode(%d).String() returned %q, expected a registered name", op, name)
+		}
+	}
+}
+
+func TestOpCodeStringOutOfRange(t *testing.T) {
+	if got := OpCode(255).String(); got != "???" {
+		t.Errorf("OpCode(255).String() = %q, want %q", got, "???")
+	}
+}
+
+func TestOpModeString(t *testing.T) {
+	tests := []struct {
+		mode OpMode
+		want string
+	}{
+		{IABC, "iABC"},
+		{IvABC, "ivABC"},
+		{IABx, "iABx"},
+		{IAsBx, "iAsBx"},
+		{IAx, "iAx"},
+		{IsJ, "isJ"},
+	}
+	for _, tt := range tests {
+		if got := tt.mode.String(); got != tt.want {
+			t.Errorf("OpMode(%d).String() = %q, want %q", tt.mode, got, tt.want)
+		}
+	}
+}
+
+func TestOpModeStringOutOfRange(t *testing.T) {
+	if got := OpMode(99).String(); got != "???" {
+		t.Errorf("OpMode(99).String() = %q, want %q", got, "???")
+	}
+}
