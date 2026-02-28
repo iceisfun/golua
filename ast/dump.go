@@ -6,9 +6,21 @@ import (
 	"strings"
 )
 
+// DumpOptions controls AST dump output.
+type DumpOptions struct {
+	// ShowPos annotates each node with its source position (@line:col).
+	ShowPos bool
+}
+
 // Dump writes a human-readable, indented representation of the AST to w.
 func Dump(w io.Writer, block *Block) {
 	d := &dumper{w: w}
+	d.block(block)
+}
+
+// DumpWith writes a human-readable AST representation with configurable options.
+func DumpWith(w io.Writer, block *Block, opts DumpOptions) {
+	d := &dumper{w: w, showPos: opts.ShowPos}
 	d.block(block)
 }
 
@@ -20,8 +32,9 @@ func DumpString(block *Block) string {
 }
 
 type dumper struct {
-	w     io.Writer
-	depth int
+	w       io.Writer
+	depth   int
+	showPos bool
 }
 
 func (d *dumper) indent() {
@@ -36,12 +49,24 @@ func (d *dumper) printf(format string, args ...any) {
 	fmt.Fprintln(d.w)
 }
 
+func (d *dumper) pos(n Node) string {
+	if !d.showPos {
+		return ""
+	}
+	p := n.Pos()
+	return fmt.Sprintf(" @%d:%d", p.Line, p.Column)
+}
+
 func (d *dumper) block(b *Block) {
-	if b == nil || len(b.Stmts) == 0 {
+	if b == nil {
 		d.printf("(block)")
 		return
 	}
-	d.printf("(block")
+	if len(b.Stmts) == 0 {
+		d.printf("(block%s)", d.pos(b))
+		return
+	}
+	d.printf("(block%s", d.pos(b))
 	d.depth++
 	for _, s := range b.Stmts {
 		d.stmt(s)
@@ -53,7 +78,7 @@ func (d *dumper) block(b *Block) {
 func (d *dumper) stmt(s Stmt) {
 	switch s := s.(type) {
 	case *AssignStmt:
-		d.printf("(assign")
+		d.printf("(assign%s", d.pos(s))
 		d.depth++
 		d.printf("(targets")
 		d.depth++
@@ -73,7 +98,7 @@ func (d *dumper) stmt(s Stmt) {
 		d.printf(")")
 
 	case *LocalStmt:
-		d.printf("(local")
+		d.printf("(local%s", d.pos(s))
 		d.depth++
 		d.printf("(names")
 		d.depth++
@@ -99,14 +124,14 @@ func (d *dumper) stmt(s Stmt) {
 		d.printf(")")
 
 	case *DoStmt:
-		d.printf("(do")
+		d.printf("(do%s", d.pos(s))
 		d.depth++
 		d.block(s.Body)
 		d.depth--
 		d.printf(")")
 
 	case *WhileStmt:
-		d.printf("(while")
+		d.printf("(while%s", d.pos(s))
 		d.depth++
 		d.expr(s.Cond)
 		d.block(s.Body)
@@ -114,7 +139,7 @@ func (d *dumper) stmt(s Stmt) {
 		d.printf(")")
 
 	case *RepeatStmt:
-		d.printf("(repeat")
+		d.printf("(repeat%s", d.pos(s))
 		d.depth++
 		d.block(s.Body)
 		d.printf("(until")
@@ -126,7 +151,7 @@ func (d *dumper) stmt(s Stmt) {
 		d.printf(")")
 
 	case *IfStmt:
-		d.printf("(if")
+		d.printf("(if%s", d.pos(s))
 		d.depth++
 		d.expr(s.Cond)
 		d.printf("(then")
@@ -157,7 +182,7 @@ func (d *dumper) stmt(s Stmt) {
 		d.printf(")")
 
 	case *ForNumStmt:
-		d.printf("(for-num %s", s.Name.Name)
+		d.printf("(for-num%s %s", d.pos(s), s.Name.Name)
 		d.depth++
 		d.printf("(start")
 		d.depth++
@@ -185,7 +210,7 @@ func (d *dumper) stmt(s Stmt) {
 		for i, n := range s.Names {
 			names[i] = n.Name
 		}
-		d.printf("(for-in [%s]", strings.Join(names, ", "))
+		d.printf("(for-in%s [%s]", d.pos(s), strings.Join(names, ", "))
 		d.depth++
 		d.printf("(iters")
 		d.depth++
@@ -200,9 +225,9 @@ func (d *dumper) stmt(s Stmt) {
 
 	case *ReturnStmt:
 		if len(s.Values) == 0 {
-			d.printf("(return)")
+			d.printf("(return%s)", d.pos(s))
 		} else {
-			d.printf("(return")
+			d.printf("(return%s", d.pos(s))
 			d.depth++
 			for _, v := range s.Values {
 				d.expr(v)
@@ -212,16 +237,16 @@ func (d *dumper) stmt(s Stmt) {
 		}
 
 	case *BreakStmt:
-		d.printf("(break)")
+		d.printf("(break%s)", d.pos(s))
 
 	case *GotoStmt:
-		d.printf("(goto %s)", s.Label)
+		d.printf("(goto%s %s)", d.pos(s), s.Label)
 
 	case *LabelStmt:
-		d.printf("(label %s)", s.Name)
+		d.printf("(label%s %s)", d.pos(s), s.Name)
 
 	case *ExprStmt:
-		d.printf("(expr-stmt")
+		d.printf("(expr-stmt%s", d.pos(s))
 		d.depth++
 		d.expr(s.Expr)
 		d.depth--
@@ -232,7 +257,7 @@ func (d *dumper) stmt(s Stmt) {
 		if s.IsMethod {
 			method = " :method"
 		}
-		d.printf("(func-stmt%s", method)
+		d.printf("(func-stmt%s%s", d.pos(s), method)
 		d.depth++
 		d.printf("(name")
 		d.depth++
@@ -244,7 +269,7 @@ func (d *dumper) stmt(s Stmt) {
 		d.printf(")")
 
 	case *LocalFuncStmt:
-		d.printf("(local-func %s", s.Name.Name)
+		d.printf("(local-func%s %s", d.pos(s), s.Name.Name)
 		d.depth++
 		d.funcExpr(s.Func)
 		d.depth--
@@ -252,9 +277,9 @@ func (d *dumper) stmt(s Stmt) {
 
 	case *GlobalStmt:
 		if s.Star {
-			d.printf("(global *)")
+			d.printf("(global%s *)", d.pos(s))
 		} else {
-			d.printf("(global")
+			d.printf("(global%s", d.pos(s))
 			d.depth++
 			d.printf("(names")
 			d.depth++
@@ -281,14 +306,14 @@ func (d *dumper) stmt(s Stmt) {
 		}
 
 	case *GlobalFuncStmt:
-		d.printf("(global-func %s", s.Name.Name)
+		d.printf("(global-func%s %s", d.pos(s), s.Name.Name)
 		d.depth++
 		d.funcExpr(s.Func)
 		d.depth--
 		d.printf(")")
 
 	case *EmptyStmt:
-		d.printf("(;)")
+		d.printf("(;%s)", d.pos(s))
 
 	default:
 		d.printf("(?unknown-stmt)")
@@ -298,24 +323,24 @@ func (d *dumper) stmt(s Stmt) {
 func (d *dumper) expr(e Expr) {
 	switch e := e.(type) {
 	case *NilExpr:
-		d.printf("nil")
+		d.printf("nil%s", d.pos(e))
 	case *TrueExpr:
-		d.printf("true")
+		d.printf("true%s", d.pos(e))
 	case *FalseExpr:
-		d.printf("false")
+		d.printf("false%s", d.pos(e))
 	case *NumberExpr:
-		d.printf("(int %s)", e.Raw)
+		d.printf("(int%s %s)", d.pos(e), e.Raw)
 	case *FloatExpr:
-		d.printf("(float %s)", e.Raw)
+		d.printf("(float%s %s)", d.pos(e), e.Raw)
 	case *StringExpr:
-		d.printf("(string %q)", e.Value)
+		d.printf("(string%s %q)", d.pos(e), e.Value)
 	case *VarArgExpr:
-		d.printf("...")
+		d.printf("...%s", d.pos(e))
 	case *NameExpr:
-		d.printf("(name %s)", e.Name)
+		d.printf("(name%s %s)", d.pos(e), e.Name)
 
 	case *BinopExpr:
-		d.printf("(binop %s", e.Op)
+		d.printf("(binop%s %s", d.pos(e), e.Op)
 		d.depth++
 		d.expr(e.Left)
 		d.expr(e.Right)
@@ -323,14 +348,14 @@ func (d *dumper) expr(e Expr) {
 		d.printf(")")
 
 	case *UnopExpr:
-		d.printf("(unop %s", e.Op)
+		d.printf("(unop%s %s", d.pos(e), e.Op)
 		d.depth++
 		d.expr(e.Operand)
 		d.depth--
 		d.printf(")")
 
 	case *IndexExpr:
-		d.printf("(index")
+		d.printf("(index%s", d.pos(e))
 		d.depth++
 		d.expr(e.Table)
 		d.expr(e.Key)
@@ -338,14 +363,14 @@ func (d *dumper) expr(e Expr) {
 		d.printf(")")
 
 	case *FieldExpr:
-		d.printf("(field .%s", e.Field)
+		d.printf("(field%s .%s", d.pos(e), e.Field)
 		d.depth++
 		d.expr(e.Table)
 		d.depth--
 		d.printf(")")
 
 	case *MethodCallExpr:
-		d.printf("(method-call :%s", e.Method)
+		d.printf("(method-call%s :%s", d.pos(e), e.Method)
 		d.depth++
 		d.expr(e.Object)
 		if len(e.Args) > 0 {
@@ -361,7 +386,7 @@ func (d *dumper) expr(e Expr) {
 		d.printf(")")
 
 	case *FuncCallExpr:
-		d.printf("(call")
+		d.printf("(call%s", d.pos(e))
 		d.depth++
 		d.expr(e.Func)
 		if len(e.Args) > 0 {
@@ -381,9 +406,9 @@ func (d *dumper) expr(e Expr) {
 
 	case *TableConstructor:
 		if len(e.Fields) == 0 {
-			d.printf("(table {})")
+			d.printf("(table%s {})", d.pos(e))
 		} else {
-			d.printf("(table {")
+			d.printf("(table%s {", d.pos(e))
 			d.depth++
 			for _, f := range e.Fields {
 				if f.Key != nil {
@@ -414,7 +439,7 @@ func (d *dumper) expr(e Expr) {
 		}
 
 	case *ParenExpr:
-		d.printf("(paren")
+		d.printf("(paren%s", d.pos(e))
 		d.depth++
 		d.expr(e.Inner)
 		d.depth--
@@ -441,7 +466,7 @@ func (d *dumper) funcExpr(f *FuncExpr) {
 	if len(params) == 0 && f.VarArg {
 		va = strings.TrimPrefix(va, ", ")
 	}
-	d.printf("(function (%s%s)", strings.Join(params, ", "), va)
+	d.printf("(function%s (%s%s)", d.pos(f), strings.Join(params, ", "), va)
 	d.depth++
 	d.block(f.Body)
 	d.depth--

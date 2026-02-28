@@ -10,7 +10,7 @@
 // Flags:
 //
 //	-e string    parse the given string instead of files
-//	-pos         include source positions on each node (TODO)
+//	-pos         include source positions on each node
 //	-tokens      also dump the token stream before the AST
 package main
 
@@ -29,6 +29,7 @@ import (
 
 var (
 	exprFlag   = flag.String("e", "", "parse the given string")
+	posFlag    = flag.Bool("pos", false, "include source positions on each node")
 	tokensFlag = flag.Bool("tokens", false, "dump token stream before AST")
 )
 
@@ -74,7 +75,7 @@ func run(source, input string) {
 		os.Exit(1)
 	}
 
-	ast.Dump(os.Stdout, block)
+	ast.DumpWith(os.Stdout, block, ast.DumpOptions{ShowPos: *posFlag})
 }
 
 func dumpTokens(source, input string) {
