@@ -5,10 +5,10 @@ import "testing"
 // collectNext iterates through all key-value pairs using Next.
 func collectNext(t LuaTable) []Value {
 	var keys []Value
-	k, _ := t.Next(Nil)
+	k, _, _ := t.Next(Nil)
 	for !k.IsNil() {
 		keys = append(keys, k)
-		k, _ = t.Next(k)
+		k, _, _ = t.Next(k)
 	}
 	return keys
 }
@@ -36,7 +36,7 @@ func TestNextInsertionOrder(t *testing.T) {
 func TestNextDeterminism(t *testing.T) {
 	tbl := NewEmptyTable()
 	for i := 0; i < 20; i++ {
-		tbl.Set(NewString(string(rune('A'+i))), NewInt(int64(i)))
+		tbl.MustSet(NewString(string(rune('A'+i))), NewInt(int64(i)))
 	}
 
 	keys1 := collectNext(tbl)
@@ -79,26 +79,27 @@ func TestNextNoDuplicateFinalKey(t *testing.T) {
 	tbl := NewEmptyTable()
 	tbl.SetString("only", NewInt(1))
 
-	k, v := tbl.Next(Nil)
+	k, v, err := tbl.Next(Nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if k.AsString() != "only" || v.AsInt() != 1 {
 		t.Fatalf("expected (only, 1), got (%v, %v)", k, v)
 	}
 
-	k2, v2 := tbl.Next(k)
+	k2, v2, err := tbl.Next(k)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !k2.IsNil() || !v2.IsNil() {
 		t.Errorf("expected (nil, nil) after last key, got (%v, %v)", k2, v2)
 	}
 
-	// Calling Next again with a key that is "not found" must panic in Lua 5.4+
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Errorf("expected panic for nonexistent key, but got none")
-		} else if msg, ok := r.(string); !ok || msg != "invalid key to 'next'" {
-			t.Errorf("expected panic %q, got %v", "invalid key to 'next'", r)
-		}
-	}()
-	tbl.Next(NewString("nonexistent"))
+	// Calling Next with a key that is "not found" must return an error
+	_, _, err = tbl.Next(NewString("nonexistent"))
+	if err == nil {
+		t.Errorf("expected error for nonexistent key, but got none")
+	}
 }
 
 // TestDeleteAndIteration verifies iteration correctness after deleting a key.
@@ -108,7 +109,7 @@ func TestDeleteAndIteration(t *testing.T) {
 	tbl.SetString("b", NewInt(2))
 	tbl.SetString("c", NewInt(3))
 
-	tbl.Delete(NewString("b"))
+	_ = tbl.Delete(NewString("b"))
 
 	keys := collectNext(tbl)
 	if len(keys) != 2 {
@@ -127,10 +128,10 @@ func TestMixedInsertDeleteLifecycle(t *testing.T) {
 	tbl := NewEmptyTable()
 	tbl.SetString("a", NewInt(1))
 	tbl.SetString("b", NewInt(2))
-	tbl.Delete(NewString("a"))
+	_ = tbl.Delete(NewString("a"))
 	tbl.SetString("c", NewInt(3))
 	tbl.SetString("d", NewInt(4))
-	tbl.Delete(NewString("c"))
+	_ = tbl.Delete(NewString("c"))
 
 	keys := collectNext(tbl)
 	if len(keys) != 2 {
@@ -171,7 +172,7 @@ func TestArrayAndHashMixedTraversal(t *testing.T) {
 func TestMetatableViaInterface(t *testing.T) {
 	var tbl LuaTable = NewEmptyTable()
 	var mt LuaTable = NewEmptyTable()
-	mt.Set(NewString("__index"), NewString("test"))
+	_ = mt.Set(NewString("__index"), NewString("test"))
 
 	tbl.SetMetatable(mt)
 	got := tbl.Metatable()
@@ -206,7 +207,7 @@ func TestDeleteMethod(t *testing.T) {
 		t.Fatal("key should exist")
 	}
 
-	tbl.Delete(NewString("key"))
+	_ = tbl.Delete(NewString("key"))
 	if !tbl.Get(NewString("key")).IsNil() {
 		t.Error("key should be nil after delete")
 	}
@@ -215,10 +216,10 @@ func TestDeleteMethod(t *testing.T) {
 // TestLenViaInterface verifies Len() matches array part count.
 func TestLenViaInterface(t *testing.T) {
 	var tbl LuaTable = NewEmptyTable()
-	tbl.Set(NewInt(1), NewString("a"))
-	tbl.Set(NewInt(2), NewString("b"))
-	tbl.Set(NewInt(3), NewString("c"))
-	tbl.Set(NewString("name"), NewString("test")) // hash, not counted
+	_ = tbl.Set(NewInt(1), NewString("a"))
+	_ = tbl.Set(NewInt(2), NewString("b"))
+	_ = tbl.Set(NewInt(3), NewString("c"))
+	_ = tbl.Set(NewString("name"), NewString("test")) // hash, not counted
 
 	if tbl.Len() != 3 {
 		t.Errorf("expected Len() == 3, got %d", tbl.Len())
@@ -252,18 +253,18 @@ func TestIteratorResetRegression(t *testing.T) {
 
 	// First traversal
 	seen1 := make(map[string]bool)
-	k, _ := tbl.Next(Nil)
+	k, _, _ := tbl.Next(Nil)
 	for !k.IsNil() {
 		seen1[k.AsString()] = true
-		k, _ = tbl.Next(k)
+		k, _, _ = tbl.Next(k)
 	}
 
 	// Second traversal
 	seen2 := make(map[string]bool)
-	k, _ = tbl.Next(Nil)
+	k, _, _ = tbl.Next(Nil)
 	for !k.IsNil() {
 		seen2[k.AsString()] = true
-		k, _ = tbl.Next(k)
+		k, _, _ = tbl.Next(k)
 	}
 
 	for _, key := range []string{"a", "b", "c"} {

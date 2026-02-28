@@ -14,8 +14,8 @@ func TestMetatableCycleIndex(t *testing.T) {
 	t2 := NewEmptyTable()
 	mt1 := NewEmptyTable()
 	mt2 := NewEmptyTable()
-	mt1.Set(metaIndex, NewTable(t2))
-	mt2.Set(metaIndex, NewTable(t1))
+	mt1.MustSet(metaIndex, NewTable(t2))
+	mt2.MustSet(metaIndex, NewTable(t1))
 	t1.SetMetatable(mt1)
 	t2.SetMetatable(mt2)
 
@@ -35,8 +35,8 @@ func TestMetatableCycleNewIndex(t *testing.T) {
 	t2 := NewEmptyTable()
 	mt1 := NewEmptyTable()
 	mt2 := NewEmptyTable()
-	mt1.Set(metaNewIndex, NewTable(t2))
-	mt2.Set(metaNewIndex, NewTable(t1))
+	mt1.MustSet(metaNewIndex, NewTable(t2))
+	mt2.MustSet(metaNewIndex, NewTable(t1))
 	t1.SetMetatable(mt1)
 	t2.SetMetatable(mt2)
 
@@ -56,8 +56,8 @@ func TestMetatableCycleIndexLua(t *testing.T) {
 	t2 := NewEmptyTable()
 	mt1 := NewEmptyTable()
 	mt2 := NewEmptyTable()
-	mt1.Set(metaIndex, NewTable(t2))
-	mt2.Set(metaIndex, NewTable(t1))
+	mt1.MustSet(metaIndex, NewTable(t2))
+	mt2.MustSet(metaIndex, NewTable(t1))
 	t1.SetMetatable(mt1)
 	t2.SetMetatable(mt2)
 
@@ -109,8 +109,8 @@ func TestMaxMetaDepthCustomLower(t *testing.T) {
 	t2 := NewEmptyTable()
 	mt1 := NewEmptyTable()
 	mt2 := NewEmptyTable()
-	mt1.Set(metaIndex, NewTable(t2))
-	mt2.Set(metaIndex, NewTable(t1))
+	mt1.MustSet(metaIndex, NewTable(t2))
+	mt2.MustSet(metaIndex, NewTable(t1))
 	t1.SetMetatable(mt1)
 	t2.SetMetatable(mt2)
 
@@ -130,8 +130,8 @@ func TestMaxMetaDepthCustomLowerNewIndex(t *testing.T) {
 	t2 := NewEmptyTable()
 	mt1 := NewEmptyTable()
 	mt2 := NewEmptyTable()
-	mt1.Set(metaNewIndex, NewTable(t2))
-	mt2.Set(metaNewIndex, NewTable(t1))
+	mt1.MustSet(metaNewIndex, NewTable(t2))
+	mt2.MustSet(metaNewIndex, NewTable(t1))
 	t1.SetMetatable(mt1)
 	t2.SetMetatable(mt2)
 
@@ -194,14 +194,14 @@ func TestMaxMetaDepthValidChainBelowLimit(t *testing.T) {
 	t1 := NewEmptyTable()
 	t2 := NewEmptyTable()
 	t3 := NewEmptyTable()
-	t3.Set(NewString("found"), NewInt(77))
+	t3.MustSet(NewString("found"), NewInt(77))
 
 	mt1 := NewEmptyTable()
-	mt1.Set(metaIndex, NewTable(t2))
+	mt1.MustSet(metaIndex, NewTable(t2))
 	t1.SetMetatable(mt1)
 
 	mt2 := NewEmptyTable()
-	mt2.Set(metaIndex, NewTable(t3))
+	mt2.MustSet(metaIndex, NewTable(t3))
 	t2.SetMetatable(mt2)
 
 	val, err := v.tableGet(t1, NewString("found"))
@@ -219,7 +219,7 @@ func TestMaxMetaDepthFunctionMetamethodUnaffected(t *testing.T) {
 
 	tbl := NewEmptyTable()
 	mt := NewEmptyTable()
-	mt.Set(metaIndex, NewNativeFunc(func(vm *VM) int {
+	mt.MustSet(metaIndex, NewNativeFunc(func(vm *VM) int {
 		vm.Set(0, NewInt(999))
 		return 1
 	}))
@@ -251,12 +251,12 @@ func TestMetatableValidChain(t *testing.T) {
 		tables[i] = NewEmptyTable()
 	}
 	// Put the value in the last table
-	tables[9].Set(NewString("found"), NewInt(99))
+	_ = tables[9].Set(NewString("found"), NewInt(99))
 
 	// Chain: tables[0] -> tables[1] -> ... -> tables[9]
 	for i := 0; i < 9; i++ {
 		mt := NewEmptyTable()
-		mt.Set(metaIndex, NewTable(tables[i+1]))
+		mt.MustSet(metaIndex, NewTable(tables[i+1]))
 		tables[i].SetMetatable(mt)
 	}
 

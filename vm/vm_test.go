@@ -882,7 +882,7 @@ func TestForInWithPairs(t *testing.T) {
 		iterFunc := NewNativeFunc(func(vm *VM) int {
 			t := vm.Get(1).AsTable()
 			k := vm.Get(2)
-			nextK, nextV := t.Next(k)
+			nextK, nextV, _ := t.Next(k)
 			vm.stack[vm.Base()] = nextK
 			vm.stack[vm.Base()+1] = nextV
 			return 2

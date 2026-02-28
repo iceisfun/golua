@@ -106,8 +106,9 @@ func (vm *VM) Globals() LuaTable {
 }
 
 // SetGlobal sets a global variable.
+// String keys are always valid, so this never returns an error.
 func (vm *VM) SetGlobal(name string, value Value) {
-	vm.globals.Set(NewString(name), value)
+	_ = vm.globals.Set(NewString(name), value) // string key cannot fail
 }
 
 // GetGlobal gets a global variable.

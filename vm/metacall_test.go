@@ -20,10 +20,10 @@ import (
 // the first arg by the given factor.
 func makeCallable(factor int64) Value {
 	tbl := NewEmptyTable()
-	tbl.Set(NewString("factor"), NewInt(factor))
+	tbl.MustSet(NewString("factor"), NewInt(factor))
 
 	mt := NewEmptyTable()
-	mt.Set(metaCall, NewNativeFunc(func(v *VM) int {
+	mt.MustSet(metaCall, NewNativeFunc(func(v *VM) int {
 		self := v.Get(1) // the table itself (prepended by __call dispatch)
 		val := v.Get(2)  // first argument
 		f := self.AsTable().Get(NewString("factor"))
@@ -666,7 +666,7 @@ func TestMetaCallProtectedCallLuaMetamethod(t *testing.T) {
 func TestMetaCallNativeMultipleReturns(t *testing.T) {
 	tbl := NewEmptyTable()
 	mt := NewEmptyTable()
-	mt.Set(metaCall, NewNativeFunc(func(v *VM) int {
+	mt.MustSet(metaCall, NewNativeFunc(func(v *VM) int {
 		x := v.Get(2).AsInt()
 		v.Set(0, NewInt(x))
 		v.Set(1, NewInt(x*2))
@@ -711,7 +711,7 @@ func TestMetaCallErrorPropagation(t *testing.T) {
 func TestMetaCallNativeErrorPropagation(t *testing.T) {
 	tbl := NewEmptyTable()
 	mt := NewEmptyTable()
-	mt.Set(metaCall, NewNativeFunc(func(v *VM) int {
+	mt.MustSet(metaCall, NewNativeFunc(func(v *VM) int {
 		panic("native boom")
 	}))
 	tbl.SetMetatable(mt)

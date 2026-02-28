@@ -55,7 +55,7 @@ func makeFileHandle(f vm.LuaFile) vm.Value {
 
 // markFileClosed marks a file handle as closed.
 func markFileClosed(handle vm.LuaTable) {
-	handle.Set(vm.NewString("__file_open"), vm.False)
+	_ = handle.Set(vm.NewString("__file_open"), vm.False) // string key cannot fail
 }
 
 // makeIoOpen creates the io.open function.

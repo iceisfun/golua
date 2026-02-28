@@ -1,5 +1,7 @@
 package vm
 
+import "fmt"
+
 // Table represents a Lua table (§2.1). It has both an array part (for
 // sequential integer keys 1..n) and a hash part (for all other keys).
 // The keys slice maintains insertion order so that next() is deterministic.
@@ -163,14 +165,15 @@ func (t *Table) GetString(s string) Value {
 }
 
 // Set sets a value in the table (raw access, no metamethods).
-func (t *Table) Set(key, value Value) {
+// Returns an error for invalid keys (nil, NaN).
+func (t *Table) Set(key, value Value) error {
 	if key.IsNil() {
-		panic("table index is nil")
+		return fmt.Errorf("table index is nil")
 	}
 
 	// Check for NaN
 	if key.IsFloat() && key.num != key.num {
-		panic("table index is NaN")
+		return fmt.Errorf("table index is NaN")
 	}
 
 	// Check if it's an integer key that could go in array part
@@ -186,19 +189,28 @@ func (t *Table) Set(key, value Value) {
 				} else {
 					t.array[idx-1] = value
 				}
-				return
+				return nil
 			} else if idx == len(t.array)+1 && !value.IsNil() {
 				// Extend array
 				t.array = append(t.array, value)
 				// Move any hash entries that now belong in array
 				t.rehashToArray()
-				return
+				return nil
 			}
 		}
 	}
 
 	// Use hash part
 	t.setHash(hashKey(key), value)
+	return nil
+}
+
+// MustSet is like Set but panics on error.
+// For use in internal code and tests where the key is known to be valid.
+func (t *Table) MustSet(key, value Value) {
+	if err := t.Set(key, value); err != nil {
+		panic(err)
+	}
 }
 
 // SetInt sets by integer key (1-based).
@@ -272,8 +284,9 @@ func (t *Table) Len() int {
 }
 
 // Delete removes a key from the table.
-func (t *Table) Delete(key Value) {
-	t.Set(key, Nil)
+// Returns an error if the key is invalid (nil, NaN).
+func (t *Table) Delete(key Value) error {
+	return t.Set(key, Nil)
 }
 
 // Metatable returns the table's metatable.
@@ -295,23 +308,24 @@ func (t *Table) SetMetatable(mt LuaTable) {
 }
 
 // Next implements the pairs() iterator.
-// Given a key, returns (nextKey, nextValue).
+// Given a key, returns (nextKey, nextValue, nil).
 // If key is nil, returns the first pair.
-// If no more pairs, returns (nil, nil).
+// If no more pairs, returns (Nil, Nil, nil).
+// Returns an error if the key is not found in the table.
 // The hash part is traversed in insertion order so that next() is
 // deterministic as long as the table is not modified.
 // Array entries with nil values (holes) are skipped, matching Lua semantics.
-func (t *Table) Next(key Value) (Value, Value) {
+func (t *Table) Next(key Value) (Value, Value, error) {
 	if key.IsNil() {
 		// Start iteration: find first non-nil array entry
 		if kv, vv, ok := t.nextArrayEntry(0); ok {
-			return kv, vv
+			return kv, vv, nil
 		}
 		// First live hash entry
 		if kv, vv, ok := t.firstLiveHashEntry(); ok {
-			return kv, vv
+			return kv, vv, nil
 		}
-		return Nil, Nil
+		return Nil, Nil, nil
 	}
 
 	// Find current key and return next
@@ -319,13 +333,13 @@ func (t *Table) Next(key Value) (Value, Value) {
 		if i, ok := key.ToInt(); ok && i >= 1 && int(i) <= len(t.array) {
 			// Currently in array part — find next non-nil entry
 			if kv, vv, ok := t.nextArrayEntry(int(i)); ok {
-				return kv, vv
+				return kv, vv, nil
 			}
 			// No more non-nil array entries, start hash
 			if kv, vv, ok := t.firstLiveHashEntry(); ok {
-				return kv, vv
+				return kv, vv, nil
 			}
-			return Nil, Nil
+			return Nil, Nil, nil
 		}
 	}
 
@@ -338,13 +352,23 @@ func (t *Table) Next(key Value) (Value, Value) {
 			for j := i + 1; j < len(t.keys); j++ {
 				nextK := t.keys[j]
 				if v, alive := t.hash[nextK]; alive {
-					return keyToValue(nextK), v
+					return keyToValue(nextK), v, nil
 				}
 			}
-			return Nil, Nil
+			return Nil, Nil, nil
 		}
 	}
-	panic("invalid key to 'next'")
+	return Nil, Nil, fmt.Errorf("invalid key to 'next'")
+}
+
+// MustNext is like Next but panics on error.
+// For use in internal code and tests where the key is known to be valid.
+func (t *Table) MustNext(key Value) (Value, Value) {
+	k, v, err := t.Next(key)
+	if err != nil {
+		panic(err)
+	}
+	return k, v
 }
 
 // nextArrayEntry returns the first non-nil array entry at or after index start

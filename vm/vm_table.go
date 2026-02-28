@@ -143,20 +143,26 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		existing := t.Get(key)
 		if !existing.IsNil() {
 			// Key exists, set directly
-			t.Set(key, value)
+			if err := t.Set(key, value); err != nil {
+				return err
+			}
 			return nil
 		}
 
 		// Key doesn't exist, check for __newindex metamethod
 		mt := t.Metatable()
 		if mt == nil {
-			t.Set(key, value)
+			if err := t.Set(key, value); err != nil {
+				return err
+			}
 			return nil
 		}
 
 		newindex := mt.Get(metaNewIndex)
 		if newindex.IsNil() {
-			t.Set(key, value)
+			if err := t.Set(key, value); err != nil {
+				return err
+			}
 			return nil
 		}
 
@@ -186,20 +192,26 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 		existing := t.Get(keyVal)
 		if !existing.IsNil() {
 			// Key exists, set directly
-			t.Set(keyVal, value)
+			if err := t.Set(keyVal, value); err != nil {
+				return err
+			}
 			return nil
 		}
 
 		// Key doesn't exist, check for __newindex metamethod
 		mt := t.Metatable()
 		if mt == nil {
-			t.Set(keyVal, value)
+			if err := t.Set(keyVal, value); err != nil {
+				return err
+			}
 			return nil
 		}
 
 		newindex := mt.Get(metaNewIndex)
 		if newindex.IsNil() {
-			t.Set(keyVal, value)
+			if err := t.Set(keyVal, value); err != nil {
+				return err
+			}
 			return nil
 		}
 
@@ -228,20 +240,26 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 		existing := t.Get(keyVal)
 		if !existing.IsNil() {
 			// Key exists, set directly
-			t.Set(keyVal, value)
+			if err := t.Set(keyVal, value); err != nil {
+				return err
+			}
 			return nil
 		}
 
 		// Key doesn't exist, check for __newindex metamethod
 		mt := t.Metatable()
 		if mt == nil {
-			t.Set(keyVal, value)
+			if err := t.Set(keyVal, value); err != nil {
+				return err
+			}
 			return nil
 		}
 
 		newindex := mt.Get(metaNewIndex)
 		if newindex.IsNil() {
-			t.Set(keyVal, value)
+			if err := t.Set(keyVal, value); err != nil {
+				return err
+			}
 			return nil
 		}
 

@@ -453,7 +453,10 @@ func luaNext(v *vm.VM) int {
 		panic("bad argument #1 to 'next' (table expected)")
 	}
 	key := v.Get(2)
-	nextK, nextV := tbl.Next(key)
+	nextK, nextV, err := tbl.Next(key)
+	if err != nil {
+		panic(err.Error())
+	}
 	if nextK.IsNil() {
 		v.Set(0, vm.Nil)
 		return 1
@@ -517,7 +520,9 @@ func luaRawset(v *vm.VM) int {
 	}
 	key := v.Get(2)
 	val := v.Get(3)
-	tbl.Set(key, val)
+	if err := tbl.Set(key, val); err != nil {
+		panic(err.Error())
+	}
 	v.Set(0, vm.NewTable(tbl))
 	return 1
 }

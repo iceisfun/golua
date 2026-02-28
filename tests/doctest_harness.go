@@ -51,7 +51,7 @@ const defaultDoctestTimeout = 10 * time.Second
 func registerDoctestHelpers(v *vm.VM, cfg *doctestConfig) {
 	dt := vm.NewEmptyTable()
 
-	dt.Set(vm.NewString("set_timeout"), vm.NewNativeFunc(func(v *vm.VM) int {
+	dt.MustSet(vm.NewString("set_timeout"), vm.NewNativeFunc(func(v *vm.VM) int {
 		if v.ArgCount() < 1 || !v.Get(1).IsNumber() {
 			panic("doctest.set_timeout: expected positive number argument")
 		}
@@ -72,7 +72,7 @@ func registerDoctestHelpers(v *vm.VM, cfg *doctestConfig) {
 		return 0
 	}))
 
-	dt.Set(vm.NewString("fail"), vm.NewNativeFunc(func(v *vm.VM) int {
+	dt.MustSet(vm.NewString("fail"), vm.NewNativeFunc(func(v *vm.VM) int {
 		msg := "doctest.fail called"
 		if v.ArgCount() >= 1 && v.Get(1).IsString() {
 			msg = v.Get(1).AsString()
@@ -80,7 +80,7 @@ func registerDoctestHelpers(v *vm.VM, cfg *doctestConfig) {
 		panic(msg)
 	}))
 
-	dt.Set(vm.NewString("assert"), vm.NewNativeFunc(func(v *vm.VM) int {
+	dt.MustSet(vm.NewString("assert"), vm.NewNativeFunc(func(v *vm.VM) int {
 		if v.ArgCount() < 1 {
 			panic("doctest.assert: expected at least 1 argument")
 		}
@@ -95,7 +95,7 @@ func registerDoctestHelpers(v *vm.VM, cfg *doctestConfig) {
 		return 0
 	}))
 
-	dt.Set(vm.NewString("expect_error"), vm.NewNativeFunc(func(v *vm.VM) int {
+	dt.MustSet(vm.NewString("expect_error"), vm.NewNativeFunc(func(v *vm.VM) int {
 		if v.ArgCount() < 1 || !v.Get(1).IsCallable() {
 			panic("doctest.expect_error: expected callable argument")
 		}
@@ -113,7 +113,7 @@ func registerDoctestHelpers(v *vm.VM, cfg *doctestConfig) {
 		return 1
 	}))
 
-	dt.Set(vm.NewString("expect_equal"), vm.NewNativeFunc(func(v *vm.VM) int {
+	dt.MustSet(vm.NewString("expect_equal"), vm.NewNativeFunc(func(v *vm.VM) int {
 		if v.ArgCount() < 2 {
 			panic("doctest.expect_equal: expected 2 arguments")
 		}
@@ -126,7 +126,7 @@ func registerDoctestHelpers(v *vm.VM, cfg *doctestConfig) {
 		return 0
 	}))
 
-	dt.Set(vm.NewString("expect_type"), vm.NewNativeFunc(func(v *vm.VM) int {
+	dt.MustSet(vm.NewString("expect_type"), vm.NewNativeFunc(func(v *vm.VM) int {
 		if v.ArgCount() < 2 {
 			panic("doctest.expect_type: expected 2 arguments")
 		}

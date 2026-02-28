@@ -9,9 +9,9 @@ func TestTableChurnSetDelete(t *testing.T) {
 	tbl := NewEmptyTable()
 
 	for i := int64(1); i <= 10000; i++ {
-		tbl.Set(NewInt(i), NewInt(i))
+		tbl.MustSet(NewInt(i), NewInt(i))
 		if i%2 == 0 {
-			tbl.Set(NewInt(i), Nil)
+			tbl.MustSet(NewInt(i), Nil)
 		}
 	}
 
@@ -45,16 +45,16 @@ func TestTableChurnGetNeverReturnsRawNil(t *testing.T) {
 	}
 
 	// Set and delete via hash
-	tbl.Set(NewString("key"), NewString("value"))
-	tbl.Set(NewString("key"), Nil)
+	tbl.MustSet(NewString("key"), NewString("value"))
+	tbl.MustSet(NewString("key"), Nil)
 	v = tbl.Get(NewString("key"))
 	if !v.IsNil() {
 		t.Fatalf("Get on deleted hash key should return Nil, got %s", v.String())
 	}
 
 	// Set and delete via array
-	tbl.Set(NewInt(1), NewInt(42))
-	tbl.Set(NewInt(1), Nil)
+	tbl.MustSet(NewInt(1), NewInt(42))
+	tbl.MustSet(NewInt(1), Nil)
 	v = tbl.Get(NewInt(1))
 	if !v.IsNil() {
 		t.Fatalf("Get on deleted array key should return Nil, got %s", v.String())
@@ -69,22 +69,22 @@ func TestTableChurnNoPanic(t *testing.T) {
 	// Mixed operations: sequential insert, random-ish delete, re-insert
 	for round := 0; round < 3; round++ {
 		for i := int64(1); i <= 1000; i++ {
-			tbl.Set(NewInt(i), NewInt(i*10))
+			tbl.MustSet(NewInt(i), NewInt(i*10))
 		}
 		for i := int64(1); i <= 1000; i += 3 {
-			tbl.Set(NewInt(i), Nil)
+			tbl.MustSet(NewInt(i), Nil)
 		}
 		for i := int64(1); i <= 1000; i += 3 {
-			tbl.Set(NewInt(i), NewString("refilled"))
+			tbl.MustSet(NewInt(i), NewString("refilled"))
 		}
 	}
 
 	// String keys
 	for i := 0; i < 1000; i++ {
 		key := NewString("k" + string(rune('A'+i%26)))
-		tbl.Set(key, NewInt(int64(i)))
+		tbl.MustSet(key, NewInt(int64(i)))
 		if i%2 == 0 {
-			tbl.Set(key, Nil)
+			tbl.MustSet(key, Nil)
 		}
 	}
 }
@@ -96,16 +96,16 @@ func TestTableNextSkipsArrayHoles(t *testing.T) {
 
 	// Create array [1, 2, 3, 4, 5]
 	for i := int64(1); i <= 5; i++ {
-		tbl.Set(NewInt(i), NewInt(i*10))
+		tbl.MustSet(NewInt(i), NewInt(i*10))
 	}
 
 	// Punch holes: delete keys 2 and 4
-	tbl.Set(NewInt(2), Nil)
-	tbl.Set(NewInt(4), Nil)
+	tbl.MustSet(NewInt(2), Nil)
+	tbl.MustSet(NewInt(4), Nil)
 
 	// Iterate and collect keys
 	var keys []int64
-	k, v := tbl.Next(Nil)
+	k, v := tbl.MustNext(Nil)
 	for !k.IsNil() {
 		if v.IsNil() {
 			t.Fatalf("Next() returned non-nil key %s with nil value", k.String())
@@ -115,7 +115,7 @@ func TestTableNextSkipsArrayHoles(t *testing.T) {
 			t.Fatalf("expected integer key, got %s", k.String())
 		}
 		keys = append(keys, ki)
-		k, v = tbl.Next(k)
+		k, v = tbl.MustNext(k)
 	}
 
 	// Should see keys 1, 3, 5 (holes at 2 and 4 skipped)
@@ -136,10 +136,10 @@ func TestTableChurnHashOnly(t *testing.T) {
 
 	// Use large integer keys that go straight to hash
 	for i := int64(1000); i <= 2000; i++ {
-		tbl.Set(NewInt(i), NewInt(i))
+		tbl.MustSet(NewInt(i), NewInt(i))
 	}
 	for i := int64(1000); i <= 2000; i += 2 {
-		tbl.Set(NewInt(i), Nil)
+		tbl.MustSet(NewInt(i), Nil)
 	}
 
 	// Verify

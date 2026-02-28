@@ -1137,7 +1137,9 @@ func (vm *VM) execute() ([]Value, error) {
 				ct.rehashToArray()
 			} else {
 				for i := 0; i < n; i++ {
-					tbl.Set(NewInt(int64(offset+i)), vm.stack[frame.base+a+1+i])
+					if err := tbl.Set(NewInt(int64(offset+i)), vm.stack[frame.base+a+1+i]); err != nil {
+						return nil, err
+					}
 				}
 			}
 
