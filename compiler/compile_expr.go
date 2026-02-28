@@ -21,16 +21,16 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 	}
 
 	switch e := expr.(type) {
-	case *ast.NilExpr:
+	case *ast.NilExpr: // e.g. local x = nil
 		fs.emit(ABC(OP_LOADNIL, reg, 0, 0, 0), e.P.Line)
 
-	case *ast.TrueExpr:
+	case *ast.TrueExpr: // e.g. local x = true
 		fs.emit(ABC(OP_LOADTRUE, reg, 0, 0, 0), e.P.Line)
 
-	case *ast.FalseExpr:
+	case *ast.FalseExpr: // e.g. local x = false
 		fs.emit(ABC(OP_LOADFALSE, reg, 0, 0, 0), e.P.Line)
 
-	case *ast.NumberExpr:
+	case *ast.NumberExpr: // e.g. local x = 42 — LOADI for small ints, LOADK for large
 		if e.Value >= -OffsetSBx && e.Value <= OffsetSBx {
 			fs.emit(AsBx(OP_LOADI, reg, int(e.Value)), e.P.Line)
 		} else {
@@ -38,7 +38,7 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 			fs.emit(ABx(OP_LOADK, reg, k), e.P.Line)
 		}
 
-	case *ast.FloatExpr:
+	case *ast.FloatExpr: // e.g. local x = 3.14 — LOADF for whole floats, LOADK otherwise
 		iv := int(e.Value)
 		if float64(iv) == e.Value && iv >= -OffsetSBx && iv <= OffsetSBx {
 			fs.emit(AsBx(OP_LOADF, reg, iv), e.P.Line)
@@ -47,42 +47,42 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 			fs.emit(ABx(OP_LOADK, reg, k), e.P.Line)
 		}
 
-	case *ast.StringExpr:
+	case *ast.StringExpr: // e.g. local x = "hello"
 		k := fs.addConstant(StringValue(e.Value))
 		fs.emit(ABx(OP_LOADK, reg, k), e.P.Line)
 
-	case *ast.NameExpr:
+	case *ast.NameExpr: // e.g. x — resolves to local, upvalue, or _ENV[x]
 		c.compileName(e, reg)
 
-	case *ast.BinopExpr:
+	case *ast.BinopExpr: // e.g. a + b, x .. y, a == b, x and y
 		c.compileBinop(e, reg)
 
-	case *ast.UnopExpr:
+	case *ast.UnopExpr: // e.g. -x, not x, #t, ~n
 		c.compileUnop(e, reg)
 
-	case *ast.FuncCallExpr:
+	case *ast.FuncCallExpr: // e.g. f(a, b) — single result in reg
 		c.compileFuncCall(e, reg, 2, e.P.Line) // C=2 → 1 result
 
-	case *ast.MethodCallExpr:
+	case *ast.MethodCallExpr: // e.g. obj:method(a) — single result in reg
 		c.compileMethodCall(e, reg, 2, e.P.Line)
 
-	case *ast.FuncExpr:
+	case *ast.FuncExpr: // e.g. function(x) return x end
 		protoIdx := c.compileFunc(e, e.P.Line)
 		fs.emit(ABx(OP_CLOSURE, reg, protoIdx), e.P.Line)
 
-	case *ast.TableConstructor:
+	case *ast.TableConstructor: // e.g. {1, 2, key="val"}
 		c.compileTableConstructor(e, reg)
 
-	case *ast.FieldExpr:
+	case *ast.FieldExpr: // e.g. t.name
 		c.compileFieldExpr(e, reg)
 
-	case *ast.IndexExpr:
+	case *ast.IndexExpr: // e.g. t[key]
 		c.compileIndexExpr(e, reg)
 
-	case *ast.ParenExpr:
+	case *ast.ParenExpr: // e.g. (expr) — forces single result
 		c.compileExprToReg(e.Inner, reg)
 
-	case *ast.VarArgExpr:
+	case *ast.VarArgExpr: // e.g. ... — single vararg result
 		if !fs.proto.IsVarArg {
 			c.error(e, "cannot use '...' outside a vararg function")
 		}
@@ -144,6 +144,8 @@ func (c *compiler) compileExprMultiRet(expr ast.Expr, n int) {
 // Name lookup (local, upvalue, global)
 // ---------------------------------------------------------------------------
 
+// compileName resolves a variable name and emits the appropriate load:
+// MOVE for locals, GETUPVAL for upvalues, or GETTABUP for globals (_ENV[name]).
 func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 	fs := c.fs
 
@@ -178,6 +180,10 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 // Binary operations
 // ---------------------------------------------------------------------------
 
+// compileBinop compiles a binary operation. Short-circuit operators (and, or),
+// concatenation (..), and comparisons are handled by specialized methods.
+// Arithmetic and bitwise ops compile both operands into registers and emit
+// the operation followed by an MMBIN for metamethod fallback.
 func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
@@ -245,6 +251,8 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	fs.freeReg = rightReg
 }
 
+// compileConcat flattens a chain of .. operators (e.g. a .. b .. c) into
+// consecutive registers and emits a single OP_CONCAT covering all of them.
 func (c *compiler) compileConcat(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
@@ -276,6 +284,7 @@ func (c *compiler) compileConcat(e *ast.BinopExpr, reg int) {
 	fs.freeReg = base + 1
 }
 
+// flattenConcat recursively collects all operands of a .. chain into a flat slice.
 func (c *compiler) flattenConcat(e ast.Expr) []ast.Expr {
 	if binop, ok := e.(*ast.BinopExpr); ok && binop.Op == ".." {
 		left := c.flattenConcat(binop.Left)
@@ -285,6 +294,8 @@ func (c *compiler) flattenConcat(e ast.Expr) []ast.Expr {
 	return []ast.Expr{e}
 }
 
+// compileComparison compiles == ~= < <= > >= into a comparison instruction
+// followed by conditional jumps that produce a boolean result in reg.
 func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
@@ -336,6 +347,7 @@ func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 // Logical and/or
 // ---------------------------------------------------------------------------
 
+// compileAnd compiles "a and b" — short-circuits to a if a is falsy.
 func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
@@ -347,6 +359,7 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 	c.patchJump(jmp)
 }
 
+// compileOr compiles "a or b" — short-circuits to a if a is truthy.
 func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
@@ -362,6 +375,7 @@ func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 // Unary operations
 // ---------------------------------------------------------------------------
 
+// compileUnop compiles a unary operator: -x (UNM), not x (NOT), #t (LEN), ~n (BNOT).
 func (c *compiler) compileUnop(e *ast.UnopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
@@ -429,6 +443,8 @@ func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, 
 	fs.emit(ABC(OP_CALL, base, nArgs+1, nResults, 0), line)
 }
 
+// compileMethodCall compiles obj:method(args). Emits SELF to load the method
+// and self reference, then CALL. nResults follows the same convention as compileFuncCall.
 func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults int, line int) {
 	fs := c.fs
 
@@ -479,6 +495,8 @@ func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults i
 // Table constructors
 // ---------------------------------------------------------------------------
 
+// compileTableConstructor compiles {1, 2, key="val"} — emits NEWTABLE,
+// then SETLIST for array entries and SETFIELD/SETTABLE for hash entries.
 func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 	fs := c.fs
 	line := e.P.Line
@@ -599,6 +617,8 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 	fs.freeReg = reg + 1
 }
 
+// emitSetList emits OP_SETLIST to flush pending array entries into a table.
+// count is the number of entries (0 = up to stack top), offset is the 1-based starting index.
 func (c *compiler) emitSetList(tableReg, count, offset int, line int) {
 	fs := c.fs
 	// IvABC format: vB = count, vC = offset
@@ -624,6 +644,7 @@ func (c *compiler) emitSetList(tableReg, count, offset int, line int) {
 // Field and index access
 // ---------------------------------------------------------------------------
 
+// compileFieldExpr compiles t.name into GETFIELD (or GETTABLE for large constant indices).
 func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 	fs := c.fs
 	tableReg := fs.reserveReg()
@@ -633,6 +654,7 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 	fs.freeReg = tableReg
 }
 
+// compileIndexExpr compiles t[key] into GETTABLE.
 func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 	fs := c.fs
 	tableReg := fs.reserveReg()

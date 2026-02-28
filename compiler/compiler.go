@@ -35,20 +35,22 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 // exprResult tracks where an expression's value ended up
 // ---------------------------------------------------------------------------
 
+// exprKind describes where an expression result resides after compilation.
 type exprKind int
 
 const (
-	exprReg     exprKind = iota // value is in register info
-	exprConst                   // value is constant index info
-	exprTrue                    // literal true
-	exprFalse                   // literal false
-	exprNil                     // literal nil
-	exprJump                    // conditional jump — info is index into pending jumps
-	exprRelocate                // instruction needs A set — info is pc
-	exprCall                    // function call — info is pc of CALL instruction
-	exprVarArg                  // vararg — info is pc of VARARG instruction
+	exprReg      exprKind = iota // value is in register info
+	exprConst                    // value is constant index info
+	exprTrue                     // literal true
+	exprFalse                    // literal false
+	exprNil                      // literal nil
+	exprJump                     // conditional jump — info is index into pending jumps
+	exprRelocate                 // instruction needs A set — info is pc
+	exprCall                     // function call — info is pc of CALL instruction
+	exprVarArg                   // vararg — info is pc of VARARG instruction
 )
 
+// exprResult tracks where an expression's value ended up after compilation.
 type exprResult struct {
 	kind exprKind
 	info int // meaning depends on kind
@@ -64,6 +66,7 @@ const noJump = -1
 // funcState — per-function compiler state
 // ---------------------------------------------------------------------------
 
+// localVar tracks a local variable during compilation.
 type localVar struct {
 	name     string
 	reg      int
@@ -72,6 +75,7 @@ type localVar struct {
 	captured bool   // true if captured as an upvalue by an inner closure
 }
 
+// scopeInfo records the state at scope entry for restoration on scope exit.
 type scopeInfo struct {
 	nLocals    int  // number of locals when scope opened
 	breakList  int  // patch list head for break jumps (-1 = none)
@@ -79,6 +83,7 @@ type scopeInfo struct {
 	firstLabel int  // index into labels slice
 }
 
+// labelInfo records a ::label:: definition for goto resolution.
 type labelInfo struct {
 	name    string
 	pc      int
@@ -86,6 +91,7 @@ type labelInfo struct {
 	nLocals int // number of active locals when label was defined
 }
 
+// pendingGoto records a forward goto that hasn't found its label yet.
 type pendingGoto struct {
 	name    string
 	pc      int // jump instruction pc
@@ -94,6 +100,8 @@ type pendingGoto struct {
 	closePC int // pc of placeholder OP_CLOSE (-1 if none)
 }
 
+// funcState holds per-function compiler state: the proto being built,
+// register allocator, local variables, scopes, and upvalue tracking.
 type funcState struct {
 	c       *compiler // backpointer to compiler (for limits and error reporting)
 	proto   *Proto
@@ -114,12 +122,15 @@ type funcState struct {
 // compiler — top-level state
 // ---------------------------------------------------------------------------
 
+// compiler is the top-level compilation state, holding the current funcState
+// and accumulated error.
 type compiler struct {
 	fs     *funcState
 	err    error
 	limits CompilerLimits
 }
 
+// error records the first compilation error; subsequent errors are ignored.
 func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 	if c.err == nil {
 		c.err = fmt.Errorf(format, args...)
@@ -130,6 +141,7 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 // Function state helpers
 // ---------------------------------------------------------------------------
 
+// newFuncState creates a new funcState for compiling a function body.
 func (c *compiler) newFuncState(source string, parent *funcState) *funcState {
 	fs := &funcState{
 		c: c,
@@ -143,6 +155,8 @@ func (c *compiler) newFuncState(source string, parent *funcState) *funcState {
 	return fs
 }
 
+// closeFuncState finalizes the current function's Proto, checks for
+// unresolved gotos, and restores the parent funcState.
 func (c *compiler) closeFuncState() *Proto {
 	fs := c.fs
 	p := fs.proto
@@ -191,8 +205,7 @@ func (fs *funcState) regTop() int {
 	return top
 }
 
-// maxReg is computed from the high-water mark.
-// We track it on funcState.
+// reserveReg allocates the next free register and returns its index.
 func (fs *funcState) reserveReg() int {
 	r := fs.freeReg
 	fs.freeReg++
@@ -205,6 +218,7 @@ func (fs *funcState) reserveReg() int {
 	return r
 }
 
+// reserveRegs allocates n consecutive registers and returns the base index.
 func (fs *funcState) reserveRegs(n int) int {
 	base := fs.freeReg
 	fs.freeReg += n
@@ -217,6 +231,7 @@ func (fs *funcState) reserveRegs(n int) int {
 	return base
 }
 
+// emit appends an instruction to the current proto and returns its pc.
 func (fs *funcState) emit(inst Instruction, line int) int {
 	pc := len(fs.proto.Code)
 	fs.proto.Code = append(fs.proto.Code, inst)
@@ -224,6 +239,7 @@ func (fs *funcState) emit(inst Instruction, line int) int {
 	return pc
 }
 
+// pc returns the next instruction index (i.e. the current code length).
 func (fs *funcState) pc() int {
 	return len(fs.proto.Code)
 }
@@ -303,6 +319,7 @@ func (fs *funcState) emitSelf(base, objReg, kIdx int, line int) {
 	fs.freeReg = saved
 }
 
+// addConstant adds a constant to the pool (deduplicating) and returns its index.
 func (fs *funcState) addConstant(v Value) int {
 	// Deduplicate constants
 	for i, existing := range fs.proto.Constants {
@@ -315,6 +332,7 @@ func (fs *funcState) addConstant(v Value) int {
 	return idx
 }
 
+// valEqual checks if two compile-time constants are identical (for dedup).
 func valEqual(a, b Value) bool {
 	if a.Type != b.Type {
 		return false
@@ -334,12 +352,14 @@ func valEqual(a, b Value) bool {
 	return false
 }
 
+// addProto adds a child prototype and returns its index (for OP_CLOSURE).
 func (fs *funcState) addProto(p *Proto) int {
 	idx := len(fs.proto.Protos)
 	fs.proto.Protos = append(fs.proto.Protos, p)
 	return idx
 }
 
+// stringConstant returns the constant index for a string, adding it if needed.
 func (fs *funcState) stringConstant(s string) int {
 	return fs.addConstant(StringValue(s))
 }
@@ -362,6 +382,7 @@ func (fs *funcState) checkRegLimit() {
 	}
 }
 
+// addLocal declares a new local variable, reserves its register, and returns the register index.
 func (fs *funcState) addLocal(name string, attrib string) int {
 	fs.checkVarLimit(1)
 	reg := fs.reserveReg()
@@ -375,12 +396,14 @@ func (fs *funcState) addLocal(name string, attrib string) int {
 	return reg
 }
 
+// activateLocal marks a local variable as visible starting at the current pc.
 func (fs *funcState) activateLocal(idx int) {
 	if idx < len(fs.locals) {
 		fs.locals[idx].startPC = fs.pc()
 	}
 }
 
+// lookupLocal searches for an active local variable by name, returning its register.
 func (fs *funcState) lookupLocal(name string) (int, bool) {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
 		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
@@ -390,6 +413,7 @@ func (fs *funcState) lookupLocal(name string) (int, bool) {
 	return 0, false
 }
 
+// needsClose returns true if any local at or above fromLocal is <close> or captured.
 func (fs *funcState) needsClose(fromLocal int) bool {
 	start := len(fs.locals) - (fs.nActVar - fromLocal)
 	if start < 0 {
@@ -403,6 +427,7 @@ func (fs *funcState) needsClose(fromLocal int) bool {
 	return false
 }
 
+// isConst returns true if the named local has the <const> attribute.
 func (fs *funcState) isConst(name string) bool {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
 		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
@@ -412,6 +437,7 @@ func (fs *funcState) isConst(name string) bool {
 	return false
 }
 
+// isConstUpvalue checks whether a captured variable is <const> in an enclosing scope.
 func (c *compiler) isConstUpvalue(fs *funcState, name string) bool {
 	if fs.parent == nil {
 		return false
@@ -422,6 +448,7 @@ func (c *compiler) isConstUpvalue(fs *funcState, name string) bool {
 	return c.isConstUpvalue(fs.parent, name)
 }
 
+// markCaptured flags a local as captured by an inner closure's upvalue.
 func (fs *funcState) markCaptured(name string) {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
 		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
@@ -435,6 +462,7 @@ func (fs *funcState) markCaptured(name string) {
 // Upvalues
 // ---------------------------------------------------------------------------
 
+// lookupUpvalue checks if name is already registered as an upvalue in this function.
 func (fs *funcState) lookupUpvalue(name string) (int, bool) {
 	if idx, ok := fs.upvalLookup[name]; ok {
 		return idx, true
@@ -442,6 +470,7 @@ func (fs *funcState) lookupUpvalue(name string) (int, bool) {
 	return 0, false
 }
 
+// addUpvalue registers a new upvalue and returns its index.
 func (fs *funcState) addUpvalue(name string, inStack bool, index int) int {
 	if idx, ok := fs.upvalLookup[name]; ok {
 		return idx
@@ -487,6 +516,7 @@ func (c *compiler) resolveUpvalue(fs *funcState, name string) (int, bool) {
 // Scope management
 // ---------------------------------------------------------------------------
 
+// enterScope pushes a new scope. isLoop marks it as a loop (for break resolution).
 func (fs *funcState) enterScope(isLoop bool) {
 	fs.scopes = append(fs.scopes, scopeInfo{
 		nLocals:    fs.nActVar,
@@ -496,6 +526,8 @@ func (fs *funcState) enterScope(isLoop bool) {
 	})
 }
 
+// leaveScope pops the current scope, emits OP_CLOSE if needed, removes
+// locals, resets registers, and patches pending break jumps.
 func (c *compiler) leaveScope(line int) {
 	fs := c.fs
 	scope := fs.scopes[len(fs.scopes)-1]
@@ -546,6 +578,7 @@ func (c *compiler) leaveScope(line int) {
 	}
 }
 
+// findLoopScope walks the scope stack to find the innermost loop (for break).
 func (fs *funcState) findLoopScope() *scopeInfo {
 	for i := len(fs.scopes) - 1; i >= 0; i-- {
 		if fs.scopes[i].isLoop {
@@ -600,6 +633,7 @@ func (fs *funcState) concatJumpList(l1, l2 int) int {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
+// resolveEnv returns the upvalue index for _ENV (the global environment table).
 func (c *compiler) resolveEnv() int {
 	fs := c.fs
 	if idx, ok := fs.lookupUpvalue("_ENV"); ok {
@@ -609,6 +643,8 @@ func (c *compiler) resolveEnv() int {
 	return idx
 }
 
+// isMultiRet returns true for expressions that can produce multiple results:
+// function calls, method calls, and vararg (...).
 func isMultiRet(e ast.Expr) bool {
 	switch e.(type) {
 	case *ast.FuncCallExpr, *ast.MethodCallExpr, *ast.VarArgExpr:
@@ -617,6 +653,7 @@ func isMultiRet(e ast.Expr) bool {
 	return false
 }
 
+// intLog2 returns floor(log2(x)), used for NEWTABLE hash size hints.
 func intLog2(x int) int {
 	if x <= 0 {
 		return 0

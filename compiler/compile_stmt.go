@@ -8,6 +8,8 @@ import (
 // Chunk compilation
 // ---------------------------------------------------------------------------
 
+// compileChunk creates the top-level Proto for a Lua source file. The chunk
+// is compiled as a vararg function with _ENV as its first upvalue.
 func (c *compiler) compileChunk(source string, block *ast.Block) *Proto {
 	fs := c.newFuncState(source, nil)
 	fs.maxReg = 2 // minimum
@@ -49,6 +51,7 @@ func (c *compiler) compileChunk(source string, block *ast.Block) *Proto {
 // Block and statement compilation
 // ---------------------------------------------------------------------------
 
+// compileBlock compiles all statements in a block, releasing temporaries after each.
 func (c *compiler) compileBlock(block *ast.Block) {
 	if block == nil {
 		return
@@ -64,6 +67,7 @@ func (c *compiler) compileBlock(block *ast.Block) {
 	}
 }
 
+// compileStmt dispatches a single statement to its specific compiler method.
 func (c *compiler) compileStmt(stmt ast.Stmt) {
 	switch s := stmt.(type) {
 	case *ast.LocalStmt:
@@ -111,6 +115,8 @@ func (c *compiler) compileStmt(stmt ast.Stmt) {
 // Local declarations
 // ---------------------------------------------------------------------------
 
+// compileLocalStmt compiles "local x, y = a, b" — evaluates RHS into
+// consecutive registers, then declares the local variables.
 func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -202,6 +208,8 @@ func isMultiRetExpr(e ast.Expr) bool {
 	return false
 }
 
+// compileAssignStmt compiles "a, b = x, y". For single assignments it
+// optimizes directly; for multi-assign it evaluates all RHS into temps first.
 func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -268,6 +276,8 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	fs.freeReg = tempBase
 }
 
+// compileSingleAssign handles the common case of "x = expr" — assigns to
+// a local, upvalue, global, table field, or table index.
 func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int) {
 	fs := c.fs
 
@@ -340,6 +350,8 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 	}
 }
 
+// assignToTarget stores the value in srcReg into an assignment target
+// (local, upvalue, global, field, or index).
 func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 	fs := c.fs
 
@@ -388,6 +400,7 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 	}
 }
 
+// compileSetGlobal compiles _ENV[name] = value.
 func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 	fs := c.fs
 	envUV := c.resolveEnv()
@@ -402,6 +415,7 @@ func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 // Expression statements (function calls)
 // ---------------------------------------------------------------------------
 
+// compileExprStmt compiles a bare expression statement (must be a function call).
 func (c *compiler) compileExprStmt(s *ast.ExprStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -422,6 +436,8 @@ func (c *compiler) compileExprStmt(s *ast.ExprStmt) {
 // Return
 // ---------------------------------------------------------------------------
 
+// compileReturnStmt compiles "return expr, ..." — emits RETURN0, RETURN1,
+// TAILCALL, or RETURN depending on the number and type of return values.
 func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -484,6 +500,7 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 // If/elseif/else
 // ---------------------------------------------------------------------------
 
+// compileIfStmt compiles "if cond then ... elseif ... else ... end".
 func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -546,6 +563,7 @@ func (c *compiler) compileCondJump(cond ast.Expr, jumpOnFalse bool, line int) {
 // While
 // ---------------------------------------------------------------------------
 
+// compileWhileStmt compiles "while cond do ... end".
 func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -580,6 +598,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 // Repeat
 // ---------------------------------------------------------------------------
 
+// compileRepeatStmt compiles "repeat ... until cond".
 func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -615,6 +634,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 // Do block
 // ---------------------------------------------------------------------------
 
+// compileDoStmt compiles "do ... end" — creates a new scope for the body.
 func (c *compiler) compileDoStmt(s *ast.DoStmt) {
 	c.fs.enterScope(false)
 	c.compileBlock(s.Body)
@@ -625,6 +645,8 @@ func (c *compiler) compileDoStmt(s *ast.DoStmt) {
 // Numeric for
 // ---------------------------------------------------------------------------
 
+// compileForNumStmt compiles "for i = start, stop, step do ... end".
+// Uses FORPREP/FORLOOP opcodes with 4 internal registers (init, limit, step, i).
 func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -709,6 +731,8 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 // Generic for
 // ---------------------------------------------------------------------------
 
+// compileForInStmt compiles "for k, v in iter do ... end".
+// Uses TFORPREP/TFORCALL/TFORLOOP with 4 control registers + loop variables.
 func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -814,6 +838,8 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 // Break / Goto / Labels
 // ---------------------------------------------------------------------------
 
+// compileBreakStmt compiles "break" — emits OP_CLOSE if needed, then a
+// forward jump to be patched when the enclosing loop scope exits.
 func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 	fs := c.fs
 	scope := fs.findLoopScope()
@@ -829,6 +855,8 @@ func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 	scope.breakList = fs.concatJumpList(scope.breakList, jpc)
 }
 
+// compileGotoStmt compiles "goto label". For backward gotos the jump is
+// resolved immediately; forward gotos are recorded and patched at the label.
 func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -864,6 +892,8 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 	})
 }
 
+// compileLabelStmt compiles "::label::" — records the label and resolves
+// any pending forward gotos that target it.
 func (c *compiler) compileLabelStmt(s *ast.LabelStmt) {
 	fs := c.fs
 
@@ -910,6 +940,7 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt) {
 // Function statements
 // ---------------------------------------------------------------------------
 
+// compileFuncStmt compiles "function name(...) ... end" or "function a.b.c(...) ... end".
 func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -947,6 +978,8 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 	fs.freeReg = reg
 }
 
+// compileLocalFuncStmt compiles "local function name(...) ... end".
+// The local is registered before the body so the function can reference itself.
 func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -972,6 +1005,7 @@ func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), line)
 }
 
+// compileGlobalStmt compiles "global name = expr" — assigns to _ENV[name].
 func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 	// Treat like assignment to _ENV[name]
 	fs := c.fs
@@ -993,6 +1027,7 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 	}
 }
 
+// compileGlobalFuncStmt compiles "global function name(...) ... end".
 func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -1012,6 +1047,9 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 // Function compilation (body)
 // ---------------------------------------------------------------------------
 
+// compileFunc compiles a function body (shared by function expressions,
+// function statements, and local function statements). Returns the child
+// proto index for use with OP_CLOSURE.
 func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	parentFS := c.fs
 
