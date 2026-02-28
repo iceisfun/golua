@@ -17,11 +17,21 @@ func ctxDone(v *vm.VM) <-chan struct{} {
 	return nil
 }
 
+// coroutineStatus represents the lifecycle state of a coroutine.
+type coroutineStatus string
+
+const (
+	statusSuspended coroutineStatus = "suspended"
+	statusRunning   coroutineStatus = "running"
+	statusDead      coroutineStatus = "dead"
+	statusNormal    coroutineStatus = "normal"
+)
+
 // Coroutine represents a Lua coroutine
 type Coroutine struct {
 	id       int
 	fn       vm.Value      // The function to run
-	status   string        // "suspended", "running", "dead", "normal"
+	status   coroutineStatus // lifecycle state
 	started  bool          // Whether the goroutine has been started
 	vm       *vm.VM        // Reference to the VM
 	thread   vm.Value      // Thread object (table) for coroutine.running
@@ -76,7 +86,7 @@ func coCreate(v *vm.VM) int {
 	co := &Coroutine{
 		id:       id,
 		fn:       fn,
-		status:   "suspended",
+		status:   statusSuspended,
 		vm:       v,
 		resumeCh: make(chan []vm.Value, 1),
 		yieldCh:  make(chan []vm.Value, 1),
@@ -127,13 +137,13 @@ func coResume(v *vm.VM) int {
 	status := co.status
 	co.mu.Unlock()
 
-	if status == "dead" {
+	if status == statusDead {
 		v.Set(0, vm.False)
 		v.Set(1, vm.NewString("cannot resume dead coroutine"))
 		return 2
 	}
 
-	if status == "running" {
+	if status == statusRunning {
 		v.Set(0, vm.False)
 		v.Set(1, vm.NewString("cannot resume non-suspended coroutine"))
 		return 2
@@ -146,13 +156,13 @@ func coResume(v *vm.VM) int {
 		args[i-2] = v.Get(i)
 	}
 
-	// Set caller's status to "normal" while the resumed coroutine runs
+	// Set caller's status to normal while the resumed coroutine runs
 	callerID := v.CoroutineID()
 	if callerID != 0 {
 		coroutinesMu.Lock()
 		if caller := coroutines[callerID]; caller != nil {
 			caller.mu.Lock()
-			caller.status = "normal"
+			caller.status = statusNormal
 			caller.mu.Unlock()
 		}
 		coroutinesMu.Unlock()
@@ -162,23 +172,23 @@ func coResume(v *vm.VM) int {
 	co.mu.Lock()
 	if !co.started {
 		co.started = true
-		co.status = "running"
+		co.status = statusRunning
 		go runCoroutine(co)
 	} else {
-		co.status = "running"
+		co.status = statusRunning
 	}
 	co.mu.Unlock()
 
 	// Send args to the coroutine
 	co.resumeCh <- args
 
-	// restoreCallerStatus restores the caller's coroutine status to "running"
+	// restoreCallerStatus restores the caller's coroutine status to running
 	restoreCallerStatus := func() {
 		if callerID != 0 {
 			coroutinesMu.Lock()
 			if caller := coroutines[callerID]; caller != nil {
 				caller.mu.Lock()
-				caller.status = "running"
+				caller.status = statusRunning
 				caller.mu.Unlock()
 			}
 			coroutinesMu.Unlock()
@@ -240,14 +250,14 @@ func runCoroutine(co *Coroutine) {
 			} else {
 				co.err = fmt.Errorf("%v", r)
 			}
-			co.status = "dead"
+			co.status = statusDead
 			co.mu.Unlock()
 		}
 		close(co.doneCh)
 	}()
 
 	co.mu.Lock()
-	co.status = "running"
+	co.status = statusRunning
 	co.mu.Unlock()
 
 	// Wait for first resume args
@@ -255,7 +265,7 @@ func runCoroutine(co *Coroutine) {
 	if !ok {
 		// Channel closed by coClose before first resume completed
 		co.mu.Lock()
-		co.status = "dead"
+		co.status = statusDead
 		co.mu.Unlock()
 		return
 	}
@@ -280,7 +290,7 @@ func runCoroutine(co *Coroutine) {
 	if err != nil {
 		co.err = err
 	}
-	co.status = "dead"
+	co.status = statusDead
 	co.mu.Unlock()
 }
 
@@ -308,7 +318,7 @@ func coYield(v *vm.VM) int {
 		coroutinesMu.Lock()
 		if co := coroutines[coID]; co != nil {
 			co.mu.Lock()
-			co.status = "suspended"
+			co.status = statusSuspended
 			co.mu.Unlock()
 		}
 		coroutinesMu.Unlock()
@@ -335,7 +345,7 @@ func coYield(v *vm.VM) int {
 		coroutinesMu.Lock()
 		if co := coroutines[coID]; co != nil {
 			co.mu.Lock()
-			co.status = "running"
+			co.status = statusRunning
 			co.mu.Unlock()
 		}
 		coroutinesMu.Unlock()
@@ -368,7 +378,7 @@ func coStatus(v *vm.VM) int {
 	coroutinesMu.Unlock()
 
 	if co == nil {
-		v.Set(0, vm.NewString("dead"))
+		v.Set(0, vm.NewString(string(statusDead)))
 		return 1
 	}
 
@@ -376,7 +386,7 @@ func coStatus(v *vm.VM) int {
 	status := co.status
 	co.mu.Unlock()
 
-	v.Set(0, vm.NewString(status))
+	v.Set(0, vm.NewString(string(status)))
 	return 1
 }
 
@@ -408,7 +418,7 @@ func coWrap(v *vm.VM) int {
 	co := &Coroutine{
 		id:       id,
 		fn:       fn,
-		status:   "suspended",
+		status:   statusSuspended,
 		vm:       v,
 		thread:   vm.NewTable(coTable),
 		resumeCh: make(chan []vm.Value, 1),
@@ -427,7 +437,7 @@ func coWrap(v *vm.VM) int {
 		status := co.status
 		co.mu.Unlock()
 
-		if status == "dead" {
+		if status == statusDead {
 			panic("cannot resume dead coroutine")
 		}
 
@@ -442,10 +452,10 @@ func coWrap(v *vm.VM) int {
 		co.mu.Lock()
 		if !co.started {
 			co.started = true
-			co.status = "running"
+			co.status = statusRunning
 			go runCoroutine(co)
 		} else {
-			co.status = "running"
+			co.status = statusRunning
 		}
 		co.mu.Unlock()
 
@@ -522,11 +532,11 @@ func coClose(v *vm.VM) int {
 	status := co.status
 	co.mu.Unlock()
 
-	if status == "running" {
+	if status == statusRunning {
 		panic("cannot close a running coroutine")
 	}
 
-	if status == "dead" {
+	if status == statusDead {
 		// Error-dead coroutines return false + error
 		co.mu.Lock()
 		coErr := co.err
@@ -546,7 +556,7 @@ func coClose(v *vm.VM) int {
 
 	// Mark as dead and clean up
 	co.mu.Lock()
-	co.status = "dead"
+	co.status = statusDead
 	co.mu.Unlock()
 
 	// Remove from global map
