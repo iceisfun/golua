@@ -6,8 +6,11 @@ type LuaIoCaps struct {
 	AllowWrite bool
 }
 
-// LuaIoProvider is a capability interface for IO operations.
-// Implementations decide how and where files can be opened.
+// LuaIoProvider is a capability interface for sandboxed file I/O.
+// When provided to a VM, the stdlib io library becomes available.
+// Without a provider, io.* functions are not registered.
+//
+// Lua 5.4 Reference: §6.8 (input and output facilities).
 type LuaIoProvider interface {
 	// Open opens a file with the given mode.
 	// mode follows Lua conventions: "r", "w", "a", "rb", "wb", "ab"

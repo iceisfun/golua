@@ -4,10 +4,15 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
-// Closure represents a Lua closure (function + captured upvalues).
+// Closure represents a Lua closure: a function prototype paired with its
+// captured upvalues. Each closure instance shares the same [compiler.Proto]
+// but has its own upvalue bindings, allowing closures created at different
+// call sites to capture different variables.
+//
+// Lua 5.4 Reference: §3.4.11 (function definitions), §2.5.1 (upvalues).
 type Closure struct {
-	Proto    *compiler.Proto
-	Upvalues []*Upvalue
+	Proto    *compiler.Proto // compiled bytecode and metadata
+	Upvalues []*Upvalue      // captured variables from enclosing scopes
 }
 
 // NewClosure creates a new closure from a prototype.
@@ -24,9 +29,13 @@ func NewClosure(proto *compiler.Proto) *Closure {
 // Return values should be placed starting at vm.Base().
 type NativeFunc func(vm *VM) int
 
-// Upvalue represents a captured variable.
-// When open, it references a stack slot via the VM.
-// When closed, it holds the value directly.
+// Upvalue represents a captured variable from an enclosing scope.
+// Open upvalues reference a live stack slot (shared with the enclosing
+// function). When the enclosing scope exits, the upvalue is "closed" —
+// the value is copied from the stack into the Upvalue itself, and the
+// stack reference is released.
+//
+// Lua 5.4 Reference: §3.5 (visibility rules).
 type Upvalue struct {
 	vm       *VM   // Reference to VM for open upvalues
 	stackIdx int   // Absolute stack index for open upvalues

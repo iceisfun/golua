@@ -5,7 +5,9 @@ import (
 	"time"
 )
 
-// LuaTimeProvider is a capability interface for time operations.
+// LuaTimeProvider is a capability interface for millisecond timing operations.
+// This is a GoLua extension (not part of standard Lua) providing high-resolution
+// timing primitives for game loops, rate limiting, and initialization guards.
 type LuaTimeProvider interface {
 	// Now returns the current time in milliseconds.
 	Now() int64

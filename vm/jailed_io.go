@@ -24,6 +24,8 @@ func NewJailedIoProvider(root string) *JailedIoProvider {
 	}
 }
 
+// Open opens a file within the jailed directory. Only read modes ("r", "rb")
+// are permitted; write attempts return an error.
 func (p *JailedIoProvider) Open(name string, mode string) (LuaFile, error) {
 	// Only allow read modes
 	if mode != "r" && mode != "rb" {
@@ -41,6 +43,7 @@ func (p *JailedIoProvider) Open(name string, mode string) (LuaFile, error) {
 	}, nil
 }
 
+// Capabilities returns caps with read-only access enabled.
 func (p *JailedIoProvider) Capabilities() LuaIoCaps {
 	return LuaIoCaps{
 		AllowRead:  true,

@@ -33,8 +33,10 @@ func gcTableFinalizer(t *Table) {
 	gcPendingMu.Unlock()
 }
 
-// RegisterGcFinalizer checks if t has a __gc metamethod and registers
-// a Go finalizer if so. Safe to call multiple times (idempotent).
+// RegisterGcFinalizer checks if t has a __gc metamethod and registers a Go
+// finalizer if so. Safe to call multiple times (idempotent).
+//
+// Lua 5.4 Reference: §2.5.3 (garbage-collection metamethods).
 func RegisterGcFinalizer(t *Table) {
 	mt := t.Metatable()
 	if mt == nil {

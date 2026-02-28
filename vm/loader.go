@@ -13,8 +13,12 @@ type LuaLoaderCaps struct {
 	AllowLoadfile bool // filesystem-style semantics (still routed!)
 }
 
-// LuaCodeProvider is a capability interface.
-// Implementations decide *what* Lua is allowed to load and *from where*.
+// LuaCodeProvider is a capability interface for sandboxed code loading.
+// Implementations control what Lua source code is available and from where,
+// enabling secure embedding without granting filesystem access.
+//
+// The VM calls LoadChunk when Lua code invokes load(), loadfile(), or dofile().
+// Returning an error prevents loading; the error message is propagated to Lua.
 type LuaCodeProvider interface {
 	// LoadChunk resolves a Lua chunk and returns its source code.
 	//

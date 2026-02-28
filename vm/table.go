@@ -1,7 +1,7 @@
 package vm
 
-// Table represents a Lua table.
-// It has both an array part (for integer keys 1..n) and a hash part.
+// Table represents a Lua table (§2.1). It has both an array part (for
+// sequential integer keys 1..n) and a hash part (for all other keys).
 // The keys slice maintains insertion order so that next() is deterministic.
 //
 // Nil-value invariant: Get, GetInt, and GetString always return a valid Value.

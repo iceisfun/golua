@@ -7,8 +7,11 @@ type LuaOsCaps struct {
 	AllowGetenv bool
 }
 
-// LuaOsProvider is a capability interface for OS operations.
-// Implementations decide what system information is exposed to Lua.
+// LuaOsProvider is a capability interface for sandboxed OS operations.
+// When provided to a VM, the stdlib os library becomes available.
+// Without a provider, os.* functions are not registered.
+//
+// Lua 5.4 Reference: §6.9 (operating system facilities).
 type LuaOsProvider interface {
 	// Clock returns CPU time used by the program in seconds.
 	Clock() float64

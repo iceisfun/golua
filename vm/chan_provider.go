@@ -16,7 +16,9 @@ type LuaChanCaps struct {
 	AllowTryRecv bool
 }
 
-// LuaChanProvider is a capability interface for channel operations.
+// LuaChanProvider is a capability interface for Go channel operations.
+// Channels are a GoLua extension (not part of standard Lua) that enable
+// safe communication between Lua coroutines and Go goroutines.
 type LuaChanProvider interface {
 	NewChannel(size int) *LuaChannel
 	Capabilities() LuaChanCaps

@@ -9,7 +9,17 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
-// VM is the Lua virtual machine state.
+// VM is the Lua virtual machine state. Each VM instance has its own stack,
+// call stack, open upvalues, and to-be-closed variable tracking. The global
+// table is shared between a parent VM and its coroutine VMs.
+//
+// Create a VM with [New] and execute code with [VM.Run] or [VM.ProtectedCall].
+// Configure behavior with [VMOption] functions: [WithContext], [WithLimits],
+// [WithCaptureOutput].
+//
+// Provider interfaces control access to system resources. Without providers,
+// the corresponding stdlib modules (io, os, debug, chan, time) are not
+// registered when [stdlib.Open] is called.
 type VM struct {
 	stack     []Value     // Value stack
 	top       int         // Top of stack (first free slot)
@@ -100,7 +110,9 @@ func (vm *VM) GetGlobal(name string) Value {
 	return vm.globals.Get(NewString(name))
 }
 
-// Run executes a compiled prototype and returns the results.
+// Run executes a compiled prototype and returns the results. The prototype's
+// first upvalue is automatically bound to the VM's global table (_ENV).
+// Errors from the Lua program are caught and returned as Go errors.
 func (vm *VM) Run(proto *compiler.Proto) ([]Value, error) {
 	// Create main closure
 	closure := NewClosure(proto)
@@ -116,7 +128,10 @@ func (vm *VM) Run(proto *compiler.Proto) ([]Value, error) {
 	return vm.ProtectedCall(NewFunction(closure), nil)
 }
 
-// ProtectedCall calls a function in protected mode, catching any errors.
+// ProtectedCall calls a function in protected mode, catching any Lua errors.
+// If fn is a table with a __call metamethod, the metamethod is invoked.
+// Returns the function's results on success, or an error on failure.
+// This is the Go equivalent of Lua's pcall().
 func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error) {
 	// Save VM state for recovery
 	savedTop := vm.top
@@ -240,8 +255,10 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
 }
 
-// NewCoroutineVM creates a new VM for running a coroutine.
-// It shares globals with the parent but has its own stack and coroutine channels.
+// NewCoroutineVM creates a new VM for running a coroutine. The child VM shares
+// the parent's globals, string metatable, providers, limits, and output buffer,
+// but has its own stack, call stack, and upvalue tracking. Communication between
+// parent and child happens through the yieldCh and resumeCh channels.
 func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 	return &VM{
 		stack:         make([]Value, 256),

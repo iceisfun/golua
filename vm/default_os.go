@@ -29,10 +29,12 @@ func NewFilteredOsProvider(filter func(string) bool) *DefaultOsProvider {
 	}
 }
 
+// Clock returns CPU time in seconds since the VM started.
 func (p *DefaultOsProvider) Clock() float64 {
 	return time.Since(p.startTime).Seconds()
 }
 
+// Time returns the current Unix timestamp, or constructs one from dateTable fields.
 func (p *DefaultOsProvider) Time(dateTable map[string]int) (int64, error) {
 	if dateTable == nil {
 		return time.Now().Unix(), nil
@@ -59,6 +61,7 @@ func (p *DefaultOsProvider) Time(dateTable map[string]int) (int64, error) {
 	return t.Unix(), nil
 }
 
+// Date formats a timestamp using strftime-style format specifiers.
 func (p *DefaultOsProvider) Date(format string, timestamp int64) (string, error) {
 	t := time.Unix(timestamp, 0)
 
@@ -76,6 +79,7 @@ func (p *DefaultOsProvider) Date(format string, timestamp int64) (string, error)
 	return t.Format(goFormat), nil
 }
 
+// DateTable returns a map of date/time components for the given timestamp.
 func (p *DefaultOsProvider) DateTable(timestamp int64) map[string]int {
 	t := time.Unix(timestamp, 0)
 
@@ -100,6 +104,7 @@ func (p *DefaultOsProvider) DateTable(timestamp int64) map[string]int {
 	}
 }
 
+// Getenv returns an environment variable, respecting the optional filter.
 func (p *DefaultOsProvider) Getenv(name string) (string, bool) {
 	if p.envFilter != nil && !p.envFilter(name) {
 		return "", false
@@ -107,6 +112,7 @@ func (p *DefaultOsProvider) Getenv(name string) (string, bool) {
 	return os.LookupEnv(name)
 }
 
+// Capabilities returns caps with all OS operations enabled.
 func (p *DefaultOsProvider) Capabilities() LuaOsCaps {
 	return LuaOsCaps{
 		AllowTime:   true,

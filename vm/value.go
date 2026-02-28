@@ -1,4 +1,38 @@
-// Package vm executes Lua bytecode compiled by the compiler package.
+// Package vm implements the Lua 5.4 virtual machine.
+//
+// The VM executes bytecode produced by the [compiler] package using a
+// register-based architecture. Each function invocation gets a stack frame
+// with registers addressed by index. The VM supports the full Lua 5.4
+// feature set: closures with upvalue capture, coroutines via goroutine-based
+// cooperative scheduling, metamethods for all operators, and protected calls
+// (pcall/xpcall) via Go's panic/recover.
+//
+// # Value Representation
+//
+// Lua values are represented by the [Value] struct, a tagged union that avoids
+// interface boxing for common types (nil, bool, int, float). Tables implement
+// the [LuaTable] interface, allowing custom virtual table implementations.
+//
+// # Error Handling
+//
+// Lua errors are propagated as Go panics wrapping [LuaError]. Protected call
+// boundaries (pcall, xpcall) recover these panics and return the error value.
+// Go errors from native functions are converted to Lua errors at the boundary.
+//
+// # Provider Interfaces
+//
+// The VM uses provider interfaces ([LuaIoProvider], [LuaOsProvider],
+// [LuaChanProvider], etc.) to abstract system operations, enabling sandboxed
+// execution without direct filesystem or OS access.
+//
+// # Coroutines
+//
+// Coroutines run as separate goroutines communicating via channels. Each
+// coroutine gets its own [VM] instance sharing globals with the parent.
+// Yield/resume synchronize through paired channels.
+//
+// Lua 5.4 Reference: §2.1 (values and types), §2.4 (metatables and metamethods),
+// §2.5 (garbage collection), §2.6 (coroutines), §2.7 (error handling).
 package vm
 
 import (
@@ -10,13 +44,18 @@ import (
 	"strings"
 )
 
-// Value represents a Lua runtime value.
-// Uses a tagged union approach for efficiency.
+// Value represents a Lua runtime value using a tagged union for efficiency.
+// The zero value is nil. Values are compared by value for primitive types
+// (nil, bool, int, float, string) and by identity for reference types
+// (table, function).
+//
+// Integer and float are distinct subtypes of "number" following Lua 5.4
+// semantics. Arithmetic operations preserve integer type when possible.
 type Value struct {
 	typ     valueType
-	num     float64 // authoritative for typeFloat, typeBool
-	integer int64   // authoritative for typeInt
-	ptr     any
+	num     float64 // float value, or 1.0/0.0 for bool true/false
+	integer int64   // integer value
+	ptr     any     // string, *Table, *Closure, or NativeFunc
 }
 
 type valueType byte
@@ -81,17 +120,37 @@ func NewNativeFunc(f NativeFunc) Value {
 	return Value{typ: typeNativeFunc, ptr: f}
 }
 
-// Type queries
-func (v Value) IsNil() bool        { return v.typ == typeNil }
-func (v Value) IsBool() bool       { return v.typ == typeBool }
-func (v Value) IsInt() bool        { return v.typ == typeInt }
-func (v Value) IsFloat() bool      { return v.typ == typeFloat }
-func (v Value) IsNumber() bool     { return v.typ == typeInt || v.typ == typeFloat }
-func (v Value) IsString() bool     { return v.typ == typeString }
-func (v Value) IsTable() bool      { return v.typ == typeTable }
-func (v Value) IsFunction() bool   { return v.typ == typeFunction }
+// IsNil reports whether v is nil.
+func (v Value) IsNil() bool { return v.typ == typeNil }
+
+// IsBool reports whether v is a boolean.
+func (v Value) IsBool() bool { return v.typ == typeBool }
+
+// IsInt reports whether v is an integer number.
+func (v Value) IsInt() bool { return v.typ == typeInt }
+
+// IsFloat reports whether v is a floating-point number.
+func (v Value) IsFloat() bool { return v.typ == typeFloat }
+
+// IsNumber reports whether v is a number (integer or float).
+func (v Value) IsNumber() bool { return v.typ == typeInt || v.typ == typeFloat }
+
+// IsString reports whether v is a string.
+func (v Value) IsString() bool { return v.typ == typeString }
+
+// IsTable reports whether v is a table.
+func (v Value) IsTable() bool { return v.typ == typeTable }
+
+// IsFunction reports whether v is a Lua closure.
+func (v Value) IsFunction() bool { return v.typ == typeFunction }
+
+// IsNativeFunc reports whether v is a Go native function.
 func (v Value) IsNativeFunc() bool { return v.typ == typeNativeFunc }
-func (v Value) IsCallable() bool   { return v.typ == typeFunction || v.typ == typeNativeFunc }
+
+// IsCallable reports whether v can be called (closure or native function).
+// Note: tables with a __call metamethod are also callable at runtime but
+// return false here since the metamethod lookup happens in the VM.
+func (v Value) IsCallable() bool { return v.typ == typeFunction || v.typ == typeNativeFunc }
 
 // Type returns the Lua type name.
 func (v Value) Type() string {
@@ -464,13 +523,16 @@ func (v Value) LessEqual(other Value) (bool, bool) {
 	return false, false
 }
 
-// LuaError wraps a Lua Value as a Go error so that error() can propagate
-// arbitrary Lua values (tables, numbers, etc.) through panic/recover
-// and pcall/xpcall can return the original value instead of a string.
+// LuaError wraps an arbitrary Lua [Value] as a Go error. When Lua code calls
+// error(v), the VM panics with a *LuaError containing v. Protected call
+// boundaries (pcall, xpcall) recover the panic and extract the original value,
+// preserving non-string error objects (tables, numbers, etc.) through the
+// error propagation chain.
 type LuaError struct {
 	Value Value
 }
 
+// Error returns the string representation of the wrapped Lua value.
 func (e *LuaError) Error() string {
 	return ValueToString(e.Value)
 }

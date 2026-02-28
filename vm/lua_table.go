@@ -1,23 +1,37 @@
 package vm
 
-// LuaTable is the interface for Lua table values.
-// The concrete *Table type implements this interface. Custom implementations
-// may be provided for specialized use cases (e.g., virtual filesystems, proxies).
+// LuaTable is the interface for Lua table values. The concrete [Table] type
+// implements this interface. Custom implementations may be provided for
+// specialized use cases (virtual filesystems, proxy objects, etc.).
+//
+// All methods follow Lua 5.4 raw access semantics — metamethods are NOT
+// invoked by Get/Set. The VM handles metamethod dispatch separately.
+//
+// Lua 5.4 Reference: §2.1 (tables), §6.1 (table library).
 type LuaTable interface {
+	// Get returns the value associated with key, or Nil if absent.
 	Get(key Value) Value
+	// Set assigns val to key. Setting a key to Nil removes it.
 	Set(key Value, val Value)
+	// Delete removes the given key from the table.
 	Delete(key Value)
+	// Next returns the next key-value pair after key for table traversal.
+	// Pass Nil as key to get the first pair. Returns (Nil, Nil) at end.
 	Next(key Value) (nextKey Value, val Value)
+	// Len returns the raw length of the table's sequence part.
 	Len() int
+	// Metatable returns the table's metatable, or nil if none is set.
 	Metatable() LuaTable
+	// SetMetatable sets (or clears) the table's metatable.
 	SetMetatable(mt LuaTable)
 }
 
 // Compile-time check that *Table implements LuaTable.
 var _ LuaTable = (*Table)(nil)
 
-// Pre-allocated metamethod name values to avoid repeated NewString allocations
-// in hot paths like metamethod lookups.
+// Pre-allocated metamethod name values. These are created once at init time
+// to avoid repeated string allocation in hot paths like metamethod lookups.
+// The full set covers all Lua 5.4 metamethods (§2.4).
 var (
 	metaIndex     = NewString("__index")
 	metaNewIndex  = NewString("__newindex")
