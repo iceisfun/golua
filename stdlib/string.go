@@ -7,8 +7,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode/utf8"
-
 	"github.com/iceisfun/golua/compiler"
 	"github.com/iceisfun/golua/vm"
 )
@@ -432,14 +430,6 @@ func lookupGsubTable(repl vm.Value, captures []captureValue, wholeMatch string) 
 	panic(fmt.Sprintf("invalid replacement value (a %s)", val.Type()))
 }
 
-// captureStr returns the string representation of a capture value.
-func captureStr(c captureValue) string {
-	if c.isPos {
-		return fmt.Sprintf("%d", c.pos)
-	}
-	return c.str
-}
-
 // string.match(s, pattern [, init])
 func stringMatch(v *vm.VM) int {
 	s := getString(v, 1, "match")
@@ -535,34 +525,6 @@ func stringGmatch(v *vm.VM) int {
 
 	v.Set(0, iter)
 	return 1
-}
-
-// Helper functions
-
-func getString(v *vm.VM, idx int, fname string) string {
-	val := v.Get(idx)
-	if val.IsString() {
-		return val.AsString()
-	}
-	if val.IsNumber() {
-		return val.String()
-	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (string expected, got %s)", idx, fname, val.Type()))
-}
-
-func getInt(v *vm.VM, idx int, fname string) int64 {
-	val := v.Get(idx)
-	if i, ok := val.ToInt(); ok {
-		return i
-	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, val.Type()))
-}
-
-func posRelat(pos int64, len int) int {
-	if pos >= 0 {
-		return int(pos)
-	}
-	return len + int(pos) + 1
 }
 
 func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
@@ -1001,56 +963,6 @@ func luaPointerFormat(val vm.Value) string {
 		return fmt.Sprintf("%p", val.AsTable())
 	}
 	return "(null)"
-}
-
-func toInt(v interface{}) int64 {
-	switch x := v.(type) {
-	case int64:
-		return x
-	case float64:
-		return int64(x)
-	case int:
-		return int64(x)
-	default:
-		return 0
-	}
-}
-
-func toUint(v interface{}) uint64 {
-	return uint64(toInt(v))
-}
-
-func toFloat(v interface{}) float64 {
-	switch x := v.(type) {
-	case float64:
-		return x
-	case int64:
-		return float64(x)
-	case int:
-		return float64(x)
-	default:
-		return 0
-	}
-}
-
-func toString(v interface{}) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	default:
-		return fmt.Sprintf("%v", v)
-	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func utf8Len(s string) int {
-	return utf8.RuneCountInString(s)
 }
 
 // string.dump(function [, strip])
