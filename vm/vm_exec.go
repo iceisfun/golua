@@ -850,7 +850,7 @@ func (vm *VM) execute() ([]Value, error) {
 						fn = mm
 						continue // Retry dispatch with metamethod
 					}
-					return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+					return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
 				}
 			}
 			if fn.IsFunction() {
@@ -1061,13 +1061,13 @@ func (vm *VM) execute() ([]Value, error) {
 							return nil, err
 						}
 					} else {
-						return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+						return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
 					}
 				} else {
-					return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+					return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
 				}
 			} else {
-				return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+				return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
 			}
 			if err != nil {
 				return nil, err
@@ -1308,7 +1308,7 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 		// Check for __call metamethod
 		mm := vm.getMetafield(fn, "__call")
 		if mm.IsNil() {
-			return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+			return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
 		}
 
 		// Build new args: prepend fn (self) so the call becomes mm(fn, args...)
@@ -1349,7 +1349,7 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 
 			vm.callStack = vm.callStack[:len(vm.callStack)-1]
 		} else {
-			return nil, fmt.Errorf("attempt to call a %s value", mm.Type())
+			return nil, vm.runtimeError("attempt to call a %s value", mm.Type())
 		}
 	}
 

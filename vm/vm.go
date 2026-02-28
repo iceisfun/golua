@@ -258,7 +258,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		return vm.ProtectedCall(mm, newArgs)
 	}
 
-	return nil, fmt.Errorf("attempt to call a %s value", fn.Type())
+	return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
 }
 
 // NewCoroutineVM creates a new VM for running a coroutine. The child VM shares
