@@ -1,4 +1,4 @@
-package main
+package golua_test
 
 import (
 	"strings"
