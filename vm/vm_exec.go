@@ -43,7 +43,7 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 			// Store varargs well beyond the frame to prevent overlap with function return values
 			// Native functions can return multiple values which get written to registers,
 			// so we need a buffer between MaxStack and varargs
-			varargPos = base + proto.MaxStack + 256
+			varargPos = base + proto.MaxStack + VarargBufferOffset
 			numVararg = numArgs - numParams
 			vm.ensureStack(varargPos + numVararg)
 			for i := 0; i < numVararg; i++ {
@@ -69,7 +69,7 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		isVararg:  proto.IsVarArg,
 		varargPos: varargPos,
 		numVararg: numVararg,
-		argc:      -1, // Lua frames use vm.top for ArgCount
+		argc:      UseVMTop, // Lua frames use vm.top for ArgCount
 	}
 	vm.callStack = append(vm.callStack, frame)
 
@@ -775,7 +775,7 @@ func (vm *VM) execute() ([]Value, error) {
 					// Reuse the frame
 					frame.closure = closure
 					frame.pc = 0
-					frame.argc = -1 // Lua frame: use vm.top for ArgCount
+					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
 
 					// Set up parameters

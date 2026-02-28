@@ -43,7 +43,7 @@ func (vm *VM) ArgCount() int {
 		return 0
 	}
 	frame := &vm.callStack[len(vm.callStack)-1]
-	if frame.argc >= 0 {
+	if frame.argc != UseVMTop {
 		return frame.argc
 	}
 	return vm.top - frame.base - 1

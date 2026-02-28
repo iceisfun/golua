@@ -67,17 +67,24 @@ type VM struct {
 	outputLines   *[]string // Shared captured output buffer (pointer for coroutine sharing)
 }
 
+// Sentinel values for callFrame fields.
+const (
+	MultiReturn        = -1  // callFrame.nResults: return all results
+	UseVMTop           = -1  // callFrame.argc: compute arg count from vm.top
+	VarargBufferOffset = 256 // stack gap between MaxStack and vararg storage
+)
+
 // callFrame represents a function call on the call stack.
 type callFrame struct {
 	closure    *Closure // Function being executed
 	pc         int      // Program counter (next instruction to execute)
 	base       int      // Base stack index for this frame's registers
-	nResults   int      // Expected number of results (-1 = variable)
+	nResults   int      // Expected number of results (MultiReturn = variable)
 	isVararg   bool     // True if function is vararg
 	varargPos  int      // Stack position where varargs start
 	numVararg  int      // Number of varargs
 	isTailCall bool     // True if this was a tail call
-	argc       int      // Argument count for native functions (-1 = use vm.top)
+	argc       int      // Argument count for native functions (UseVMTop = use vm.top)
 }
 
 // New creates a new VM with an empty global environment.
@@ -236,7 +243,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	}
 
 	if fn.IsFunction() {
-		return vm.call(fn.AsClosure(), args, -1)
+		return vm.call(fn.AsClosure(), args, MultiReturn)
 	}
 
 	// Check for __call metamethod
@@ -297,7 +304,7 @@ func (vm *VM) CoroutineID() int {
 
 // CallCoroutine calls a closure as a coroutine, with yield support.
 func (vm *VM) CallCoroutine(closure *Closure, args []Value) ([]Value, error) {
-	return vm.call(closure, args, -1)
+	return vm.call(closure, args, MultiReturn)
 }
 
 // ThreadObj returns the thread object representing this VM (for coroutine.running).
