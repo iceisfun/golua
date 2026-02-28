@@ -1217,6 +1217,7 @@ func (vm *VM) EnsureStack(n int) {
 	vm.ensureStack(n)
 }
 
+// constToValue converts a compile-time constant to a runtime Value.
 func (vm *VM) constToValue(c compiler.Value) Value {
 	switch c.Type {
 	case compiler.ValNil:
@@ -1236,6 +1237,8 @@ func (vm *VM) constToValue(c compiler.Value) Value {
 	}
 }
 
+// getRK returns either a constant (when k != 0) or a register value.
+// Used by instructions that encode an operand as "register or constant".
 func (vm *VM) getRK(frame *callFrame, c, k int) Value {
 	proto := frame.closure.Proto
 	if k != 0 {
@@ -1243,6 +1246,9 @@ func (vm *VM) getRK(frame *callFrame, c, k int) Value {
 	}
 	return vm.stack[frame.base+c]
 }
+// doCall dispatches an OP_CALL instruction. It collects arguments from the
+// stack, calls the target (closure, native, or __call metamethod), and stores
+// the results back into the caller's registers.
 func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 	fn := vm.stack[frame.base+a]
 

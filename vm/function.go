@@ -40,7 +40,7 @@ type Upvalue struct {
 	vm       *VM   // Reference to VM for open upvalues
 	stackIdx int   // Absolute stack index for open upvalues
 	closed   Value // Holds the value when closed
-	isOpen   bool
+	isOpen   bool  // true while referencing a live stack slot
 }
 
 // NewOpenUpvalue creates an open upvalue pointing to a stack slot.

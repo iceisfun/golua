@@ -6,6 +6,8 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
+// arith performs a register-register arithmetic operation, trying integer
+// fast path first, then float, then metamethods.
 func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	// Coerce string operands to numeric values (preserving integer type)
 	if v1.IsString() {
@@ -104,6 +106,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v2.Type())
 }
 
+// arithK performs a register-constant arithmetic operation.
 func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 	// Integer fast path
 	if v.IsInt() && kv.IsInt() && op != compiler.OP_DIVK && op != compiler.OP_POWK {
@@ -208,6 +211,7 @@ func (vm *VM) arithMetamethod(op compiler.OpCode) string {
 	}
 }
 
+// bitwise performs a register-register bitwise operation, with metamethod fallback.
 func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	// Lua 5.4: bitwise ops do NOT coerce strings (unlike arithmetic)
 	var i1, i2 int64
@@ -255,6 +259,7 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v2.Type())
 }
 
+// bitwiseK performs a register-constant bitwise operation.
 func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
 	// Lua 5.4: bitwise ops do NOT coerce strings
 	var i1, i2 int64

@@ -333,8 +333,6 @@ func (vm *VM) GetCoroutineChannels() (yieldCh, resumeCh chan []Value) {
 
 
 
-
-
 // callMetamethod calls a metamethod with 2 arguments and returns the first result
 func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {
 	if fn.IsFunction() {

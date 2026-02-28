@@ -58,6 +58,7 @@ type Value struct {
 	ptr     any     // string, *Table, *Closure, or NativeFunc
 }
 
+// valueType tags the kind of Lua value stored in a Value struct.
 type valueType byte
 
 const (
@@ -627,6 +628,7 @@ func ParseHexFloat(s string) (float64, bool) {
 	return sign * value, true
 }
 
+// hexDigit returns the numeric value of a hex digit (0-15), or -1 if invalid.
 func hexDigit(c rune) int {
 	switch {
 	case c >= '0' && c <= '9':

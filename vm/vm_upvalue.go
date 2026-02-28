@@ -4,6 +4,8 @@ import "fmt"
 
 // Upvalue management
 
+// findOrCreateUpvalue returns an existing open upvalue for the given stack
+// index, or creates a new one if none exists yet.
 func (vm *VM) findOrCreateUpvalue(stackIdx int) *Upvalue {
 	// Look for existing open upvalue at this index
 	for _, uv := range vm.openUpvalues {
@@ -18,6 +20,8 @@ func (vm *VM) findOrCreateUpvalue(stackIdx int) *Upvalue {
 	return uv
 }
 
+// closeUpvalues closes all open upvalues at or above the given stack level,
+// then calls __close metamethods on any to-be-closed variables in that range.
 func (vm *VM) closeUpvalues(level int) {
 	// Close all upvalues with stack index >= level
 	remaining := vm.openUpvalues[:0]

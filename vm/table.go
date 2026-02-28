@@ -21,12 +21,12 @@ import "fmt"
 // a dead key. This allows ongoing pairs() iteration to skip over deleted
 // entries without losing position. Dead keys are revived on re-insertion.
 type Table struct {
-	array     []Value
-	hash      map[any]Value
-	keys      []any // insertion-ordered hash keys (may contain dead keys)
-	deadKeys  int   // count of keys in t.keys not in t.hash
-	metatable LuaTable
-	isThread  bool  // true if this table represents a coroutine thread
+	array     []Value       // sequential integer-keyed part (indices 1..n)
+	hash      map[any]Value // associative part for non-sequential keys
+	keys      []any         // insertion-ordered hash keys (may contain dead keys)
+	deadKeys  int           // count of keys in t.keys not in t.hash
+	metatable LuaTable      // per-table metatable for operator/event overrides
+	isThread  bool          // true if this table represents a coroutine thread
 }
 
 // SetThread marks this table as a coroutine thread.
