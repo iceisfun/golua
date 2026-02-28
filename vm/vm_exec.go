@@ -1194,6 +1194,12 @@ func (vm *VM) execute() ([]Value, error) {
 }
 // Helper methods
 
+// ensureStack grows the VM stack to hold at least n slots.
+// Panics on stack overflow when limits are set. This panic is always caught
+// by ProtectedCall's recover() — ensureStack is never called outside a
+// protected boundary. The panic is the correct mechanism because it mirrors
+// Lua's longjmp-based error propagation and avoids threading error returns
+// through the entire instruction dispatch loop.
 func (vm *VM) ensureStack(n int) {
 	if vm.limits.MaxStackSlots > 0 && n >= vm.limits.MaxStackSlots {
 		panic(fmt.Sprintf("stack overflow: %d slots exceeds limit %d",
@@ -1205,7 +1211,8 @@ func (vm *VM) ensureStack(n int) {
 }
 
 // EnsureStack grows the stack so that index n is valid.
-// Native functions should call this before writing to high stack indices.
+// Must be called from within a ProtectedCall boundary (i.e., from a
+// NativeFunc). Panics on stack overflow, caught by ProtectedCall's recover.
 func (vm *VM) EnsureStack(n int) {
 	vm.ensureStack(n)
 }

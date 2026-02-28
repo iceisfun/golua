@@ -50,6 +50,8 @@ func (vm *VM) ArgCount() int {
 }
 
 // Push pushes a value onto the stack.
+// Must be called from within a ProtectedCall boundary (i.e., from a
+// NativeFunc). Panics on stack overflow, caught by ProtectedCall's recover.
 func (vm *VM) Push(v Value) {
 	vm.ensureStack(vm.top + 1)
 	vm.stack[vm.top] = v

@@ -76,6 +76,9 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
 			vm.callCloseMetamethod(indices[i], errVal)
 		}()
 	}
+	// Re-raise the last __close handler error after all handlers have run.
+	// This panic propagates to ProtectedCall's recover(), which converts it
+	// to an error return. The re-raise ensures the error is not silently lost.
 	if lastPanic != nil {
 		panic(lastPanic)
 	}

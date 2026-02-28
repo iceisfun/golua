@@ -15,6 +15,19 @@
 // GoLua extensions beyond Lua 5.4: bit32 (from Lua 5.2), chan (Go channels),
 // time (millisecond timing), glob (Go-style pattern matching).
 //
+// # Panic convention
+//
+// All stdlib NativeFuncs run inside [vm.VM.ProtectedCall] boundaries.
+// Panics are the Lua error-raising mechanism (caught by recover in
+// ProtectedCall), analogous to PUC-Rio Lua's longjmp:
+//
+//   - panic("bad argument #N ...") = Lua error() for argument validation
+//   - panic(&vm.LuaError{Value: v}) = preserves non-string error objects
+//   - panic(err.Error()) = re-raises errors from nested ProtectedCalls
+//
+// These panics are intentional and always caught. They never escape to the
+// Go caller.
+//
 // Lua 5.4 Reference: §6 (standard libraries).
 package stdlib
 
