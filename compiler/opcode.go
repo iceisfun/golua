@@ -1,13 +1,32 @@
-// Package compiler transforms a Lua AST into bytecode.
+// Package compiler transforms a Lua AST into executable bytecode.
 //
-// The bytecode format closely follows Lua 5.5's instruction set:
-// 32-bit instructions with a 7-bit opcode and varying operand layouts.
+// The compilation pipeline takes an [ast.Block] (produced by the parser) and
+// emits a [Proto] — a function prototype containing 32-bit instructions, a
+// constant table, upvalue descriptors, and nested child prototypes.
+//
+// The instruction set uses a register-based architecture with 7-bit opcodes
+// and five encoding formats (iABC, iABx, iAsBx, iAx, isJ). Register
+// allocation uses a linear scan over the function's local variables, with
+// freeReg tracking the next available register.
+//
+// Key compiler invariants:
+//   - Registers 0..N-1 hold the function's N local variables.
+//   - Temporary expression results are allocated above local registers.
+//   - Upvalue capture follows Lua 5.4 semantics: open upvalues reference
+//     the enclosing stack, closed upvalues copy to heap on scope exit.
+//   - OP_CLOSE is emitted at scope boundaries where captured locals exist,
+//     and before goto jumps that cross local-variable declarations.
+//
+// Lua 5.4 Reference: §3.3.2 (local variables), §3.4 (expressions),
+// §3.3.11 (to-be-closed variables).
 package compiler
 
 // OpCode is a 7-bit Lua VM opcode.
 type OpCode byte
 
-// Instruction set — order matches Lua 5.5 exactly (ORDER OP).
+// Instruction set — order matches Lua 5.4's opcode numbering (ORDER OP).
+// Each opcode comment shows its format and semantics in Lua register notation.
+// R[x] = register x, K[x] = constant x, UpValue[x] = upvalue x.
 const (
 	OP_MOVE      OpCode = iota // A B     R[A] := R[B]
 	OP_LOADI                   // A sBx   R[A] := sBx
@@ -126,16 +145,17 @@ const (
 	NumOps // sentinel
 )
 
-// OpMode describes the instruction format.
+// OpMode describes the instruction encoding format. Each opcode has exactly
+// one mode that determines how operand fields are packed into the 32-bit word.
 type OpMode byte
 
 const (
-	IABC  OpMode = iota // A B C k
-	IvABC               // A vB vC k
-	IABx                // A Bx
-	IAsBx               // A sBx
-	IAx                 // Ax
-	IsJ                 // sJ
+	IABC  OpMode = iota // A(8) B(8) C(8) k(1) — three operands + flag
+	IvABC               // A(8) vB(6) vC(10) k(1) — variable-width B and C (NEWTABLE, SETLIST)
+	IABx                // A(8) Bx(17) — unsigned extended operand
+	IAsBx               // A(8) sBx(17) — signed extended operand (sBx = Bx - offset)
+	IAx                 // Ax(25) — single wide operand (EXTRAARG)
+	IsJ                 // sJ(25) — signed jump offset (JMP)
 )
 
 // opProperties stores the mode for each opcode.
@@ -252,7 +272,7 @@ func OpName(op OpCode) string {
 	return "???"
 }
 
-// OpMode returns the instruction format for an opcode.
+// GetOpMode returns the instruction encoding format for an opcode.
 func GetOpMode(op OpCode) OpMode {
 	if int(op) < len(opProperties) {
 		return opProperties[op].mode
@@ -260,7 +280,10 @@ func GetOpMode(op OpCode) OpMode {
 	return IABC
 }
 
-// Metamethod indices for OP_MMBIN / OP_MMBINI / OP_MMBINK.
+// Metamethod tag indices used by OP_MMBIN, OP_MMBINI, and OP_MMBINK to
+// identify which metamethod to invoke when operands don't support an
+// arithmetic or comparison operation directly. These match the TM_* order
+// in Lua 5.4's ltm.h.
 const (
 	TM_ADD  = 0
 	TM_SUB  = 1

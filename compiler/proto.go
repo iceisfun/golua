@@ -31,12 +31,27 @@ const (
 	ValString           // string
 )
 
-func NilValue() Value               { return Value{Type: ValNil} }
-func BoolValue(b bool) Value        { if b { return Value{Type: ValTrue} }; return Value{Type: ValFalse} }
-func IntValue(v int64) Value        { return Value{Type: ValInt, IVal: v} }
-func FloatValue(v float64) Value    { return Value{Type: ValFloat, FVal: v} }
-func StringValue(s string) Value    { return Value{Type: ValString, SVal: s} }
+// NilValue returns a nil constant.
+func NilValue() Value { return Value{Type: ValNil} }
 
+// BoolValue returns a boolean constant.
+func BoolValue(b bool) Value {
+	if b {
+		return Value{Type: ValTrue}
+	}
+	return Value{Type: ValFalse}
+}
+
+// IntValue returns an integer constant.
+func IntValue(v int64) Value { return Value{Type: ValInt, IVal: v} }
+
+// FloatValue returns a floating-point constant.
+func FloatValue(v float64) Value { return Value{Type: ValFloat, FVal: v} }
+
+// StringValue returns a string constant.
+func StringValue(s string) Value { return Value{Type: ValString, SVal: s} }
+
+// String returns a human-readable representation of the constant value.
 func (v Value) String() string {
 	switch v.Type {
 	case ValNil:
@@ -85,25 +100,30 @@ type LocalVar struct {
 // Proto — a compiled function prototype
 // ---------------------------------------------------------------------------
 
-// Proto is the result of compiling a Lua function (or the top-level chunk).
+// Proto is the compiled representation of a single Lua function (or the
+// top-level chunk). It contains the instruction stream, constant pool,
+// upvalue descriptors, and references to nested child prototypes.
+//
+// The VM executes a Proto by creating a [vm.Closure] that pairs the Proto
+// with captured upvalues. The top-level chunk is itself a vararg function
+// with a single upvalue (_ENV).
 type Proto struct {
-	Source   string        // source file name
-	LineDef int           // first line defined
-	LastLine int          // last line defined
+	Source   string // source file name (for error messages and debug info)
+	LineDef  int   // first line of the function definition
+	LastLine int   // last line of the function definition
 
-	NumParams int         // number of fixed parameters
-	IsVarArg  bool        // has vararg
+	NumParams int  // number of fixed (named) parameters
+	IsVarArg  bool // true if the function accepts varargs (...)
 
-	MaxStack  int         // maximum stack size (registers) needed
+	MaxStack int // high-water mark of register usage (determines stack allocation)
 
-	Code      []Instruction
-	Lines     []int       // line number for each instruction (parallel to Code)
-	Constants []Value
-	Protos    []*Proto    // nested function prototypes
-	Upvalues  []UpvalDesc
+	Code      []Instruction // instruction stream
+	Lines     []int         // source line number for each instruction (parallel to Code)
+	Constants []Value       // constant pool (strings, numbers, booleans, nil)
+	Protos    []*Proto      // nested function prototypes (referenced by OP_CLOSURE)
+	Upvalues  []UpvalDesc   // upvalue capture descriptors
 
-	// Debug
-	Locals    []LocalVar
+	Locals []LocalVar // debug info: local variable names and scopes
 }
 
 // ---------------------------------------------------------------------------

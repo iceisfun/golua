@@ -10,7 +10,14 @@ import (
 // Public API
 // ---------------------------------------------------------------------------
 
-// Compile compiles a parsed block (chunk) into a top-level function prototype.
+// Compile transforms a parsed AST block into a top-level function prototype.
+// The source parameter names the chunk for error messages and debug info.
+// The returned [Proto] represents a vararg function with a single upvalue (_ENV)
+// that, when executed, runs the chunk's statements.
+//
+// Compile may return an error for programs that exceed compiler limits
+// (register count, local variable count, upvalue count) or contain
+// unresolved goto labels.
 func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, error) {
 	cfg := compileConfig{}
 	for _, o := range opts {

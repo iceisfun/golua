@@ -2,13 +2,16 @@ package compiler
 
 // Instruction is a 32-bit Lua VM instruction.
 //
-// Bit layout (Lua 5.5):
+// Bit layout (from LSB to MSB):
 //
-//	iABC:   C(8) | B(8) | k(1) | A(8) | Op(7)
-//	iABx:   Bx(17)      | A(8) | Op(7)
-//	iAsBx:  sBx(17)     | A(8) | Op(7)   (sBx = Bx - OFFSET_sBx)
-//	iAx:    Ax(25)               | Op(7)
-//	isJ:    sJ(25)               | Op(7)   (sJ = J - OFFSET_sJ)
+//	iABC:   Op(7) | A(8) | k(1) | B(8) | C(8)
+//	iABx:   Op(7) | A(8) | Bx(17)
+//	iAsBx:  Op(7) | A(8) | sBx(17)         where sBx = Bx - OffsetSBx
+//	iAx:    Op(7) | Ax(25)
+//	isJ:    Op(7) | sJ(25)                 where sJ = J - OffsetSJ
+//
+// The opcode occupies the low 7 bits. Field A occupies bits 7-14.
+// Remaining bits are format-dependent.
 type Instruction uint32
 
 // Field sizes.
@@ -60,38 +63,47 @@ func mask1(n, p uint) uint32 {
 // Getters
 // ---------------------------------------------------------------------------
 
+// OpCode extracts the 7-bit opcode from the instruction.
 func (i Instruction) OpCode() OpCode {
 	return OpCode(uint32(i) & mask1(SizeOP, PosOP))
 }
 
+// A extracts the 8-bit A field (register or operand).
 func (i Instruction) A() int {
 	return int((uint32(i) >> PosA) & mask1(SizeA, 0))
 }
 
+// B extracts the 8-bit B field.
 func (i Instruction) B() int {
 	return int((uint32(i) >> PosB) & mask1(SizeB, 0))
 }
 
+// C extracts the 8-bit C field.
 func (i Instruction) C() int {
 	return int((uint32(i) >> PosC) & mask1(SizeC, 0))
 }
 
+// K extracts the 1-bit k flag (used for comparison polarity and RK mode).
 func (i Instruction) K() int {
 	return int((uint32(i) >> PosK) & 1)
 }
 
+// Bx extracts the unsigned 17-bit Bx field (iABx format).
 func (i Instruction) Bx() int {
 	return int((uint32(i) >> PosBx) & mask1(SizeBx, 0))
 }
 
+// SBx extracts the signed 17-bit sBx field (iAsBx format), offset-decoded.
 func (i Instruction) SBx() int {
 	return i.Bx() - OffsetSBx
 }
 
+// Ax extracts the 25-bit Ax field (iAx format, used by OP_EXTRAARG).
 func (i Instruction) Ax() int {
 	return int((uint32(i) >> PosAx) & mask1(SizeAx, 0))
 }
 
+// SJ extracts the signed 25-bit jump offset (isJ format, used by OP_JMP).
 func (i Instruction) SJ() int {
 	return int((uint32(i)>>PosSJ)&mask1(SizeSJ, 0)) - OffsetSJ
 }
