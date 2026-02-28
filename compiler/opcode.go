@@ -280,29 +280,48 @@ func GetOpMode(op OpCode) OpMode {
 	return IABC
 }
 
-// Metamethod tag indices used by OP_MMBIN, OP_MMBINI, and OP_MMBINK to
-// identify which metamethod to invoke when operands don't support an
-// arithmetic or comparison operation directly. These match the TM_* order
-// in Lua 5.4's ltm.h.
-const (
-	TM_ADD  = 0
-	TM_SUB  = 1
-	TM_MUL  = 2
-	TM_MOD  = 3
-	TM_POW  = 4
-	TM_DIV  = 5
-	TM_IDIV = 6
-	TM_BAND = 7
-	TM_BOR  = 8
-	TM_BXOR = 9
-	TM_SHL  = 10
-	TM_SHR  = 11
-	TM_UNM  = 12
-	TM_BNOT = 13
-	TM_LT   = 14
-	TM_LE   = 15
+// MetamethodTag identifies which metamethod to invoke when operands don't
+// support an arithmetic or comparison operation directly. Used by OP_MMBIN,
+// OP_MMBINI, and OP_MMBINK. The ordinals match Lua 5.4's TM_* enum in ltm.h.
+type MetamethodTag int
 
-	TM_CONCAT = 16
-	TM_LEN    = 17
-	TM_EQ     = 18
+const (
+	TM_ADD  MetamethodTag = iota // __add
+	TM_SUB                       // __sub
+	TM_MUL                       // __mul
+	TM_MOD                       // __mod
+	TM_POW                       // __pow
+	TM_DIV                       // __div
+	TM_IDIV                      // __idiv
+	TM_BAND                      // __band
+	TM_BOR                       // __bor
+	TM_BXOR                      // __bxor
+	TM_SHL                       // __shl
+	TM_SHR                       // __shr
+	TM_UNM                       // __unm
+	TM_BNOT                      // __bnot
+	TM_LT                        // __lt
+	TM_LE                        // __le
+
+	TM_CONCAT // __concat
+	TM_LEN    // __len
+	TM_EQ     // __eq
 )
+
+var metamethodNames = [...]string{
+	TM_ADD: "__add", TM_SUB: "__sub", TM_MUL: "__mul",
+	TM_MOD: "__mod", TM_POW: "__pow", TM_DIV: "__div",
+	TM_IDIV: "__idiv", TM_BAND: "__band", TM_BOR: "__bor",
+	TM_BXOR: "__bxor", TM_SHL: "__shl", TM_SHR: "__shr",
+	TM_UNM: "__unm", TM_BNOT: "__bnot", TM_LT: "__lt",
+	TM_LE: "__le", TM_CONCAT: "__concat", TM_LEN: "__len",
+	TM_EQ: "__eq",
+}
+
+// String returns the Lua metamethod name (e.g. "__add").
+func (t MetamethodTag) String() string {
+	if t >= 0 && int(t) < len(metamethodNames) {
+		return metamethodNames[t]
+	}
+	return "???"
+}

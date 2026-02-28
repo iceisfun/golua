@@ -209,7 +209,7 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	c.compileExprToReg(e.Right, rightReg)
 
 	var op OpCode
-	var mmOp int
+	var mmOp MetamethodTag
 	switch e.Op {
 	case "+":
 		op, mmOp = OP_ADD, TM_ADD
@@ -241,7 +241,7 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	}
 
 	fs.emit(ABC(op, reg, leftReg, rightReg, 0), line)
-	fs.emit(ABC(OP_MMBIN, leftReg, rightReg, mmOp, 0), line)
+	fs.emit(ABC(OP_MMBIN, leftReg, rightReg, int(mmOp), 0), line)
 	fs.freeReg = rightReg
 }
 
