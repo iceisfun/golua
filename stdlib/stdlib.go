@@ -1,3 +1,21 @@
+// Package stdlib implements the Lua 5.4 standard library for the GoLua VM.
+//
+// Call [Open] to register all standard library functions in a VM. The
+// following modules are always registered: basic functions (print, assert,
+// type, etc.), string, math, table, coroutine, load, bit32, and utf8.
+//
+// Conditional modules require a provider to be set on the VM before calling
+// Open:
+//   - io: requires [vm.LuaIoProvider] (e.g. [vm.JailedIoProvider])
+//   - os: requires [vm.LuaOsProvider] (e.g. [vm.DefaultOsProvider])
+//   - debug: requires [vm.LuaDebugProvider] (e.g. [vm.DefaultDebugProvider])
+//   - chan: requires [vm.LuaChanProvider] (e.g. [vm.DefaultChanProvider])
+//   - time: requires [vm.LuaTimeProvider] (e.g. [vm.DefaultTimeProvider])
+//
+// GoLua extensions beyond Lua 5.4: bit32 (from Lua 5.2), chan (Go channels),
+// time (millisecond timing), glob (Go-style pattern matching).
+//
+// Lua 5.4 Reference: §6 (standard libraries).
 package stdlib
 
 import (
@@ -11,7 +29,10 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
-// Open registers all standard library functions in the VM.
+// Open registers all standard library functions and modules in the VM.
+// Conditional modules (io, os, debug, chan, time) are only registered if
+// their corresponding provider has been set on the VM. Open also sets
+// _G and _VERSION ("Lua 5.4") as globals.
 func Open(v *vm.VM) {
 	// Basic functions
 	v.SetGlobal("print", vm.NewNativeFunc(luaPrint))
