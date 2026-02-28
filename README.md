@@ -257,15 +257,15 @@ v.Run(proto) // Lua reads with events:recv()
 
 Lua API:
 
-| Function | Description |
-|---|---|
-| `chan.make(size?)` | Create a new channel (0 = unbuffered) |
-| `chan.select(ch1, ..., timeout?)` | Receive from any ready channel; returns `idx, val, ok` |
-| `ch:send(val)` | Blocking send (panics on interrupt or closed channel) |
-| `ch:recv()` | Blocking receive; returns `val, ok` (`ok=false` when closed and drained) |
-| `ch:close()` | Close the channel (panics if already closed) |
-| `ch:try_send(val)` | Non-blocking send; returns `bool` |
-| `ch:try_recv()` | Non-blocking receive; returns `val, ok, received` |
+| Function                          | Description                                                              |
+| --------------------------------- | ------------------------------------------------------------------------ |
+| `chan.make(size?)`                | Create a new channel (0 = unbuffered)                                    |
+| `chan.select(ch1, ..., timeout?)` | Receive from any ready channel; returns `idx, val, ok`                   |
+| `ch:send(val)`                    | Blocking send (panics on interrupt or closed channel)                    |
+| `ch:recv()`                       | Blocking receive; returns `val, ok` (`ok=false` when closed and drained) |
+| `ch:close()`                      | Close the channel (panics if already closed)                             |
+| `ch:try_send(val)`                | Non-blocking send; returns `bool`                                        |
+| `ch:try_recv()`                   | Non-blocking receive; returns `val, ok, received`                        |
 
 `chan.select` returns a 1-based index of the channel that fired, or `0` on timeout. Blocking operations respect context cancellation and call `CheckInterrupt()` after waking.
 
@@ -295,10 +295,10 @@ end
 if time.tick("heartbeat", 500) then send_heartbeat() end
 ```
 
-| Function | Description |
-|---|---|
-| `time.now()` | Current time in milliseconds (integer) |
-| `time.since(t)` | Milliseconds elapsed since `t` |
+| Function                | Description                                              |
+| ----------------------- | -------------------------------------------------------- |
+| `time.now()`            | Current time in milliseconds (integer)                   |
+| `time.since(t)`         | Milliseconds elapsed since `t`                           |
 | `time.tick([name,] ms)` | Returns `true` once per `ms` interval, `false` otherwise |
 
 When `name` is omitted, `time.tick` auto-keys by callsite (`source:line`), so each call location gets an independent timer. The `time` table is **absent by default** and only appears when the host sets a `LuaTimeProvider`.
@@ -325,43 +325,43 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 
 `stdlib.Open(v)` registers all standard modules. Capability-gated modules only appear when their provider is set.
 
-| Module | Requires Provider | Description |
-|--------|-------------------|-------------|
-| `string` | No | Pattern matching, formatting, byte manipulation |
-| `math` | No | Math functions with per-VM deterministic random |
-| `table` | No | Table manipulation (sort, concat, insert, remove, move, pack, unpack) |
-| `coroutine` | No | Coroutine creation and control |
-| `utf8` | No | UTF-8 encoding/decoding (strict mode) |
-| `bit32` | No | Lua 5.2 bitwise compat library |
-| `glob` | No | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`) |
-| `io` | `LuaIoProvider` | File I/O (absent by default) |
-| `os` | `LuaOsProvider` | OS functions: clock, time, date, getenv (absent by default) |
-| `debug` | `LuaDebugProvider` | Diagnostic-only: traceback, stackdepth, where (absent by default) |
-| `chan` | `LuaChanProvider` | Go↔Lua message passing channels (absent by default) |
-| `time` | `LuaTimeProvider` | Millisecond timing: now, since, periodic tick (absent by default) |
+| Module      | Requires Provider  | Description                                                                        |
+| ----------- | ------------------ | ---------------------------------------------------------------------------------- |
+| `string`    | No                 | Pattern matching, formatting, byte manipulation                                    |
+| `math`      | No                 | Math functions with per-VM deterministic random                                    |
+| `table`     | No                 | Table manipulation (sort, concat, insert, remove, move, pack, unpack)              |
+| `coroutine` | No                 | Coroutine creation and control                                                     |
+| `utf8`      | No                 | UTF-8 encoding/decoding (strict mode)                                              |
+| `bit32`     | No                 | Lua 5.2 bitwise compat library                                                     |
+| `glob`      | No                 | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`) |
+| `io`        | `LuaIoProvider`    | File I/O (absent by default)                                                       |
+| `os`        | `LuaOsProvider`    | OS functions: clock, time, date, getenv (absent by default)                        |
+| `debug`     | `LuaDebugProvider` | Diagnostic-only: traceback, stackdepth, where (absent by default)                  |
+| `chan`      | `LuaChanProvider`  | Go↔Lua message passing channels (absent by default)                                |
+| `time`      | `LuaTimeProvider`  | Millisecond timing: now, since, periodic tick (absent by default)                  |
 
 ## Security Model
 
 GoLua is sandboxed by default. The VM starts with no access to the host system. Capabilities are granted explicitly by the host via providers.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                              Host (Go)                               │
-│                                                                      │
-│  ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐ ┌───────────┐│
-│  │IoProvider│ │OsProvider│ │ChanProvider│ │TimeProvider│ │PrintProvider││
-│  │(optional)│ │(optional)│ │(optional)  │ │(optional)  │ │(optional)  ││
-│  └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬──────┘ └─────┬─────┘│
-│       │            │             │              │              │      │
-│  ┌────▼────────────▼─────────────▼──────────────▼──────────────▼───┐ │
-│  │                        VM  (sandbox)                            │ │
-│  │                                                                 │ │
-│  │  string, math, table, coroutine, glob                           │ │
-│  │  io*, os*, debug*, chan*, time*                                 │ │
-│  │  print/warn → PrintProvider (or stdout/stderr fallback)        │ │
-│  │                              (* = provider-gated)               │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                              Host (Go)                                   │
+│                                                                          │
+│  ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐ ┌─────────────┐ │
+│  │IoProvider│ │OsProvider│ │ChanProvider│ │TimeProvider│ │PrintProvider│ │
+│  │(optional)│ │(optional)│ │(optional)  │ │(optional)  │ │(optional)   │ │
+│  └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬──────┘ └─────┬───────┘ │
+│       │            │             │              │              │         │
+│  ┌────▼────────────▼─────────────▼──────────────▼──────────────▼───┐     │
+│  │                        VM  (sandbox)                            │     │
+│  │                                                                 │     │
+│  │  string, math, table, coroutine, glob                           │     │
+│  │  io*, os*, debug*, chan*, time*                                 │     │
+│  │  print/warn → PrintProvider (or stdout/stderr fallback)         │     │
+│  │                              (* = provider-gated)               │     │
+│  └─────────────────────────────────────────────────────────────────┘     │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 - No filesystem access unless explicitly provided
@@ -370,6 +370,7 @@ GoLua is sandboxed by default. The VM starts with no access to the host system. 
 - No ambient authority
 
 The default IO provider (`JailedIoProvider`) enforces:
+
 - root confinement
 - read-only access
 - path traversal prevention
