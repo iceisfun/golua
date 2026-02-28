@@ -59,10 +59,11 @@ func mustRun(t *testing.T, code string) []vm.Value {
 	return results
 }
 
-// ============================================================
-// BUG 1: string.reverse reverses runes instead of bytes
-// Lua strings are byte sequences. string.reverse should reverse bytes.
-// ============================================================
+// ---------------------------------------------------------------------------
+// Bug regressions
+// ---------------------------------------------------------------------------
+
+// string.reverse should reverse bytes, not runes
 func TestBug_StringReverse_ByteVsRune(t *testing.T) {
 	// "é" is U+00E9, encoded as bytes 0xC3 0xA9 in UTF-8
 	// string.reverse should give 0xA9 0xC3 (byte reversal)
@@ -87,10 +88,7 @@ func TestBug_StringReverse_ByteVsRune(t *testing.T) {
 	}
 }
 
-// ============================================================
-// BUG 2: setmetatable doesn't check __metatable protection
-// When a metatable has __metatable field, setmetatable should error.
-// ============================================================
+// setmetatable must check __metatable protection
 func TestBug_SetmetatableProtection(t *testing.T) {
 	_, _, err := runLua(t, `
 		local t = setmetatable({}, {__metatable = "protected"})
@@ -105,10 +103,7 @@ func TestBug_SetmetatableProtection(t *testing.T) {
 	}
 }
 
-// ============================================================
-// BUG 3: tonumber("0xff") returns nil instead of 255
-// Lua 5.4: tonumber("0xff") should parse hex strings at base 10
-// ============================================================
+// tonumber("0xff") must parse hex strings
 func TestBug_TonumberHex(t *testing.T) {
 	results := mustRun(t, `return tonumber("0xff")`)
 
@@ -135,10 +130,7 @@ func TestBug_TonumberHex(t *testing.T) {
 	}
 }
 
-// ============================================================
-// BUG 4: assert() doesn't return all its arguments
-// Lua 5.4: assert(v, msg) returns v, msg on success
-// ============================================================
+// assert() must return all its arguments
 func TestBug_AssertReturnsAllArgs(t *testing.T) {
 	results := mustRun(t, `return assert(1, 2, 3)`)
 
@@ -156,10 +148,7 @@ func TestBug_AssertReturnsAllArgs(t *testing.T) {
 	}
 }
 
-// ============================================================
-// BUG 5: Closures in for loops capture same variable
-// Each iteration should capture its own copy of the loop variable
-// ============================================================
+// Closures in for loops must capture per-iteration copy
 func TestBug_ClosureForLoopCapture(t *testing.T) {
 	results := mustRun(t, `
 		local funcs = {}
@@ -188,9 +177,7 @@ func TestBug_ClosureForLoopCapture(t *testing.T) {
 	}
 }
 
-// ============================================================
-// BUG 6: pcall(non_function) crashes instead of returning error
-// ============================================================
+// pcall(non_function) must not crash
 func TestBug_PcallNonFunction(t *testing.T) {
 	results, _, err := runLua(t, `return pcall(42)`)
 
@@ -209,9 +196,7 @@ func TestBug_PcallNonFunction(t *testing.T) {
 	}
 }
 
-// ============================================================
-// BUG 7: coroutine.wrap — calling after dead should error gracefully
-// ============================================================
+// coroutine.wrap calling after dead should error gracefully
 func TestBug_CoroutineWrapDead(t *testing.T) {
 	results, _, err := runLua(t, `
 		local gen = coroutine.wrap(function()
@@ -239,9 +224,9 @@ func TestBug_CoroutineWrapDead(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Additional edge case tests (not bugs, but coverage)
-// ============================================================
+// ---------------------------------------------------------------------------
+// Edge case coverage
+// ---------------------------------------------------------------------------
 
 func TestEdge_StringSubNegative(t *testing.T) {
 	results := mustRun(t, `return string.sub("hello", -3)`)
@@ -582,11 +567,11 @@ func TestEdge_TonumberBase(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Adjacent tests for bug fixes
-// ============================================================
+// ---------------------------------------------------------------------------
+// Adjacent edge cases for bug fixes
+// ---------------------------------------------------------------------------
 
-func TestAdj_StringUpperLowerNonASCII(t *testing.T) {
+func TestEdge_StringUpperLowerNonASCII(t *testing.T) {
 	// string.upper/lower must only affect ASCII a-z/A-Z, leave other bytes intact
 	results := mustRun(t, `
 		local s = "heLLo\xC3\xA9"  -- mixed case + non-ASCII bytes
@@ -606,14 +591,14 @@ func TestAdj_StringUpperLowerNonASCII(t *testing.T) {
 	}
 }
 
-func TestAdj_StringReverseASCII(t *testing.T) {
+func TestEdge_StringReverseASCII(t *testing.T) {
 	results := mustRun(t, `return string.reverse("abcde")`)
 	if len(results) == 0 || results[0].AsString() != "edcba" {
 		t.Errorf("string.reverse('abcde') = %v, expected 'edcba'", results[0])
 	}
 }
 
-func TestAdj_GetmetatableProtected(t *testing.T) {
+func TestEdge_GetmetatableProtected(t *testing.T) {
 	// getmetatable should return __metatable value, not the real metatable
 	results := mustRun(t, `
 		local mt = {__metatable = "protected"}
@@ -625,7 +610,7 @@ func TestAdj_GetmetatableProtected(t *testing.T) {
 	}
 }
 
-func TestAdj_SetmetatableProtectedError(t *testing.T) {
+func TestEdge_SetmetatableProtectedError(t *testing.T) {
 	// Verify the error message matches Lua 5.4
 	_, _, err := runLua(t, `
 		local t = setmetatable({}, {__metatable = "no touch"})
@@ -639,7 +624,7 @@ func TestAdj_SetmetatableProtectedError(t *testing.T) {
 	}
 }
 
-func TestAdj_TonumberNegativeHex(t *testing.T) {
+func TestEdge_TonumberNegativeHex(t *testing.T) {
 	// tonumber("-0xff") — Lua 5.4 does not support negative hex prefix
 	// but tonumber with explicit base should work for hex
 	results := mustRun(t, `return tonumber("0xA0")`)
@@ -650,7 +635,7 @@ func TestAdj_TonumberNegativeHex(t *testing.T) {
 	}
 }
 
-func TestAdj_AssertSingleArg(t *testing.T) {
+func TestEdge_AssertSingleArg(t *testing.T) {
 	results := mustRun(t, `return assert(42)`)
 	if len(results) != 1 {
 		t.Errorf("assert(42) returned %d values, expected 1", len(results))
@@ -660,7 +645,7 @@ func TestAdj_AssertSingleArg(t *testing.T) {
 	}
 }
 
-func TestAdj_AssertFalseMessage(t *testing.T) {
+func TestEdge_AssertFalseMessage(t *testing.T) {
 	_, _, err := runLua(t, `assert(false, "custom error")`)
 	if err == nil {
 		t.Fatal("assert(false) should error")
@@ -670,7 +655,7 @@ func TestAdj_AssertFalseMessage(t *testing.T) {
 	}
 }
 
-func TestAdj_ForLoopClosureNested(t *testing.T) {
+func TestEdge_ForLoopClosureNested(t *testing.T) {
 	// Nested for loops — each level should capture its own variable
 	results := mustRun(t, `
 		local funcs = {}
@@ -698,7 +683,7 @@ func TestAdj_ForLoopClosureNested(t *testing.T) {
 	}
 }
 
-func TestAdj_GenericForClosureCapture(t *testing.T) {
+func TestEdge_GenericForClosureCapture(t *testing.T) {
 	// Generic for (ipairs) should also capture per-iteration
 	results := mustRun(t, `
 		local funcs = {}
@@ -721,9 +706,9 @@ func TestAdj_GenericForClosureCapture(t *testing.T) {
 	}
 }
 
-// ============================================================
-// Probe tests: comprehensive edge case coverage
-// ============================================================
+// ---------------------------------------------------------------------------
+// Comprehensive edge case probes
+// ---------------------------------------------------------------------------
 
 func TestProbe_FormatSNonString(t *testing.T) {
 	results := mustRun(t, `
@@ -1287,7 +1272,9 @@ func TestProbe_VarargNilCount(t *testing.T) {
 	}
 }
 
-// ---- pairs iteration with key deletion ----
+// ---------------------------------------------------------------------------
+// Iterator edge cases
+// ---------------------------------------------------------------------------
 
 func TestPairs_DeleteCurrentKey(t *testing.T) {
 	// Deleting the current key during iteration should not terminate early
