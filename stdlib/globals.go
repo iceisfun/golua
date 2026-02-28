@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 
@@ -348,8 +347,6 @@ func luaCollectgarbage(v *vm.VM) int {
 	}
 }
 
-var warningEnabled = true
-
 // warn(msg1 [, msg2, ...])
 func luaWarn(v *vm.VM) int {
 	argc := v.ArgCount()
@@ -364,13 +361,13 @@ func luaWarn(v *vm.VM) int {
 	if len(s) > 0 && s[0] == '@' {
 		switch s {
 		case "@off":
-			warningEnabled = false
+			v.SetWarnEnabled(false)
 		case "@on":
-			warningEnabled = true
+			v.SetWarnEnabled(true)
 		}
 		return 0
 	}
-	if warningEnabled {
+	if v.WarnEnabled() {
 		var buf strings.Builder
 		buf.WriteString("Lua warning: ")
 		buf.WriteString(s)
@@ -381,7 +378,7 @@ func luaWarn(v *vm.VM) int {
 			}
 			buf.WriteString(arg.AsString())
 		}
-		fmt.Fprintln(os.Stderr, buf.String())
+		v.Warn(buf.String())
 	}
 	return 0
 }

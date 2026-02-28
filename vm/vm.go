@@ -57,6 +57,10 @@ type VM struct {
 	// Time provider support
 	timeProvider LuaTimeProvider // Provider for time operations (optional)
 
+	// Print/warn provider support
+	printProvider LuaPrintProvider // Provider for print/warn output routing (optional)
+	warnEnabled   bool             // Per-VM warn flag (controlled by warn("@on")/"@off")
+
 	// Execution control
 	ctx        context.Context // nil = no cancellation checking
 	limits     Limits          // zero values = no limit
@@ -91,8 +95,9 @@ type callFrame struct {
 // Optional VMOption arguments can configure context and limits.
 func New(opts ...VMOption) *VM {
 	vm := &VM{
-		stack:   make([]Value, 256),
-		globals: NewEmptyTable(),
+		stack:       make([]Value, 256),
+		globals:     NewEmptyTable(),
+		warnEnabled: true,
 	}
 	for _, opt := range opts {
 		opt(vm)
@@ -281,6 +286,8 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		debugProvider: parent.debugProvider,
 		chanProvider:  parent.chanProvider,
 		timeProvider:  parent.timeProvider,
+		printProvider: parent.printProvider,
+		warnEnabled:   parent.warnEnabled,
 		ctx:           parent.ctx,
 		limits:        parent.limits,
 		captureOutput: parent.captureOutput,

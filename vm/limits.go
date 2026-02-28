@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/iceisfun/golua/compiler"
 )
@@ -64,14 +65,30 @@ func WithCaptureOutput(capture bool) VMOption {
 	}
 }
 
-// Print writes a line to captured output (if capture is enabled) or stdout.
-// This is intended to be called by the stdlib print implementation.
+// Print writes a line to the print provider, captured output buffer, or stdout.
+// When a LuaPrintProvider is set, output is routed to it exclusively.
+// Otherwise, falls back to the capture buffer (if enabled) or stdout.
 func (vm *VM) Print(line string) {
+	if vm.printProvider != nil {
+		vm.printProvider.Print(line)
+		return
+	}
 	if vm.captureOutput && vm.outputLines != nil {
 		*vm.outputLines = append(*vm.outputLines, line)
 		return
 	}
 	fmt.Println(line)
+}
+
+// Warn writes a warning message to the print provider or stderr.
+// When a LuaPrintProvider is set, output is routed to it exclusively.
+// Otherwise, falls back to stderr.
+func (vm *VM) Warn(msg string) {
+	if vm.printProvider != nil {
+		vm.printProvider.Warn(msg)
+		return
+	}
+	fmt.Fprintln(os.Stderr, msg)
 }
 
 // OutputLines returns all captured output lines.

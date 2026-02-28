@@ -156,6 +156,31 @@ func (vm *VM) TimeProvider() LuaTimeProvider {
 	return vm.timeProvider
 }
 
+// Print/warn provider
+
+// SetPrintProvider sets the print/warn output provider for this VM.
+// When set, Print() and Warn() delegate to the provider instead of
+// writing to stdout/stderr (or the capture buffer).
+func (vm *VM) SetPrintProvider(provider LuaPrintProvider) {
+	vm.printProvider = provider
+}
+
+// PrintProvider returns the current print provider, or nil if none is set.
+func (vm *VM) PrintProvider() LuaPrintProvider {
+	return vm.printProvider
+}
+
+// SetWarnEnabled sets whether warn() produces output.
+// This is the per-VM equivalent of warn("@on")/"@off".
+func (vm *VM) SetWarnEnabled(enabled bool) {
+	vm.warnEnabled = enabled
+}
+
+// WarnEnabled returns whether warn() output is enabled for this VM.
+func (vm *VM) WarnEnabled() bool {
+	return vm.warnEnabled
+}
+
 // Context and limits
 
 // SetContext sets the context for cooperative cancellation.

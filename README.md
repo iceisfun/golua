@@ -23,6 +23,7 @@ A Lua 5.4 interpreter written in Go, with experimental 5.5 features. Pure Go, ze
 - Sandboxed OS via `LuaOsProvider` (includes `DefaultOsProvider` with optional env filtering)
 - Capability-gated channels for Go↔Lua message passing via `LuaChanProvider`
 - Millisecond-precision timing via `LuaTimeProvider` (`time.now`, `time.since`, `time.tick`)
+- Output interception via `LuaPrintProvider` (redirect `print()`/`warn()` to logging, per-VM warn isolation)
 - Context cancellation and execution limits (call depth, stack, instructions)
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
 - Single static binary when compiled
@@ -78,6 +79,7 @@ See the `examples/` directory for complete examples:
 - **[chan](examples/chan/)** - Go↔Lua channels with chan.select ([go_to_lua](examples/chan/go_to_lua/), [lua_to_go](examples/chan/lua_to_go/), [multi_go_to_lua](examples/chan/multi_go_to_lua/))
 - **[glob](examples/glob/)** - Go-style case-insensitive pattern matching from Go and Lua
 - **[time](examples/time/)** - Millisecond timing: now, since, and periodic tick
+- **[print_provider](examples/print_provider/)** - Intercept and redirect print/warn output with LuaPrintProvider
 
 ## Go Interop
 
@@ -164,6 +166,29 @@ stdlib.Open(v)
 // Lua now has debug.traceback, debug.stackdepth, debug.where
 // No hooks, no local/upvalue mutation, no bytecode inspection
 ```
+
+### Print Interception
+
+Route `print()` and `warn()` output through your logging infrastructure:
+
+```go
+type LoggingProvider struct{ Name string }
+
+func (p *LoggingProvider) Print(msg string) {
+    log.Printf("[%s] %s", p.Name, msg)
+}
+func (p *LoggingProvider) Warn(msg string) {
+    log.Printf("[%s] WARN: %s", p.Name, msg)
+}
+
+v := vm.New()
+v.SetPrintProvider(&LoggingProvider{Name: "inventory.lua"})
+stdlib.Open(v)
+```
+
+Without a provider, `print()` writes to stdout (or the `WithCaptureOutput` buffer) and `warn()` writes to stderr — matching standard Lua behavior.
+
+The `warn("@on")`/`warn("@off")` flag is per-VM, so disabling warnings in one VM does not affect others.
 
 ### Context Cancellation and Execution Limits
 
@@ -320,22 +345,23 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 GoLua is sandboxed by default. The VM starts with no access to the host system. Capabilities are granted explicitly by the host via providers.
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                         Host (Go)                          │
-│                                                            │
-│   ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐  │
-│   │IoProvider│ │OsProvider│ │ChanProvider│ │TimeProvider│  │
-│   │(optional)│ │(optional)│ │(optional)  │ │(optional)  │  │
-│   └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬──────┘  │
-│        │            │             │              │         │
-│   ┌────▼────────────▼─────────────▼──────────────▼──────┐  │
-│   │                  VM  (sandbox)                      │  │
-│   │                                                     │  │
-│   │  string, math, table, coroutine, glob               │  │
-│   │  io*, os*, debug*, chan*, time*                     │  │
-│   │                          (* = provider-gated)       │  │
-│   └─────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                              Host (Go)                               │
+│                                                                      │
+│  ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐ ┌───────────┐│
+│  │IoProvider│ │OsProvider│ │ChanProvider│ │TimeProvider│ │PrintProvider││
+│  │(optional)│ │(optional)│ │(optional)  │ │(optional)  │ │(optional)  ││
+│  └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬──────┘ └─────┬─────┘│
+│       │            │             │              │              │      │
+│  ┌────▼────────────▼─────────────▼──────────────▼──────────────▼───┐ │
+│  │                        VM  (sandbox)                            │ │
+│  │                                                                 │ │
+│  │  string, math, table, coroutine, glob                           │ │
+│  │  io*, os*, debug*, chan*, time*                                 │ │
+│  │  print/warn → PrintProvider (or stdout/stderr fallback)        │ │
+│  │                              (* = provider-gated)               │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 - No filesystem access unless explicitly provided
