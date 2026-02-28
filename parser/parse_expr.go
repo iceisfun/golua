@@ -8,34 +8,82 @@ import (
 // ---------------------------------------------------------------------------
 // Expression parsing (precedence climbing)
 // ---------------------------------------------------------------------------
+//
+// The parser uses Lua's precedence-climbing scheme:
+// - every binary operator has a left and right binding priority
+// - higher numbers bind tighter
+// - right-associative operators use right = left-1 (e.g. "^", "..")
+//
+// parseSubExpr(limit) parses an expression whose next operator must have
+// left priority strictly greater than limit to continue binding.
 
-type binPriority struct{ left, right int }
+type precedence int
 
-var priorities = map[string]binPriority{
-	"+":   {10, 10},
-	"-":   {10, 10},
-	"*":   {11, 11},
-	"%":   {11, 11},
-	"^":   {14, 13}, // right-assoc
-	"/":   {11, 11},
-	"//":  {11, 11},
-	"&":   {6, 6},
-	"|":   {4, 4},
-	"~":   {5, 5},
-	"<<":  {7, 7},
-	">>":  {7, 7},
-	"..":  {9, 8}, // right-assoc
-	"==":  {3, 3},
-	"<":   {3, 3},
-	"<=":  {3, 3},
-	"~=":  {3, 3},
-	">":   {3, 3},
-	">=":  {3, 3},
-	"and": {2, 2},
-	"or":  {1, 1},
+const (
+	precedenceLowest precedence = iota
+	precedenceOr
+	precedenceAnd
+	precedenceCompare
+	precedenceBitOr
+	precedenceBitXor
+	precedenceBitAnd
+	precedenceShift
+	precedenceConcatRight
+	precedenceConcatLeft
+	precedenceAdd
+	precedenceMul
+	precedenceUnary
+	precedencePowRight
+	precedencePowLeft
+)
+
+type binPriority struct {
+	left  precedence
+	right precedence
 }
 
-const unaryPriority = 12
+func leftAssoc(level precedence) binPriority {
+	return binPriority{left: level, right: level}
+}
+
+func rightAssoc(level precedence) binPriority {
+	return binPriority{left: level, right: level - 1}
+}
+
+func (p binPriority) binds(limit precedence) bool {
+	return p.left > limit
+}
+
+type binPriorities map[string]binPriority
+
+func (bp binPriorities) lookup(op string) (binPriority, bool) {
+	pri, ok := bp[op]
+	return pri, ok
+}
+
+var priorities = binPriorities{
+	"+":   leftAssoc(precedenceAdd),
+	"-":   leftAssoc(precedenceAdd),
+	"*":   leftAssoc(precedenceMul),
+	"%":   leftAssoc(precedenceMul),
+	"^":   rightAssoc(precedencePowLeft),
+	"/":   leftAssoc(precedenceMul),
+	"//":  leftAssoc(precedenceMul),
+	"&":   leftAssoc(precedenceBitAnd),
+	"|":   leftAssoc(precedenceBitOr),
+	"~":   leftAssoc(precedenceBitXor),
+	"<<":  leftAssoc(precedenceShift),
+	">>":  leftAssoc(precedenceShift),
+	"..":  rightAssoc(precedenceConcatLeft),
+	"==":  leftAssoc(precedenceCompare),
+	"<":   leftAssoc(precedenceCompare),
+	"<=":  leftAssoc(precedenceCompare),
+	"~=":  leftAssoc(precedenceCompare),
+	">":   leftAssoc(precedenceCompare),
+	">=":  leftAssoc(precedenceCompare),
+	"and": leftAssoc(precedenceAnd),
+	"or":  leftAssoc(precedenceOr),
+}
 
 func (p *parser) getBinop() string {
 	switch p.tok.Type {
@@ -102,11 +150,11 @@ func (p *parser) getUnop() string {
 }
 
 func (p *parser) parseExpr() ast.Expr {
-	return p.parseSubExpr(0)
+	return p.parseSubExpr(precedenceLowest)
 }
 
 // parseSubExpr -> (simpleexp | unop subexpr) { binop subexpr }
-func (p *parser) parseSubExpr(limit int) ast.Expr {
+func (p *parser) parseSubExpr(limit precedence) ast.Expr {
 	if p.err != nil {
 		return ast.NewNilExpr(p.pos())
 	}
@@ -116,28 +164,13 @@ func (p *parser) parseSubExpr(limit int) ast.Expr {
 	if uop := p.getUnop(); uop != "" {
 		pos := p.pos()
 		p.advance()
-		operand := p.parseSubExpr(unaryPriority)
+		operand := p.parseSubExpr(precedenceUnary)
 		expr = ast.NewUnopExpr(pos, uop, operand)
 	} else {
 		expr = p.parseSimpleExpr()
 	}
 
-	for {
-		op := p.getBinop()
-		if op == "" {
-			break
-		}
-		pri := priorities[op]
-		if pri.left <= limit {
-			break
-		}
-		pos := p.pos()
-		p.advance()
-		right := p.parseSubExpr(pri.right)
-		expr = ast.NewBinopExpr(pos, op, expr, right)
-	}
-
-	return expr
+	return p.continueBinExpr(expr, limit)
 }
 
 func (p *parser) parseSimpleExpr() ast.Expr {
@@ -340,7 +373,7 @@ func (p *parser) parseField() *ast.TableField {
 		// Not a record field — build the expression starting from the name
 		nameExpr := ast.NewNameExpr(pos, nameTok.Literal)
 		expr := p.continueSuffixedExpr(nameExpr)
-		expr = p.continueBinExpr(expr, 0)
+		expr = p.continueBinExpr(expr, precedenceLowest)
 		return ast.NewTableField(pos, nil, expr)
 	}
 
@@ -350,14 +383,14 @@ func (p *parser) parseField() *ast.TableField {
 }
 
 // continueBinExpr handles residual binary operators after partial expression parsing.
-func (p *parser) continueBinExpr(expr ast.Expr, limit int) ast.Expr {
+func (p *parser) continueBinExpr(expr ast.Expr, limit precedence) ast.Expr {
 	for {
 		op := p.getBinop()
 		if op == "" {
 			break
 		}
-		pri := priorities[op]
-		if pri.left <= limit {
+		pri, ok := priorities.lookup(op)
+		if !ok || !pri.binds(limit) {
 			break
 		}
 		pos := p.pos()

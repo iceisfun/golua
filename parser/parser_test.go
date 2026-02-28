@@ -17,6 +17,25 @@ func dump(t *testing.T, src string) string {
 	return ast.DumpString(block)
 }
 
+func parseSingleReturnExpr(t *testing.T, src string) ast.Expr {
+	t.Helper()
+	block, err := Parse("test", src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(block.Stmts) != 1 {
+		t.Fatalf("expected one statement, got %d", len(block.Stmts))
+	}
+	ret, ok := block.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return statement, got %T", block.Stmts[0])
+	}
+	if len(ret.Values) != 1 {
+		t.Fatalf("expected one return value, got %d", len(ret.Values))
+	}
+	return ret.Values[0]
+}
+
 // helper: assert parse fails
 func expectError(t *testing.T, src, want string) {
 	t.Helper()
@@ -59,14 +78,30 @@ func TestBinaryOps(t *testing.T) {
 }
 
 func TestRightAssocPow(t *testing.T) {
-	d := dump(t, "return 2 ^ 3 ^ 4")
-	// Should parse as 2 ^ (3 ^ 4)
-	contains(t, d, "(binop ^")
+	expr := parseSingleReturnExpr(t, "return 2 ^ 3 ^ 4")
+	top, ok := expr.(*ast.BinopExpr)
+	if !ok || top.Op != "^" {
+		t.Fatalf("expected top-level ^ binop, got %T (%v)", expr, expr)
+	}
+	if _, ok := top.Left.(*ast.NumberExpr); !ok {
+		t.Fatalf("expected left operand to be number, got %T", top.Left)
+	}
+	right, ok := top.Right.(*ast.BinopExpr)
+	if !ok || right.Op != "^" {
+		t.Fatalf("expected right operand to be ^ binop, got %T (%v)", top.Right, top.Right)
+	}
 }
 
 func TestRightAssocConcat(t *testing.T) {
-	d := dump(t, "return 'a' .. 'b' .. 'c'")
-	contains(t, d, "(binop ..")
+	expr := parseSingleReturnExpr(t, "return 'a' .. 'b' .. 'c'")
+	top, ok := expr.(*ast.BinopExpr)
+	if !ok || top.Op != ".." {
+		t.Fatalf("expected top-level .. binop, got %T (%v)", expr, expr)
+	}
+	right, ok := top.Right.(*ast.BinopExpr)
+	if !ok || right.Op != ".." {
+		t.Fatalf("expected right operand to be .. binop, got %T (%v)", top.Right, top.Right)
+	}
 }
 
 func TestUnaryOps(t *testing.T) {
@@ -78,16 +113,27 @@ func TestUnaryOps(t *testing.T) {
 }
 
 func TestUnaryPrecedence(t *testing.T) {
-	d := dump(t, "return -2 ^ 3")
-	// Should parse as -(2 ^ 3): unary has priority 12, ^ left is 14
-	// Actually: unary is parsed with priority 12. ^ has left priority 14 > 12,
-	// so ^ binds tighter. So it's ((-2) ^ 3)? No...
-	// Lua: -2^3 = -(2^3) = -8. The unary operator applies to the RESULT of ^.
-	// In Lua's parser: unary calls subexpr(UNARY_PRIORITY=12).
-	// Inside that, simpleexp returns 2, then ^ has left priority 14 > 12,
-	// so it binds. So operand of - is (2^3). Correct!
-	contains(t, d, "(unop -")
-	contains(t, d, "(binop ^")
+	expr := parseSingleReturnExpr(t, "return -2 ^ 3")
+	un, ok := expr.(*ast.UnopExpr)
+	if !ok || un.Op != "-" {
+		t.Fatalf("expected top-level unary -, got %T (%v)", expr, expr)
+	}
+	bin, ok := un.Operand.(*ast.BinopExpr)
+	if !ok || bin.Op != "^" {
+		t.Fatalf("expected unary operand to be ^ binop, got %T (%v)", un.Operand, un.Operand)
+	}
+}
+
+func TestUnaryBindsTighterThanMul(t *testing.T) {
+	expr := parseSingleReturnExpr(t, "return -2 * 3")
+	bin, ok := expr.(*ast.BinopExpr)
+	if !ok || bin.Op != "*" {
+		t.Fatalf("expected top-level * binop, got %T (%v)", expr, expr)
+	}
+	left, ok := bin.Left.(*ast.UnopExpr)
+	if !ok || left.Op != "-" {
+		t.Fatalf("expected left operand to be unary -, got %T (%v)", bin.Left, bin.Left)
+	}
 }
 
 // ---------------------------------------------------------------------------

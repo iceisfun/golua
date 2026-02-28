@@ -10,6 +10,19 @@ package compiler
 //	iAx:    Op(7) | Ax(25)
 //	isJ:    Op(7) | sJ(25)                 where sJ = J - OffsetSJ
 //
+// Bit positions:
+//
+//	 31       24 23       16 15  14        7 6        0
+//	+----------+-----------+---+-----------+----------+
+//	| C (8)    | B (8)     | k | A (8)     | Op (7)   |   iABC
+//	+----------+-----------+---+-----------+----------+
+//	|        Bx (17)           | A (8)     | Op (7)   |   iABx / iAsBx
+//	+--------------------------+-----------+----------+
+//	|             Ax (25)                  | Op (7)   |   iAx
+//	+--------------------------------------+----------+
+//	|             sJ (25)                  | Op (7)   |   isJ
+//	+--------------------------------------+----------+
+//
 // The opcode occupies the low 7 bits. Field A occupies bits 7-14.
 // Remaining bits are format-dependent.
 type Instruction uint32
@@ -51,7 +64,10 @@ const (
 	OffsetSC  = MaxArgC >> 1  // 127
 	OffsetSJ  = MaxArgSJ >> 1
 
-	NoReg = MaxArgA // 255 — invalid register sentinel
+	// NoReg is the invalid-register sentinel. It equals MaxArgA (255),
+	// the largest value that fits in the 8-bit A field, and is used to
+	// signal "no register" in instruction operands.
+	NoReg = MaxArgA // 255
 )
 
 // mask1 returns a bitmask with n 1-bits starting at position p.
