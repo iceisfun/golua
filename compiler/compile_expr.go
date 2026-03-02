@@ -600,13 +600,6 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 				kIdx := fs.stringConstant(key.Value)
 				fs.emitSetField(reg, kIdx, valReg, line)
 				fs.freeReg = valReg
-			case *ast.NameExpr:
-				// name = value in table constructor
-				valReg := fs.reserveReg()
-				c.compileExprToReg(f.Value, valReg)
-				kIdx := fs.stringConstant(key.Name)
-				fs.emitSetField(reg, kIdx, valReg, line)
-				fs.freeReg = valReg
 			default:
 				keyReg := fs.reserveReg()
 				c.compileExprToReg(f.Key, keyReg)
