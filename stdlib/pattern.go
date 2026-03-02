@@ -86,6 +86,9 @@ func (ms *matchState) match(si int, pp int) int {
 			if next == 'f' {
 				return ms.matchFrontier(si, pp)
 			}
+			if next == '0' {
+				panic("invalid capture index %0")
+			}
 			if next >= '1' && next <= '9' {
 				return ms.matchBackRef(si, pp)
 			}
@@ -237,14 +240,14 @@ func (ms *matchState) matchFrontier(si, pp int) int {
 func (ms *matchState) matchBackRef(si, pp int) int {
 	l := int(ms.p[pp+1] - '1')
 	if l < 0 || l >= ms.level {
-		panic(fmt.Sprintf("invalid back reference %%%d", l+1))
+		panic(fmt.Sprintf("invalid capture index %%%d", l+1))
 	}
 	c := ms.cap[l]
 	if c.slen == capUnfinished {
-		panic(fmt.Sprintf("invalid back reference %%%d", l+1))
+		panic(fmt.Sprintf("invalid capture index %%%d", l+1))
 	}
 	if c.slen == capPosition {
-		panic(fmt.Sprintf("invalid back reference %%%d", l+1))
+		panic(fmt.Sprintf("invalid capture index %%%d", l+1))
 	}
 	capStr := ms.s[c.init : c.init+c.slen]
 	if si+len(capStr) > len(ms.s) {

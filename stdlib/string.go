@@ -347,7 +347,7 @@ func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureVa
 						result.WriteString(c.str)
 					}
 				} else {
-					panic(fmt.Sprintf("invalid use of '%%%c' in replacement string", next))
+					panic(fmt.Sprintf("invalid capture index %%%c", next))
 				}
 				i++
 				continue
@@ -356,7 +356,7 @@ func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureVa
 				i++
 				continue
 			}
-			panic(fmt.Sprintf("invalid use of '%%%c' in replacement string", next))
+			panic("invalid use of '%' in replacement string")
 		}
 		result.WriteByte(repl[i])
 	}
