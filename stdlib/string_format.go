@@ -144,8 +144,17 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		case 'F':
 			panic("invalid conversion '%F' to 'format'")
 		case 's':
-			goSpec := spec + "s"
-			result.WriteString(fmt.Sprintf(goSpec, tolstring(v, val)))
+			str := tolstring(v, val)
+			if spec != "%" && strings.ContainsRune(str, 0) {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (string contains zeros)", argIdx+1))
+			}
+			if spec == "%" {
+				// No modifiers: embed string directly (preserving null bytes)
+				result.WriteString(str)
+			} else {
+				goSpec := spec + "s"
+				result.WriteString(fmt.Sprintf(goSpec, str))
+			}
 		case 'q':
 			result.WriteString(luaQuote(val, argIdx+1))
 		case 'c':
