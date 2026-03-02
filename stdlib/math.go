@@ -167,7 +167,7 @@ func mathLog(v *vm.VM) int {
 func mathMax(v *vm.VM) int {
 	n := v.ArgCount()
 	if n == 0 {
-		panic("bad argument #1 to 'max' (number expected, got no value)")
+		panic("bad argument #1 to 'max' (value expected)")
 	}
 
 	maxVal := v.Get(1)
@@ -192,7 +192,7 @@ func mathMax(v *vm.VM) int {
 func mathMin(v *vm.VM) int {
 	n := v.ArgCount()
 	if n == 0 {
-		panic("bad argument #1 to 'min' (number expected, got no value)")
+		panic("bad argument #1 to 'min' (value expected)")
 	}
 
 	minVal := v.Get(1)
