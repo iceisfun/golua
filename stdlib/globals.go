@@ -179,8 +179,8 @@ func luaToNumber(v *vm.VM) int {
 		if len(body) >= 2 && body[0] == '0' && (body[1] == 'x' || body[1] == 'X') {
 			hex := body[2:]
 			if hex != "" && !strings.ContainsAny(hex, ".pP") {
-				if i, err := strconv.ParseInt(hex, 16, 64); err == nil {
-					v.Set(0, vm.NewInt(sign*i))
+				if u, err := strconv.ParseUint(hex, 16, 64); err == nil {
+					v.Set(0, vm.NewInt(sign*int64(u)))
 					return 1
 				}
 			}
