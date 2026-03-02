@@ -256,7 +256,7 @@ func mathRandomClosure(rng *rand.Rand) vm.NativeFunc {
 			} else {
 				v.Set(0, vm.NewInt(randRange(rng, 1, upper)))
 			}
-		default:
+		case 2:
 			// random(m, n) -> [m, n]
 			lower := getInt(v, 1, "random")
 			upper := getInt(v, 2, "random")
@@ -264,6 +264,8 @@ func mathRandomClosure(rng *rand.Rand) vm.NativeFunc {
 				panic("bad argument #2 to 'random' (interval is empty)")
 			}
 			v.Set(0, vm.NewInt(randRange(rng, lower, upper)))
+		default:
+			panic("wrong number of arguments")
 		}
 		return 1
 	}
