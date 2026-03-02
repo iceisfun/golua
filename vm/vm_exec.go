@@ -478,7 +478,7 @@ func (vm *VM) execute() ([]Value, error) {
 				op := "__len"
 				mm := vm.getMetafield(v, op)
 				if !mm.IsNil() {
-					res, err := vm.callMetamethod(mm, v, Nil)
+					res, err := vm.callMetamethod(mm, v, v)
 					if err != nil {
 						return nil, err
 					}

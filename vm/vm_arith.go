@@ -9,6 +9,9 @@ import (
 // arith performs a register-register arithmetic operation, trying integer
 // fast path first, then float, then metamethods.
 func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
+	// Save original values for metamethod calls (metamethods receive uncoerced operands)
+	orig1, orig2 := v1, v2
+
 	// Coerce string operands to numeric values (preserving integer type)
 	if v1.IsString() {
 		if nv, ok := StringToNumericValue(v1.AsString()); ok {
@@ -89,10 +92,10 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 		return NewFloat(result), nil
 	}
 
-	// Try metamethods
+	// Try metamethods with original (uncoerced) operands
 	mmName := vm.arithMetamethod(op)
-	if mm := vm.getArithMetamethod(v1, v2, mmName); !mm.IsNil() {
-		result, err := vm.callMetamethod(mm, v1, v2)
+	if mm := vm.getArithMetamethod(orig1, orig2, mmName); !mm.IsNil() {
+		result, err := vm.callMetamethod(mm, orig1, orig2)
 		if err != nil {
 			return Nil, err
 		}
@@ -101,9 +104,9 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 
 	// No metamethod found, report error
 	if !ok1 {
-		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v1.Type())
+		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", orig1.Type())
 	}
-	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v2.Type())
+	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", orig2.Type())
 }
 
 // arithK performs a register-constant arithmetic operation.
