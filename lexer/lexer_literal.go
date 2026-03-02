@@ -1,7 +1,9 @@
 package lexer
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"unicode"
@@ -425,7 +427,12 @@ func parseFloat(s string) (float64, error) {
 	if strings.HasPrefix(lower, "0x") && !strings.ContainsAny(lower, "pP") {
 		s = s + "p0"
 	}
-	return strconv.ParseFloat(s, 64)
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil && errors.Is(err, strconv.ErrRange) && !math.IsNaN(f) {
+		// Overflow to ±Inf is valid in Lua (e.g. 1e9999 → inf).
+		return f, nil
+	}
+	return f, err
 }
 
 func parseInt(s string) (int64, error) {
