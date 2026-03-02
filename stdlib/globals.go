@@ -667,6 +667,12 @@ func valueToString(val vm.Value) string {
 		if t, ok := tbl.(*vm.Table); ok && t.IsThread() {
 			return fmt.Sprintf("thread: %p", tbl)
 		}
+		// Check for __name metamethod (used when __tostring is absent)
+		if mt := tbl.Metatable(); mt != nil {
+			if name := mt.Get(vm.NewString("__name")); name.IsString() {
+				return fmt.Sprintf("%s: %p", name.AsString(), tbl)
+			}
+		}
 		return fmt.Sprintf("table: %p", tbl)
 	case val.IsFunction():
 		return fmt.Sprintf("function: %p", val.AsClosure())
