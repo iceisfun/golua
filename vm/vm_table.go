@@ -280,6 +280,11 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 	return fmt.Errorf("'__newindex' chain too long; possible loop")
 }
 
+// TableGet retrieves t[key] with __index metamethod support.
+func (vm *VM) TableGet(t LuaTable, key Value) (Value, error) {
+	return vm.tableGet(t, key)
+}
+
 // TableGetInt retrieves t[key] with __index metamethod support.
 func (vm *VM) TableGetInt(t LuaTable, key int) (Value, error) {
 	return vm.tableGetInt(t, key)

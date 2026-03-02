@@ -287,7 +287,7 @@ func stringGsub(v *vm.VM) int {
 			} else if repl.IsFunction() || repl.IsNativeFunc() {
 				replacement = callGsubFunc(v, repl, matchCaps, s[pos:end])
 			} else if repl.IsTable() {
-				replacement = lookupGsubTable(repl, matchCaps, s[pos:end])
+				replacement = lookupGsubTable(v, repl, matchCaps, s[pos:end])
 			}
 
 			result.WriteString(replacement)
@@ -395,7 +395,7 @@ func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch str
 }
 
 // lookupGsubTable looks up a gsub replacement from a table.
-func lookupGsubTable(repl vm.Value, captures []captureValue, wholeMatch string) string {
+func lookupGsubTable(v *vm.VM, repl vm.Value, captures []captureValue, wholeMatch string) string {
 	var key vm.Value
 	c := captures[0]
 	if c.isPos {
@@ -403,7 +403,10 @@ func lookupGsubTable(repl vm.Value, captures []captureValue, wholeMatch string) 
 	} else {
 		key = vm.NewString(c.str)
 	}
-	val := repl.AsTable().Get(key)
+	val, err := v.TableGet(repl.AsTable(), key)
+	if err != nil {
+		panic(err.Error())
+	}
 	if val.IsString() {
 		return val.AsString()
 	} else if val.IsNumber() {
