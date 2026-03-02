@@ -348,27 +348,36 @@ func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 // ---------------------------------------------------------------------------
 
 // compileAnd compiles "a and b" — short-circuits to a if a is falsy.
+// Uses a temporary register for the left operand so that OP_TESTSET does not
+// clobber a local variable that shares the destination register (e.g.
+// "max = false and 99 or max" where max is both destination and operand).
 func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
 
-	c.compileExprToReg(e.Left, reg)
-	fs.emit(ABC(OP_TESTSET, reg, reg, 0, 0), line) // skip if falsy, keep value
+	tmp := fs.reserveReg()
+	c.compileExprToReg(e.Left, tmp)
+	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 0), line) // skip if falsy, keep value
 	jmp := fs.emitJump(line)                        // jump to end (short-circuit)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
+	fs.freeReg = tmp
 }
 
 // compileOr compiles "a or b" — short-circuits to a if a is truthy.
+// Uses a temporary register for the left operand so that OP_TESTSET does not
+// clobber a local variable that shares the destination register.
 func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
 
-	c.compileExprToReg(e.Left, reg)
-	fs.emit(ABC(OP_TESTSET, reg, reg, 0, 1), line) // skip if truthy, keep value
+	tmp := fs.reserveReg()
+	c.compileExprToReg(e.Left, tmp)
+	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 1), line) // skip if truthy, keep value
 	jmp := fs.emitJump(line)                        // jump to end (short-circuit)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
+	fs.freeReg = tmp
 }
 
 // ---------------------------------------------------------------------------
