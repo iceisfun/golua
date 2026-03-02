@@ -164,9 +164,8 @@ func tableRemove(v *vm.VM) int {
 		elem := tableGetIdx(v, tbl, i+1)
 		tableSetIdx(v, tbl, i, elem)
 	}
-	if length > 0 {
-		tableSetIdx(v, tbl, length, vm.Nil)
-	}
+	// Clear the last slot (or the removed slot when length == 0 and pos == 0)
+	tableSetIdx(v, tbl, length, vm.Nil)
 
 	v.Set(0, removed)
 	return 1
