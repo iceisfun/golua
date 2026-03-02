@@ -222,8 +222,42 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		return
 	}
 
-	// General case: evaluate all values into temp regs, then assign
+	// General case: evaluate all values into temp regs, then assign.
+	//
+	// For correctness, LHS table/key sub-expressions (e.g. a[i]) must be
+	// evaluated before any assignment occurs, because a later assignment
+	// might overwrite a variable used in an earlier LHS index expression.
+	// Example: i, a[i], a = j, i, i  — a[i] must use the original a and i.
+	//
+	// Phase 1: Pre-evaluate LHS indexed targets into temp registers.
+	type precomputedTarget struct {
+		tableReg int // temp reg holding table reference
+		keyReg   int // temp reg holding key (-1 for field targets using constant)
+		fieldK   int // constant index for field targets (-1 for index targets)
+	}
+	precomputed := make([]precomputedTarget, nTargets)
 	tempBase := fs.freeReg
+
+	for i := 0; i < nTargets; i++ {
+		switch t := s.Targets[i].(type) {
+		case *ast.IndexExpr:
+			tReg := fs.reserveReg()
+			c.compileExprToReg(t.Table, tReg)
+			kReg := fs.reserveReg()
+			c.compileExprToReg(t.Key, kReg)
+			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1}
+		case *ast.FieldExpr:
+			tReg := fs.reserveReg()
+			c.compileExprToReg(t.Table, tReg)
+			fK := fs.stringConstant(t.Field)
+			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK}
+		default:
+			precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: -1}
+		}
+	}
+
+	// Phase 2: Evaluate all RHS values into temp registers.
+	valBase := fs.freeReg
 	lastIsMultiRet := false
 
 	for i := 0; i < nValues; i++ {
@@ -233,7 +267,7 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 				lastIsMultiRet = true
 				c.compileExprMultiRet(s.Values[i], nTargets-i)
 			} else {
-				reg := tempBase + i
+				reg := valBase + i
 				c.compileExprToReg(s.Values[i], reg)
 				if reg >= fs.freeReg {
 					fs.freeReg = reg + 1
@@ -243,7 +277,7 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 				}
 			}
 		} else {
-			reg := tempBase + i
+			reg := valBase + i
 			c.compileExprToReg(s.Values[i], reg)
 			if reg >= fs.freeReg {
 				fs.freeReg = reg + 1
@@ -257,7 +291,7 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	// Fill missing values with nil (but not if last expr was multi-return)
 	if nValues < nTargets && !lastIsMultiRet {
 		for i := nValues; i < nTargets; i++ {
-			reg := tempBase + i
+			reg := valBase + i
 			fs.emit(ABC(OP_LOADNIL, reg, 0, 0, 0), line)
 			if reg >= fs.freeReg {
 				fs.freeReg = reg + 1
@@ -268,9 +302,20 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		}
 	}
 
-	// Now assign from temps to targets
+	// Phase 3: Assign from temp value registers to targets using precomputed
+	// table/key registers for indexed targets.
 	for i := 0; i < nTargets; i++ {
-		c.assignToTarget(s.Targets[i], tempBase+i, line)
+		pc := precomputed[i]
+		if pc.tableReg >= 0 {
+			// Pre-evaluated indexed/field target
+			if pc.keyReg >= 0 {
+				fs.emit(ABC(OP_SETTABLE, pc.tableReg, pc.keyReg, valBase+i, 0), line)
+			} else {
+				fs.emitSetField(pc.tableReg, pc.fieldK, valBase+i, line)
+			}
+		} else {
+			c.assignToTarget(s.Targets[i], valBase+i, line)
+		}
 	}
 
 	fs.freeReg = tempBase
