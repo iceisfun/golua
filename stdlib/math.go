@@ -87,6 +87,11 @@ func mathAtan(v *vm.VM) int {
 }
 
 func mathCeil(v *vm.VM) int {
+	arg := v.Get(1)
+	if arg.IsInt() {
+		v.Set(0, arg)
+		return 1
+	}
 	n := getNumber(v, 1, "ceil")
 	f := math.Ceil(n)
 	if !math.IsNaN(f) && !math.IsInf(f, 0) && f >= -9223372036854775808 && f < 9223372036854775808 {
@@ -116,6 +121,11 @@ func mathExp(v *vm.VM) int {
 }
 
 func mathFloor(v *vm.VM) int {
+	arg := v.Get(1)
+	if arg.IsInt() {
+		v.Set(0, arg)
+		return 1
+	}
 	n := getNumber(v, 1, "floor")
 	f := math.Floor(n)
 	if !math.IsNaN(f) && !math.IsInf(f, 0) && f >= -9223372036854775808 && f < 9223372036854775808 {

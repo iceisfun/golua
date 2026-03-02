@@ -320,11 +320,19 @@ func (v Value) ToInt() (int64, bool) {
 		if s == "" {
 			return 0, false
 		}
-		// Try hex first
+		// Try hex integer first
 		if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
 			if i, err := strconv.ParseInt(s[2:], 16, 64); err == nil {
 				return i, true
 			}
+			// Try unsigned hex for values like 0xFFFFFFFFFFFFFFFF
+			if u, err := strconv.ParseUint(s[2:], 16, 64); err == nil {
+				return int64(u), true
+			}
+		}
+		// Try direct decimal integer parse (preserves precision for maxint)
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return i, true
 		}
 		// Try as float, then check if it's a whole number
 		// Accept ErrRange (overflow → ±Inf) but Inf won't pass the int check below
