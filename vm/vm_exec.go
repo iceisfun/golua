@@ -1274,6 +1274,7 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 	var results []Value
 	var err error
 
+dispatch:
 	if fn.IsFunction() {
 		// vm.top is at frameTop, so vm.call will place the new frame right after
 		// the calling frame's full register space. Args are copied into a slice
@@ -1322,41 +1323,17 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 		newArgs[0] = fn
 		copy(newArgs[1:], args)
 
-		if mm.IsFunction() {
-			// Keep vm.top at current value (same approach as the normal Function path)
-			results, err = vm.call(mm.AsClosure(), newArgs, c-1)
-		} else if mm.IsNativeFunc() {
-			// Set up stack for native metamethod call
-			nativeBase := frame.base + a
-			vm.ensureStack(nativeBase + 1 + len(newArgs) + 4)
-
-			// Write function and args into the stack for Get/Set access
-			vm.stack[nativeBase] = mm
-			for i, arg := range newArgs {
-				vm.stack[nativeBase+1+i] = arg
-			}
-
-			nativeFrame := callFrame{base: nativeBase, argc: len(newArgs)}
-			vm.callStack = append(vm.callStack, nativeFrame)
-
-			// Clear slots beyond args to prevent stale data
-			clearStart := nativeBase + 1 + len(newArgs)
-			clearEnd := clearStart + 4
-			if clearEnd > len(vm.stack) {
-				clearEnd = len(vm.stack)
-			}
-			for i := clearStart; i < clearEnd; i++ {
-				vm.stack[i] = Nil
-			}
-
-			nResults := mm.AsNativeFunc()(vm)
-			results = make([]Value, nResults)
-			copy(results, vm.stack[nativeBase:nativeBase+nResults])
-
-			vm.callStack = vm.callStack[:len(vm.callStack)-1]
-		} else {
-			return nil, vm.runtimeError("attempt to call a %s value", mm.Type())
+		// Recursively dispatch mm with newArgs so that __call chains of
+		// arbitrary depth are resolved (mm may itself be a table with __call).
+		// Write mm + newArgs into the stack so the callee sees them via Get.
+		vm.ensureStack(frame.base + a + 1 + len(newArgs) + 4)
+		vm.stack[frame.base+a] = mm
+		for i, arg := range newArgs {
+			vm.stack[frame.base+a+1+i] = arg
 		}
+		fn = mm
+		args = newArgs
+		goto dispatch
 	}
 
 	if err != nil {
