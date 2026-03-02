@@ -133,7 +133,7 @@ func mathFmod(v *vm.VM) int {
 	y := getNumber(v, 2, "fmod")
 	if v1.IsInt() && v2.IsInt() {
 		if y == 0 {
-			panic("attempt to perform 'n%0'")
+			panic("bad argument #2 to 'fmod' (zero)")
 		}
 		// Integer fmod: preserve integer type
 		a := v1.AsInt()
