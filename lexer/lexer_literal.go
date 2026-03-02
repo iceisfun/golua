@@ -22,17 +22,21 @@ func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 		case '\n', '\r':
 			return token.Token{}, l.errorf("unfinished string")
 		case '\\':
-			ch, err := l.scanEscape()
+			ch, isUnicode, err := l.scanEscape()
 			if err != nil {
 				return token.Token{}, err
 			}
 			if ch != -2 { // -2 is sentinel for \z (skip whitespace, write nothing)
-				if ch <= 0xFF {
+				if isUnicode {
+					// \u{XXXX} always produces UTF-8 encoding.
+					// Lua allows codepoints up to 0x7FFFFFFF (extended UTF-8),
+					// beyond Go's Unicode limit of 0x10FFFF.
+					writeExtendedUTF8(&buf, ch)
+				} else if ch <= 0xFF {
 					// Byte-level escapes (\xNN, \DDD, \a, \n, etc.)
 					// must produce exact byte values, not UTF-8 re-encoding.
 					buf.WriteByte(byte(ch))
 				} else {
-					// Only \u{XXXX} can produce values > 255 (Unicode codepoints).
 					buf.WriteRune(ch)
 				}
 			}
@@ -51,48 +55,52 @@ func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 }
 
 // scanEscape reads an escape sequence after '\'.
-// Returns the decoded rune.
-func (l *Lexer) scanEscape() (rune, error) {
+// Returns the decoded rune and whether it is a unicode (\u{}) escape.
+// Unicode escapes must always be written as UTF-8 (via WriteRune),
+// while byte escapes (\xNN, \DDD) must be written as raw bytes.
+func (l *Lexer) scanEscape() (rune, bool, error) {
 	l.readChar() // skip '\\'
 	ch := l.current
 	switch ch {
 	case 'a':
 		l.readChar()
-		return '\a', nil
+		return '\a', false, nil
 	case 'b':
 		l.readChar()
-		return '\b', nil
+		return '\b', false, nil
 	case 'f':
 		l.readChar()
-		return '\f', nil
+		return '\f', false, nil
 	case 'n':
 		l.readChar()
-		return '\n', nil
+		return '\n', false, nil
 	case 'r':
 		l.readChar()
-		return '\r', nil
+		return '\r', false, nil
 	case 't':
 		l.readChar()
-		return '\t', nil
+		return '\t', false, nil
 	case 'v':
 		l.readChar()
-		return '\v', nil
+		return '\v', false, nil
 	case '\\':
 		l.readChar()
-		return '\\', nil
+		return '\\', false, nil
 	case '"':
 		l.readChar()
-		return '"', nil
+		return '"', false, nil
 	case '\'':
 		l.readChar()
-		return '\'', nil
+		return '\'', false, nil
 	case '\n', '\r':
 		l.incLine()
-		return '\n', nil
+		return '\n', false, nil
 	case 'x':
-		return l.scanHexEscape()
+		r, err := l.scanHexEscape()
+		return r, false, err
 	case 'u':
-		return l.scanUTF8Escape()
+		r, err := l.scanUTF8Escape()
+		return r, true, err
 	case 'z':
 		// Skip whitespace
 		l.readChar() // skip 'z'
@@ -103,14 +111,15 @@ func (l *Lexer) scanEscape() (rune, error) {
 				l.readChar()
 			}
 		}
-		return -2, nil // sentinel: caller should not write this
+		return -2, false, nil // sentinel: caller should not write this
 	case eof:
-		return 0, l.errorf("unfinished string")
+		return 0, false, l.errorf("unfinished string")
 	default:
 		if isDigit(ch) {
-			return l.scanDecimalEscape()
+			r, err := l.scanDecimalEscape()
+			return r, false, err
 		}
-		return 0, l.errorf("invalid escape sequence '\\%c'", ch)
+		return 0, false, l.errorf("invalid escape sequence '\\%c'", ch)
 	}
 }
 
@@ -158,6 +167,42 @@ func (l *Lexer) scanUTF8Escape() (rune, error) {
 	}
 	l.readChar() // skip '}'
 	return rune(val), nil
+}
+
+// writeExtendedUTF8 encodes a codepoint as extended UTF-8 (up to 6 bytes),
+// supporting Lua's full range of 0x00–0x7FFFFFFF. Go's WriteRune only handles
+// up to 0x10FFFF; values beyond that are replaced with U+FFFD.
+func writeExtendedUTF8(buf *strings.Builder, r rune) {
+	cp := uint32(r)
+	switch {
+	case cp <= 0x7F:
+		buf.WriteByte(byte(cp))
+	case cp <= 0x7FF:
+		buf.WriteByte(byte(0xC0 | (cp >> 6)))
+		buf.WriteByte(byte(0x80 | (cp & 0x3F)))
+	case cp <= 0xFFFF:
+		buf.WriteByte(byte(0xE0 | (cp >> 12)))
+		buf.WriteByte(byte(0x80 | ((cp >> 6) & 0x3F)))
+		buf.WriteByte(byte(0x80 | (cp & 0x3F)))
+	case cp <= 0x1FFFFF:
+		buf.WriteByte(byte(0xF0 | (cp >> 18)))
+		buf.WriteByte(byte(0x80 | ((cp >> 12) & 0x3F)))
+		buf.WriteByte(byte(0x80 | ((cp >> 6) & 0x3F)))
+		buf.WriteByte(byte(0x80 | (cp & 0x3F)))
+	case cp <= 0x3FFFFFF:
+		buf.WriteByte(byte(0xF8 | (cp >> 24)))
+		buf.WriteByte(byte(0x80 | ((cp >> 18) & 0x3F)))
+		buf.WriteByte(byte(0x80 | ((cp >> 12) & 0x3F)))
+		buf.WriteByte(byte(0x80 | ((cp >> 6) & 0x3F)))
+		buf.WriteByte(byte(0x80 | (cp & 0x3F)))
+	default: // up to 0x7FFFFFFF
+		buf.WriteByte(byte(0xFC | (cp >> 30)))
+		buf.WriteByte(byte(0x80 | ((cp >> 24) & 0x3F)))
+		buf.WriteByte(byte(0x80 | ((cp >> 18) & 0x3F)))
+		buf.WriteByte(byte(0x80 | ((cp >> 12) & 0x3F)))
+		buf.WriteByte(byte(0x80 | ((cp >> 6) & 0x3F)))
+		buf.WriteByte(byte(0x80 | (cp & 0x3F)))
+	}
 }
 
 // scanDecimalEscape reads \ddd (up to 3 decimal digits).
