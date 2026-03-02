@@ -604,6 +604,9 @@ func ParseHexFloat(s string) (float64, bool) {
 	}
 
 	// Parse binary exponent
+	if pIdx >= 0 && expPart == "" {
+		return 0, false // 'p'/'P' present but no exponent digits
+	}
 	if expPart != "" {
 		expSign := 1
 		if len(expPart) > 0 && (expPart[0] == '+' || expPart[0] == '-') {
