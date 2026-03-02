@@ -406,6 +406,8 @@ func (c classChar) matches(b byte) bool {
 		matched = isUpper(b)
 	case 'c':
 		matched = isControl(b)
+	case 'g':
+		matched = isGraph(b)
 	case 'p':
 		matched = isPunct(b)
 	case 'x':
@@ -462,9 +464,9 @@ func getPatternElem(pattern string, patPos int) (patternElem, int) {
 		}
 		next := pattern[patPos+1]
 		switch next {
-		case 'a', 'd', 's', 'w', 'l', 'u', 'c', 'p', 'x', 'z':
+		case 'a', 'd', 'g', 's', 'w', 'l', 'u', 'c', 'p', 'x', 'z':
 			return classChar{class: next, neg: false}, 2
-		case 'A', 'D', 'S', 'W', 'L', 'U', 'C', 'P', 'X', 'Z':
+		case 'A', 'D', 'G', 'S', 'W', 'L', 'U', 'C', 'P', 'X', 'Z':
 			return classChar{class: next + 32, neg: true}, 2
 		default:
 			return literalChar{ch: next}, 2
@@ -519,9 +521,9 @@ func parseCharSetElems(set string) []patternElem {
 		if set[i] == '%' && i+1 < len(set) {
 			next := set[i+1]
 			switch next {
-			case 'a', 'd', 's', 'w', 'l', 'u', 'c', 'p', 'x', 'z':
+			case 'a', 'd', 'g', 's', 'w', 'l', 'u', 'c', 'p', 'x', 'z':
 				elems = append(elems, classChar{class: next, neg: false})
-			case 'A', 'D', 'S', 'W', 'L', 'U', 'C', 'P', 'X', 'Z':
+			case 'A', 'D', 'G', 'S', 'W', 'L', 'U', 'C', 'P', 'X', 'Z':
 				elems = append(elems, classChar{class: next + 32, neg: true})
 			default:
 				elems = append(elems, literalChar{ch: next})
@@ -550,4 +552,5 @@ func isPunct(b byte) bool {
 		(b >= 0x5B && b <= 0x60) || // [\]^_`
 		(b >= 0x7B && b <= 0x7E) // {|}~
 }
+func isGraph(b byte) bool   { return b > ' ' && b < 127 } // printable non-space
 func isHex(b byte) bool     { return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') }
