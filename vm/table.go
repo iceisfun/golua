@@ -406,9 +406,13 @@ func keyToValue(k any) Value {
 		return NewFloat(v)
 	case string:
 		return NewString(v)
+	case LuaTable:
+		return NewTable(v)
+	case *Closure:
+		return NewFunction(v)
+	case NativeFunc:
+		return NewNativeFunc(v)
 	default:
-		// Table or function pointer - we can't easily recover this
-		// This is a limitation of our simple Next implementation
 		return Nil
 	}
 }
