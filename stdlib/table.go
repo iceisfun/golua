@@ -92,6 +92,9 @@ func tableConcat(v *vm.VM) int {
 		} else {
 			panic(fmt.Sprintf("invalid value (%s) at index %d in table for 'concat'", val.Type(), idx))
 		}
+		if idx == j {
+			break // avoid int64 overflow on idx++
+		}
 	}
 
 	v.Set(0, vm.NewString(strings.Join(parts, sep)))
@@ -178,6 +181,12 @@ func tableSort(v *vm.VM) int {
 	length := tableObjLen(v, v.Get(1))
 	if length <= 1 {
 		return 0
+	}
+
+	// Guard against absurd lengths from __len metamethod
+	const maxSortLen = 1 << 30
+	if length > maxSortLen {
+		panic("bad argument #1 to 'sort' (array too big)")
 	}
 
 	// Extract values into slice via __index
