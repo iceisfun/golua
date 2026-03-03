@@ -333,9 +333,6 @@ func (vm *VM) GetCoroutineChannels() (yieldCh, resumeCh chan []Value) {
 	return vm.yieldCh, vm.resumeCh
 }
 
-
-
-
 // maxCallDepth returns the effective call depth limit.
 // Positive: use that value. Zero: use DefaultMaxCallDepth. Negative: unlimited.
 func (vm *VM) maxCallDepth() int {
@@ -382,7 +379,7 @@ func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {
 		vm.stack[nativeBase+1] = arg1
 		vm.stack[nativeBase+2] = arg2
 
-		nativeFrame := callFrame{base: nativeBase}
+		nativeFrame := callFrame{base: nativeBase, argc: 2}
 		vm.callStack = append(vm.callStack, nativeFrame)
 		vm.top = nativeBase + 3
 
@@ -429,7 +426,7 @@ func (vm *VM) callMetamethod3(fn, arg1, arg2, arg3 Value) (Value, error) {
 		vm.stack[nativeBase+2] = arg2
 		vm.stack[nativeBase+3] = arg3
 
-		nativeFrame := callFrame{base: nativeBase}
+		nativeFrame := callFrame{base: nativeBase, argc: 3}
 		vm.callStack = append(vm.callStack, nativeFrame)
 		vm.top = nativeBase + 4
 
@@ -494,4 +491,3 @@ func (vm *VM) GetSourceLocation(level int) string {
 	}
 	return ""
 }
-
