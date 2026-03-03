@@ -31,4 +31,25 @@ f, err = load(table.concat(code, "\n"))
 assert(f ~= nil, "scoped locals should compile, got error: " .. tostring(err))
 assert(f() == true)
 
+-- MaxRegs: function call with too many args should fail
+-- f(1,1,...,1) with 261 args needs 262 registers (func + 261 args),
+-- which exceeds MaxRegs=249.
+local s = "local function f(...) end\nf(" .. string.rep("1,", 260) .. "1)"
+f, err = load(s)
+assert(f == nil, "expected compile error for 261-arg call")
+assert(string.find(err, "too many registers") or string.find(err, "too many"),
+    "expected 'too many registers' in: " .. tostring(err))
+
+-- MaxRegs: method call with too many args should also fail
+s = "local t = {}\nfunction t:f(...) end\nt:f(" .. string.rep("1,", 259) .. "1)"
+f, err = load(s)
+assert(f == nil, "expected compile error for 260-arg method call")
+assert(string.find(err, "too many registers") or string.find(err, "too many"),
+    "expected 'too many registers' in: " .. tostring(err))
+
+-- MaxRegs: call at limit should work (247 args + func + local = 249 regs)
+s = "local function f(...) end\nf(" .. string.rep("1,", 246) .. "1)"
+f, err = load(s)
+assert(f ~= nil, "247-arg call should compile, got error: " .. tostring(err))
+
 print("PASS")

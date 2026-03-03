@@ -23,6 +23,9 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		if fs.freeReg > fs.maxReg {
 			fs.maxReg = fs.freeReg
 		}
+		if fs.freeReg > fs.c.limits.MaxRegs {
+			fs.c.error(expr, "function or expression needs too many registers")
+		}
 	}
 
 	switch e := expr.(type) {
