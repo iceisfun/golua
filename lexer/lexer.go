@@ -20,12 +20,13 @@ const eof = -1
 
 // Lexer tokenizes Lua source code.
 type Lexer struct {
-	source  string // source name (for error messages)
-	input   string // full source text
-	pos     int    // current byte position in input
-	line    int    // current line number (1-based)
-	col     int    // current column number (1-based)
-	current rune   // current character (eof at end)
+	source         string // source name (for error messages)
+	input          string // full source text
+	pos            int    // current byte position in input
+	line           int    // current line number (1-based)
+	col            int    // current column number (1-based)
+	current        rune   // current character (eof at end)
+	stringRawStart int    // byte position of opening delimiter for string scanning (used in "near" context)
 }
 
 // New creates a new Lexer for the given source text.
@@ -82,6 +83,25 @@ func (l *Lexer) currentPos() token.Pos {
 // errorf creates a lexer error at the current position.
 func (l *Lexer) errorf(format string, args ...any) error {
 	return &token.PosError{Pos: l.currentPos(), Msg: fmt.Sprintf(format, args...)}
+}
+
+// stringNear returns the "near" context for an error during string scanning.
+// Returns the raw source text from the opening delimiter through the current
+// position, wrapped in single quotes. Matches Lua 5.4's txtToken(TK_STRING).
+func (l *Lexer) stringNear() string {
+	end := l.pos
+	if end > len(l.input) {
+		end = len(l.input)
+	}
+	return "'" + l.input[l.stringRawStart:end] + "'"
+}
+
+// stringErrorf creates a lexer error with "near" context from the string
+// being scanned. Used for escape sequence errors where the raw source text
+// helps identify the problem location.
+func (l *Lexer) stringErrorf(format string, args ...any) error {
+	msg := fmt.Sprintf(format, args...)
+	return &token.PosError{Pos: l.currentPos(), Msg: msg + " near " + l.stringNear()}
 }
 
 // incLine handles newline sequences: \n, \r, \n\r, \r\n.
@@ -252,7 +272,7 @@ func (l *Lexer) scanLongString(buf *strings.Builder, sep int) error {
 			}
 			return &token.PosError{
 				Pos: token.Pos{Source: l.source, Line: l.line, Column: 1},
-				Msg: fmt.Sprintf("unfinished long %s (starting at line %d)", kind, startLine),
+				Msg: fmt.Sprintf("unfinished long %s (starting at line %d) near <eof>", kind, startLine),
 			}
 
 		case ']':

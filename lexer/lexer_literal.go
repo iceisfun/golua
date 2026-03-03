@@ -14,15 +14,18 @@ import (
 // scanString reads a short string delimited by ' or ".
 func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 	delim := l.current
+	// Save position of opening delimiter for "near" context in error messages.
+	// l.pos is past the delimiter after readChar, so subtract 1 (ASCII delimiters).
+	l.stringRawStart = l.pos - 1
 	l.readChar() // skip opening delimiter
 
 	var buf strings.Builder
 	for l.current != delim {
 		switch l.current {
 		case eof:
-			return token.Token{}, l.errorf("unfinished string")
+			return token.Token{}, l.errorf("unfinished string near <eof>")
 		case '\n', '\r':
-			return token.Token{}, l.errorf("unfinished string")
+			return token.Token{}, l.errorf("unfinished string near <eof>")
 		case '\\':
 			ch, isUnicode, err := l.scanEscape()
 			if err != nil {
@@ -115,13 +118,13 @@ func (l *Lexer) scanEscape() (rune, bool, error) {
 		}
 		return -2, false, nil // sentinel: caller should not write this
 	case eof:
-		return 0, false, l.errorf("unfinished string")
+		return 0, false, l.errorf("unfinished string near <eof>")
 	default:
 		if isDigit(ch) {
 			r, err := l.scanDecimalEscape()
 			return r, false, err
 		}
-		return 0, false, l.errorf("invalid escape sequence '\\%c'", ch)
+		return 0, false, l.stringErrorf("invalid escape sequence")
 	}
 }
 
@@ -130,12 +133,12 @@ func (l *Lexer) scanHexEscape() (rune, error) {
 	l.readChar() // skip 'x'
 	d1, ok := hexVal(l.current)
 	if !ok {
-		return 0, l.errorf("hexadecimal digit expected")
+		return 0, l.stringErrorf("hexadecimal digit expected")
 	}
 	l.readChar()
 	d2, ok := hexVal(l.current)
 	if !ok {
-		return 0, l.errorf("hexadecimal digit expected")
+		return 0, l.stringErrorf("hexadecimal digit expected")
 	}
 	l.readChar()
 	return rune(d1*16 + d2), nil
@@ -145,25 +148,25 @@ func (l *Lexer) scanHexEscape() (rune, error) {
 func (l *Lexer) scanUTF8Escape() (rune, error) {
 	l.readChar() // skip 'u'
 	if l.current != '{' {
-		return 0, l.errorf("missing '{'")
+		return 0, l.stringErrorf("missing '{'")
 	}
 	l.readChar() // skip '{'
 	val, ok := hexVal(l.current)
 	if !ok {
-		return 0, l.errorf("hexadecimal digit expected")
+		return 0, l.stringErrorf("hexadecimal digit expected")
 	}
 	l.readChar()
 	for l.current != '}' {
 		if l.current == eof {
-			return 0, l.errorf("missing '}'")
+			return 0, l.stringErrorf("missing '}'")
 		}
 		d, ok := hexVal(l.current)
 		if !ok {
-			return 0, l.errorf("missing '}'")
+			return 0, l.stringErrorf("missing '}'")
 		}
 		val = val*16 + d
 		if val > 0x7FFFFFFF {
-			return 0, l.errorf("UTF-8 value too large")
+			return 0, l.stringErrorf("UTF-8 value too large")
 		}
 		l.readChar()
 	}
@@ -216,7 +219,7 @@ func (l *Lexer) scanDecimalEscape() (rune, error) {
 		l.readChar()
 	}
 	if val > 255 {
-		return 0, l.errorf("decimal escape too large")
+		return 0, l.stringErrorf("decimal escape too large")
 	}
 	return rune(val), nil
 }

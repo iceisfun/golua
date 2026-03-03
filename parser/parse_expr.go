@@ -155,6 +155,8 @@ func (p *parser) parseExpr() ast.Expr {
 
 // parseSubExpr -> (simpleexp | unop subexpr) { binop subexpr }
 func (p *parser) parseSubExpr(limit precedence) ast.Expr {
+	p.incDepth()
+	defer p.decDepth()
 	if p.err != nil {
 		return ast.NewNilExpr(p.pos())
 	}
@@ -330,6 +332,7 @@ func (p *parser) parseFuncBody(isMethod bool) *ast.FuncExpr {
 
 func (p *parser) parseTableConstructor() *ast.TableConstructor {
 	pos := p.pos()
+	openLine := p.tok.Pos.Line
 	p.expect(token.Type('{'))
 	var fields []*ast.TableField
 	for !p.check(token.Type('}')) && !p.check(token.EOS) {
@@ -341,7 +344,7 @@ func (p *parser) parseTableConstructor() *ast.TableConstructor {
 			break
 		}
 	}
-	p.expect(token.Type('}'))
+	p.checkMatch(token.Type('}'), "{", openLine)
 	return ast.NewTableConstructor(pos, fields)
 }
 

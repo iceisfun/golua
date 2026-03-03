@@ -67,11 +67,17 @@ func Parse(source, input string, stripShebang ...bool) (*ast.Block, error) {
 // Parser state
 // ---------------------------------------------------------------------------
 
+// maxSyntaxLevels limits parser recursion depth to match Lua 5.4's
+// LUAI_MAXCCALLS. Deeply nested expressions or long assignment target
+// lists beyond this limit produce "too many syntax levels" errors.
+const maxSyntaxLevels = 200
+
 type parser struct {
 	lex    *lexer.Lexer
 	tok    token.Token // current (lookahead) token
 	source string
 	err    error
+	depth  int // recursion depth counter
 }
 
 func (p *parser) advance() error {
@@ -115,7 +121,35 @@ func (p *parser) errorf(format string, args ...any) error {
 	return p.err
 }
 
+// incDepth increments the parser recursion depth and returns an error
+// if it exceeds maxSyntaxLevels.
+func (p *parser) incDepth() {
+	p.depth++
+	if p.depth > maxSyntaxLevels {
+		p.errorf("chunk has too many syntax levels")
+	}
+}
+
+func (p *parser) decDepth() {
+	p.depth--
+}
+
 func (p *parser) pos() token.Pos { return p.tok.Pos }
+
+// checkMatch expects a closing token (e.g. '}', ')', 'end') that matches
+// an opening token. If the close is missing and on a different line from the
+// open, the error includes "(to close 'OPEN' at line N)" for better diagnostics.
+// Matches Lua 5.4's check_match.
+func (p *parser) checkMatch(close token.Type, openLiteral string, openLine int) error {
+	if p.tok.Type == close {
+		return p.advance()
+	}
+	if openLine == p.tok.Pos.Line {
+		return p.errorf("'%s' expected near %s", close, p.nearToken())
+	}
+	return p.errorf("'%s' expected (to close '%s' at line %d) near %s",
+		close, openLiteral, openLine, p.nearToken())
+}
 
 // nearToken returns the current token formatted for error messages:
 // quoted for names/strings/numbers, unquoted for <eof> and keywords.
@@ -419,8 +453,13 @@ func (p *parser) parseExprStat() ast.Stmt {
 	if p.check(token.Type('=')) || p.check(token.Type(',')) {
 		targets := []ast.Expr{expr}
 		for p.match(token.Type(',')) {
+			p.incDepth()
 			targets = append(targets, p.parseSuffixedExpr())
+			if p.err != nil {
+				break
+			}
 		}
+		p.depth -= len(targets) - 1 // unwind depth for all targets added
 		p.expect(token.Type('='))
 		values := p.parseExprList()
 		return ast.NewAssignStmt(pos, targets, values)
