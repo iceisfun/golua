@@ -61,10 +61,25 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		c.compileUnop(e, reg)
 
 	case *ast.FuncCallExpr: // e.g. f(a, b) — single result in reg
-		c.compileFuncCall(e, reg, 2, e.P.Line) // C=2 → 1 result
+		// When reg < freeReg the target is an existing local. Compiling the
+		// call directly at reg would clobber it with the function before
+		// arguments that reference it are evaluated. Use a temp register.
+		if reg < fs.freeReg {
+			tmp := fs.freeReg
+			c.compileFuncCall(e, tmp, 2, e.P.Line) // C=2 → 1 result at tmp
+			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
+		} else {
+			c.compileFuncCall(e, reg, 2, e.P.Line) // C=2 → 1 result
+		}
 
 	case *ast.MethodCallExpr: // e.g. obj:method(a) — single result in reg
-		c.compileMethodCall(e, reg, 2, e.P.Line)
+		if reg < fs.freeReg {
+			tmp := fs.freeReg
+			c.compileMethodCall(e, tmp, 2, e.P.Line)
+			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
+		} else {
+			c.compileMethodCall(e, reg, 2, e.P.Line)
+		}
 
 	case *ast.FuncExpr: // e.g. function(x) return x end
 		protoIdx := c.compileFunc(e, e.P.Line)
