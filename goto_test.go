@@ -48,14 +48,6 @@ func TestGotoIntoLocalScope(t *testing.T) {
 			::bad::
 			print(a, b)`,
 		},
-		{
-			"forward goto in nested block jumps over local",
-			`do
-				goto bad
-				local x = 42
-				::bad::
-			end`,
-		},
 	}
 
 	for _, tt := range tests {
@@ -136,6 +128,17 @@ func TestGotoValidCases(t *testing.T) {
 			local dummy = j
 			if j < 2 then goto back end
 			assert(j == 2)`,
+		},
+		{
+			"goto over local to label at end of block",
+			`local x = 13
+			do
+				goto l1
+				local a = 23
+				x = a
+				::l1::
+			end
+			assert(x == 13)`,
 		},
 	}
 

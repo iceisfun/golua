@@ -53,11 +53,29 @@ func (c *compiler) compileChunk(source string, block *ast.Block) *Proto {
 
 // compileBlock compiles all statements in a block, releasing temporaries after each.
 func (c *compiler) compileBlock(block *ast.Block) {
+	c.compileBlockOpts(block, true)
+}
+
+// compileBlockOpts compiles a block. When labelEndOpt is true, labels at
+// the end of the block are treated as if preceding locals are out of scope
+// (Lua 5.4 §3.3.4). This must be false for repeat-until bodies, where the
+// until condition can still reference body locals.
+func (c *compiler) compileBlockOpts(block *ast.Block, labelEndOpt bool) {
 	if block == nil {
 		return
 	}
-	for _, stmt := range block.Stmts {
-		c.compileStmt(stmt)
+	stmts := block.Stmts
+	for i, stmt := range stmts {
+		// When compiling a label, tell it whether it's at the end of
+		// the block (followed only by other labels). Lua 5.4 treats
+		// such labels as if locals declared before them are already
+		// out of scope, allowing goto to jump over those locals.
+		if lbl, ok := stmt.(*ast.LabelStmt); ok {
+			atEnd := labelEndOpt && labelAtBlockEnd(stmts, i)
+			c.compileLabelStmt(lbl, atEnd)
+		} else {
+			c.compileStmt(stmt)
+		}
 		// After each statement, release temporary registers while
 		// preserving all registers occupied by active locals.
 		// We use regTop() instead of nActVar because locals may not
@@ -65,6 +83,22 @@ func (c *compiler) compileBlock(block *ast.Block) {
 		// temporaries (e.g., while/for loop conditions) can create gaps.
 		c.fs.freeReg = c.fs.regTop()
 	}
+}
+
+// labelAtBlockEnd reports whether the statement at stmts[idx] is a label
+// followed only by other labels or semicolons before the block ends.
+// Lua 5.4 treats such labels as if locals declared before them are
+// already out of scope.
+func labelAtBlockEnd(stmts []ast.Stmt, idx int) bool {
+	for j := idx + 1; j < len(stmts); j++ {
+		switch stmts[j].(type) {
+		case *ast.LabelStmt, *ast.EmptyStmt:
+			// no-op statements — continue checking
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // compileStmt dispatches a single statement to its specific compiler method.
@@ -95,7 +129,7 @@ func (c *compiler) compileStmt(stmt ast.Stmt) {
 	case *ast.GotoStmt:
 		c.compileGotoStmt(s)
 	case *ast.LabelStmt:
-		c.compileLabelStmt(s)
+		c.compileLabelStmt(s, false)
 	case *ast.FuncStmt:
 		c.compileFuncStmt(s)
 	case *ast.LocalFuncStmt:
@@ -666,7 +700,10 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	loopStart := fs.pc()
 	fs.enterScope(true)
 
-	c.compileBlock(s.Body)
+	// Use labelEndOpt=false because the until condition can reference
+	// body locals — labels at the end of a repeat block must NOT treat
+	// preceding locals as out of scope.
+	c.compileBlockOpts(s.Body, false)
 
 	// Evaluate condition (may reference body locals)
 	condLine := s.Cond.Pos().Line
@@ -954,23 +991,38 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 
 // compileLabelStmt compiles "::label::" — records the label and resolves
 // any pending forward gotos that target it.
-func (c *compiler) compileLabelStmt(s *ast.LabelStmt) {
+//
+// When atBlockEnd is true, the label is the last non-label statement in
+// its block (Lua 5.4 §3.3.4). In that case, locals declared before the
+// label are treated as already out of scope, allowing goto to jump past
+// them.
+func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool) {
 	fs := c.fs
 
-	// Check for duplicate label in current scope
+	// Check for duplicate label in all visible scopes. Labels are
+	// removed from fs.labels when their scope exits, so all entries
+	// are from currently active (enclosing) scopes.
 	scope := fs.scopes[len(fs.scopes)-1]
-	for _, lbl := range fs.labels[scope.firstLabel:] {
+	for _, lbl := range fs.labels {
 		if lbl.name == s.Name {
 			c.error(s, "label '%s' already defined on line %d", s.Name, lbl.line)
 			return
 		}
 	}
 
+	// Determine effective nLocals for this label. If the label is at
+	// the end of a block, locals in the current scope are about to go
+	// out of scope, so use the enclosing scope's nLocals instead.
+	labelNLocals := fs.nActVar
+	if atBlockEnd {
+		labelNLocals = scope.nLocals
+	}
+
 	fs.labels = append(fs.labels, labelInfo{
 		name:    s.Name,
 		pc:      fs.pc(),
 		line:    s.P.Line,
-		nLocals: fs.nActVar,
+		nLocals: labelNLocals,
 	})
 
 	// Resolve pending gotos
@@ -978,14 +1030,20 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt) {
 	for _, pg := range fs.pendGotos {
 		if pg.name == s.Name {
 			// Validate: goto must not jump into scope of a local variable
-			if pg.nLocals < fs.nActVar {
-				c.error(s, "<goto %s> at line %d jumps into the scope of local variable", pg.name, pg.line)
+			if pg.nLocals < labelNLocals {
+				// Find the name of the first variable the goto jumps over
+				varName := "?"
+				baseIdx := len(fs.locals) - (fs.nActVar - pg.nLocals)
+				if baseIdx >= 0 && baseIdx < len(fs.locals) {
+					varName = fs.locals[baseIdx].name
+				}
+				c.error(s, "<goto %s> at line %d jumps into the scope of local '%s'", pg.name, pg.line, varName)
 				remaining = append(remaining, pg)
 				continue
 			}
 			// Patch placeholder OP_CLOSE if one was emitted
-			if pg.closePC >= 0 && fs.nActVar < pg.nLocals {
-				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(fs.nActVar)
+			if pg.closePC >= 0 && labelNLocals < pg.nLocals {
+				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(labelNLocals)
 			}
 			offset := fs.pc() - (pg.pc + 1)
 			fs.proto.Code[pg.pc] = fs.proto.Code[pg.pc].SetSJ(offset)

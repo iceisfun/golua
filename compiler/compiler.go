@@ -599,6 +599,21 @@ func (c *compiler) leaveScope(line int) {
 	// Remove labels from this scope
 	fs.labels = fs.labels[:scope.firstLabel]
 
+	// Adjust pending gotos that originated inside this scope: lower their
+	// nLocals to the scope's initial level so that the "jumps into scope"
+	// check works correctly when the label is at a higher scope.
+	// Also patch any OP_CLOSE placeholder to close down to the scope's
+	// initial level. This matches Lua 5.4's movegotosout.
+	for i := range fs.pendGotos {
+		pg := &fs.pendGotos[i]
+		if pg.nLocals > scope.nLocals {
+			if pg.closePC >= 0 {
+				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(scope.nLocals)
+			}
+			pg.nLocals = scope.nLocals
+		}
+	}
+
 	// Patch break jumps
 	if scope.breakList != noJump {
 		c.patchListToHere(scope.breakList)

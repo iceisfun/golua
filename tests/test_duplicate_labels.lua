@@ -11,9 +11,11 @@ assert(err1:find("label") and err1:find("lab"),
 local f2, err2 = load("do ::lab:: end do ::lab:: end")
 assert(f2, "same label in different blocks should compile: " .. tostring(err2))
 
--- Test 3: duplicate labels in nested block vs outer block
--- Inner block shadowing is OK in Lua 5.4
+-- Test 3: outer label followed by same label in nested block is rejected
+-- (Lua 5.4.8 behavior)
 local f3, err3 = load("::lab:: do ::lab:: end")
-assert(f3, "nested duplicate label should compile: " .. tostring(err3))
+assert(f3 == nil, "outer then nested duplicate should fail: " .. tostring(err3))
+assert(err3:find("label") and err3:find("lab"),
+  "error should mention duplicate label: " .. tostring(err3))
 
 print("PASS")
