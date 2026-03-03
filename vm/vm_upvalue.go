@@ -65,7 +65,9 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
 		savedTbcLen := len(vm.tbcVars)
 		savedCallStackLen := len(vm.callStack)
 		func() {
+			savedTop := vm.top
 			defer func() {
+				vm.top = savedTop
 				if r := recover(); r != nil {
 					lastPanic = r
 					// Update errVal for subsequent handlers (Lua 5.4 behavior:
