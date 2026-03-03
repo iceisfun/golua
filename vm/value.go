@@ -623,26 +623,58 @@ func ParseHexFloat(s string) (float64, bool) {
 		return 0, false
 	}
 
-	// Parse integer part
+	// Parse integer and fractional hex digits, tracking binary exponent
+	// separately to handle very long digit strings without overflow.
 	var value float64
+	binExp := 0
+	const maxSigDigits = 15 // enough for float64 precision (60 bits > 53)
+	sigDigits := 0
+	gotNonZero := false
+
 	for _, c := range intPart {
 		d := hexDigit(c)
 		if d < 0 {
 			return 0, false
 		}
-		value = value*16 + float64(d)
+		if d != 0 {
+			gotNonZero = true
+		}
+		if gotNonZero {
+			if sigDigits < maxSigDigits {
+				value = value*16 + float64(d)
+				sigDigits++
+			} else {
+				// Beyond precision: digit contributes to exponent only
+				binExp += 4
+			}
+		} else {
+			// Leading zeros don't affect value or exponent
+		}
 	}
 
 	// Parse fractional part
 	if fracPart != "" {
-		mult := 1.0 / 16.0
+		fracExp := 0
 		for _, c := range fracPart {
 			d := hexDigit(c)
 			if d < 0 {
 				return 0, false
 			}
-			value += float64(d) * mult
-			mult /= 16.0
+			fracExp -= 4
+			if d != 0 {
+				gotNonZero = true
+			}
+			if gotNonZero && sigDigits < maxSigDigits {
+				value = value*16 + float64(d)
+				binExp += fracExp
+				fracExp = 0
+				sigDigits++
+			} else if !gotNonZero {
+				// Leading fractional zeros adjust the exponent
+				binExp += fracExp
+				fracExp = 0
+			}
+			// Digits beyond precision are dropped
 		}
 	}
 
@@ -667,11 +699,15 @@ func ParseHexFloat(s string) (float64, bool) {
 				return 0, false
 			}
 			exp = exp*10 + int(c-'0')
+			if exp > 100000 {
+				// Cap to avoid int overflow; result will be 0 or ±Inf
+				exp = 100000
+			}
 		}
-		value *= math.Pow(2, float64(expSign*exp))
+		binExp += expSign * exp
 	}
 
-	return sign * value, true
+	return sign * math.Ldexp(value, binExp), true
 }
 
 // hexDigit returns the numeric value of a hex digit (0-15), or -1 if invalid.
