@@ -369,24 +369,8 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 				c.error(target, "attempt to assign to const variable '%s'", t.Name)
 				return
 			}
-			// For function calls, we need to use a temporary register because
-			// compileFuncCall places the function into the target register before
-			// evaluating arguments. If those arguments reference this variable,
-			// they'd get the function instead of the original value.
-			if _, isCall := value.(*ast.FuncCallExpr); isCall {
-				tempReg := fs.reserveReg()
-				c.compileExprToReg(value, tempReg)
-				fs.emit(ABC(OP_MOVE, reg, tempReg, 0, 0), line)
-				fs.freeReg = tempReg
-				return
-			}
-			if _, isCall := value.(*ast.MethodCallExpr); isCall {
-				tempReg := fs.reserveReg()
-				c.compileExprToReg(value, tempReg)
-				fs.emit(ABC(OP_MOVE, reg, tempReg, 0, 0), line)
-				fs.freeReg = tempReg
-				return
-			}
+			// compileExprToReg handles clobber protection for function/method
+			// calls via savedFreeReg — no special-casing needed here.
 			c.compileExprToReg(value, reg)
 			return
 		}

@@ -668,6 +668,49 @@ func TestParenExpr(t *testing.T) {
 	_ = p
 }
 
+// TestAssignCallRegAlloc verifies that assigning a function call result to an
+// existing local uses the first free register for the call (matching PUC-Lua).
+// Before the fix, compileSingleAssign pre-reserved a temp register, inflating
+// freeReg so that compileExprToReg allocated a *second* temp, producing an
+// extra OP_MOVE and wasting a register.
+//
+// PUC-Lua bytecode for "local x = 1; x = print(x)":
+//   VARARGPREP 0; LOADI 0 1; GETTABUP 1 0 0; MOVE 2 0; CALL 1 2 2; MOVE 0 1; RETURN 1 1 1
+// (7 instructions, 2 OP_MOVE: one for arg copy, one for final assignment)
+//
+// GoLua before fix (8 instructions, 3 OP_MOVE):
+//   VARARGPREP 0; LOADI 0 1; GETTABUP 2 0 0; MOVE 3 0; CALL 2 2 2; MOVE 1 2; MOVE 0 1; RETURN0
+func TestAssignCallRegAlloc(t *testing.T) {
+	p := compile(t, `local x = 1; x = print(x)`)
+	moves := countOp(p, OP_MOVE)
+	// 2 MOVEs: MOVE for arg copy + MOVE for final assignment (matches PUC-Lua).
+	if moves != 2 {
+		t.Errorf("expected 2 OP_MOVE, got %d\nbytecode:\n%s", moves, p.DumpString())
+	}
+	// Total instruction count should match PUC-Lua (7).
+	if len(p.Code) > 7 {
+		t.Errorf("expected <= 7 instructions, got %d\nbytecode:\n%s", len(p.Code), p.DumpString())
+	}
+}
+
+// TestAssignMethodCallRegAlloc verifies method call assignment register usage.
+// PUC-Lua produces 6 instructions (SELF reads directly from the local).
+// GoLua currently produces 7 (extra MOVE to copy object before SELF) — the
+// compileMethodCall object-copy is a separate issue from the assignment path.
+func TestAssignMethodCallRegAlloc(t *testing.T) {
+	p := compile(t, `local s = "hello"; s = s:upper()`)
+	moves := countOp(p, OP_MOVE)
+	// 2 MOVEs: MOVE for object copy before SELF + MOVE for final assignment.
+	// (PUC-Lua only needs 1 MOVE since SELF reads the object register directly.)
+	if moves != 2 {
+		t.Errorf("expected 2 OP_MOVE, got %d\nbytecode:\n%s", moves, p.DumpString())
+	}
+	// 7 instructions (one more than PUC-Lua's 6 due to object copy).
+	if len(p.Code) > 7 {
+		t.Errorf("expected <= 7 instructions, got %d\nbytecode:\n%s", len(p.Code), p.DumpString())
+	}
+}
+
 // TestAllLuaTestFiles tries to compile all the Lua test files that the parser handles.
 func TestCompileLuaTestFiles(t *testing.T) {
 	// These are the test files from the Lua 5.5 test suite that the parser can handle.
