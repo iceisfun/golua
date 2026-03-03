@@ -220,7 +220,7 @@ func TestRuntimeErrorConcatenateNil(t *testing.T) {
 func TestRuntimeErrorIntegerFloorDivByZero(t *testing.T) {
 	expectRuntimeError(t, "idiv.lua",
 		"local x = 10\nlocal y = x // 0\n",
-		"idiv.lua:2:", "attempt to perform 'n//0'")
+		"idiv.lua:2:", "attempt to divide by zero")
 }
 
 func TestRuntimeErrorIntegerModByZero(t *testing.T) {

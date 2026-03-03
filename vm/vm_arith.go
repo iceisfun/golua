@@ -36,7 +36,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 			return NewInt(i1 * i2), nil
 		case compiler.OP_IDIV:
 			if i2 == 0 {
-				return Nil, vm.runtimeError("attempt to perform 'n//0'")
+				return Nil, vm.runtimeError("attempt to divide by zero")
 			}
 			if i2 == -1 {
 				return NewInt(-i1), nil
@@ -126,7 +126,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 			return NewInt(i1 * i2), nil
 		case compiler.OP_IDIVK:
 			if i2 == 0 {
-				return Nil, vm.runtimeError("attempt to perform 'n//0'")
+				return Nil, vm.runtimeError("attempt to divide by zero")
 			}
 			if i2 == -1 {
 				return NewInt(-i1), nil
