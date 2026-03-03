@@ -109,7 +109,17 @@ func stringRep(v *vm.VM) int {
 		return 1
 	}
 
+	// Check for overflow: total = len(s)*n + len(sep)*(n-1)
+	const maxSize = 1 << 30 // ~1GB, reasonable limit
+	sLen := int64(len(s))
+	sepLen := int64(len(sep))
+	totalSize := sLen*n + sepLen*(n-1)
+	if totalSize < 0 || totalSize > maxSize || (sLen > 0 && n > maxSize/sLen) {
+		panic("resulting string too large")
+	}
+
 	var result strings.Builder
+	result.Grow(int(totalSize))
 	for i := int64(0); i < n; i++ {
 		if i > 0 {
 			result.WriteString(sep)
