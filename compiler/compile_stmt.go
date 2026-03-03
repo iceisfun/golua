@@ -368,6 +368,15 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 			fs.freeReg = tempReg
 			return
 		}
+		// Local _ENV: _ENV[name] via SETFIELD on local
+		if envReg, ok := fs.lookupLocal("_ENV"); ok {
+			nameK := fs.stringConstant(t.Name)
+			tempReg := fs.reserveReg()
+			c.compileExprToReg(value, tempReg)
+			fs.emitSetField(envReg, nameK, tempReg, line)
+			fs.freeReg = tempReg
+			return
+		}
 		// Global: _ENV[name]
 		c.compileSetGlobal(t.Name, value, line)
 
@@ -418,6 +427,12 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 				return
 			}
 			fs.emit(ABC(OP_SETUPVAL, srcReg, idx, 0, 0), line)
+			return
+		}
+		// Local _ENV: _ENV[name] via SETFIELD on local
+		if envReg, ok := fs.lookupLocal("_ENV"); ok {
+			nameK := fs.stringConstant(t.Name)
+			fs.emitSetField(envReg, nameK, srcReg, line)
 			return
 		}
 		// Global: _ENV[name]
