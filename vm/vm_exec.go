@@ -585,7 +585,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				if needErr {
 					varName := localName(frame.closure.Proto, a, frame.pc)
-					return nil, fmt.Errorf("variable '%s' got a non-closable value", varName)
+					return nil, vm.runtimeError("variable '%s' got a non-closable value", varName)
 				}
 			}
 			vm.tbcVars = append(vm.tbcVars, frame.base+a)
@@ -998,7 +998,7 @@ func (vm *VM) execute() ([]Value, error) {
 				initI := init.AsInt()
 				stepI := step.AsInt()
 				if stepI == 0 {
-					return nil, fmt.Errorf("'for' step is zero")
+					return nil, vm.runtimeError("'for' step is zero")
 				}
 				// Try to convert limit to integer
 				limitI, limitIsInt := limit.ToInt()
@@ -1022,7 +1022,7 @@ func (vm *VM) execute() ([]Value, error) {
 						limitI = math.MinInt64
 						limitIsInt = true
 					} else if math.IsNaN(limitF) {
-						return nil, fmt.Errorf("'for' limit must be a number, got %s", limit.Type())
+						return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", limit.Type())
 					} else if stepI > 0 {
 						fl := math.Floor(limitF)
 						if fl < float64(math.MinInt64) {
@@ -1049,7 +1049,7 @@ func (vm *VM) execute() ([]Value, error) {
 						limitIsInt = true
 					}
 				} else if !limitIsInt {
-					return nil, fmt.Errorf("'for' limit must be a number, got %s", limit.Type())
+					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", limit.Type())
 				}
 
 				// Integer for loop
@@ -1075,16 +1075,16 @@ func (vm *VM) execute() ([]Value, error) {
 				limitF, ok2 := limit.ToNumber()
 				stepF, ok3 := step.ToNumber()
 				if !ok1 {
-					return nil, fmt.Errorf("'for' initial value must be a number, got %s", init.Type())
+					return nil, vm.runtimeError("bad 'for' initial value (number expected, got %s)", init.Type())
 				}
 				if !ok2 {
-					return nil, fmt.Errorf("'for' limit must be a number, got %s", limit.Type())
+					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", limit.Type())
 				}
 				if !ok3 {
-					return nil, fmt.Errorf("'for' step must be a number, got %s", step.Type())
+					return nil, vm.runtimeError("bad 'for' step (number expected, got %s)", step.Type())
 				}
 				if stepF == 0 {
-					return nil, fmt.Errorf("'for' step is zero")
+					return nil, vm.runtimeError("'for' step is zero")
 				}
 				vm.stack[frame.base+a] = NewFloat(initF)
 				vm.stack[frame.base+a+1] = NewFloat(limitF)
