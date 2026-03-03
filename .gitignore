@@ -22,6 +22,7 @@ proposed_tests/
 
 # Testing
 a.lua
+test.lua
 lua
 ref/
 EXTENDED_TESTING_PLAN.md
