@@ -23,6 +23,9 @@ func (vm *VM) equal(v1, v2 Value) (bool, error) {
 			return false, nil
 		}
 
+		if !mm.IsCallable() {
+			return false, vm.runtimeError("attempt to call a %s value (metamethod 'eq')", mm.Type())
+		}
 		res, err := vm.callMetamethod(mm, v1, v2)
 		if err != nil {
 			return false, err
@@ -53,6 +56,9 @@ func (vm *VM) lessThan(v1, v2 Value) (bool, error) {
 	}
 
 	if !mm.IsNil() {
+		if !mm.IsCallable() {
+			return false, vm.runtimeError("attempt to call a %s value (metamethod 'lt')", mm.Type())
+		}
 		res, err := vm.callMetamethod(mm, v1, v2)
 		if err != nil {
 			return false, err
@@ -78,6 +84,9 @@ func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
 	}
 
 	if !mm.IsNil() {
+		if !mm.IsCallable() {
+			return false, vm.runtimeError("attempt to call a %s value (metamethod 'le')", mm.Type())
+		}
 		res, err := vm.callMetamethod(mm, v1, v2)
 		if err != nil {
 			return false, err
@@ -95,6 +104,9 @@ func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
 	}
 
 	if !mm.IsNil() {
+		if !mm.IsCallable() {
+			return false, vm.runtimeError("attempt to call a %s value (metamethod 'lt')", mm.Type())
+		}
 		res, err := vm.callMetamethod(mm, v2, v1) // Note swapped args: b < a
 		if err != nil {
 			return false, err
@@ -131,6 +143,9 @@ func (vm *VM) concat(v1, v2 Value) (Value, error) {
 	}
 
 	if !mm.IsNil() {
+		if !mm.IsCallable() {
+			return Nil, vm.runtimeError("attempt to call a %s value (metamethod 'concat')", mm.Type())
+		}
 		return vm.callMetamethod(mm, v1, v2)
 	}
 

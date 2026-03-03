@@ -377,7 +377,7 @@ func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {
 		return result, nil
 	}
 
-	return Nil, nil
+	return Nil, vm.runtimeError("attempt to call a %s value", fn.Type())
 }
 
 // callMetamethod3 calls a metamethod with 3 arguments
@@ -423,7 +423,7 @@ func (vm *VM) callMetamethod3(fn, arg1, arg2, arg3 Value) (Value, error) {
 		return result, nil
 	}
 
-	return Nil, nil
+	return Nil, vm.runtimeError("attempt to call a %s value", fn.Type())
 }
 
 // getMetafield retrieves a metafield from a value's metatable

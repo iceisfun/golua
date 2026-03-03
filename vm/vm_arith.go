@@ -95,6 +95,9 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	// Try metamethods with original (uncoerced) operands
 	mmName := vm.arithMetamethod(op)
 	if mm := vm.getArithMetamethod(orig1, orig2, mmName); !mm.IsNil() {
+		if !mm.IsCallable() {
+			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", mm.Type(), mmName[2:])
+		}
 		result, err := vm.callMetamethod(mm, orig1, orig2)
 		if err != nil {
 			return Nil, err
@@ -179,6 +182,9 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 	// Try metamethods
 	mmName := vm.arithMetamethod(op)
 	if mm := vm.getArithMetamethod(v, kv, mmName); !mm.IsNil() {
+		if !mm.IsCallable() {
+			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", mm.Type(), mmName[2:])
+		}
 		result, err := vm.callMetamethod(mm, v, kv)
 		if err != nil {
 			return Nil, err
@@ -253,6 +259,9 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	// Try metamethods
 	mmName := vm.bitwiseMetamethod(op)
 	if mm := vm.getArithMetamethod(v1, v2, mmName); !mm.IsNil() {
+		if !mm.IsCallable() {
+			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", mm.Type(), mmName[2:])
+		}
 		return vm.callMetamethod(mm, v1, v2)
 	}
 
@@ -295,6 +304,9 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
 	// Try metamethods
 	mmName := vm.bitwiseMetamethod(op)
 	if mm := vm.getArithMetamethod(v, kv, mmName); !mm.IsNil() {
+		if !mm.IsCallable() {
+			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", mm.Type(), mmName[2:])
+		}
 		return vm.callMetamethod(mm, v, kv)
 	}
 
