@@ -1,6 +1,8 @@
 package stdlib
 
 import (
+	"fmt"
+
 	"github.com/iceisfun/golua/vm"
 )
 
@@ -59,12 +61,28 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		t := arg.AsTable()
 		dateTable := make(map[string]int)
 
-		for _, key := range []string{"year", "month", "day", "hour", "min", "sec"} {
+		// Required fields
+		for _, key := range []string{"year", "month", "day"} {
+			val := t.Get(vm.NewString(key))
+			if val.IsNil() {
+				panic(fmt.Sprintf("field '%s' missing in date table", key))
+			}
+			i, ok := val.ToInt()
+			if !ok {
+				panic(fmt.Sprintf("field '%s' is not an integer", key))
+			}
+			dateTable[key] = int(i)
+		}
+
+		// Optional fields
+		for _, key := range []string{"hour", "min", "sec"} {
 			val := t.Get(vm.NewString(key))
 			if !val.IsNil() {
-				if i, ok := val.ToInt(); ok {
-					dateTable[key] = int(i)
+				i, ok := val.ToInt()
+				if !ok {
+					panic(fmt.Sprintf("field '%s' is not an integer", key))
 				}
+				dateTable[key] = int(i)
 			}
 		}
 

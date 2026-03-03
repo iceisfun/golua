@@ -65,17 +65,16 @@ func (p *DefaultOsProvider) Time(dateTable map[string]int) (int64, error) {
 func (p *DefaultOsProvider) Date(format string, timestamp int64) (string, error) {
 	t := time.Unix(timestamp, 0)
 
-	if format == "" {
-		format = "%c"
-	}
-
 	// Check for ! prefix (UTC)
 	if strings.HasPrefix(format, "!") {
 		t = t.UTC()
 		format = format[1:]
 	}
 
-	goFormat := strftimeToGo(format)
+	goFormat, err := strftimeToGo(format)
+	if err != nil {
+		return "", err
+	}
 	return t.Format(goFormat), nil
 }
 
@@ -122,11 +121,14 @@ func (p *DefaultOsProvider) Capabilities() LuaOsCaps {
 }
 
 // strftimeToGo converts a strftime format string to a Go time.Format layout.
-func strftimeToGo(format string) string {
+func strftimeToGo(format string) (string, error) {
 	var result strings.Builder
 	i := 0
 	for i < len(format) {
-		if format[i] == '%' && i+1 < len(format) {
+		if format[i] == '%' {
+			if i+1 >= len(format) {
+				return "", fmt.Errorf("invalid conversion specifier in 'date'")
+			}
 			i++
 			switch format[i] {
 			case 'Y':
@@ -168,14 +170,12 @@ func strftimeToGo(format string) string {
 			case '%':
 				result.WriteByte('%')
 			default:
-				// Unknown directive, keep as-is
-				result.WriteByte('%')
-				result.WriteByte(format[i])
+				return "", fmt.Errorf("invalid conversion specifier '%c%c'", '%', format[i])
 			}
 		} else {
 			result.WriteByte(format[i])
 		}
 		i++
 	}
-	return result.String()
+	return result.String(), nil
 }

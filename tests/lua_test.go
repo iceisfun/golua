@@ -114,6 +114,7 @@ func runLuaTest(t *testing.T, filename string) {
 
 	// Run
 	v := vm.New()
+	v.SetOsProvider(vm.NewDefaultOsProvider())
 	stdlib.Open(v)
 
 	// Capture panics from assert() failures
