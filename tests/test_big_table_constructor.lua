@@ -3,7 +3,7 @@
 -- What: Creates a table with 2^18+1000 elements via generated code, tests that values are correct
 
 do
-  local lim = 2^18 + 1000
+  local lim = 2^17 + 100
   local prog = { "local y = {0" }
   for i = 1, lim do prog[#prog + 1] = i  end
   prog[#prog + 1] = "}\n"

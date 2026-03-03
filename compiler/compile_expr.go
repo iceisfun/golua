@@ -397,7 +397,7 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 	tmp := fs.reserveReg()
 	c.compileExprToReg(e.Left, tmp)
 	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 0), line) // skip if falsy, keep value
-	jmp := fs.emitJump(line)                       // jump to end (short-circuit)
+	jmp := fs.emitJump(line)                        // jump to end (short-circuit)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
 	fs.freeReg = tmp
@@ -413,7 +413,7 @@ func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 	tmp := fs.reserveReg()
 	c.compileExprToReg(e.Left, tmp)
 	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 1), line) // skip if truthy, keep value
-	jmp := fs.emitJump(line)                       // jump to end (short-circuit)
+	jmp := fs.emitJump(line)                        // jump to end (short-circuit)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
 	fs.freeReg = tmp
@@ -472,7 +472,7 @@ func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, 
 	nArgs := len(e.Args)
 	for i, arg := range e.Args {
 		if i == nArgs-1 && isMultiRet(arg) {
-			c.compileExprMultiRet(arg, 0)                     // open call
+			c.compileExprMultiRet(arg, 0) // open call
 			fs.emit(ABC(OP_CALL, base, 0, nResults, 0), line) // B=0 means top
 			return
 		}

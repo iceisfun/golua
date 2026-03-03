@@ -275,8 +275,8 @@ func stringGsub(v *vm.VM) int {
 
 	var result strings.Builder
 	count := 0
-	pos := 0        // 0-based current position
-	lastMatch := -1 // 0-based end of last match, -1 = none
+	pos := 0          // 0-based current position
+	lastMatch := -1   // 0-based end of last match, -1 = none
 
 	for pos <= len(s) && (maxRepl < 0 || count < maxRepl) {
 		end, caps, ok := luaMatchAt(s, searchPat, pos)
@@ -482,8 +482,8 @@ func stringGmatch(v *vm.VM) int {
 		init = 1
 	}
 
-	pos := init - 1 // 0-based
-	lastMatch := -1 // 0-based end of last match, -1 = none
+	pos := init - 1     // 0-based
+	lastMatch := -1     // 0-based end of last match, -1 = none
 
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
 		for pos <= len(s) {
@@ -523,3 +523,4 @@ func stringGmatch(v *vm.VM) int {
 	v.Set(0, iter)
 	return 1
 }
+
