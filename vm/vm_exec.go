@@ -574,13 +574,18 @@ func (vm *VM) execute() ([]Value, error) {
 			val := vm.stack[frame.base+a]
 			// Validate: nil and false are always OK; otherwise must have __close
 			if !val.IsNil() && !(val.IsBool() && !val.AsBool()) {
+				needErr := false
 				if val.IsTable() {
 					mt := val.AsTable().Metatable()
 					if mt == nil || mt.Get(metaClose).IsNil() {
-						return nil, fmt.Errorf("variable is assigned a non-closable value")
+						needErr = true
 					}
 				} else {
-					return nil, fmt.Errorf("variable is assigned a non-closable value")
+					needErr = true
+				}
+				if needErr {
+					varName := localName(frame.closure.Proto, a, frame.pc)
+					return nil, fmt.Errorf("variable '%s' got a non-closable value", varName)
 				}
 			}
 			vm.tbcVars = append(vm.tbcVars, frame.base+a)
@@ -1448,4 +1453,19 @@ dispatch:
 	}
 
 	return results, nil
+}
+
+// localName returns the name of the local variable occupying register reg
+// at the given pc, or "?" if not found. Mirrors Lua 5.4's luaF_getlocalname.
+func localName(proto *compiler.Proto, reg int, pc int) string {
+	n := reg + 1 // 1-based local number
+	for i := 0; i < len(proto.Locals) && proto.Locals[i].StartPC <= pc; i++ {
+		if pc < proto.Locals[i].EndPC { // active at this PC
+			n--
+			if n == 0 {
+				return proto.Locals[i].Name
+			}
+		}
+	}
+	return "?"
 }

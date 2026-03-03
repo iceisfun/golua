@@ -111,17 +111,25 @@ func (vm *VM) CloseAllTBC() {
 // errVal is the error object (Nil for normal exit, the Lua error value on error paths).
 func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 	val := vm.stack[stackIdx]
-	if !val.IsTable() {
+	// nil and false are always OK (no __close needed)
+	if val.IsNil() || (val.IsBool() && !val.AsBool()) {
 		return
 	}
-	t := val.AsTable()
-	mt := t.Metatable()
-	if mt == nil {
-		return
+	if val.IsTable() {
+		t := val.AsTable()
+		mt := t.Metatable()
+		if mt != nil {
+			closeFunc := mt.Get(metaClose)
+			if !closeFunc.IsNil() {
+				_, err := vm.callMetamethod(closeFunc, val, errVal)
+				if err != nil {
+					panic(err.Error())
+				}
+				return
+			}
+		}
 	}
-	closeFunc := mt.Get(metaClose)
-	if closeFunc.IsNil() {
-		return
-	}
-	vm.callMetamethod(closeFunc, val, errVal)
+	// Value was registered as TBC but __close is now missing (removed at
+	// runtime or metatable changed). This matches Lua 5.4 behavior.
+	panic("attempt to call a nil value (metamethod 'close')")
 }
