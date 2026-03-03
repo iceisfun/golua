@@ -137,15 +137,15 @@ func coResume(v *vm.VM) int {
 	status := co.status
 	co.mu.Unlock()
 
-	if status == statusDead {
+	if status != statusSuspended {
+		var msg string
+		if status == statusDead {
+			msg = "cannot resume dead coroutine"
+		} else {
+			msg = "cannot resume non-suspended coroutine"
+		}
 		v.Set(0, vm.False)
-		v.Set(1, vm.NewString("cannot resume dead coroutine"))
-		return 2
-	}
-
-	if status == statusRunning {
-		v.Set(0, vm.False)
-		v.Set(1, vm.NewString("cannot resume non-suspended coroutine"))
+		v.Set(1, vm.NewString(msg))
 		return 2
 	}
 
@@ -448,6 +448,29 @@ func coWrap(v *vm.VM) int {
 			args[i-1] = v.Get(i)
 		}
 
+		// Set caller's status to normal while the resumed coroutine runs
+		callerID := v.CoroutineID()
+		if callerID != 0 {
+			coroutinesMu.Lock()
+			if caller := coroutines[callerID]; caller != nil {
+				caller.mu.Lock()
+				caller.status = statusNormal
+				caller.mu.Unlock()
+			}
+			coroutinesMu.Unlock()
+		}
+		restoreCallerStatus := func() {
+			if callerID != 0 {
+				coroutinesMu.Lock()
+				if caller := coroutines[callerID]; caller != nil {
+					caller.mu.Lock()
+					caller.status = statusRunning
+					caller.mu.Unlock()
+				}
+				coroutinesMu.Unlock()
+			}
+		}
+
 		// Start the goroutine if this is the first call
 		co.mu.Lock()
 		if !co.started {
@@ -465,12 +488,14 @@ func coWrap(v *vm.VM) int {
 		// Wait for yield or completion
 		select {
 		case results := <-co.yieldCh:
+			restoreCallerStatus()
 			v.EnsureStack(v.Base() + len(results))
 			for i, r := range results {
 				v.Set(i, r)
 			}
 			return len(results)
 		case <-co.doneCh:
+			restoreCallerStatus()
 			co.mu.Lock()
 			err := co.err
 			result := co.result
@@ -487,6 +512,7 @@ func coWrap(v *vm.VM) int {
 			}
 			return len(result)
 		case <-ctxDone(v):
+			restoreCallerStatus()
 			panic("execution interrupted: " + v.Context().Err().Error())
 		}
 	})
