@@ -348,8 +348,8 @@ func tableMove(v *vm.VM) int {
 			}
 		}
 
-		if tt > f {
-			// Copy backwards to avoid overwriting
+		if a1 == a2 && tt > f && tt <= e {
+			// Copy backwards to avoid overwriting (overlapping same-table move)
 			for i := count - 1; i >= 0; i-- {
 				val := tableGetIdx(v, a1, int(f+i))
 				tableSetIdx(v, a2, int(tt+i), val)
