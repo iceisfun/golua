@@ -984,8 +984,14 @@ func (vm *VM) execute() ([]Value, error) {
 				initF, ok1 := init.ToNumber()
 				limitF, ok2 := limit.ToNumber()
 				stepF, ok3 := step.ToNumber()
-				if !ok1 || !ok2 || !ok3 {
-					return nil, fmt.Errorf("'for' limit must be a number")
+				if !ok1 {
+					return nil, fmt.Errorf("'for' initial value must be a number, got %s", init.Type())
+				}
+				if !ok2 {
+					return nil, fmt.Errorf("'for' limit must be a number, got %s", limit.Type())
+				}
+				if !ok3 {
+					return nil, fmt.Errorf("'for' step must be a number, got %s", step.Type())
 				}
 				if stepF == 0 {
 					return nil, fmt.Errorf("'for' step is zero")
