@@ -453,11 +453,12 @@ func (fs *funcState) needsClose(fromLocal int) bool {
 	return false
 }
 
-// isConst returns true if the named local has the <const> attribute.
+// isConst returns true if the named local has the <const> or <close> attribute.
+// Both attributes make a variable immutable (Lua 5.4 §3.3.7).
 func (fs *funcState) isConst(name string) bool {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
 		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
-			return fs.locals[i].attrib == "const"
+			return fs.locals[i].attrib == "const" || fs.locals[i].attrib == "close"
 		}
 	}
 	return false

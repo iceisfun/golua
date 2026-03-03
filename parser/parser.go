@@ -357,6 +357,9 @@ func (p *parser) parseGlobalStmt() ast.Stmt {
 func (p *parser) parseAttrib() string {
 	if p.match(token.Type('<')) {
 		tok, _ := p.expect(token.NAME)
+		if tok.Literal != "const" && tok.Literal != "close" {
+			p.err = &token.PosError{Pos: tok.Pos, Msg: fmt.Sprintf("unknown attribute '%s'", tok.Literal)}
+		}
 		p.expect(token.Type('>'))
 		return tok.Literal
 	}
