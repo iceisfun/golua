@@ -159,13 +159,13 @@ func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
 	}
 
 	// Register all local variables occupying base..base+nNames-1
+	fs.checkVarLimit(nNames)
+
 	fs.freeReg = base + nNames
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
 	fs.checkRegLimit()
-
-	fs.checkVarLimit(nNames)
 	baseIdx := len(fs.locals)
 	for i, name := range s.Names {
 		attrib := ""
