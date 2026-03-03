@@ -12,6 +12,11 @@ import (
 func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 	fs := c.fs
 
+	// Save freeReg before the advance. If there are active locals after reg,
+	// the original freeReg > reg+1, which matters for expressions that use
+	// reg+1... as scratch space (table constructors, function calls).
+	savedFreeReg := fs.freeReg
+
 	// Ensure the register is allocated
 	if reg >= fs.freeReg {
 		fs.freeReg = reg + 1
@@ -86,7 +91,18 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		fs.emit(ABx(OP_CLOSURE, reg, protoIdx), e.P.Line)
 
 	case *ast.TableConstructor: // e.g. {1, 2, key="val"}
-		c.compileTableConstructor(e, reg)
+		// Table constructors use reg+1, reg+2, ... as scratch space for
+		// array values before SETLIST flushes them. If reg is below existing
+		// locals, that scratch space would clobber them. Build at a safe
+		// register and move the result.
+		if savedFreeReg > reg+1 {
+			tmp := fs.freeReg
+			c.compileTableConstructor(e, tmp)
+			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
+			fs.freeReg = tmp + 1
+		} else {
+			c.compileTableConstructor(e, reg)
+		}
 
 	case *ast.FieldExpr: // e.g. t.name
 		c.compileFieldExpr(e, reg)
