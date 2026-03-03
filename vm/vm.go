@@ -311,8 +311,9 @@ func (vm *VM) CoroutineID() int {
 }
 
 // CallCoroutine calls a closure as a coroutine, with yield support.
+// Uses ProtectedCall to ensure TBC variables are closed on error.
 func (vm *VM) CallCoroutine(closure *Closure, args []Value) ([]Value, error) {
-	return vm.call(closure, args, MultiReturn)
+	return vm.ProtectedCall(NewFunction(closure), args)
 }
 
 // ThreadObj returns the thread object representing this VM (for coroutine.running).
