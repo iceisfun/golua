@@ -44,6 +44,15 @@ import (
 	"strings"
 )
 
+// nativeFuncBox wraps a NativeFunc in a heap-allocated struct so that it
+// can be stored as a comparable pointer in Value.ptr and used as a Go map
+// key (Go function values are not comparable). Each call to NewNativeFunc
+// allocates a distinct box, giving each Value reference identity.
+type nativeFuncBox struct {
+	fn  NativeFunc
+	ptr uintptr // cached reflect pointer for fmt %p output
+}
+
 // Value represents a Lua runtime value using a tagged union for efficiency.
 // The zero value is nil. Values are compared by value for primitive types
 // (nil, bool, int, float, string) and by identity for reference types
@@ -117,8 +126,13 @@ func NewFunction(f *Closure) Value {
 }
 
 // NewNativeFunc creates a native function value.
+// The function is wrapped in a nativeFuncBox so that the resulting Value
+// can be used as a table key (Go function types are not comparable).
 func NewNativeFunc(f NativeFunc) Value {
-	return Value{typ: typeNativeFunc, ptr: f}
+	return Value{typ: typeNativeFunc, ptr: &nativeFuncBox{
+		fn:  f,
+		ptr: reflect.ValueOf(f).Pointer(),
+	}}
 }
 
 // IsNil reports whether v is nil.
@@ -226,7 +240,7 @@ func (v Value) AsClosure() *Closure {
 // AsNativeFunc returns the native function value.
 func (v Value) AsNativeFunc() NativeFunc {
 	if v.typ == typeNativeFunc {
-		return v.ptr.(NativeFunc)
+		return v.ptr.(*nativeFuncBox).fn
 	}
 	return nil
 }
@@ -424,7 +438,7 @@ func (v Value) String() string {
 	case typeFunction:
 		return fmt.Sprintf("function: %p", v.ptr)
 	case typeNativeFunc:
-		return fmt.Sprintf("function: %p", v.ptr)
+		return fmt.Sprintf("function: 0x%x", v.ptr.(*nativeFuncBox).ptr)
 	default:
 		return "???"
 	}
@@ -507,7 +521,7 @@ func (v Value) Equal(other Value) bool {
 	case typeTable, typeFunction:
 		return v.ptr == other.ptr
 	case typeNativeFunc:
-		return reflect.ValueOf(v.ptr).Pointer() == reflect.ValueOf(other.ptr).Pointer()
+		return v.ptr == other.ptr
 	default:
 		return false
 	}

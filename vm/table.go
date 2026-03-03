@@ -410,8 +410,8 @@ func keyToValue(k any) Value {
 		return NewTable(v)
 	case *Closure:
 		return NewFunction(v)
-	case NativeFunc:
-		return NewNativeFunc(v)
+	case *nativeFuncBox:
+		return Value{typ: typeNativeFunc, ptr: v}
 	default:
 		return Nil
 	}

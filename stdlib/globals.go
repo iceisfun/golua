@@ -439,6 +439,29 @@ func luaPairs(v *vm.VM) int {
 	return 3
 }
 
+// ipairsIter is the shared iterator function returned by ipairs().
+// A single Value is reused so that ipairs{} == ipairs{} holds.
+var ipairsIter = vm.NewNativeFunc(func(v *vm.VM) int {
+	t := v.Get(1).AsTable()
+	if t == nil {
+		panic(fmt.Sprintf("bad argument #1 to 'ipairs' (table expected, got %s)", v.Get(1).Type()))
+	}
+	i := v.Get(2)
+	idx, _ := i.ToInt()
+	idx++
+	val, err := v.TableGetInt(t, int(idx))
+	if err != nil {
+		panic(err)
+	}
+	if val.IsNil() {
+		v.Set(0, vm.Nil)
+		return 1
+	}
+	v.Set(0, vm.NewInt(idx))
+	v.Set(1, val)
+	return 2
+})
+
 // ipairs(t)
 func luaIpairs(v *vm.VM) int {
 	arg := v.Get(1)
@@ -446,29 +469,7 @@ func luaIpairs(v *vm.VM) int {
 		panic("bad argument #1 to 'ipairs' (table expected, got no value)")
 	}
 
-	// ipairs iterator — uses metamethod-aware access so __index is honored
-	iter := vm.NewNativeFunc(func(v *vm.VM) int {
-		t := v.Get(1).AsTable()
-		if t == nil {
-			panic(fmt.Sprintf("bad argument #1 to 'ipairs' (table expected, got %s)", v.Get(1).Type()))
-		}
-		i := v.Get(2)
-		idx, _ := i.ToInt()
-		idx++
-		val, err := v.TableGetInt(t, int(idx))
-		if err != nil {
-			panic(err)
-		}
-		if val.IsNil() {
-			v.Set(0, vm.Nil)
-			return 1
-		}
-		v.Set(0, vm.NewInt(idx))
-		v.Set(1, val)
-		return 2
-	})
-
-	v.Set(0, iter)
+	v.Set(0, ipairsIter)
 	v.Set(1, arg)
 	v.Set(2, vm.NewInt(0))
 	return 3
