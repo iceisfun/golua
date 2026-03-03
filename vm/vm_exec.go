@@ -970,14 +970,84 @@ func (vm *VM) execute() ([]Value, error) {
 			limit := vm.stack[frame.base+a+1]
 			step := vm.stack[frame.base+a+2]
 
-			// If all three are integers, use integer loop
-			if init.IsInt() && limit.IsInt() && step.IsInt() {
+			// Coerce string operands to numbers
+			if init.IsString() {
+				if nv, ok := StringToNumericValue(init.AsString()); ok {
+					init = nv
+				}
+			}
+			if limit.IsString() {
+				if nv, ok := StringToNumericValue(limit.AsString()); ok {
+					limit = nv
+				}
+			}
+			if step.IsString() {
+				if nv, ok := StringToNumericValue(step.AsString()); ok {
+					step = nv
+				}
+			}
+
+			// Lua 5.4: if init and step are integer TYPE (not just convertible),
+			// use integer mode. Float values like 1.0 use float mode.
+			if init.IsInt() && step.IsInt() {
 				initI := init.AsInt()
-				limitI := limit.AsInt()
 				stepI := step.AsInt()
 				if stepI == 0 {
 					return nil, fmt.Errorf("'for' step is zero")
 				}
+				// Try to convert limit to integer
+				limitI, limitIsInt := limit.ToInt()
+				if !limitIsInt && limit.IsNumber() {
+					// Float limit: convert using floor (step>0) or ceil (step<0)
+					limitF := limit.AsFloat()
+					if math.IsInf(limitF, 1) {
+						// +Inf: step>0 → use MaxInt64; step<0 → skip
+						if stepI < 0 {
+							frame.pc += bx + 1
+							break
+						}
+						limitI = math.MaxInt64
+						limitIsInt = true
+					} else if math.IsInf(limitF, -1) {
+						// -Inf: step>0 → skip; step<0 → use MinInt64
+						if stepI > 0 {
+							frame.pc += bx + 1
+							break
+						}
+						limitI = math.MinInt64
+						limitIsInt = true
+					} else if math.IsNaN(limitF) {
+						return nil, fmt.Errorf("'for' limit must be a number, got %s", limit.Type())
+					} else if stepI > 0 {
+						fl := math.Floor(limitF)
+						if fl < float64(math.MinInt64) {
+							// Limit too negative, loop never runs
+							frame.pc += bx + 1
+							break
+						} else if fl > float64(math.MaxInt64) {
+							limitI = math.MaxInt64
+						} else {
+							limitI = int64(fl)
+						}
+						limitIsInt = true
+					} else {
+						cl := math.Ceil(limitF)
+						if cl > float64(math.MaxInt64) {
+							// Limit too positive, loop never runs
+							frame.pc += bx + 1
+							break
+						} else if cl < float64(math.MinInt64) {
+							limitI = math.MinInt64
+						} else {
+							limitI = int64(cl)
+						}
+						limitIsInt = true
+					}
+				} else if !limitIsInt {
+					return nil, fmt.Errorf("'for' limit must be a number, got %s", limit.Type())
+				}
+
+				// Integer for loop
 				vm.stack[frame.base+a] = NewInt(initI)
 				vm.stack[frame.base+a+1] = NewInt(limitI)
 				vm.stack[frame.base+a+2] = NewInt(stepI)
@@ -995,7 +1065,7 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 				}
 			} else {
-				// Convert to numbers for float loop
+				// Float for loop
 				initF, ok1 := init.ToNumber()
 				limitF, ok2 := limit.ToNumber()
 				stepF, ok3 := step.ToNumber()
