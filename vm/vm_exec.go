@@ -364,6 +364,8 @@ func (vm *VM) execute() ([]Value, error) {
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(int64(sc) << uint(i))
+				} else if v.IsNumber() {
+					return nil, vm.runtimeError("number has no integer representation")
 				} else {
 					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}
@@ -379,6 +381,8 @@ func (vm *VM) execute() ([]Value, error) {
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
+				} else if v.IsNumber() {
+					return nil, vm.runtimeError("number has no integer representation")
 				} else {
 					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}
@@ -457,6 +461,8 @@ func (vm *VM) execute() ([]Value, error) {
 						return nil, err
 					}
 					vm.stack[frame.base+a] = result
+				} else if v.IsNumber() {
+					return nil, vm.runtimeError("number has no integer representation")
 				} else {
 					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}

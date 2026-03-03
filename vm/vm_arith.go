@@ -257,7 +257,13 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	}
 
 	if !ok1 {
+		if v1.IsNumber() {
+			return Nil, vm.runtimeError("number has no integer representation")
+		}
 		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v1.Type())
+	}
+	if v2.IsNumber() {
+		return Nil, vm.runtimeError("number has no integer representation")
 	}
 	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v2.Type())
 }
@@ -293,7 +299,13 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
 	}
 
 	if !ok1 {
+		if v.IsNumber() {
+			return Nil, vm.runtimeError("number has no integer representation")
+		}
 		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
+	}
+	if kv.IsNumber() {
+		return Nil, vm.runtimeError("number has no integer representation")
 	}
 	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", kv.Type())
 }
