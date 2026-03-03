@@ -386,6 +386,9 @@ func luaWarn(v *vm.VM) int {
 // pairs(t)
 func luaPairs(v *vm.VM) int {
 	arg := v.Get(1)
+	if arg.IsNil() {
+		panic("bad argument #1 to 'pairs' (table expected, got no value)")
+	}
 
 	// Check for __pairs metamethod (only on tables)
 	if arg.IsTable() {
@@ -414,6 +417,9 @@ func luaPairs(v *vm.VM) int {
 // ipairs(t)
 func luaIpairs(v *vm.VM) int {
 	arg := v.Get(1)
+	if arg.IsNil() {
+		panic("bad argument #1 to 'ipairs' (table expected, got no value)")
+	}
 
 	// ipairs iterator — uses metamethod-aware access so __index is honored
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {

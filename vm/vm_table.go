@@ -309,7 +309,7 @@ func (vm *VM) ObjLen(val Value) (int, error) {
 		if i, ok := res.ToInt(); ok {
 			return int(i), nil
 		}
-		return 0, fmt.Errorf("'__len' must return an integer")
+		return 0, fmt.Errorf("object length is not an integer")
 	}
 	if val.IsTable() {
 		return val.AsTable().Len(), nil
