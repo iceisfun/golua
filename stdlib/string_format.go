@@ -56,10 +56,13 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			panic(fmt.Sprintf("invalid conversion '%s'", spec))
 		}
 
-		// Validate width and precision (Lua 5.4: must be < 100)
-		validateFormatWidthPrec(spec)
-
 		specChar := format[i]
+
+		// Validate width and precision (Lua 5.4: must be < 100)
+		validateFormatWidthPrec(spec, specChar)
+
+		// Validate flag/conversion combinations (Lua 5.4 restrictions)
+		validateConversion(spec, specChar)
 
 		if argIdx >= len(vals) {
 			panic(fmt.Sprintf("bad argument #%d to 'format' (no value)", argIdx+2))
@@ -160,7 +163,13 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		case 'c':
 			if i, ok := val.ToInt(); ok {
 				// Lua %c writes one byte (C unsigned char semantics).
-				result.WriteByte(byte(i))
+				ch := string([]byte{byte(i)})
+				// Apply width formatting if specified (e.g., %-16c).
+				if spec != "%" {
+					goSpec := spec + "s"
+					ch = fmt.Sprintf(goSpec, ch)
+				}
+				result.WriteString(ch)
 			} else if _, ok := val.ToNumber(); ok {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number has no integer representation)", argIdx+1))
 			} else {
@@ -365,7 +374,12 @@ func parseFormatWidth(spec string) (width int, left bool) {
 }
 
 // validateFormatWidthPrec panics if width or precision >= 100 (Lua 5.4 limit).
-func validateFormatWidthPrec(spec string) {
+func validateFormatWidthPrec(spec string, conv byte) {
+	// Check overall spec length (Lua 5.4 limit)
+	if len(spec) > 50 {
+		panic("invalid format (too long)")
+	}
+
 	i := 1 // skip '%'
 	// skip flags
 	for i < len(spec) && strings.ContainsRune("#0- +", rune(spec[i])) {
@@ -378,7 +392,7 @@ func validateFormatWidthPrec(spec string) {
 	}
 	if i > start {
 		if w, err := strconv.Atoi(spec[start:i]); err == nil && w >= 100 {
-			panic("invalid format (width or precision too long)")
+			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	}
 	// parse precision
@@ -390,9 +404,58 @@ func validateFormatWidthPrec(spec string) {
 		}
 		if i > start {
 			if p, err := strconv.Atoi(spec[start:i]); err == nil && p >= 100 {
-				panic("invalid format (width or precision too long)")
+				panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 			}
 		}
+	}
+}
+
+// validateConversion checks flag/conversion compatibility per Lua 5.4 rules.
+func validateConversion(spec string, conv byte) {
+	// Parse only the actual flags (before width/precision digits)
+	j := 1 // skip '%'
+	flags := ""
+	for j < len(spec) && strings.ContainsRune("#0- +", rune(spec[j])) {
+		flags += string(spec[j])
+		j++
+	}
+	// Skip width digits
+	for j < len(spec) && spec[j] >= '0' && spec[j] <= '9' {
+		j++
+	}
+	// Check for precision
+	hasDot := j < len(spec) && spec[j] == '.'
+	hasModifiers := len(spec) > 1
+
+	switch conv {
+	case 'c':
+		// %c allows width and '-' flag only. No precision, no '0', no '#', no '+', no ' '.
+		if hasDot || strings.ContainsAny(flags, "0# +") {
+			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+		}
+	case 'q':
+		// %q does not accept any modifiers
+		if hasModifiers {
+			panic("cannot have modifiers with '%q'")
+		}
+	case 's':
+		// %s: no '0' flag, no '#' flag
+		if strings.ContainsAny(flags, "0#") {
+			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+		}
+	case 'd', 'i', 'u':
+		// %d/%i/%u: no '#' flag
+		if strings.Contains(flags, "#") {
+			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+		}
+	case 'p':
+		// %p: no precision
+		if hasDot {
+			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+		}
+	case 'F':
+		// %F is not valid in Lua 5.4
+		panic(fmt.Sprintf("invalid conversion '%%%c'", conv))
 	}
 }
 
