@@ -271,8 +271,18 @@ func (fs *funcState) pc() int {
 	return len(fs.proto.Code)
 }
 
+// loadConstant emits OP_LOADK or OP_LOADKX depending on the constant index size.
+func (fs *funcState) loadConstant(reg int, kIdx int, line int) {
+	if kIdx <= MaxArgBx {
+		fs.emit(ABx(OP_LOADK, reg, kIdx), line)
+	} else {
+		fs.emit(ABx(OP_LOADKX, reg, 0), line)
+		fs.emit(Ax(OP_EXTRAARG, kIdx), line)
+	}
+}
+
 // emitGetTabUp emits OP_GETTABUP or, when kIdx > MaxArgC, a fallback
-// sequence (GETUPVAL + LOADK + GETTABLE) that avoids 8-bit overflow.
+// sequence (GETUPVAL + LOADK/LOADKX + GETTABLE) that avoids 8-bit overflow.
 func (fs *funcState) emitGetTabUp(reg, upIdx, kIdx int, line int) {
 	if kIdx <= MaxArgC {
 		fs.emit(ABC(OP_GETTABUP, reg, upIdx, kIdx, 0), line)
@@ -282,13 +292,13 @@ func (fs *funcState) emitGetTabUp(reg, upIdx, kIdx int, line int) {
 	tmpEnv := fs.reserveReg()
 	tmpKey := fs.reserveReg()
 	fs.emit(ABC(OP_GETUPVAL, tmpEnv, upIdx, 0, 0), line)
-	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.loadConstant(tmpKey, kIdx, line)
 	fs.emit(ABC(OP_GETTABLE, reg, tmpEnv, tmpKey, 0), line)
 	fs.freeReg = saved
 }
 
 // emitGetField emits OP_GETFIELD or, when kIdx > MaxArgC, a fallback
-// sequence (LOADK + GETTABLE).
+// sequence (LOADK/LOADKX + GETTABLE).
 func (fs *funcState) emitGetField(reg, tableReg, kIdx int, line int) {
 	if kIdx <= MaxArgC {
 		fs.emit(ABC(OP_GETFIELD, reg, tableReg, kIdx, 0), line)
@@ -296,13 +306,13 @@ func (fs *funcState) emitGetField(reg, tableReg, kIdx int, line int) {
 	}
 	saved := fs.freeReg
 	tmpKey := fs.reserveReg()
-	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.loadConstant(tmpKey, kIdx, line)
 	fs.emit(ABC(OP_GETTABLE, reg, tableReg, tmpKey, 0), line)
 	fs.freeReg = saved
 }
 
 // emitSetTabUp emits OP_SETTABUP or, when kIdx > MaxArgC, a fallback
-// sequence (GETUPVAL + LOADK + SETTABLE).
+// sequence (GETUPVAL + LOADK/LOADKX + SETTABLE).
 func (fs *funcState) emitSetTabUp(upIdx, kIdx, valReg int, line int) {
 	if kIdx <= MaxArgC {
 		fs.emit(ABC(OP_SETTABUP, upIdx, kIdx, valReg, 0), line)
@@ -312,13 +322,13 @@ func (fs *funcState) emitSetTabUp(upIdx, kIdx, valReg int, line int) {
 	tmpEnv := fs.reserveReg()
 	tmpKey := fs.reserveReg()
 	fs.emit(ABC(OP_GETUPVAL, tmpEnv, upIdx, 0, 0), line)
-	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.loadConstant(tmpKey, kIdx, line)
 	fs.emit(ABC(OP_SETTABLE, tmpEnv, tmpKey, valReg, 0), line)
 	fs.freeReg = saved
 }
 
 // emitSetField emits OP_SETFIELD or, when kIdx > MaxArgC, a fallback
-// sequence (LOADK + SETTABLE).
+// sequence (LOADK/LOADKX + SETTABLE).
 func (fs *funcState) emitSetField(tableReg, kIdx, valReg int, line int) {
 	if kIdx <= MaxArgC {
 		fs.emit(ABC(OP_SETFIELD, tableReg, kIdx, valReg, 0), line)
@@ -326,13 +336,13 @@ func (fs *funcState) emitSetField(tableReg, kIdx, valReg int, line int) {
 	}
 	saved := fs.freeReg
 	tmpKey := fs.reserveReg()
-	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.loadConstant(tmpKey, kIdx, line)
 	fs.emit(ABC(OP_SETTABLE, tableReg, tmpKey, valReg, 0), line)
 	fs.freeReg = saved
 }
 
 // emitSelf emits OP_SELF or, when kIdx > MaxArgC, a fallback
-// sequence (MOVE + LOADK + GETTABLE).
+// sequence (MOVE + LOADK/LOADKX + GETTABLE).
 func (fs *funcState) emitSelf(base, objReg, kIdx int, line int) {
 	if kIdx <= MaxArgC {
 		fs.emit(ABC(OP_SELF, base, objReg, kIdx, 0), line)
@@ -341,7 +351,7 @@ func (fs *funcState) emitSelf(base, objReg, kIdx int, line int) {
 	saved := fs.freeReg
 	fs.emit(ABC(OP_MOVE, base+1, objReg, 0, 0), line)
 	tmpKey := fs.reserveReg()
-	fs.emit(ABx(OP_LOADK, tmpKey, kIdx), line)
+	fs.loadConstant(tmpKey, kIdx, line)
 	fs.emit(ABC(OP_GETTABLE, base, objReg, tmpKey, 0), line)
 	fs.freeReg = saved
 }

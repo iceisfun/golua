@@ -3,7 +3,6 @@ package stdlib
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 
 	"github.com/iceisfun/golua/vm"
@@ -196,55 +195,25 @@ func tableSort(v *vm.VM) int {
 	}
 
 	comp := v.Get(2)
-	var sortErr error
+	var sortErr any
 
 	if comp.IsNil() {
 		// Default comparison: a < b (via metamethod-aware CompareLT)
-		sort.Slice(values, func(i, j int) bool {
-			if sortErr != nil {
-				return false
-			}
-			lt, err := v.CompareLT(values[i], values[j])
-			if err != nil {
-				sortErr = err
-				return false
-			}
-			return lt
-		})
+		auxSort(v, values, 0, length-1, vm.Nil, &sortErr)
 	} else {
 		if !comp.IsFunction() && !comp.IsNativeFunc() {
 			panic(fmt.Sprintf("bad argument #2 to 'sort' (function expected, got %s)", comp.Type()))
 		}
-		// Custom comparator: call the Lua function for each comparison
-		sort.Slice(values, func(i, j int) bool {
-			if sortErr != nil {
-				return false // abort: don't reorder after error
-			}
-			results, err := v.ProtectedCall(comp, []vm.Value{values[i], values[j]})
-			if err != nil {
-				sortErr = err
-				return false
-			}
-			if len(results) == 0 {
-				return false
-			}
-			if results[0].ToBool() {
-				// Anti-symmetry check: comp(a,b) and comp(b,a) cannot both be true
-				revResults, revErr := v.ProtectedCall(comp, []vm.Value{values[j], values[i]})
-				if revErr != nil {
-					sortErr = revErr
-					return false
-				}
-				if len(revResults) > 0 && revResults[0].ToBool() {
-					sortErr = fmt.Errorf("invalid order function for sorting")
-					return false
-				}
-				return true
-			}
-			return false
-		})
+		// Custom comparator
+		auxSort(v, values, 0, length-1, comp, &sortErr)
 	}
 	if sortErr != nil {
+		if val, errIsValue := sortErr.(vm.Value); errIsValue {
+			panic(&vm.LuaError{Value: val})
+		}
+		if err, isErr := sortErr.(error); isErr {
+			panic(err.Error())
+		}
 		panic(sortErr)
 	}
 
@@ -254,6 +223,110 @@ func tableSort(v *vm.VM) int {
 	}
 
 	return 0
+}
+
+// sortComp evaluates a < b using the optional user comparator or CompareLT.
+func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
+	if *err != nil {
+		return false
+	}
+	if comp == vm.Nil || comp.IsNil() {
+		lt, e := v.CompareLT(a, b)
+		if e != nil {
+			*err = e
+			return false
+		}
+		return lt
+	}
+	res, e := v.ProtectedCall(comp, []vm.Value{a, b})
+	if e != nil {
+		if luaErr, ok := e.(*vm.LuaError); ok {
+			*err = luaErr.Value
+		} else {
+			*err = e
+		}
+		return false
+	}
+	if len(res) == 0 {
+		return false
+	}
+	return res[0].ToBool()
+}
+
+// auxSort implements Lua 5.4's sorting algorithm (QuickSort with InsertionSort fallback).
+func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
+	for lo < up {
+		p := (lo + up) / 2
+		// Sort elements a[lo], a[p], a[up]
+		if sortComp(v, a[up], a[p], comp, err) {
+			a[up], a[p] = a[p], a[up]
+		}
+		if sortComp(v, a[p], a[lo], comp, err) {
+			a[p], a[lo] = a[lo], a[p]
+		}
+		if sortComp(v, a[up], a[p], comp, err) {
+			a[up], a[p] = a[p], a[up]
+		}
+		if *err != nil {
+			return
+		}
+
+		if up-lo == 1 {
+			return
+		}
+		if up-lo == 2 {
+			if sortComp(v, a[up], a[p], comp, err) {
+				a[up], a[p] = a[p], a[up]
+			}
+			return
+		}
+
+		// Pivot is a[p]
+		pivot := a[p]
+		a[p], a[up-1] = a[up-1], a[p]
+
+		i := lo
+		j := up - 1
+
+		for {
+			for {
+				i++
+				if !sortComp(v, a[i], pivot, comp, err) {
+					break
+				}
+				if i >= up-1 {
+					*err = fmt.Errorf("invalid order function for sorting")
+					return
+				}
+			}
+			for {
+				j--
+				if !sortComp(v, pivot, a[j], comp, err) {
+					break
+				}
+				if j <= lo {
+					*err = fmt.Errorf("invalid order function for sorting")
+					return
+				}
+			}
+			if *err != nil {
+				return
+			}
+			if i >= j {
+				break
+			}
+			a[i], a[j] = a[j], a[i]
+		}
+		a[up-1], a[i] = a[i], a[up-1]
+
+		if i-lo < up-i {
+			auxSort(v, a, lo, i-1, comp, err)
+			lo = i + 1
+		} else {
+			auxSort(v, a, i+1, up, comp, err)
+			up = i - 1
+		}
+	}
 }
 
 // table.unpack(list [, i [, j]])

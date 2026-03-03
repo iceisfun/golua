@@ -38,26 +38,26 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 	case *ast.FalseExpr: // e.g. local x = false
 		fs.emit(ABC(OP_LOADFALSE, reg, 0, 0, 0), e.P.Line)
 
-	case *ast.NumberExpr: // e.g. local x = 42 — LOADI for small ints, LOADK for large
+	case *ast.NumberExpr: // e.g. local x = 42 — LOADI for small ints, LOADK/LOADKX for large
 		if e.Value >= -OffsetSBx && e.Value <= OffsetSBx {
 			fs.emit(AsBx(OP_LOADI, reg, int(e.Value)), e.P.Line)
 		} else {
 			k := fs.addConstant(IntValue(e.Value))
-			fs.emit(ABx(OP_LOADK, reg, k), e.P.Line)
+			fs.loadConstant(reg, k, e.P.Line)
 		}
 
-	case *ast.FloatExpr: // e.g. local x = 3.14 — LOADF for whole floats, LOADK otherwise
+	case *ast.FloatExpr: // e.g. local x = 3.14 — LOADF for whole floats, LOADK/LOADKX otherwise
 		iv := int(e.Value)
 		if float64(iv) == e.Value && iv >= -OffsetSBx && iv <= OffsetSBx {
 			fs.emit(AsBx(OP_LOADF, reg, iv), e.P.Line)
 		} else {
 			k := fs.addConstant(FloatValue(e.Value))
-			fs.emit(ABx(OP_LOADK, reg, k), e.P.Line)
+			fs.loadConstant(reg, k, e.P.Line)
 		}
 
 	case *ast.StringExpr: // e.g. local x = "hello"
 		k := fs.addConstant(StringValue(e.Value))
-		fs.emit(ABx(OP_LOADK, reg, k), e.P.Line)
+		fs.loadConstant(reg, k, e.P.Line)
 
 	case *ast.NameExpr: // e.g. x — resolves to local, upvalue, or _ENV[x]
 		c.compileName(e, reg)
@@ -397,7 +397,7 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 	tmp := fs.reserveReg()
 	c.compileExprToReg(e.Left, tmp)
 	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 0), line) // skip if falsy, keep value
-	jmp := fs.emitJump(line)                        // jump to end (short-circuit)
+	jmp := fs.emitJump(line)                       // jump to end (short-circuit)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
 	fs.freeReg = tmp
@@ -413,7 +413,7 @@ func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 	tmp := fs.reserveReg()
 	c.compileExprToReg(e.Left, tmp)
 	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 1), line) // skip if truthy, keep value
-	jmp := fs.emitJump(line)                        // jump to end (short-circuit)
+	jmp := fs.emitJump(line)                       // jump to end (short-circuit)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
 	fs.freeReg = tmp
@@ -472,7 +472,7 @@ func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, 
 	nArgs := len(e.Args)
 	for i, arg := range e.Args {
 		if i == nArgs-1 && isMultiRet(arg) {
-			c.compileExprMultiRet(arg, 0) // open call
+			c.compileExprMultiRet(arg, 0)                     // open call
 			fs.emit(ABC(OP_CALL, base, 0, nResults, 0), line) // B=0 means top
 			return
 		}
