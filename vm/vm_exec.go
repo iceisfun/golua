@@ -10,10 +10,7 @@ import (
 
 // call invokes a closure with the given arguments and returns results.
 func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error) {
-	if vm.limits.MaxCallDepth > 0 && len(vm.callStack) >= vm.limits.MaxCallDepth {
-		return nil, fmt.Errorf("call stack overflow: depth %d exceeds limit %d",
-			len(vm.callStack)+1, vm.limits.MaxCallDepth)
-	}
+	vm.checkCallDepth()
 
 	proto := closure.Proto
 

@@ -8,6 +8,11 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
+// DefaultMaxCallDepth is the default call depth limit, matching Lua 5.4's
+// LUAI_MAXCCALLS. Prevents runaway recursion from consuming the entire Go
+// goroutine stack (which is fatal and unrecoverable).
+const DefaultMaxCallDepth = 200
+
 // DefaultMaxMetaDepth is the default __index/__newindex chain depth limit,
 // matching Lua 5.4's MAXTAGLOOP. This is a safety bound to prevent infinite
 // loops from metatable cycles, not a semantic limit.
@@ -16,7 +21,7 @@ const DefaultMaxMetaDepth = 2000
 // Limits configures execution limits for the VM.
 // Zero values mean no limit (except MaxMetaDepth, where 0 means use DefaultMaxMetaDepth).
 type Limits struct {
-	MaxCallDepth    int                    // Maximum call stack depth (0 = unlimited)
+	MaxCallDepth    int                    // Maximum call stack depth (0 = DefaultMaxCallDepth, negative = unlimited)
 	MaxStackSlots   int                    // Maximum stack slots (0 = unlimited)
 	MaxInstructions int64                  // Maximum checkpoint visits (0 = unlimited)
 	MaxMetaDepth    int                    // Maximum __index/__newindex chain depth (0 = DefaultMaxMetaDepth)

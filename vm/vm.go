@@ -62,9 +62,10 @@ type VM struct {
 	warnEnabled   bool             // Per-VM warn flag (controlled by warn("@on")/"@off")
 
 	// Execution control
-	ctx        context.Context // nil = no cancellation checking
-	limits     Limits          // zero values = no limit
-	instrCount int64           // only tracked when MaxInstructions > 0
+	ctx           context.Context // nil = no cancellation checking
+	limits        Limits          // zero values = no limit
+	instrCount    int64           // only tracked when MaxInstructions > 0
+	callDepthBase int             // inherited call depth from parent VM (for coroutines)
 
 	// Output capture
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout
@@ -290,6 +291,7 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		warnEnabled:   parent.warnEnabled,
 		ctx:           parent.ctx,
 		limits:        parent.limits,
+		callDepthBase: parent.callDepthBase + len(parent.callStack),
 		captureOutput: parent.captureOutput,
 		outputLines:   parent.outputLines,
 	}
@@ -333,6 +335,28 @@ func (vm *VM) GetCoroutineChannels() (yieldCh, resumeCh chan []Value) {
 
 
 
+
+// maxCallDepth returns the effective call depth limit.
+// Positive: use that value. Zero: use DefaultMaxCallDepth. Negative: unlimited.
+func (vm *VM) maxCallDepth() int {
+	if vm.limits.MaxCallDepth > 0 {
+		return vm.limits.MaxCallDepth
+	}
+	if vm.limits.MaxCallDepth < 0 {
+		return 0 // unlimited
+	}
+	return DefaultMaxCallDepth
+}
+
+// checkCallDepth panics with "C stack overflow" if the effective call depth
+// (callDepthBase + current callStack length) exceeds the limit. The panic
+// is a *LuaError so pcall/xpcall can catch it.
+func (vm *VM) checkCallDepth() {
+	max := vm.maxCallDepth()
+	if max > 0 && vm.callDepthBase+len(vm.callStack) > max {
+		panic(&LuaError{Value: NewString("C stack overflow")})
+	}
+}
 
 // callMetamethod calls a metamethod with 2 arguments and returns the first result
 func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {

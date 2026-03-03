@@ -85,7 +85,7 @@ func TestContext_CancelRecursion(t *testing.T) {
 		end
 		recurse(0)
 	`
-	_, err := runLuaWithContext(t, source, "test_cancel_recursion", ctx, vm.Limits{})
+	_, err := runLuaWithContext(t, source, "test_cancel_recursion", ctx, vm.Limits{MaxCallDepth: -1})
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -210,8 +210,8 @@ func TestLimits_MaxCallDepth(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected call stack overflow error")
 	}
-	if !strings.Contains(err.Error(), "call stack overflow") {
-		t.Fatalf("expected 'call stack overflow', got: %v", err)
+	if !strings.Contains(err.Error(), "stack overflow") {
+		t.Fatalf("expected 'stack overflow', got: %v", err)
 	}
 }
 
@@ -224,7 +224,7 @@ func TestLimits_MaxCallDepth_Pcall(t *testing.T) {
 		local ok, err = pcall(recurse, 0)
 		assert(not ok, "expected pcall to fail")
 		assert(type(err) == "string", "expected error string, got " .. type(err))
-		assert(string.find(err, "call stack overflow"), "expected 'call stack overflow' in error: " .. err)
+		assert(string.find(err, "stack overflow"), "expected 'stack overflow' in error: " .. err)
 	`
 	limits := vm.Limits{MaxCallDepth: 10}
 	_, err := runLuaWithContext(t, source, "test_max_call_depth_pcall", nil, limits)
@@ -276,7 +276,7 @@ func TestLimits_CoroutineInheritance(t *testing.T) {
 		end)
 		local ok, err = coroutine.resume(co)
 		assert(not ok, "expected coroutine to fail")
-		assert(string.find(err, "call stack overflow"), "expected 'call stack overflow' in: " .. tostring(err))
+		assert(string.find(err, "stack overflow"), "expected 'stack overflow' in: " .. tostring(err))
 	`
 	limits := vm.Limits{MaxCallDepth: 10}
 	_, err := runLuaWithContext(t, source, "test_limits_coroutine_inherit", nil, limits)
@@ -399,8 +399,8 @@ func TestContext_ErrorUnwindsCleanly(t *testing.T) {
 		local ok, err = pcall(recurse, 0)
 		assert(not ok, "expected pcall to catch error")
 		assert(type(err) == "string", "expected error string")
-		assert(string.find(err, "call stack overflow"),
-			"expected call stack overflow error: " .. err)
+		assert(string.find(err, "stack overflow"),
+			"expected stack overflow error: " .. err)
 
 		-- VM state should be consistent after pcall catches the error
 		local sum = 0
