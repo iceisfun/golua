@@ -62,6 +62,8 @@ func (vm *VM) closeUpvalues(level int) {
 func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
 	var lastPanic interface{}
 	for i := len(indices) - 1; i >= 0; i-- {
+		savedTbcLen := len(vm.tbcVars)
+		savedCallStackLen := len(vm.callStack)
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -74,7 +76,31 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
 						errVal = NewString(fmt.Sprintf("%v", r))
 					}
 					// Restore call stack in case the panic left it dirty
-					// (the handler's frames should not persist)
+					if len(vm.callStack) > savedCallStackLen {
+						vm.callStack = vm.callStack[:savedCallStackLen]
+					}
+					// Close TBC variables created inside the failed handler.
+					// A __close function may itself declare TBC variables; if it
+					// errors, those inner TBC vars must be closed with the error
+					// propagated as their msg argument.
+					if len(vm.tbcVars) > savedTbcLen {
+						innerTBC := make([]int, len(vm.tbcVars)-savedTbcLen)
+						copy(innerTBC, vm.tbcVars[savedTbcLen:])
+						vm.tbcVars = vm.tbcVars[:savedTbcLen]
+						func() {
+							defer func() {
+								if innerR := recover(); innerR != nil {
+									lastPanic = innerR
+									if le, ok := innerR.(*LuaError); ok {
+										errVal = le.Value
+									} else {
+										errVal = NewString(fmt.Sprintf("%v", innerR))
+									}
+								}
+							}()
+							vm.callCloseHandlers(innerTBC, errVal)
+						}()
+					}
 				}
 			}()
 			vm.callCloseMetamethod(indices[i], errVal)
