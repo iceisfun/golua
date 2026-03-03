@@ -303,21 +303,22 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 			} else {
 				reg := valBase + i
 				c.compileExprToReg(s.Values[i], reg)
-				if reg >= fs.freeReg {
-					fs.freeReg = reg + 1
-					if fs.freeReg > fs.maxReg {
-						fs.maxReg = fs.freeReg
-					}
+				// Reset freeReg to reclaim temporaries used internally
+				fs.freeReg = reg + 1
+				if fs.freeReg > fs.maxReg {
+					fs.maxReg = fs.freeReg
 				}
 			}
 		} else {
 			reg := valBase + i
 			c.compileExprToReg(s.Values[i], reg)
-			if reg >= fs.freeReg {
-				fs.freeReg = reg + 1
-				if fs.freeReg > fs.maxReg {
-					fs.maxReg = fs.freeReg
-				}
+			// Reset freeReg to reclaim temporaries used internally
+			// (e.g., nested function call arguments). Without this,
+			// compileExprMultiRet for the next value would start at
+			// an inflated freeReg, leaving stale values in the gap.
+			fs.freeReg = reg + 1
+			if fs.freeReg > fs.maxReg {
+				fs.maxReg = fs.freeReg
 			}
 		}
 	}
