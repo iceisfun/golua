@@ -543,8 +543,10 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 	}
 
 	if len(s.Values) == 1 {
-		// Check for tail call
-		if call, ok := s.Values[0].(*ast.FuncCallExpr); ok {
+		// Check for tail call — cannot tail-call when there are to-be-closed
+		// variables or captured upvalues in scope, because they must be closed
+		// after the called function returns.
+		if call, ok := s.Values[0].(*ast.FuncCallExpr); ok && !fs.needsClose(0) {
 			base := fs.freeReg
 			c.compileFuncCall(call, base, 0, line) // compile the call
 			// Replace the CALL with TAILCALL
