@@ -141,6 +141,7 @@ type funcState struct {
 	pendGotos   []pendingGoto
 	upvalues    []UpvalDesc
 	upvalLookup map[string]int // name → index in upvalues
+	constLookup map[Value]int  // deduplication map for constants
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +176,7 @@ func (c *compiler) newFuncState(source string, parent *funcState) *funcState {
 		},
 		parent:      parent,
 		upvalLookup: make(map[string]int),
+		constLookup: make(map[Value]int),
 	}
 	c.fs = fs
 	return fs
@@ -346,35 +348,13 @@ func (fs *funcState) emitSelf(base, objReg, kIdx int, line int) {
 
 // addConstant adds a constant to the pool (deduplicating) and returns its index.
 func (fs *funcState) addConstant(v Value) int {
-	// Deduplicate constants
-	for i, existing := range fs.proto.Constants {
-		if valEqual(existing, v) {
-			return i
-		}
+	if idx, ok := fs.constLookup[v]; ok {
+		return idx
 	}
 	idx := len(fs.proto.Constants)
 	fs.proto.Constants = append(fs.proto.Constants, v)
+	fs.constLookup[v] = idx
 	return idx
-}
-
-// valEqual checks if two compile-time constants are identical (for dedup).
-func valEqual(a, b Value) bool {
-	if a.Type != b.Type {
-		return false
-	}
-	switch a.Type {
-	case ValNil:
-		return true
-	case ValFalse, ValTrue:
-		return true
-	case ValInt:
-		return a.IVal == b.IVal
-	case ValFloat:
-		return a.FVal == b.FVal
-	case ValString:
-		return a.SVal == b.SVal
-	}
-	return false
 }
 
 // addProto adds a child prototype and returns its index (for OP_CLOSURE).
