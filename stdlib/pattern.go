@@ -7,6 +7,7 @@ import (
 const luaMaxCaptures = 32
 const capUnfinished = -1
 const capPosition = -2
+const maxMatchCalls = 200
 
 // matchState tracks pattern matching state including captures.
 // This implements the standard Lua pattern matching algorithm where
@@ -16,6 +17,7 @@ type matchState struct {
 	s     string
 	p     string
 	level int
+	depth int // recursion depth counter
 	cap   [luaMaxCaptures]capSlot
 }
 
@@ -53,6 +55,11 @@ func (ms *matchState) getCaptures() []captureValue {
 // match tries to match pattern starting at pp against string position si.
 // Returns end position on success, -1 on failure.
 func (ms *matchState) match(si int, pp int) int {
+	ms.depth++
+	defer func() { ms.depth-- }()
+	if ms.depth > maxMatchCalls {
+		panic("pattern too complex")
+	}
 	for {
 		if pp >= len(ms.p) {
 			return si
