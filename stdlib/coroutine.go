@@ -563,9 +563,12 @@ func coClose(v *vm.VM) int {
 	}
 
 	if status == statusDead {
-		// Error-dead coroutines return false + error
+		// Already dead — check if it died with an error. The first close
+		// after an error returns false + error (Lua 5.4 behavior), then
+		// clears the error so subsequent closes return true.
 		co.mu.Lock()
 		coErr := co.err
+		co.err = nil
 		co.mu.Unlock()
 		if coErr != nil {
 			v.Set(0, vm.False)
