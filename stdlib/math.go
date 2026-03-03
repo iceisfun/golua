@@ -253,8 +253,9 @@ func mathRandomClosure(rng *rand.Rand) vm.NativeFunc {
 
 		switch n {
 		case 0:
-			// random() -> [0, 1)
-			v.Set(0, vm.NewFloat(rng.Float64()))
+			// random() -> [0, 1) with exactly 53 bits of randomness
+			// (matches Lua 5.4; Go's Float64 may produce non-53-bit values)
+			v.Set(0, vm.NewFloat(float64(rng.Int63n(1<<53))/float64(int64(1)<<53)))
 		case 1:
 			// random(0) -> full-range random integer (Lua 5.4)
 			// random(n) -> [1, n]
