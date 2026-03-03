@@ -530,22 +530,34 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 		// Check for tail call — cannot tail-call when there are to-be-closed
 		// variables or captured upvalues in scope, because they must be closed
 		// after the called function returns.
-		if call, ok := s.Values[0].(*ast.FuncCallExpr); ok && !fs.needsClose(0) {
-			base := fs.freeReg
-			c.compileFuncCall(call, base, 0, line) // compile the call
-			// Replace the CALL with TAILCALL
-			lastPC := fs.pc() - 1
-			inst := fs.proto.Code[lastPC]
-			if inst.OpCode() == OP_CALL {
-				fs.proto.Code[lastPC] = ABC(OP_TAILCALL, inst.A(), inst.B(), 0, 0)
+		if !fs.needsClose(0) {
+			if call, ok := s.Values[0].(*ast.FuncCallExpr); ok {
+				base := fs.freeReg
+				c.compileFuncCall(call, base, 0, line) // compile the call
+				// Replace the CALL with TAILCALL
+				lastPC := fs.pc() - 1
+				inst := fs.proto.Code[lastPC]
+				if inst.OpCode() == OP_CALL {
+					fs.proto.Code[lastPC] = ABC(OP_TAILCALL, inst.A(), inst.B(), 0, 0)
+				}
+				return
+			} else if call, ok := s.Values[0].(*ast.MethodCallExpr); ok {
+				base := fs.freeReg
+				c.compileMethodCall(call, base, 0, line) // compile the method call
+				// Replace the CALL with TAILCALL
+				lastPC := fs.pc() - 1
+				inst := fs.proto.Code[lastPC]
+				if inst.OpCode() == OP_CALL {
+					fs.proto.Code[lastPC] = ABC(OP_TAILCALL, inst.A(), inst.B(), 0, 0)
+				}
+				return
 			}
-			return
 		}
 
 		// Check for multi-return expression (vararg, method call)
 		if isMultiRet(s.Values[0]) {
 			base := fs.freeReg
-			c.compileExprMultiRet(s.Values[0], 0) // 0 = all results
+			c.compileExprMultiRet(s.Values[0], 0)        // 0 = all results
 			fs.emit(ABC(OP_RETURN, base, 0, 0, 0), line) // B=0 means return up to top
 			return
 		}
@@ -562,7 +574,7 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 		if i == len(s.Values)-1 {
 			// Last expr might be multi-return
 			if isMultiRet(val) {
-				c.compileExprMultiRet(val, 0) // 0 = all results
+				c.compileExprMultiRet(val, 0)                // 0 = all results
 				fs.emit(ABC(OP_RETURN, base, 0, 0, 0), line) // B=0 means return up to top
 				return
 			}
@@ -706,7 +718,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 
 	// If condition is falsy, jump back (keep looping)
 	fs.emit(ABC(OP_TEST, reg, 0, 0, 0), condLine) // skip next if truthy → exit
-	backJump := fs.emitJump(condLine)              // jump back (cond is false)
+	backJump := fs.emitJump(condLine)             // jump back (cond is false)
 	offset := loopStart - fs.pc()
 	fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 
