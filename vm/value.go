@@ -240,9 +240,44 @@ func StringToNumericValue(s string) (Value, bool) {
 	}
 	// Try hex integer
 	if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
-		if i, err := strconv.ParseInt(s[2:], 16, 64); err == nil {
-			return NewInt(i), true
+		hex := s[2:]
+		// Check if it's a hex float (has '.' or 'p'/'P')
+		isHexFloat := false
+		for _, c := range hex {
+			if c == '.' || c == 'p' || c == 'P' {
+				isHexFloat = true
+				break
+			}
 		}
+		if !isHexFloat {
+			// Hex integer: parse with wrapping on overflow (Lua 5.4 behavior)
+			if i, err := strconv.ParseUint(hex, 16, 64); err == nil {
+				return NewInt(int64(i)), true
+			}
+			// Overflows uint64: parse digit by digit with modular wrapping
+			var result uint64
+			valid := false
+			for _, c := range hex {
+				var d uint64
+				switch {
+				case c >= '0' && c <= '9':
+					d = uint64(c - '0')
+				case c >= 'a' && c <= 'f':
+					d = uint64(c-'a') + 10
+				case c >= 'A' && c <= 'F':
+					d = uint64(c-'A') + 10
+				default:
+					return Nil, false
+				}
+				result = result*16 + d
+				valid = true
+			}
+			if valid {
+				return NewInt(int64(result)), true
+			}
+			return Nil, false
+		}
+		// Hex float
 		if f, err := strconv.ParseFloat(s, 64); err == nil {
 			return NewFloat(f), true
 		}

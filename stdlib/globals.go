@@ -183,6 +183,31 @@ func luaToNumber(v *vm.VM) int {
 					v.Set(0, vm.NewInt(sign*int64(u)))
 					return 1
 				}
+				// Overflow: parse digit-by-digit with modular wrapping (Lua 5.4)
+				var result uint64
+				valid := true
+				for _, c := range hex {
+					var d uint64
+					switch {
+					case c >= '0' && c <= '9':
+						d = uint64(c - '0')
+					case c >= 'a' && c <= 'f':
+						d = uint64(c-'a') + 10
+					case c >= 'A' && c <= 'F':
+						d = uint64(c-'A') + 10
+					default:
+						valid = false
+						break
+					}
+					if !valid {
+						break
+					}
+					result = result*16 + d
+				}
+				if valid {
+					v.Set(0, vm.NewInt(sign*int64(result)))
+					return 1
+				}
 			}
 			// Hex float forms (e.g. 0x1p4, 0x.1, 0xA.8) — try ParseHexFloat
 			if f, ok := vm.ParseHexFloat(trimmed); ok {
