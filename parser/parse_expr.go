@@ -231,7 +231,7 @@ func (p *parser) parsePrimaryExpr() ast.Expr {
 		p.expect(token.Type(')'))
 		return ast.NewParenExpr(pos, inner)
 	default:
-		p.errorf("unexpected symbol near '%s'", p.tok)
+		p.errorf("unexpected symbol near %s", p.nearToken())
 		return ast.NewNilExpr(p.pos())
 	}
 }
@@ -287,7 +287,7 @@ func (p *parser) parseFuncArgs() []ast.Expr {
 		p.advance()
 		return []ast.Expr{ast.NewStringExpr(pos, v.Literal)}
 	default:
-		p.errorf("function arguments expected near '%s'", p.tok)
+		p.errorf("function arguments expected near %s", p.nearToken())
 		return nil
 	}
 }

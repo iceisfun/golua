@@ -34,7 +34,7 @@ func ParsePartial(source, input string) (*ast.Block, error) {
 		return block, p.err
 	}
 	if p.tok.Type != token.EOS {
-		return block, p.errorf("unexpected symbol near '%s'", p.tok.Literal)
+		return block, p.errorf("unexpected symbol near %s", p.nearToken())
 	}
 	return block, nil
 }
@@ -58,7 +58,7 @@ func Parse(source, input string, stripShebang ...bool) (*ast.Block, error) {
 		return nil, p.err
 	}
 	if p.tok.Type != token.EOS {
-		return nil, p.errorf("unexpected symbol near '%s'", p.tok.Literal)
+		return nil, p.errorf("unexpected symbol near %s", p.nearToken())
 	}
 	return block, nil
 }
@@ -86,7 +86,7 @@ func (p *parser) advance() error {
 
 func (p *parser) expect(typ token.Type) (token.Token, error) {
 	if p.tok.Type != typ {
-		return token.Token{}, p.errorf("'%s' expected near '%s'", typ, p.tok)
+		return token.Token{}, p.errorf("'%s' expected near %s", typ, p.nearToken())
 	}
 	tok := p.tok
 	if err := p.advance(); err != nil {
@@ -116,6 +116,19 @@ func (p *parser) errorf(format string, args ...any) error {
 }
 
 func (p *parser) pos() token.Pos { return p.tok.Pos }
+
+// nearToken returns the current token formatted for error messages:
+// quoted for names/strings/numbers, unquoted for <eof> and keywords.
+func (p *parser) nearToken() string {
+	switch p.tok.Type {
+	case token.NAME, token.STRING, token.INT, token.FLOAT:
+		return "'" + p.tok.Literal + "'"
+	case token.EOS:
+		return "<eof>"
+	default:
+		return "'" + p.tok.Literal + "'"
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Block / statement list
