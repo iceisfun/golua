@@ -86,8 +86,6 @@ type exprResult struct {
 
 func (e exprResult) hasJumps() bool { return e.t != -1 || e.f != -1 }
 
-const noJump = -1
-
 // ---------------------------------------------------------------------------
 // funcState — per-function compiler state
 // ---------------------------------------------------------------------------
@@ -103,11 +101,11 @@ type localVar struct {
 
 // scopeInfo records the state at scope entry for restoration on scope exit.
 type scopeInfo struct {
-	nLocals    int  // number of locals when scope opened
-	breakList  int  // patch list head for break jumps (-1 = none)
-	isLoop     bool // is this a loop scope?
-	firstLabel int  // index into labels slice
-	firstGoto  int  // index into pendGotos slice
+	nLocals    int   // number of locals when scope opened
+	breakJumps []int // pending break jump PCs to be patched on scope exit
+	isLoop     bool  // is this a loop scope?
+	firstLabel int   // index into labels slice
+	firstGoto  int   // index into pendGotos slice
 }
 
 // labelInfo records a ::label:: definition for goto resolution.
@@ -548,7 +546,6 @@ func (c *compiler) resolveUpvalue(fs *funcState, name string) (int, bool) {
 func (fs *funcState) enterScope(isLoop bool) {
 	fs.scopes = append(fs.scopes, scopeInfo{
 		nLocals:    fs.nActVar,
-		breakList:  noJump,
 		isLoop:     isLoop,
 		firstLabel: len(fs.labels),
 		firstGoto:  len(fs.pendGotos),
@@ -617,8 +614,8 @@ func (c *compiler) leaveScope(line int) {
 	}
 
 	// Patch break jumps
-	if scope.breakList != noJump {
-		c.patchListToHere(scope.breakList)
+	for _, jpc := range scope.breakJumps {
+		c.patchJump(jpc)
 	}
 }
 
@@ -646,31 +643,6 @@ func (c *compiler) patchJump(jpc int) {
 	fs := c.fs
 	offset := fs.pc() - (jpc + 1) // target - (jpc + 1)
 	fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
-}
-
-// patchListToHere patches a chain of jumps to land at the current pc.
-func (c *compiler) patchListToHere(list int) {
-	if list == noJump {
-		return
-	}
-	c.patchJump(list)
-	// Follow jump chain through SJ field
-	// For simplicity, we use a single jump per patch point (no chaining yet).
-}
-
-// concatJumpList links two jump lists. Returns the head.
-func (fs *funcState) concatJumpList(l1, l2 int) int {
-	if l2 == noJump {
-		return l1
-	}
-	if l1 == noJump {
-		return l2
-	}
-	// For our simple approach, we patch l1 to point to the same target as l2
-	// This is simplified — real Lua uses linked lists through SJ fields.
-	// For now, we handle this by storing both and patching both.
-	// We'll track this externally.
-	return l2 // simplified: only track latest
 }
 
 // ---------------------------------------------------------------------------

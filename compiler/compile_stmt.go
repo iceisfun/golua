@@ -952,7 +952,7 @@ func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 		fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), s.P.Line)
 	}
 	jpc := fs.emitJump(s.P.Line)
-	scope.breakList = fs.concatJumpList(scope.breakList, jpc)
+	scope.breakJumps = append(scope.breakJumps, jpc)
 }
 
 // compileGotoStmt compiles "goto label". For backward gotos the jump is
