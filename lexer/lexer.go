@@ -256,21 +256,25 @@ func (l *Lexer) scanLongString(buf *strings.Builder, sep int) error {
 			}
 
 		case ']':
-			closeSep := l.scanSep()
-			if closeSep == sep {
-				l.readChar() // skip final bracket
+			// Try to match closing bracket sequence ]===...===]
+			l.readChar() // skip ']'
+			eqCount := 0
+			for l.current == '=' {
+				eqCount++
+				l.readChar()
+			}
+			if l.current == ']' && eqCount+2 == sep {
+				l.readChar() // skip final ']'
 				return nil
 			}
-			// Not a matching close; add the characters we consumed
+			// Not a matching close; write back the consumed characters
 			if buf != nil {
 				buf.WriteByte(']')
-				for i := 0; i < closeSep-2; i++ {
+				for i := 0; i < eqCount; i++ {
 					buf.WriteByte('=')
 				}
-				if closeSep == 0 {
-					// malformed: scanSep consumed some '=' but didn't match
-					// the chars are already consumed, just continue
-				}
+				// l.current is now pointing at the non-matching char;
+				// it will be handled by the next iteration of the loop
 			}
 
 		case '\n', '\r':
