@@ -66,10 +66,12 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		c.compileUnop(e, reg)
 
 	case *ast.FuncCallExpr: // e.g. f(a, b) — single result in reg
-		// When reg < freeReg the target is an existing local. Compiling the
-		// call directly at reg would clobber it with the function before
+		// When reg < savedFreeReg the target is an existing local. Compiling
+		// the call directly at reg would clobber it with the function before
 		// arguments that reference it are evaluated. Use a temp register.
-		if reg < fs.freeReg {
+		// Using savedFreeReg (the value before the preamble advance) avoids
+		// unnecessary temp+MOVE when reg is a fresh register at freeReg.
+		if reg < savedFreeReg {
 			tmp := fs.freeReg
 			c.compileFuncCall(e, tmp, 2, e.P.Line) // C=2 → 1 result at tmp
 			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
@@ -78,7 +80,7 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		}
 
 	case *ast.MethodCallExpr: // e.g. obj:method(a) — single result in reg
-		if reg < fs.freeReg {
+		if reg < savedFreeReg {
 			tmp := fs.freeReg
 			c.compileMethodCall(e, tmp, 2, e.P.Line)
 			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
