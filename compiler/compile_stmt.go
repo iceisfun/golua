@@ -1026,10 +1026,11 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool) {
 		nLocals: labelNLocals,
 	})
 
-	// Resolve pending gotos
+	// Resolve pending gotos from the current scope level only. Gotos from
+	// enclosing scopes cannot jump into this block (Lua 5.4 §3.3.4).
 	remaining := fs.pendGotos[:0]
-	for _, pg := range fs.pendGotos {
-		if pg.name == s.Name {
+	for i, pg := range fs.pendGotos {
+		if i >= scope.firstGoto && pg.name == s.Name {
 			// Validate: goto must not jump into scope of a local variable
 			if pg.nLocals < labelNLocals {
 				// Find the name of the first variable the goto jumps over

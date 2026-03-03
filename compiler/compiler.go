@@ -107,6 +107,7 @@ type scopeInfo struct {
 	breakList  int  // patch list head for break jumps (-1 = none)
 	isLoop     bool // is this a loop scope?
 	firstLabel int  // index into labels slice
+	firstGoto  int  // index into pendGotos slice
 }
 
 // labelInfo records a ::label:: definition for goto resolution.
@@ -550,6 +551,7 @@ func (fs *funcState) enterScope(isLoop bool) {
 		breakList:  noJump,
 		isLoop:     isLoop,
 		firstLabel: len(fs.labels),
+		firstGoto:  len(fs.pendGotos),
 	})
 }
 
