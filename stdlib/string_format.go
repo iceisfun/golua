@@ -135,8 +135,23 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 					if specChar == 'A' {
 						s = strings.ToUpper(s)
 					}
-					if widthSpec != "%" {
-						result.WriteString(fmt.Sprintf(widthSpec+"s", s))
+					// Apply sign flags (+/space) — Go's %s won't handle these
+					if n >= 0 && !math.Signbit(n) {
+						if strings.Contains(widthSpec, "+") {
+							s = "+" + s
+						} else if strings.Contains(widthSpec, " ") {
+							s = " " + s
+						}
+					}
+					// Strip sign flags from widthSpec since we handled them
+					cleanSpec := "%"
+					for _, c := range widthSpec[1:] {
+						if c != '+' && c != ' ' {
+							cleanSpec += string(c)
+						}
+					}
+					if cleanSpec != "%" {
+						result.WriteString(fmt.Sprintf(cleanSpec+"s", s))
 					} else {
 						result.WriteString(s)
 					}
