@@ -208,8 +208,11 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 		return
 	}
 
-	// Arithmetic / bitwise — compile both sides into registers
-	leftReg := reg
+	// Arithmetic / bitwise — compile both sides into fresh registers so that
+	// we never clobber a local that is reused in the same expression.
+	// Example: b = a + b — if we compiled left into reg (b's register), it
+	// would overwrite b before the right side reads it.
+	leftReg := fs.reserveReg()
 	c.compileExprToReg(e.Left, leftReg)
 	rightReg := fs.reserveReg()
 	c.compileExprToReg(e.Right, rightReg)
@@ -248,7 +251,7 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 
 	fs.emit(ABC(op, reg, leftReg, rightReg, 0), line)
 	fs.emit(ABC(OP_MMBIN, leftReg, rightReg, int(mmOp), 0), line)
-	fs.freeReg = rightReg
+	fs.freeReg = leftReg
 }
 
 // compileConcat flattens a chain of .. operators (e.g. a .. b .. c) into

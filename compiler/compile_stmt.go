@@ -1002,8 +1002,18 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 	case *ast.NameExpr:
 		// Simple name: could be local, upvalue, or global
 		if localReg, ok := fs.lookupLocal(name.Name); ok {
+			if fs.isConst(name.Name) {
+				c.error(s.Name, "attempt to assign to const variable '%s'", name.Name)
+				fs.freeReg = reg
+				return
+			}
 			fs.emit(ABC(OP_MOVE, localReg, reg, 0, 0), line)
 		} else if uvIdx, ok := c.resolveUpvalue(fs, name.Name); ok {
+			if c.isConstUpvalue(fs, name.Name) {
+				c.error(s.Name, "attempt to assign to const variable '%s'", name.Name)
+				fs.freeReg = reg
+				return
+			}
 			fs.emit(ABC(OP_SETUPVAL, reg, uvIdx, 0, 0), line)
 		} else {
 			envUV := c.resolveEnv()
