@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/iceisfun/golua/vm"
 )
@@ -90,6 +91,19 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		if err != nil {
 			panic(err.Error())
 		}
+
+		// Normalize fields back into the table (like C's mktime)
+		norm := time.Unix(ts, 0).Local()
+		t.Set(vm.NewString("year"), vm.NewInt(int64(norm.Year())))
+		t.Set(vm.NewString("month"), vm.NewInt(int64(norm.Month())))
+		t.Set(vm.NewString("day"), vm.NewInt(int64(norm.Day())))
+		t.Set(vm.NewString("hour"), vm.NewInt(int64(norm.Hour())))
+		t.Set(vm.NewString("min"), vm.NewInt(int64(norm.Minute())))
+		t.Set(vm.NewString("sec"), vm.NewInt(int64(norm.Second())))
+		t.Set(vm.NewString("yday"), vm.NewInt(int64(norm.YearDay())))
+		wday := int(norm.Weekday()) + 1 // Lua: Sunday=1
+		t.Set(vm.NewString("wday"), vm.NewInt(int64(wday)))
+
 		v.Set(0, vm.NewInt(ts))
 		return 1
 	}
