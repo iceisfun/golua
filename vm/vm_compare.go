@@ -132,6 +132,9 @@ func (vm *VM) concat(v1, v2 Value) (Value, error) {
 		} else {
 			s2 = v2.String()
 		}
+		if len(s1) > (1<<30)-len(s2) {
+			return Nil, vm.runtimeError("string length overflow")
+		}
 		return NewString(s1 + s2), nil
 	}
 

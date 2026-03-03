@@ -518,10 +518,15 @@ func (vm *VM) execute() ([]Value, error) {
 					break
 				}
 				if v.IsString() {
-					totalLen += len(v.AsString())
+					l := len(v.AsString())
+					if totalLen > (1<<30) - l {
+						return nil, vm.runtimeError("string length overflow")
+					}
+					totalLen += l
 				} else {
-					// Conservative estimate for number length?
-					// Or just don't preload size if numbers present.
+					if totalLen > (1<<30) - 20 {
+						return nil, vm.runtimeError("string length overflow")
+					}
 					totalLen += 20
 				}
 			}
