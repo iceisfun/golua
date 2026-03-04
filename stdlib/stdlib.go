@@ -110,4 +110,7 @@ func Open(v *vm.VM) {
 
 	// Time library (only if TimeProvider is set)
 	openTime(v)
+
+	// Package/require (must be last — reads other module globals for package.loaded)
+	openPackage(v)
 }

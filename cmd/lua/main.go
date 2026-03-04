@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -93,6 +94,18 @@ done:
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	if testMode {
 		v.SetDebugProvider(vm.NewDefaultDebugProvider())
+		// Determine script directory for jailed IO provider
+		scriptDir := "."
+		if name != "=(command line)" {
+			if d := filepath.Dir(name); d != "" {
+				scriptDir = d
+			}
+		}
+		v.SetCodeProvider(vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{
+			AllowLoadfile: true,
+			AllowDofile:   true,
+		}))
+		v.SetIoProvider(vm.NewJailedIoProvider(scriptDir))
 	}
 	stdlib.Open(v)
 

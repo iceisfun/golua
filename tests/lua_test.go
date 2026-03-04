@@ -116,6 +116,11 @@ func runLuaTest(t *testing.T, filename string) {
 	v := vm.New()
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
+	v.SetIoProvider(vm.NewJailedIoProvider("."))
+	v.SetCodeProvider(vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{
+		AllowLoadfile: true,
+		AllowDofile:   true,
+	}))
 	stdlib.Open(v)
 
 	// Capture panics from assert() failures
