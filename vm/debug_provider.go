@@ -5,6 +5,7 @@ type LuaDebugCaps struct {
 	AllowTraceback  bool
 	AllowStackDepth bool
 	AllowWhere      bool
+	AllowGetInfo    bool
 }
 
 // LuaDebugProvider is a capability interface for diagnostic debug operations.
@@ -30,5 +31,6 @@ func (p *DefaultDebugProvider) Capabilities() LuaDebugCaps {
 		AllowTraceback:  true,
 		AllowStackDepth: true,
 		AllowWhere:      true,
+		AllowGetInfo:    true,
 	}
 }

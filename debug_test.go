@@ -136,7 +136,6 @@ func TestDebug_NoMutation(t *testing.T) {
 		assert(debug.setlocal == nil, "setlocal should not exist")
 		assert(debug.setupvalue == nil, "setupvalue should not exist")
 		assert(debug.setmetatable == nil, "debug.setmetatable should not exist")
-		assert(debug.getinfo == nil, "getinfo should not exist")
 		assert(debug.getlocal == nil, "getlocal should not exist")
 		assert(debug.getupvalue == nil, "getupvalue should not exist")
 	`
@@ -198,8 +197,8 @@ func TestDebug_ExploitUpvalueLeak(t *testing.T) {
 			"upvalueid must not exist - would expose upvalue identity")
 		assert(debug.upvaluejoin == nil,
 			"upvaluejoin must not exist - would alias upvalues")
-		assert(debug.getinfo == nil,
-			"getinfo must not exist - would expose closure internals")
+		assert(type(debug.getinfo) == "function",
+			"getinfo should exist")
 
 		-- The closure's private_key remains inaccessible via debug
 		-- Only the closure itself can return it
@@ -277,4 +276,222 @@ func TestDebug_WhereBoundsCheck(t *testing.T) {
 		assert(ok2, "where(0) should not panic")
 	`
 	runLuaWithDebug(t, source, "test_debug_where_bounds", provider)
+}
+
+// ---------- debug.getinfo tests ----------
+
+func TestDebug_GetInfo_Basic(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		function foo()
+			local info = debug.getinfo(1)
+			return info
+		end
+		local info = foo()
+		assert(info ~= nil, "getinfo(1) should return a table")
+		assert(info.func ~= nil, "func field should be set")
+		assert(type(info.source) == "string", "source should be string")
+		assert(type(info.currentline) == "number", "currentline should be number")
+		assert(info.what == "Lua", "what should be 'Lua' for Lua function, got: " .. tostring(info.what))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_basic", provider)
+}
+
+func TestDebug_GetInfo_StackLevels(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		function bar()
+			local info = debug.getinfo(2)
+			return info
+		end
+		function foo()
+			local r = bar()
+			return r
+		end
+		local info = foo()
+		assert(info ~= nil, "getinfo(2) should return info for foo")
+		assert(info.name == "foo", "name should be 'foo', got: " .. tostring(info.name))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_stack_levels", provider)
+}
+
+func TestDebug_GetInfo_CurrentLine(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		function foo()
+			local info = debug.getinfo(1)
+			return info.currentline
+		end
+		local line = foo()
+		assert(type(line) == "number", "currentline should be a number")
+		assert(line > 0, "currentline should be > 0, got " .. tostring(line))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_currentline", provider)
+}
+
+func TestDebug_GetInfo_InvalidLevel(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local info = debug.getinfo(999)
+		assert(info == nil, "getinfo(999) should return nil")
+		local info2 = debug.getinfo(-1)
+		assert(info2 == nil, "getinfo(-1) should return nil")
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_invalid_level", provider)
+}
+
+func TestDebug_GetInfo_CFunction(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local info = debug.getinfo(print)
+		assert(info ~= nil, "getinfo(print) should return info")
+		assert(info.what == "C", "print should be C function, got: " .. tostring(info.what))
+		assert(info.short_src == "[C]", "short_src should be '[C]', got: " .. tostring(info.short_src))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_c_function", provider)
+}
+
+func TestDebug_GetInfo_FuncInfo(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		-- Native function: isvararg=true, nparams=0, nups=0
+		local t = debug.getinfo(print, "u")
+		assert(t.isvararg == true, "print should be vararg")
+		assert(t.nparams == 0, "print nparams should be 0")
+		assert(t.nups == 0, "print nups should be 0")
+
+		-- Lua function with 3 params
+		-- Note: GoLua compiler always captures _ENV as upvalue[0],
+		-- so nups is 1 even for functions that don't use globals.
+		t = debug.getinfo(function(a,b,c) end, "u")
+		assert(t.isvararg == false, "3-param func should not be vararg")
+		assert(t.nparams == 3, "should have 3 params, got " .. tostring(t.nparams))
+
+		-- Vararg function with explicit upvalue capture
+		local x = 1
+		t = debug.getinfo(function(a,...) return x end, "u")
+		assert(t.isvararg == true, "vararg func should be vararg")
+		assert(t.nparams == 1, "should have 1 param, got " .. tostring(t.nparams))
+		assert(t.nups >= 1, "should have at least 1 upvalue, got " .. tostring(t.nups))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_func_info", provider)
+}
+
+func TestDebug_GetInfo_WhatString(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		-- Invalid option should error
+		local ok, err = pcall(debug.getinfo, print, "X")
+		assert(not ok, "invalid option 'X' should error")
+
+		-- "S" only returns source fields
+		local info = debug.getinfo(print, "S")
+		assert(info.what == "C", "S should fill what")
+		assert(info.source ~= nil, "S should fill source")
+		assert(info.currentline == nil, "S should not fill currentline")
+		assert(info.name == nil, "S should not fill name")
+
+		-- "l" only returns currentline
+		function foo()
+			return debug.getinfo(1, "l")
+		end
+		local info2 = foo()
+		assert(info2.currentline ~= nil, "l should fill currentline")
+		assert(info2.source == nil, "l should not fill source")
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_what_string", provider)
+}
+
+func TestDebug_GetInfo_Level0(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		-- Level 0 = debug.getinfo itself (a C function)
+		local info = debug.getinfo(0)
+		assert(info ~= nil, "getinfo(0) should return info")
+		assert(info.what == "C", "level 0 should be C, got: " .. tostring(info.what))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_level0", provider)
+}
+
+func TestDebug_GetInfo_MainChunk(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		-- Level 1 from top-level code = main chunk
+		local info = debug.getinfo(1)
+		assert(info ~= nil, "getinfo(1) from main should return info")
+		assert(info.what == "main", "top-level should be 'main', got: " .. tostring(info.what))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_main_chunk", provider)
+}
+
+func TestDebug_GetInfo_TailCall(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		function inner()
+			return debug.getinfo(1, "t")
+		end
+		-- Direct (non-tail) call
+		local info = inner()
+		assert(info.istailcall == false, "non-tail call should have istailcall=false")
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_tailcall", provider)
+}
+
+func TestDebug_GetInfo_ActiveLines(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		-- C function has no activelines
+		local info = debug.getinfo(print, "L")
+		assert(info.activelines == nil, "C function should have nil activelines")
+
+		-- Lua function should have activelines
+		function foo()
+			local x = 1
+			return x + 2
+		end
+		local info2 = debug.getinfo(foo, "SL")
+		assert(info2.what == "Lua", "should be Lua function")
+		-- activelines should exist and be a table
+		assert(type(info2.activelines) == "table", "activelines should be a table")
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_activelines", provider)
+}
+
+func TestDebug_GetInfo_NameInference(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		-- Name inference: name is how the function was CALLED by its caller
+		function probe()
+			local info = debug.getinfo(2, "n")
+			return info
+		end
+
+		-- Test 1: global function call
+		function my_func()
+			local r = probe()
+			return r
+		end
+		local info = my_func()
+		-- probe at level 1 reports on my_func at level 2
+		-- my_func was called from main chunk via global name
+		assert(info.name == "my_func", "should infer 'my_func', got: " .. tostring(info.name))
+		assert(info.namewhat == "global", "should be 'global', got: " .. tostring(info.namewhat))
+
+		-- Test 2: inner call via global name
+		function outer()
+			local r = probe()
+			return r
+		end
+		function caller()
+			local r = outer()
+			return r
+		end
+		local info2 = caller()
+		-- probe reports on caller (level 2), which was called from main chunk
+		-- But wait - level 2 from probe is actually outer, since:
+		-- level 0 = getinfo, level 1 = probe, level 2 = outer, level 3 = caller
+		assert(info2.name == "outer", "should infer 'outer', got: " .. tostring(info2.name))
+		assert(info2.namewhat == "global", "should be 'global', got: " .. tostring(info2.namewhat))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_name_inference", provider)
 }

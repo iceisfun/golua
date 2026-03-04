@@ -1,6 +1,11 @@
 package stdlib
 
-import "github.com/iceisfun/golua/vm"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/iceisfun/golua/vm"
+)
 
 // openDebug registers the diagnostic debug table if a DebugProvider is set.
 func openDebug(v *vm.VM) {
@@ -22,6 +27,10 @@ func openDebug(v *vm.VM) {
 
 	if caps.AllowWhere {
 		debug.SetString("where", vm.NewNativeFunc(luaDebugWhere))
+	}
+
+	if caps.AllowGetInfo {
+		debug.SetString("getinfo", vm.NewNativeFunc(luaDebugGetInfo))
 	}
 
 	v.SetGlobal("debug", vm.NewTable(debug))
@@ -69,4 +78,96 @@ func luaDebugWhere(v *vm.VM) int {
 	v.Set(0, vm.NewString(source))
 	v.Set(1, vm.NewInt(int64(line)))
 	return 2
+}
+
+// debug.getinfo([thread,] f [, what])
+// f can be a function value or a stack level number.
+// what is a string of option letters: f l n S t u L (default "flnStu").
+func luaDebugGetInfo(v *vm.VM) int {
+	arg1 := v.Get(1)
+	var info *vm.FrameInfo
+	var what string
+
+	if arg1.IsCallable() {
+		// debug.getinfo(func [, what])
+		info = v.GetFuncInfo(arg1)
+		if info == nil {
+			v.Set(0, vm.Nil)
+			return 1
+		}
+		what = "flnStu" // default
+		if !v.Get(2).IsNil() {
+			what = v.Get(2).AsString()
+		}
+	} else {
+		// debug.getinfo(level [, what])
+		level, ok := arg1.ToInt()
+		if !ok {
+			panic("bad argument #1 to 'getinfo' (value expected)")
+		}
+		if level < 0 {
+			v.Set(0, vm.Nil)
+			return 1
+		}
+		// Level 0 = getinfo itself (native frame at top of stack).
+		// The VM's GetFrameInfo uses: idx = len(callStack) - 1 - level.
+		// Since getinfo's native frame is at the top, level 0 maps directly.
+		info = v.GetFrameInfo(int(level))
+		if info == nil {
+			v.Set(0, vm.Nil)
+			return 1
+		}
+		what = "flnStu" // default
+		if !v.Get(2).IsNil() {
+			what = v.Get(2).AsString()
+		}
+	}
+
+	// Validate the what string ('>' is C API only, not valid at Lua level)
+	for _, ch := range what {
+		if !strings.ContainsRune("flnStuL", ch) {
+			panic(fmt.Sprintf("bad argument #2 to 'getinfo' (invalid option '%c')", ch))
+		}
+	}
+
+	// Build the result table
+	result := vm.NewEmptyTable()
+
+	for _, ch := range what {
+		switch ch {
+		case 'S':
+			result.SetString("source", vm.NewString(info.Source))
+			result.SetString("short_src", vm.NewString(info.ShortSrc))
+			result.SetString("linedefined", vm.NewInt(int64(info.LineDefined)))
+			result.SetString("lastlinedefined", vm.NewInt(int64(info.LastLineDefined)))
+			result.SetString("what", vm.NewString(info.What))
+		case 'l':
+			result.SetString("currentline", vm.NewInt(int64(info.CurrentLine)))
+		case 'n':
+			if info.Name != "" {
+				result.SetString("name", vm.NewString(info.Name))
+			}
+			result.SetString("namewhat", vm.NewString(info.NameWhat))
+		case 't':
+			result.SetString("istailcall", vm.NewBool(info.IsTailCall))
+		case 'u':
+			result.SetString("nups", vm.NewInt(int64(info.NUps)))
+			result.SetString("nparams", vm.NewInt(int64(info.NParams)))
+			result.SetString("isvararg", vm.NewBool(info.IsVarArg))
+		case 'f':
+			result.SetString("func", info.Func)
+		case 'L':
+			if info.ActiveLines != nil && len(info.ActiveLines) > 0 {
+				lines := vm.NewEmptyTable()
+				for line := range info.ActiveLines {
+					lines.Set(vm.NewInt(int64(line)), vm.NewBool(true))
+				}
+				result.SetString("activelines", vm.NewTable(lines))
+			}
+			// For C functions, activelines is not set (remains nil in table)
+		}
+	}
+
+	v.Set(0, vm.NewTable(result))
+	return 1
 }
