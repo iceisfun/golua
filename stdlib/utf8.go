@@ -171,6 +171,11 @@ func luaUtf8Codes(v *vm.VM) int {
 		// Convert state to byte offset (0-indexed)
 		n := int(state)
 
+		if n < 0 || n >= len(str) {
+			v.Set(0, vm.Nil)
+			return 1
+		}
+
 		// Skip continuation bytes (handles post-decode position)
 		for n < len(str) && !utf8.RuneStart(str[n]) {
 			n++
