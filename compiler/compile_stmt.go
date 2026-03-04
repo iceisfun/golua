@@ -232,16 +232,6 @@ func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
 // Assignment
 // ---------------------------------------------------------------------------
 
-// isMultiRetExpr returns true if the expression can return multiple values
-// (function calls and vararg ...)
-func isMultiRetExpr(e ast.Expr) bool {
-	switch e.(type) {
-	case *ast.FuncCallExpr, *ast.MethodCallExpr, *ast.VarArgExpr:
-		return true
-	}
-	return false
-}
-
 // compileAssignStmt compiles "a, b = x, y". For single assignments it
 // optimizes directly; for multi-assign it evaluates all RHS into temps first.
 func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
@@ -297,7 +287,7 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	for i := 0; i < nValues; i++ {
 		if i == nValues-1 && nValues < nTargets {
 			// Last expression, might be multi-return
-			if isMultiRetExpr(s.Values[i]) {
+			if isMultiRet(s.Values[i]) {
 				lastIsMultiRet = true
 				c.compileExprMultiRet(s.Values[i], nTargets-i)
 			} else {
