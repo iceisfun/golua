@@ -46,7 +46,7 @@ func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 				}
 			}
 		default:
-			buf.WriteRune(l.current)
+			l.writeCurrent(&buf)
 			l.readChar()
 		}
 	}
@@ -369,7 +369,7 @@ func (l *Lexer) scanNumberBody(pos token.Pos, buf *strings.Builder, isHex bool) 
 // scanIdentifier reads an identifier or keyword.
 func (l *Lexer) scanIdentifier(pos token.Pos) (token.Token, error) {
 	var buf strings.Builder
-	for isAlpha(l.current) || isDigit(l.current) {
+	for (!l.rawByte && isAlpha(l.current)) || isDigit(l.current) {
 		buf.WriteRune(l.current)
 		l.readChar()
 	}

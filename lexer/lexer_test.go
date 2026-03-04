@@ -248,6 +248,81 @@ func TestUnicodeIdentifierTokenization(t *testing.T) {
 	}
 }
 
+func TestRawNonASCIIBytesInStrings(t *testing.T) {
+	// Raw non-ASCII bytes (invalid UTF-8) inside string literals must be
+	// preserved as-is, not re-encoded through UTF-8 rune decoding.
+	// This is critical for Lua's byte-oriented string semantics.
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "lone high byte in short string",
+			input: "\"\\xE3\"", // \xE3 escape → byte 0xE3
+			want:  "\xE3",
+		},
+		{
+			name:  "raw high byte in short string",
+			input: "\"\xE3\"", // raw byte 0xE3 between quotes
+			want:  "\xE3",
+		},
+		{
+			name:  "raw high byte in long string",
+			input: "[[\xE3]]", // raw byte 0xE3 in long string
+			want:  "\xE3",
+		},
+		{
+			name:  "multiple raw bytes in short string",
+			input: "\"\x80\xBF\xFF\"",
+			want:  "\x80\xBF\xFF",
+		},
+		{
+			name:  "valid UTF-8 preserved in short string",
+			input: "\"\xC3\xA0\"", // valid UTF-8 for U+00E0 (à)
+			want:  "\xC3\xA0",
+		},
+		{
+			name:  "valid multibyte UTF-8 preserved in short string",
+			input: "\"\xE6\x97\xA5\"", // valid UTF-8 for 日 (U+65E5)
+			want:  "\xE6\x97\xA5",
+		},
+		{
+			name:  "valid UTF-8 preserved in long string",
+			input: "[[\xC3\xA0]]",
+			want:  "\xC3\xA0",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tokens := mustTokenize(t, tc.input)
+			if len(tokens) < 2 {
+				t.Fatalf("expected at least 2 tokens, got %d", len(tokens))
+			}
+			got := tokens[0].Literal
+			if got != tc.want {
+				t.Errorf("string content mismatch\n  want bytes: %x\n  got bytes:  %x", []byte(tc.want), []byte(got))
+			}
+		})
+	}
+}
+
+func TestRawBytesNotIdentifiers(t *testing.T) {
+	// Raw non-ASCII bytes must NOT be accepted as identifier characters.
+	// Only valid UTF-8 multi-byte sequences should form identifiers.
+	l := New("test", "\xE3=1", true)
+	tokens, err := l.Tokenize()
+	if err == nil {
+		// If it didn't error, the 0xE3 byte should NOT be an identifier
+		for _, tok := range tokens {
+			if tok.Type == token.NAME && tok.Literal == "\xe3" {
+				t.Error("raw byte 0xE3 should not be accepted as an identifier")
+			}
+		}
+	}
+	// Either an error or the byte is treated as an unknown symbol — both are fine
+}
+
 func TestIntegers(t *testing.T) {
 	cases := []struct {
 		input string

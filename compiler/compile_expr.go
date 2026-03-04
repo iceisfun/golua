@@ -56,7 +56,7 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		}
 
 	case *ast.StringExpr: // e.g. local x = "hello"
-		k := fs.addConstant(StringValue(e.Value))
+		k := fs.addConstant(StringValue(c.internString(e.Value)))
 		fs.loadConstant(reg, k, e.P.Line)
 
 	case *ast.NameExpr: // e.g. x — resolves to local, upvalue, or _ENV[x]

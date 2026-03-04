@@ -26,6 +26,7 @@ type Lexer struct {
 	line           int    // current line number (1-based)
 	col            int    // current column number (1-based)
 	current        rune   // current character (eof at end)
+	rawByte        bool   // true when current holds a raw byte (invalid UTF-8)
 	stringRawStart int    // byte position of opening delimiter for string scanning (used in "near" context)
 }
 
@@ -54,14 +55,26 @@ func New(source, input string, stripShebang bool) *Lexer {
 	return l
 }
 
-// readChar advances the lexer by one character.
+// readChar advances the lexer by one character, using UTF-8 decoding for
+// valid multi-byte sequences (e.g. Unicode identifiers). Invalid single
+// bytes are preserved as their raw byte value (not replaced with RuneError)
+// so that non-ASCII bytes in string literals pass through correctly.
+// The rawByte flag is set when the current character is a raw invalid byte.
 func (l *Lexer) readChar() {
 	if l.pos >= len(l.input) {
 		l.current = eof
+		l.rawByte = false
 		return
 	}
 	r, size := utf8.DecodeRuneInString(l.input[l.pos:])
-	l.current = r
+	if r == utf8.RuneError && size == 1 {
+		// Invalid UTF-8 byte: preserve raw byte value
+		l.current = rune(l.input[l.pos])
+		l.rawByte = true
+	} else {
+		l.current = r
+		l.rawByte = false
+	}
 	l.pos += size
 	l.col++
 }
@@ -71,8 +84,21 @@ func (l *Lexer) peek() rune {
 	if l.pos >= len(l.input) {
 		return eof
 	}
-	r, _ := utf8.DecodeRuneInString(l.input[l.pos:])
+	r, size := utf8.DecodeRuneInString(l.input[l.pos:])
+	if r == utf8.RuneError && size == 1 {
+		return rune(l.input[l.pos])
+	}
 	return r
+}
+
+// writeCurrent writes the current character to buf. Raw bytes (invalid UTF-8)
+// are written as single bytes; valid UTF-8 characters use rune encoding.
+func (l *Lexer) writeCurrent(buf *strings.Builder) {
+	if l.rawByte {
+		buf.WriteByte(byte(l.current))
+	} else {
+		buf.WriteRune(l.current)
+	}
 }
 
 // currentPos returns the current source position (pointing at current char).
@@ -191,7 +217,7 @@ func (l *Lexer) Next() (token.Token, error) {
 		case isDigit(l.current):
 			return l.scanNumber(pos)
 
-		case isAlpha(l.current):
+		case !l.rawByte && isAlpha(l.current):
 			return l.scanIdentifier(pos)
 
 		default:
@@ -305,7 +331,7 @@ func (l *Lexer) scanLongString(buf *strings.Builder, sep int) error {
 
 		default:
 			if buf != nil {
-				buf.WriteRune(l.current)
+				l.writeCurrent(buf)
 			}
 			l.readChar()
 		}

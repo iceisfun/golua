@@ -523,10 +523,8 @@ func luaQuote(val vm.Value, argIdx int) string {
 		case ch == '\n':
 			// Lua 5.4: backslash + literal newline
 			b.WriteString("\\\n")
-		case ch < 0x20 || ch >= 0x7f:
-			// Control character or non-ASCII byte: use decimal escape.
-			// Non-ASCII bytes (>= 0x80) must be escaped to ensure
-			// round-tripping through a UTF-8 source lexer.
+		case ch < 0x20 || ch == 0x7f:
+			// Control character (C locale iscntrl): use decimal escape.
 			// Use 3-digit form if next byte is a digit.
 			if i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9' {
 				b.WriteString(fmt.Sprintf("\\%03d", ch))
@@ -543,8 +541,5 @@ func luaQuote(val vm.Value, argIdx int) string {
 
 // luaPointerFormat implements Lua's %p format.
 func luaPointerFormat(val vm.Value) string {
-	if val.IsTable() {
-		return fmt.Sprintf("%p", val.AsTable())
-	}
-	return "(null)"
+	return val.PointerString()
 }

@@ -24,7 +24,7 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 	for _, o := range opts {
 		o(&cfg)
 	}
-	c := &compiler{limits: cfg.limits.effective()}
+	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string)}
 	p := c.compileChunk(source, block)
 	if c.err != nil {
 		return nil, c.err
@@ -152,9 +152,22 @@ type funcState struct {
 // compiler is the top-level compilation state, holding the current funcState
 // and accumulated error.
 type compiler struct {
-	fs     *funcState
-	err    error
-	limits CompilerLimits
+	fs         *funcState
+	err        error
+	limits     CompilerLimits
+	stringPool map[string]string // intern pool for string constants
+}
+
+// internString returns a string that shares the same backing memory as
+// all other identical strings in this compilation unit. This ensures
+// that string.format("%p", s) returns the same address for identical
+// string constants across different functions.
+func (c *compiler) internString(s string) string {
+	if interned, ok := c.stringPool[s]; ok {
+		return interned
+	}
+	c.stringPool[s] = s
+	return s
 }
 
 // error records the first compilation error; subsequent errors are ignored.
@@ -383,8 +396,10 @@ func (fs *funcState) addProto(p *Proto) int {
 }
 
 // stringConstant returns the constant index for a string, adding it if needed.
+// The string is interned via the compiler's string pool so that identical
+// literals across different functions share the same Go string backing.
 func (fs *funcState) stringConstant(s string) int {
-	return fs.addConstant(StringValue(s))
+	return fs.addConstant(StringValue(fs.c.internString(s)))
 }
 
 // ---------------------------------------------------------------------------

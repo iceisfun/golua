@@ -42,6 +42,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"unsafe"
 )
 
 // nativeFuncBox wraps a NativeFunc in a heap-allocated struct so that it
@@ -451,6 +452,28 @@ func (v Value) String() string {
 		return fmt.Sprintf("userdata: %p", v.ptr)
 	default:
 		return "???"
+	}
+}
+
+// PointerString returns the %p representation for string.format.
+// Tables, strings, and functions return a hex address; other types return "(null)".
+func (v Value) PointerString() string {
+	switch v.typ {
+	case typeTable:
+		return fmt.Sprintf("%p", v.ptr)
+	case typeString:
+		s := v.ptr.(string)
+		ptr := unsafe.StringData(s)
+		if ptr == nil {
+			return "(null)"
+		}
+		return fmt.Sprintf("%p", ptr)
+	case typeFunction:
+		return fmt.Sprintf("%p", v.ptr)
+	case typeNativeFunc:
+		return fmt.Sprintf("0x%x", v.ptr.(*nativeFuncBox).ptr)
+	default:
+		return "(null)"
 	}
 }
 
