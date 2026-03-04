@@ -633,3 +633,117 @@ func TestVarargs(t *testing.T) {
 		t.Errorf("expected 2 DOTS tokens, got %d", dotsCount)
 	}
 }
+
+func TestHexIntegerOverflow(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  int64
+	}{
+		{"max_uint64", "0xFFFFFFFFFFFFFFFF", -1},
+		{"65bit_zero", "0x10000000000000000", 0},
+		{"65bit_minus1", "0x1FFFFFFFFFFFFFFFF", -1},
+		{"large_multiword", "0x13121110090807060504030201", 578437695752307201},
+		{"allzeros_wrap", "0x100000000000000000000", 0},
+		{"single_overflow", "0x10000000000000001", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseInt(tc.input)
+			if err != nil {
+				t.Fatalf("parseInt(%q) error: %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseInt(%q) = %d, want %d", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHexOverflowTokenType(t *testing.T) {
+	// Oversized hex literals must tokenize as INT, not FLOAT
+	cases := []struct {
+		input string
+		want  int64
+	}{
+		{"0x10000000000000000", 0},
+		{"0x1FFFFFFFFFFFFFFFF", -1},
+		{"0x13121110090807060504030201", 578437695752307201},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			tokens := mustTokenize(t, tc.input)
+			if tokens[0].Type != token.INT {
+				t.Fatalf("expected INT, got %v", tokens[0].Type)
+			}
+			if tokens[0].IntVal != tc.want {
+				t.Errorf("value: want %d, got %d", tc.want, tokens[0].IntVal)
+			}
+		})
+	}
+}
+
+func TestHexOverflowBoundary(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  int64
+	}{
+		{"max_uint64_as_int64", "0xFFFFFFFFFFFFFFFF", -1},
+		{"first_overflow", "0x10000000000000000", 0},
+		{"leading_zero_64bit", "0x0FFFFFFFFFFFFFFFF", -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseInt(tc.input)
+			if err != nil {
+				t.Fatalf("parseInt(%q) error: %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseInt(%q) = %d, want %d", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecimalOverflowStaysFloat(t *testing.T) {
+	cases := []string{
+		"99999999999999999999",
+		"18446744073709551616", // 2^64
+	}
+	for _, input := range cases {
+		t.Run(input, func(t *testing.T) {
+			tokens := mustTokenize(t, input)
+			if tokens[0].Type != token.FLOAT {
+				t.Fatalf("expected FLOAT for decimal overflow %q, got %v", input, tokens[0].Type)
+			}
+		})
+	}
+}
+
+func TestHexOverflowBitwise(t *testing.T) {
+	// Integration: verify bitwise ops work on wrapped hex values via Lua code
+	// Tested via parseInt directly since bitwise ops are a VM concern
+	cases := []struct {
+		name  string
+		input string
+		mask  int64
+		want  int64
+	}{
+		{"65bit_and_0xFF", "0x10000000000000000", 0xFF, 0},
+		{"65bit_plus1_and_0xFF", "0x10000000000000001", 0xFF, 1},
+		{"multiword_and_low64", "0x13121110090807060504030201", -1, 578437695752307201},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseInt(tc.input)
+			if err != nil {
+				t.Fatalf("parseInt(%q) error: %v", tc.input, err)
+			}
+			result := got & tc.mask
+			if result != tc.want {
+				t.Errorf("parseInt(%q) & 0x%X = %d, want %d", tc.input, uint64(tc.mask), result, tc.want)
+			}
+		})
+	}
+}

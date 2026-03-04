@@ -439,14 +439,22 @@ func parseFloat(s string) (float64, error) {
 }
 
 func parseInt(s string) (int64, error) {
-	// Handle hex — use ParseUint to handle full 64-bit range (e.g. 0xFFFFFFFFFFFFFFFF),
-	// then reinterpret as int64 (matching Lua's wrapping behaviour).
+	// Handle hex — accumulate digits with wrapping at 2^64, matching Lua 5.4's
+	// l_str2int() which uses C unsigned arithmetic (no overflow check for hex).
 	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
-		u, err := strconv.ParseUint(s[2:], 16, 64)
-		if err != nil {
-			return 0, err
+		hex := s[2:]
+		if len(hex) == 0 {
+			return 0, fmt.Errorf("empty hex literal")
 		}
-		return int64(u), nil
+		var a uint64
+		for i := 0; i < len(hex); i++ {
+			d, ok := hexVal(rune(hex[i]))
+			if !ok {
+				return 0, fmt.Errorf("invalid hex digit")
+			}
+			a = a*16 + uint64(d) // wraps naturally at 2^64
+		}
+		return int64(a), nil
 	}
 	// Handle binary — same approach as hex.
 	if strings.HasPrefix(s, "0b") || strings.HasPrefix(s, "0B") {
