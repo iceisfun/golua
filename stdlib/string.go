@@ -25,6 +25,9 @@ func openString(v *vm.VM) {
 	str.SetString("match", vm.NewNativeFunc(stringMatch))
 	str.SetString("gmatch", vm.NewNativeFunc(stringGmatch))
 	str.SetString("dump", vm.NewNativeFunc(stringDump))
+	str.SetString("pack", vm.NewNativeFunc(stringPack))
+	str.SetString("unpack", vm.NewNativeFunc(stringUnpack))
+	str.SetString("packsize", vm.NewNativeFunc(stringPacksize))
 
 	v.SetGlobal("string", vm.NewTable(str))
 
