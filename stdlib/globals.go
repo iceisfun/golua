@@ -324,7 +324,9 @@ func luaXpcall(v *vm.VM) int {
 		} else {
 			errVal = vm.NewString(err.Error())
 		}
+		exitNonYieldable := v.EnterNonYieldable()
 		handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{errVal})
+		exitNonYieldable()
 		v.Set(0, vm.False)
 		if handlerErr != nil {
 			v.Set(1, vm.NewString("error in error handling"))
@@ -426,10 +428,16 @@ func luaPairs(v *vm.VM) int {
 				if err != nil {
 					panic(err)
 				}
-				for i, r := range results {
-					v.Set(i, r)
+				// Lua 5.4: __pairs must produce exactly 3 values (f, s, var).
+				// Extra values are discarded; missing values are nil-filled.
+				for i := 0; i < 3; i++ {
+					if i < len(results) {
+						v.Set(i, results[i])
+					} else {
+						v.Set(i, vm.Nil)
+					}
 				}
-				return len(results)
+				return 3
 			}
 		}
 	}
