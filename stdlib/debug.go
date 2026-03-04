@@ -73,6 +73,10 @@ func openDebug(v *vm.VM) {
 		debug.SetString("gethook", vm.NewNativeFunc(luaDebugGetHook))
 	}
 
+	if caps.AllowUpvalueJoin {
+		debug.SetString("upvaluejoin", vm.NewNativeFunc(luaDebugUpvalueJoin))
+	}
+
 	v.SetGlobal("debug", vm.NewTable(debug))
 }
 
@@ -514,6 +518,43 @@ func luaDebugSetHook(v *vm.VM) int {
 	}
 
 	v.SetHook(arg1, mask, count)
+	return 0
+}
+
+// debug.upvaluejoin(f1, n1, f2, n2)
+// Makes the n1-th upvalue of f1 refer to the same storage as the n2-th upvalue of f2.
+func luaDebugUpvalueJoin(v *vm.VM) int {
+	f1 := v.Get(1)
+	if !f1.IsFunction() {
+		panic("bad argument #1 to 'upvaluejoin' (function expected)")
+	}
+	n1, ok := v.Get(2).ToInt()
+	if !ok {
+		panic("bad argument #2 to 'upvaluejoin' (number expected)")
+	}
+	f2 := v.Get(3)
+	if !f2.IsFunction() {
+		panic("bad argument #3 to 'upvaluejoin' (function expected)")
+	}
+	n2, ok := v.Get(4).ToInt()
+	if !ok {
+		panic("bad argument #4 to 'upvaluejoin' (number expected)")
+	}
+
+	c1 := f1.AsClosure()
+	c2 := f2.AsClosure()
+	if c1 == nil || c2 == nil {
+		return 0
+	}
+
+	if n1 < 1 || int(n1) > len(c1.Upvalues) {
+		panic(fmt.Sprintf("bad argument #2 to 'upvaluejoin' (invalid upvalue index %d)", n1))
+	}
+	if n2 < 1 || int(n2) > len(c2.Upvalues) {
+		panic(fmt.Sprintf("bad argument #4 to 'upvaluejoin' (invalid upvalue index %d)", n2))
+	}
+
+	c1.Upvalues[int(n1)-1] = c2.Upvalues[int(n2)-1]
 	return 0
 }
 

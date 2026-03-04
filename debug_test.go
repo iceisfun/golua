@@ -184,8 +184,7 @@ func TestDebug_ExploitUpvalueLeak(t *testing.T) {
 
 		-- These are now available with DefaultDebugProvider
 		assert(type(debug.setlocal) == "function", "setlocal should exist")
-		assert(debug.upvaluejoin == nil,
-			"upvaluejoin must not exist - would alias upvalues")
+		assert(type(debug.upvaluejoin) == "function", "upvaluejoin should exist")
 		assert(type(debug.sethook) == "function", "sethook should exist")
 
 		-- These are now available for inspection/mutation
@@ -816,4 +815,100 @@ func TestDebug_GetRegistry_Persistent(t *testing.T) {
 		assert(reg2["mykey"] == 42, "registry should persist values across calls")
 	`
 	runLuaWithDebug(t, src, "test_debug_getregistry_persistent", provider)
+}
+
+// ---------- debug.upvaluejoin tests ----------
+
+func TestDebug_UpvalueJoin_SharedIdentity(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function outer()
+			local x = 1
+			return function() return x end,
+			       function() return x end
+		end
+		local a, b = outer()
+		-- Already share the same upvalue; join should be a no-op
+		debug.upvaluejoin(a, 2, b, 2)
+		assert(debug.upvalueid(a, 2) == debug.upvalueid(b, 2),
+			"joined upvalues should have same ID")
+	`
+	runLuaWithDebug(t, src, "test_upvaluejoin_shared_identity", provider)
+}
+
+func TestDebug_UpvalueJoin_MutationPropagation(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function make()
+			local x = 1
+			return function() x = x + 1; return x end,
+			       function() return x end
+		end
+		local inc, get = make()
+		local inc2, get2 = make()
+		-- inc2/get2 have a separate x. Join get2's x to inc/get's x.
+		debug.upvaluejoin(get2, 2, inc, 2)
+		inc()     -- increments first x to 2
+		assert(get() == 2, "get should see 2")
+		assert(get2() == 2, "get2 should see 2 after join")
+		-- inc2 still has its own x
+		assert(inc2() == 2, "inc2 should still use its own x")
+	`
+	runLuaWithDebug(t, src, "test_upvaluejoin_mutation", provider)
+}
+
+func TestDebug_UpvalueJoin_ClosedUpvalues(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function make()
+			local x = 5
+			return function() return x end
+		end
+		local a = make()
+		local b = make()
+		-- a and b have independent closed upvalues
+		assert(debug.upvalueid(a, 2) ~= debug.upvalueid(b, 2),
+			"before join, should be different")
+		debug.upvaluejoin(a, 2, b, 2)
+		assert(debug.upvalueid(a, 2) == debug.upvalueid(b, 2),
+			"after join, should be same")
+		assert(a() == 5, "a should return 5")
+		assert(b() == 5, "b should return 5")
+	`
+	runLuaWithDebug(t, src, "test_upvaluejoin_closed", provider)
+}
+
+func TestDebug_UpvalueJoin_InvalidArgs(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		-- Non-function first arg
+		local ok, err = pcall(debug.upvaluejoin, 1, 1, print, 1)
+		assert(not ok, "should error on non-function f1")
+
+		-- Non-function third arg
+		local ok2, err2 = pcall(debug.upvaluejoin, print, 1, 1, 1)
+		assert(not ok2, "should error on non-function f2")
+
+		-- Invalid upvalue index
+		local function f() local x = 1; return function() return x end end
+		local g = f()
+		local ok3, err3 = pcall(debug.upvaluejoin, g, 99, g, 1)
+		assert(not ok3, "should error on invalid index")
+	`
+	runLuaWithDebug(t, src, "test_upvaluejoin_invalid", provider)
+}
+
+func TestDebug_UpvalueJoin_SelfJoin(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		-- Join a function's upvalue to itself (should be a no-op)
+		local function make()
+			local x = 42
+			return function() return x end
+		end
+		local f = make()
+		debug.upvaluejoin(f, 2, f, 2)
+		assert(f() == 42, "self-join should not corrupt value")
+	`
+	runLuaWithDebug(t, src, "test_upvaluejoin_self", provider)
 }
