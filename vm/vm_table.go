@@ -115,10 +115,10 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 	// Get the metatable for this value type
 	var mt LuaTable
-	if val.IsString() {
-		mt = vm.stringMeta
-	} else if val.IsTable() {
+	if val.IsTable() {
 		mt = val.AsTable().Metatable()
+	} else {
+		mt = vm.GetTypeMeta(val)
 	}
 	if mt == nil {
 		return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
@@ -134,6 +134,18 @@ func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 		return vm.callMetamethod(index, val, key)
 	}
 	return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
+}
+
+// resolveIndex resolves an __index metamethod for a non-table value.
+// mm is the __index metamethod value, obj is the original value, key is the lookup key.
+func (vm *VM) resolveIndex(mm Value, obj Value, key Value) (Value, error) {
+	if mm.IsTable() {
+		return vm.tableGet(mm.AsTable(), key)
+	}
+	if mm.IsFunction() || mm.IsNativeFunc() {
+		return vm.callMetamethod(mm, obj, key)
+	}
+	return Nil, vm.runtimeError("attempt to index a %s value", obj.Type())
 }
 
 // tableSet sets a value in a table, handling __newindex metamethod

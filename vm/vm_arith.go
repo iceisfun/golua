@@ -342,22 +342,13 @@ func (vm *VM) bitwiseMetamethod(op compiler.OpCode) string {
 
 // getArithMetamethod looks for an arithmetic metamethod on either operand
 func (vm *VM) getArithMetamethod(v1, v2 Value, name string) Value {
-	nameVal := NewString(name)
 	// Try first operand
-	if v1.IsTable() {
-		if mt := v1.AsTable().Metatable(); mt != nil {
-			if mm := mt.Get(nameVal); !mm.IsNil() {
-				return mm
-			}
-		}
+	if mm := vm.getMetafield(v1, name); !mm.IsNil() {
+		return mm
 	}
 	// Try second operand
-	if v2.IsTable() {
-		if mt := v2.AsTable().Metatable(); mt != nil {
-			if mm := mt.Get(nameVal); !mm.IsNil() {
-				return mm
-			}
-		}
+	if mm := vm.getMetafield(v2, name); !mm.IsNil() {
+		return mm
 	}
 	return Nil
 }

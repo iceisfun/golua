@@ -216,6 +216,13 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		info.Name, info.NameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
 	}
 
+	// When inside a hook and name couldn't be inferred from caller,
+	// mark as "hook". This happens because the hook function is called
+	// by fireHook/ProtectedCall, not by a CALL instruction in the caller.
+	if vm.inHook && info.NameWhat == "" {
+		info.NameWhat = "hook"
+	}
+
 	return info
 }
 
@@ -392,7 +399,8 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 
 // GetLocal returns the name and value of local variable #index at the given
 // stack level. Level 0 = current frame, 1 = caller, etc.
-// index is 1-based. Returns ("", Nil, false) if out of range.
+// index is 1-based. Negative indices access varargs: -1 = first vararg, etc.
+// Returns ("", Nil, false) if out of range.
 func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 	idx := len(vm.callStack) - 1 - level
 	if idx < 0 || idx >= len(vm.callStack) {
@@ -402,6 +410,23 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 	frame := &vm.callStack[idx]
 	if frame.closure == nil {
 		return "", Nil, false
+	}
+
+	// Negative index: access varargs
+	if index < 0 {
+		if !frame.isVararg || frame.numVararg == 0 {
+			return "", Nil, false
+		}
+		varIdx := -index - 1 // 0-based vararg index
+		if varIdx >= frame.numVararg {
+			return "", Nil, false
+		}
+		stackIdx := frame.varargPos + varIdx
+		val := Nil
+		if stackIdx >= 0 && stackIdx < len(vm.stack) {
+			val = vm.stack[stackIdx]
+		}
+		return "(vararg)", val, true
 	}
 
 	proto := frame.closure.Proto
@@ -425,6 +450,67 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 	}
 
 	return name, val, true
+}
+
+// GetFuncLocal returns the name of local variable #index from a function's
+// prototype (without needing a live stack frame). Only parameter names are
+// available. index is 1-based. Returns ("", false) if out of range.
+func (vm *VM) GetFuncLocal(fn Value, index int) (string, bool) {
+	if fn.IsNativeFunc() || !fn.IsFunction() {
+		return "", false
+	}
+	closure := fn.AsClosure()
+	if closure == nil {
+		return "", false
+	}
+	proto := closure.Proto
+	// For a function not on the stack, we check locals at PC 0
+	// Only parameters (StartPC == 0) are visible
+	reg := index - 1
+	name := localName(proto, reg, 0)
+	if name == "?" {
+		return "", false
+	}
+	return name, true
+}
+
+// SetLocal sets the value of local variable #index at the given stack level.
+// Returns the name of the variable, or ("", false) if out of range.
+func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
+	idx := len(vm.callStack) - 1 - level
+	if idx < 0 || idx >= len(vm.callStack) {
+		return "", false
+	}
+
+	frame := &vm.callStack[idx]
+	if frame.closure == nil {
+		return "", false
+	}
+
+	proto := frame.closure.Proto
+	pc := frame.pc - 1
+	if pc < 0 {
+		pc = 0
+	}
+
+	reg := index - 1
+	name := localName(proto, reg, pc)
+	if name == "?" {
+		return "", false
+	}
+
+	stackIdx := frame.base + reg
+	if stackIdx >= 0 && stackIdx < len(vm.stack) {
+		vm.stack[stackIdx] = val
+	}
+
+	return name, true
+}
+
+// IsValidLevel checks if a stack level is within the current call stack bounds.
+func (vm *VM) IsValidLevel(level int) bool {
+	idx := len(vm.callStack) - 1 - level
+	return idx >= 0 && idx < len(vm.callStack)
 }
 
 // GetRegistry returns the VM's registry table, creating it on first access.

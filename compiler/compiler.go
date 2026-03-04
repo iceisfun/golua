@@ -573,18 +573,24 @@ func (c *compiler) leaveScope(line int) {
 		}
 	}
 
-	// Remove locals from this scope
-	for len(fs.locals) > 0 && fs.nActVar > scope.nLocals {
-		loc := &fs.locals[len(fs.locals)-1]
-		if loc.startPC >= 0 {
-			fs.proto.Locals = append(fs.proto.Locals, LocalVar{
-				Name:    loc.name,
-				StartPC: loc.startPC,
-				EndPC:   fs.pc(),
-			})
+	// Remove locals from this scope.
+	// Emit debug info in forward (register) order so localName works correctly,
+	// then pop from the end as before.
+	{
+		nToRemove := fs.nActVar - scope.nLocals
+		start := len(fs.locals) - nToRemove
+		endPC := fs.pc()
+		for i := start; i < len(fs.locals); i++ {
+			if fs.locals[i].startPC >= 0 {
+				fs.proto.Locals = append(fs.proto.Locals, LocalVar{
+					Name:    fs.locals[i].name,
+					StartPC: fs.locals[i].startPC,
+					EndPC:   endPC,
+				})
+			}
 		}
-		fs.locals = fs.locals[:len(fs.locals)-1]
-		fs.nActVar--
+		fs.locals = fs.locals[:start]
+		fs.nActVar = scope.nLocals
 	}
 
 	// Reset freeReg past all remaining locals. We use regTop() instead

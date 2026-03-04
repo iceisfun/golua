@@ -10,7 +10,12 @@ type LuaDebugCaps struct {
 	AllowSetUpvalue  bool
 	AllowUpvalueID   bool
 	AllowGetLocal    bool
+	AllowSetLocal    bool
 	AllowGetRegistry bool
+	AllowGetMetatable bool
+	AllowSetMetatable bool
+	AllowSetHook     bool
+	AllowGetHook     bool
 }
 
 // LuaDebugProvider is a capability interface for diagnostic debug operations.
@@ -41,6 +46,11 @@ func (p *DefaultDebugProvider) Capabilities() LuaDebugCaps {
 		AllowSetUpvalue:  true,
 		AllowUpvalueID:   true,
 		AllowGetLocal:    true,
+		AllowSetLocal:    true,
 		AllowGetRegistry: true,
+		AllowGetMetatable: true,
+		AllowSetMetatable: true,
+		AllowSetHook:     true,
+		AllowGetHook:     true,
 	}
 }

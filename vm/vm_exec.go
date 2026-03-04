@@ -74,6 +74,9 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 	// This ensures nested calls get non-overlapping stack regions
 	vm.top = base + proto.MaxStack
 
+	// Fire call hook after frame is pushed
+	vm.fireCallHook()
+
 	// Execute
 	results, err := vm.execute()
 
@@ -126,6 +129,16 @@ func (vm *VM) execute() ([]Value, error) {
 
 		inst := code[frame.pc]
 		frame.pc++
+
+		// Hook dispatch: line and count hooks (fast path: hookMask == 0 skips entirely)
+		if vm.hookMask != 0 && !vm.inHook {
+			if vm.checkLineCountHooks(proto, frame.pc-1) {
+				// Re-fetch after hook callback may have modified call stack
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+			}
+		}
 
 		op := inst.OpCode()
 
@@ -207,10 +220,16 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 				vm.stack[frame.base+a] = val
-			} else if table.IsString() && vm.stringMeta != nil {
-				// String indexing - use string metatable
-				val := vm.stringMeta.Get(key)
+			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+				// Type metatable __index
+				val, err := vm.resolveIndex(mm, table, key)
+				if err != nil {
+					return nil, err
+				}
 				vm.stack[frame.base+a] = val
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
@@ -224,6 +243,15 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 				vm.stack[frame.base+a] = val
+			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+				val, err := vm.resolveIndex(mm, table, NewInt(int64(c)))
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = val
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
@@ -238,10 +266,15 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 				vm.stack[frame.base+a] = val
-			} else if table.IsString() && vm.stringMeta != nil {
-				// String field access - use string metatable
-				val := vm.stringMeta.Get(NewString(key))
+			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+				val, err := vm.resolveIndex(mm, table, NewString(key))
+				if err != nil {
+					return nil, err
+				}
 				vm.stack[frame.base+a] = val
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
@@ -773,6 +806,8 @@ func (vm *VM) execute() ([]Value, error) {
 				return nil, err
 			}
 			a, b, _ := inst.A(), inst.B(), inst.C()
+			// Fire tail call hook before reusing frame
+			vm.fireTailCallHook()
 			// Tail call optimization - reuse current frame
 			fn := vm.stack[frame.base+a]
 
@@ -885,6 +920,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			_ = c // c contains info about closing upvalues
 
+			// Fire return hook before closing upvalues
+			vm.fireReturnHook()
+
 			// Close upvalues
 			vm.closeUpvalues(frame.base)
 
@@ -901,11 +939,13 @@ func (vm *VM) execute() ([]Value, error) {
 			return results, nil
 
 		case compiler.OP_RETURN0:
+			vm.fireReturnHook()
 			vm.closeUpvalues(frame.base)
 			return nil, nil
 
 		case compiler.OP_RETURN1:
 			a := inst.A()
+			vm.fireReturnHook()
 			vm.closeUpvalues(frame.base)
 			return []Value{vm.stack[frame.base+a]}, nil
 

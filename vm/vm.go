@@ -30,8 +30,12 @@ type VM struct {
 	// To-be-closed variables (stack index -> true)
 	tbcVars []int
 
-	// Type metatables (for string, number, etc.)
-	stringMeta LuaTable
+	// Type metatables (for string, number, bool, nil, function)
+	stringMeta   LuaTable
+	numberMeta   LuaTable
+	boolMeta     LuaTable
+	nilMeta      LuaTable
+	functionMeta LuaTable
 
 	// Coroutine support
 	yieldCh     chan []Value // Channel to send yield values (nil if not in coroutine)
@@ -64,6 +68,14 @@ type VM struct {
 	// Print/warn provider support
 	printProvider LuaPrintProvider // Provider for print/warn output routing (optional)
 	warnEnabled   bool             // Per-VM warn flag (controlled by warn("@on")/"@off")
+
+	// Hook support
+	hookFunc     Value  // Hook callback function
+	hookMask     byte   // Bitmask of active hook events
+	hookCount    int    // Instruction count interval for count hooks
+	hookCounter  int    // Current counter (counts down to 0)
+	inHook       bool   // Re-entrancy guard
+	lastHookLine int    // Last line reported by line hook (-1 = none)
 
 	// Execution control
 	ctx           context.Context // nil = no cancellation checking
@@ -280,6 +292,10 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		stack:         make([]Value, 256),
 		globals:       parent.globals,
 		stringMeta:    parent.stringMeta,
+		numberMeta:    parent.numberMeta,
+		boolMeta:      parent.boolMeta,
+		nilMeta:       parent.nilMeta,
+		functionMeta:  parent.functionMeta,
 		yieldCh:       yieldCh,
 		resumeCh:      resumeCh,
 		coroutineID:   coID,
@@ -309,6 +325,86 @@ func (vm *VM) SetStringMeta(mt LuaTable) {
 // StringMeta returns the string metatable.
 func (vm *VM) StringMeta() LuaTable {
 	return vm.stringMeta
+}
+
+// SetNumberMeta sets the metatable for all numbers.
+func (vm *VM) SetNumberMeta(mt LuaTable) {
+	vm.numberMeta = mt
+}
+
+// NumberMeta returns the number metatable.
+func (vm *VM) NumberMeta() LuaTable {
+	return vm.numberMeta
+}
+
+// SetBoolMeta sets the metatable for all booleans.
+func (vm *VM) SetBoolMeta(mt LuaTable) {
+	vm.boolMeta = mt
+}
+
+// BoolMeta returns the boolean metatable.
+func (vm *VM) BoolMeta() LuaTable {
+	return vm.boolMeta
+}
+
+// SetNilMeta sets the metatable for nil values.
+func (vm *VM) SetNilMeta(mt LuaTable) {
+	vm.nilMeta = mt
+}
+
+// NilMeta returns the nil metatable.
+func (vm *VM) NilMeta() LuaTable {
+	return vm.nilMeta
+}
+
+// SetFunctionMeta sets the metatable for all functions.
+func (vm *VM) SetFunctionMeta(mt LuaTable) {
+	vm.functionMeta = mt
+}
+
+// FunctionMeta returns the function metatable.
+func (vm *VM) FunctionMeta() LuaTable {
+	return vm.functionMeta
+}
+
+// GetTypeMeta returns the type metatable for a value.
+// Returns nil for tables (use table's own metatable) and types without metatables set.
+func (vm *VM) GetTypeMeta(v Value) LuaTable {
+	if v.IsString() {
+		return vm.stringMeta
+	}
+	if v.IsNumber() {
+		return vm.numberMeta
+	}
+	if v.IsBool() {
+		return vm.boolMeta
+	}
+	if v.IsNil() {
+		return vm.nilMeta
+	}
+	if v.IsFunction() || v.IsNativeFunc() {
+		return vm.functionMeta
+	}
+	return nil
+}
+
+// SetTypeMeta sets the type metatable for the given value's type.
+func (vm *VM) SetTypeMeta(v Value, mt LuaTable) {
+	if v.IsTable() {
+		v.AsTable().SetMetatable(mt)
+		return
+	}
+	if v.IsString() {
+		vm.stringMeta = mt
+	} else if v.IsNumber() {
+		vm.numberMeta = mt
+	} else if v.IsBool() {
+		vm.boolMeta = mt
+	} else if v.IsNil() {
+		vm.nilMeta = mt
+	} else if v.IsFunction() || v.IsNativeFunc() {
+		vm.functionMeta = mt
+	}
 }
 
 // CoroutineID returns the coroutine ID for this VM (0 if main).
@@ -458,9 +554,11 @@ func (vm *VM) getMetafield(v Value, key string) Value {
 		if mt := v.AsTable().Metatable(); mt != nil {
 			return mt.Get(NewString(key))
 		}
+		return Nil
 	}
-	if v.IsString() && vm.stringMeta != nil {
-		return vm.stringMeta.Get(NewString(key))
+	// Check type metatables for non-table types
+	if mt := vm.GetTypeMeta(v); mt != nil {
+		return mt.Get(NewString(key))
 	}
 	return Nil
 }

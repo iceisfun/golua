@@ -49,8 +49,28 @@ func openDebug(v *vm.VM) {
 		debug.SetString("getlocal", vm.NewNativeFunc(luaDebugGetLocal))
 	}
 
+	if caps.AllowSetLocal {
+		debug.SetString("setlocal", vm.NewNativeFunc(luaDebugSetLocal))
+	}
+
 	if caps.AllowGetRegistry {
 		debug.SetString("getregistry", vm.NewNativeFunc(luaDebugGetRegistry))
+	}
+
+	if caps.AllowGetMetatable {
+		debug.SetString("getmetatable", vm.NewNativeFunc(luaDebugGetMetatable))
+	}
+
+	if caps.AllowSetMetatable {
+		debug.SetString("setmetatable", vm.NewNativeFunc(luaDebugSetMetatable))
+	}
+
+	if caps.AllowSetHook {
+		debug.SetString("sethook", vm.NewNativeFunc(luaDebugSetHook))
+	}
+
+	if caps.AllowGetHook {
+		debug.SetString("gethook", vm.NewNativeFunc(luaDebugGetHook))
 	}
 
 	v.SetGlobal("debug", vm.NewTable(debug))
@@ -310,11 +330,30 @@ func luaDebugUpvalueID(v *vm.VM) int {
 	return 1
 }
 
-// debug.getlocal([thread,] level, local)
+// debug.getlocal([thread,] f, local)
+// f can be a function value or a stack level number.
+// When f is a function, returns only parameter names (no values).
 // Returns the name and value of local variable #local at stack level.
+// Negative local indices access varargs.
 // Returns nil if out of range.
 func luaDebugGetLocal(v *vm.VM) int {
 	arg1 := v.Get(1)
+
+	// Check if first arg is a function (getlocal(func, index) form)
+	if arg1.IsCallable() {
+		arg2 := v.Get(2)
+		local, ok := arg2.ToInt()
+		if !ok {
+			panic("bad argument #2 to 'getlocal' (number expected)")
+		}
+		name, found := v.GetFuncLocal(arg1, int(local))
+		if !found {
+			return 0
+		}
+		v.Set(0, vm.NewString(name))
+		return 1
+	}
+
 	level, ok := arg1.ToInt()
 	if !ok {
 		panic("bad argument #1 to 'getlocal' (number expected)")
@@ -324,6 +363,11 @@ func luaDebugGetLocal(v *vm.VM) int {
 	local, ok := arg2.ToInt()
 	if !ok {
 		panic("bad argument #2 to 'getlocal' (number expected)")
+	}
+
+	// Validate level is in range (level 0 = getlocal itself = native frame)
+	if !v.IsValidLevel(int(level)) {
+		panic("bad argument #1 to 'getlocal' (level out of range)")
 	}
 
 	name, val, found := v.GetLocal(int(level), int(local))
@@ -336,9 +380,163 @@ func luaDebugGetLocal(v *vm.VM) int {
 	return 2
 }
 
+// debug.setlocal([thread,] level, local, value)
+// Sets the value of local variable #local at the given stack level.
+// Returns the name of the variable, or nil if out of range.
+func luaDebugSetLocal(v *vm.VM) int {
+	arg1 := v.Get(1)
+	level, ok := arg1.ToInt()
+	if !ok {
+		panic("bad argument #1 to 'setlocal' (number expected)")
+	}
+
+	arg2 := v.Get(2)
+	local, ok := arg2.ToInt()
+	if !ok {
+		panic("bad argument #2 to 'setlocal' (number expected)")
+	}
+
+	newVal := v.Get(3)
+
+	if !v.IsValidLevel(int(level)) {
+		panic("bad argument #1 to 'setlocal' (level out of range)")
+	}
+
+	name, found := v.SetLocal(int(level), int(local), newVal)
+	if !found {
+		return 0
+	}
+
+	v.Set(0, vm.NewString(name))
+	return 1
+}
+
 // debug.getregistry()
 // Returns the registry table.
 func luaDebugGetRegistry(v *vm.VM) int {
 	v.Set(0, vm.NewTable(v.GetRegistry()))
 	return 1
+}
+
+// debug.getmetatable(value)
+// Returns the raw metatable of value, bypassing __metatable protection.
+// Works for any type (including non-tables via type metatables).
+func luaDebugGetMetatable(v *vm.VM) int {
+	val := v.Get(1)
+	if val.IsTable() {
+		mt := val.AsTable().Metatable()
+		if mt != nil {
+			v.Set(0, vm.NewTable(mt))
+		} else {
+			v.Set(0, vm.Nil)
+		}
+		return 1
+	}
+	// Non-table: return type metatable
+	if mt := v.GetTypeMeta(val); mt != nil {
+		v.Set(0, vm.NewTable(mt))
+		return 1
+	}
+	v.Set(0, vm.Nil)
+	return 1
+}
+
+// debug.setmetatable(value, table)
+// Sets the metatable of value, bypassing __metatable protection.
+// For non-table values, sets the type metatable (affects all values of that type).
+// Returns the first argument (value).
+func luaDebugSetMetatable(v *vm.VM) int {
+	val := v.Get(1)
+	mt := v.Get(2)
+
+	var mtTable vm.LuaTable
+	if mt.IsTable() {
+		mtTable = mt.AsTable()
+	} else if !mt.IsNil() {
+		panic("bad argument #2 to 'setmetatable' (nil or table expected)")
+	}
+
+	if val.IsTable() {
+		val.AsTable().SetMetatable(mtTable)
+	} else {
+		v.SetTypeMeta(val, mtTable)
+	}
+
+	v.Set(0, val)
+	return 1
+}
+
+// debug.sethook([thread,] hook, mask [, count])
+// Sets a hook function. mask is a string with 'c' (call), 'r' (return), 'l' (line).
+// count is the instruction count for count hooks.
+// Call with no arguments to remove the hook.
+func luaDebugSetHook(v *vm.VM) int {
+	arg1 := v.Get(1)
+
+	// No arguments or nil first arg: remove hook
+	if arg1.IsNil() || v.ArgCount() == 0 {
+		v.SetHook(vm.Nil, 0, 0)
+		return 0
+	}
+
+	if !arg1.IsCallable() {
+		panic("bad argument #1 to 'sethook' (function expected)")
+	}
+
+	arg2 := v.Get(2)
+	if !arg2.IsString() {
+		panic("bad argument #2 to 'sethook' (string expected)")
+	}
+	maskStr := arg2.AsString()
+
+	var mask byte
+	for _, ch := range maskStr {
+		switch ch {
+		case 'c':
+			mask |= vm.HookMaskCall
+		case 'r':
+			mask |= vm.HookMaskReturn
+		case 'l':
+			mask |= vm.HookMaskLine
+		default:
+			// Unknown characters are ignored (Lua 5.4 behavior)
+		}
+	}
+
+	count := 0
+	if !v.Get(3).IsNil() {
+		if c, ok := v.Get(3).ToInt(); ok {
+			count = int(c)
+			if count > 0 {
+				mask |= vm.HookMaskCount
+			}
+		}
+	}
+
+	v.SetHook(arg1, mask, count)
+	return 0
+}
+
+// debug.gethook([thread])
+// Returns the current hook function, mask string, and count.
+func luaDebugGetHook(v *vm.VM) int {
+	hookFunc, mask, count := v.GetHook()
+
+	v.Set(0, hookFunc)
+
+	// Build mask string
+	var maskStr string
+	if mask&vm.HookMaskCall != 0 {
+		maskStr += "c"
+	}
+	if mask&vm.HookMaskReturn != 0 {
+		maskStr += "r"
+	}
+	if mask&vm.HookMaskLine != 0 {
+		maskStr += "l"
+	}
+
+	v.Set(1, vm.NewString(maskStr))
+	v.Set(2, vm.NewInt(int64(count)))
+	return 3
 }

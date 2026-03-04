@@ -132,20 +132,21 @@ func TestDebug_WhereLevel(t *testing.T) {
 func TestDebug_NoMutation(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	source := `
-		assert(debug.sethook == nil, "sethook should not exist")
-		assert(debug.setlocal == nil, "setlocal should not exist")
-		assert(debug.setmetatable == nil, "debug.setmetatable should not exist")
+		-- With DefaultDebugProvider, all functions are available
+		assert(type(debug.sethook) == "function", "sethook should exist")
+		assert(type(debug.setlocal) == "function", "setlocal should exist")
+		assert(type(debug.setmetatable) == "function", "debug.setmetatable should exist")
 	`
 	runLuaWithDebug(t, source, "test_debug_no_mutation", provider)
 }
 
-func TestDebug_NoHooks(t *testing.T) {
+func TestDebug_Hooks(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	source := `
-		assert(debug.gethook == nil, "gethook should not exist")
-		assert(debug.sethook == nil, "sethook should not exist")
+		assert(type(debug.gethook) == "function", "gethook should exist")
+		assert(type(debug.sethook) == "function", "sethook should exist")
 	`
-	runLuaWithDebug(t, source, "test_debug_no_hooks", provider)
+	runLuaWithDebug(t, source, "test_debug_hooks", provider)
 }
 
 // TestDebug_TCO_InvisibleRecursion verifies that the debug provider doesn't
@@ -181,13 +182,11 @@ func TestDebug_ExploitUpvalueLeak(t *testing.T) {
 		local private_key = "SECRET_123"
 		local function my_closure() return private_key end
 
-		-- Verify dangerous functions still don't exist
-		assert(debug.setlocal == nil,
-			"setlocal must not exist - would mutate local variables")
+		-- These are now available with DefaultDebugProvider
+		assert(type(debug.setlocal) == "function", "setlocal should exist")
 		assert(debug.upvaluejoin == nil,
 			"upvaluejoin must not exist - would alias upvalues")
-		assert(debug.sethook == nil,
-			"sethook must not exist")
+		assert(type(debug.sethook) == "function", "sethook should exist")
 
 		-- These are now available for inspection/mutation
 		assert(type(debug.getinfo) == "function", "getinfo should exist")
@@ -789,7 +788,10 @@ func TestDebug_GetLocal_InvalidIndex(t *testing.T) {
 func TestDebug_GetLocal_InvalidLevel(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	src := `
-		assert(debug.getlocal(999, 1) == nil, "invalid level should return nil")
+		-- Invalid level should error (matches Lua 5.4 behavior)
+		local ok, err = pcall(debug.getlocal, 999, 1)
+		assert(not ok, "invalid level should error")
+		assert(string.find(err, "level out of range"), "should mention level out of range")
 	`
 	runLuaWithDebug(t, src, "test_debug_getlocal_invalid_level", provider)
 }
