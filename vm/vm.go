@@ -38,6 +38,9 @@ type VM struct {
 	resumeCh    chan []Value // Channel to receive resume values (nil if not in coroutine)
 	coroutineID int          // ID of the coroutine this VM belongs to (0 if main)
 	threadObj   Value        // Thread object representing this VM (for coroutine.running)
+	// > 0 means current execution is inside a non-yieldable native callback
+	// context (Lua "C-call boundary").
+	nonYieldableDepth int
 
 	// Code loading support
 	codeProvider LuaCodeProvider // Provider for loading Lua chunks (optional)

@@ -385,6 +385,8 @@ func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch str
 	}
 
 	// Use ProtectedCall but re-panic on error (Lua propagates gsub function errors)
+	exitNonYieldable := v.EnterNonYieldable()
+	defer exitNonYieldable()
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {
 		panic(err)
@@ -523,4 +525,3 @@ func stringGmatch(v *vm.VM) int {
 	v.Set(0, iter)
 	return 1
 }
-

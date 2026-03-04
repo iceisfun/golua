@@ -49,6 +49,25 @@ func (vm *VM) ArgCount() int {
 	return vm.top - frame.base - 1
 }
 
+// EnterNonYieldable marks a native callback region where coroutine.yield()
+// must fail with "attempt to yield across a C-call boundary".
+// The returned function must be called (typically via defer) to restore state.
+func (vm *VM) EnterNonYieldable() func() {
+	vm.nonYieldableDepth++
+	return func() {
+		if vm.nonYieldableDepth <= 0 {
+			panic("internal error: non-yieldable depth underflow")
+		}
+		vm.nonYieldableDepth--
+	}
+}
+
+// IsYieldableContext reports whether the current execution context can yield.
+// Main thread (no coroutine channels) is never yieldable.
+func (vm *VM) IsYieldableContext() bool {
+	return vm.yieldCh != nil && vm.nonYieldableDepth == 0
+}
+
 // Push pushes a value onto the stack.
 // Must be called from within a ProtectedCall boundary (i.e., from a
 // NativeFunc). Panics on stack overflow, caught by ProtectedCall's recover.

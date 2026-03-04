@@ -238,6 +238,8 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 		}
 		return lt
 	}
+	exitNonYieldable := v.EnterNonYieldable()
+	defer exitNonYieldable()
 	res, e := v.ProtectedCall(comp, []vm.Value{a, b})
 	if e != nil {
 		if luaErr, ok := e.(*vm.LuaError); ok {

@@ -311,6 +311,9 @@ func coYield(v *vm.VM) int {
 	if yieldCh == nil || resumeCh == nil {
 		panic("attempt to yield from outside a coroutine")
 	}
+	if !v.IsYieldableContext() {
+		panic("attempt to yield across a C-call boundary")
+	}
 
 	// Mark coroutine as suspended before yielding
 	coID := v.CoroutineID()
@@ -607,8 +610,6 @@ func coClose(v *vm.VM) int {
 
 // coroutine.isyieldable() -> boolean
 func coIsYieldable(v *vm.VM) int {
-	// Check if we're inside a coroutine
-	yieldCh, _ := v.GetCoroutineChannels()
-	v.Set(0, vm.NewBool(yieldCh != nil))
+	v.Set(0, vm.NewBool(v.IsYieldableContext()))
 	return 1
 }

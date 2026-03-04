@@ -69,6 +69,8 @@ func luaLoad(v *vm.VM) int {
 	} else if chunk.IsFunction() || chunk.IsNativeFunc() {
 		// Call the function repeatedly to get the source
 		var builder []byte
+		exitNonYieldable := v.EnterNonYieldable()
+		defer exitNonYieldable()
 		for {
 			results, err := v.ProtectedCall(chunk, nil)
 			if err != nil {

@@ -90,6 +90,8 @@ func luaToString(v *vm.VM) int {
 	if val.IsTable() {
 		if mt := val.AsTable().Metatable(); mt != nil {
 			if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+				exitNonYieldable := v.EnterNonYieldable()
+				defer exitNonYieldable()
 				results, err := v.ProtectedCall(ts, []vm.Value{val})
 				if err != nil {
 					panic(err)
@@ -647,7 +649,9 @@ func tolstring(v *vm.VM, val vm.Value) string {
 	if val.IsTable() {
 		if mt := val.AsTable().Metatable(); mt != nil {
 			if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+				exitNonYieldable := v.EnterNonYieldable()
 				results, err := v.ProtectedCall(ts, []vm.Value{val})
+				exitNonYieldable()
 				if err != nil {
 					panic(err)
 				}
