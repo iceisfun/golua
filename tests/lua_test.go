@@ -91,7 +91,11 @@ func runLuaDir(t *testing.T, dir string) {
 
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			runLuaTest(t, file)
+			if needsFullIo(file) {
+				runLuaTestFullIo(t, file)
+			} else {
+				runLuaTest(t, file)
+			}
 		})
 	}
 }
@@ -141,6 +145,56 @@ func runLuaTest(t *testing.T, filename string) {
 	if runErr != nil {
 		t.Fatalf("Runtime error: %v", runErr)
 	}
+}
+
+// runLuaTestFullIo is like runLuaTest but uses FullIoProvider for tests that
+// need write access, standard file handles, os.tmpname, and os.remove.
+func runLuaTestFullIo(t *testing.T, filename string) {
+	t.Helper()
+
+	source, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatalf("Failed to read %s: %v", filename, err)
+	}
+
+	proto, err := compileLua(filename, string(source))
+	if err != nil {
+		t.Fatalf("Compilation failed: %v", err)
+	}
+
+	v := vm.New()
+	v.SetOsProvider(vm.NewDefaultOsProvider())
+	v.SetDebugProvider(vm.NewDefaultDebugProvider())
+	v.SetIoProvider(vm.NewFullIoProvider("."))
+	v.SetCodeProvider(vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{
+		AllowLoadfile: true,
+		AllowDofile:   true,
+	}))
+	stdlib.Open(v)
+
+	var runErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				runErr, _ = r.(error)
+				if runErr == nil {
+					t.Fatalf("Runtime panic: %v", r)
+				}
+			}
+		}()
+		_, runErr = v.Run(proto)
+	}()
+
+	if runErr != nil {
+		t.Fatalf("Runtime error: %v", runErr)
+	}
+}
+
+// needsFullIo returns true for test files that require FullIoProvider
+// (write access, standard file handles, os.tmpname, os.remove).
+func needsFullIo(filename string) bool {
+	base := filepath.Base(filename)
+	return strings.HasPrefix(base, "io_")
 }
 
 func compileLua(name, source string) (*compiler.Proto, error) {

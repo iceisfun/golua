@@ -337,11 +337,42 @@ func luaDebugUpvalueID(v *vm.VM) int {
 // debug.getlocal([thread,] f, local)
 // f can be a function value or a stack level number.
 // When f is a function, returns only parameter names (no values).
+// When thread is a coroutine, operates on that coroutine's stack.
 // Returns the name and value of local variable #local at stack level.
 // Negative local indices access varargs.
 // Returns nil if out of range.
 func luaDebugGetLocal(v *vm.VM) int {
 	arg1 := v.Get(1)
+
+	// Check if first arg is a thread (coroutine)
+	if arg1.IsTable() {
+		tbl := arg1.AsTable()
+		if tbl != nil && tbl.IsThread() {
+			coVM := tbl.VMRef()
+			if coVM == nil {
+				return 0
+			}
+			arg2 := v.Get(2)
+			level, ok := arg2.ToInt()
+			if !ok {
+				panic("bad argument #2 to 'getlocal' (number expected)")
+			}
+			arg3 := v.Get(3)
+			local, ok := arg3.ToInt()
+			if !ok {
+				panic("bad argument #3 to 'getlocal' (number expected)")
+			}
+			// For suspended coroutines, level numbering matches the coroutine's
+			// own call stack: level 0 = yield, level 1 = function that called yield.
+			name, val, found := coVM.GetLocal(int(level), int(local))
+			if !found {
+				return 0
+			}
+			v.Set(0, vm.NewString(name))
+			v.Set(1, val)
+			return 2
+		}
+	}
 
 	// Check if first arg is a function (getlocal(func, index) form)
 	if arg1.IsCallable() {
@@ -386,9 +417,41 @@ func luaDebugGetLocal(v *vm.VM) int {
 
 // debug.setlocal([thread,] level, local, value)
 // Sets the value of local variable #local at the given stack level.
+// When thread is a coroutine, operates on that coroutine's stack.
 // Returns the name of the variable, or nil if out of range.
 func luaDebugSetLocal(v *vm.VM) int {
 	arg1 := v.Get(1)
+
+	// Check if first arg is a thread (coroutine)
+	if arg1.IsTable() {
+		tbl := arg1.AsTable()
+		if tbl != nil && tbl.IsThread() {
+			coVM := tbl.VMRef()
+			if coVM == nil {
+				return 0
+			}
+			arg2 := v.Get(2)
+			level, ok := arg2.ToInt()
+			if !ok {
+				panic("bad argument #2 to 'setlocal' (number expected)")
+			}
+			arg3 := v.Get(3)
+			local, ok := arg3.ToInt()
+			if !ok {
+				panic("bad argument #3 to 'setlocal' (number expected)")
+			}
+			newVal := v.Get(4)
+			// For suspended coroutines, level numbering matches the coroutine's
+			// own call stack: level 0 = yield, level 1 = function that called yield.
+			name, found := coVM.SetLocal(int(level), int(local), newVal)
+			if !found {
+				return 0
+			}
+			v.Set(0, vm.NewString(name))
+			return 1
+		}
+	}
+
 	level, ok := arg1.ToInt()
 	if !ok {
 		panic("bad argument #1 to 'setlocal' (number expected)")

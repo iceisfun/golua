@@ -498,13 +498,10 @@ func TestDebug_GetUpvalue_Basic(t *testing.T) {
 			return function() return x end
 		end
 		local f = outer()
-		-- GoLua compiler always adds _ENV as upvalue[0], so x is at index 2
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
 		local name1, value1 = debug.getupvalue(f, 1)
-		assert(name1 == "_ENV", "first upvalue should be '_ENV', got: " .. tostring(name1))
-
-		local name2, value2 = debug.getupvalue(f, 2)
-		assert(name2 == "x", "second upvalue should be 'x', got: " .. tostring(name2))
-		assert(value2 == 42, "value should be 42, got: " .. tostring(value2))
+		assert(name1 == "x", "first upvalue should be 'x', got: " .. tostring(name1))
+		assert(value1 == 42, "value should be 42, got: " .. tostring(value1))
 	`
 	runLuaWithDebug(t, src, "test_debug_getupvalue_basic", provider)
 }
@@ -566,8 +563,8 @@ func TestDebug_GetUpvalue_ClosedUpvalue(t *testing.T) {
 			return function() return x end
 		end
 		local f = make()
-		-- _ENV is upvalue 1, x is upvalue 2
-		local name, value = debug.getupvalue(f, 2)
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		local name, value = debug.getupvalue(f, 1)
 		assert(name == "x", "closed upvalue name should be 'x', got: " .. tostring(name))
 		assert(value == "hello", "closed upvalue value should be 'hello', got: " .. tostring(value))
 	`
@@ -645,8 +642,8 @@ func TestDebug_SetUpvalue_Basic(t *testing.T) {
 			return function() return x end
 		end
 		local f = outer()
-		-- _ENV is upvalue 1, x is upvalue 2
-		local name = debug.setupvalue(f, 2, 55)
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		local name = debug.setupvalue(f, 1, 55)
 		assert(name == "x", "setupvalue should return name 'x', got: " .. tostring(name))
 		assert(f() == 55, "function should return updated value 55, got: " .. tostring(f()))
 	`
@@ -663,8 +660,8 @@ func TestDebug_SetUpvalue_SharedUpvalue(t *testing.T) {
 		end
 		local getter, setter = outer()
 		assert(getter() == 1)
-		-- _ENV is upvalue 1, x is upvalue 2
-		debug.setupvalue(getter, 2, 99)
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		debug.setupvalue(getter, 1, 99)
 		assert(getter() == 99, "getter should see updated value")
 		-- setter shares the same upvalue, so it should also see the change
 		assert(setter ~= nil)
@@ -700,9 +697,9 @@ func TestDebug_UpvalueID_Shared(t *testing.T) {
 			       function() return x end
 		end
 		local a, b = outer()
-		-- _ENV is upvalue 1, x is upvalue 2
-		local id_a = debug.upvalueid(a, 2)
-		local id_b = debug.upvalueid(b, 2)
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		local id_a = debug.upvalueid(a, 1)
+		local id_b = debug.upvalueid(b, 1)
 		assert(id_a == id_b, "shared upvalue should have same ID")
 	`
 	runLuaWithDebug(t, src, "test_debug_upvalueid_shared", provider)
@@ -718,9 +715,9 @@ func TestDebug_UpvalueID_Different(t *testing.T) {
 		local a = make()
 		local b = make()
 		-- Each call to make() creates a separate upvalue for x
-		-- _ENV is upvalue 1, x is upvalue 2
-		local id_a = debug.upvalueid(a, 2)
-		local id_b = debug.upvalueid(b, 2)
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		local id_a = debug.upvalueid(a, 1)
+		local id_b = debug.upvalueid(b, 1)
 		assert(id_a ~= id_b, "different upvalue instances should have different IDs")
 	`
 	runLuaWithDebug(t, src, "test_debug_upvalueid_different", provider)
@@ -829,8 +826,9 @@ func TestDebug_UpvalueJoin_SharedIdentity(t *testing.T) {
 		end
 		local a, b = outer()
 		-- Already share the same upvalue; join should be a no-op
-		debug.upvaluejoin(a, 2, b, 2)
-		assert(debug.upvalueid(a, 2) == debug.upvalueid(b, 2),
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		debug.upvaluejoin(a, 1, b, 1)
+		assert(debug.upvalueid(a, 1) == debug.upvalueid(b, 1),
 			"joined upvalues should have same ID")
 	`
 	runLuaWithDebug(t, src, "test_upvaluejoin_shared_identity", provider)
@@ -847,7 +845,8 @@ func TestDebug_UpvalueJoin_MutationPropagation(t *testing.T) {
 		local inc, get = make()
 		local inc2, get2 = make()
 		-- inc2/get2 have a separate x. Join get2's x to inc/get's x.
-		debug.upvaluejoin(get2, 2, inc, 2)
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		debug.upvaluejoin(get2, 1, inc, 1)
 		inc()     -- increments first x to 2
 		assert(get() == 2, "get should see 2")
 		assert(get2() == 2, "get2 should see 2 after join")
@@ -867,10 +866,11 @@ func TestDebug_UpvalueJoin_ClosedUpvalues(t *testing.T) {
 		local a = make()
 		local b = make()
 		-- a and b have independent closed upvalues
-		assert(debug.upvalueid(a, 2) ~= debug.upvalueid(b, 2),
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		assert(debug.upvalueid(a, 1) ~= debug.upvalueid(b, 1),
 			"before join, should be different")
-		debug.upvaluejoin(a, 2, b, 2)
-		assert(debug.upvalueid(a, 2) == debug.upvalueid(b, 2),
+		debug.upvaluejoin(a, 1, b, 1)
+		assert(debug.upvalueid(a, 1) == debug.upvalueid(b, 1),
 			"after join, should be same")
 		assert(a() == 5, "a should return 5")
 		assert(b() == 5, "b should return 5")
@@ -907,7 +907,8 @@ func TestDebug_UpvalueJoin_SelfJoin(t *testing.T) {
 			return function() return x end
 		end
 		local f = make()
-		debug.upvaluejoin(f, 2, f, 2)
+		-- x is the only upvalue (index 1); _ENV not captured since no globals used
+		debug.upvaluejoin(f, 1, f, 1)
 		assert(f() == 42, "self-join should not corrupt value")
 	`
 	runLuaWithDebug(t, src, "test_upvaluejoin_self", provider)

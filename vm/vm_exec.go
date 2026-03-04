@@ -349,6 +349,31 @@ func (vm *VM) execute() ([]Value, error) {
 			} else if table.IsString() && vm.stringMeta != nil {
 				// String method call - use string metatable
 				vm.stack[frame.base+a] = vm.stringMeta.Get(NewString(key))
+			} else if ud := table.AsUserdata(); ud != nil {
+				// Userdata method call - use __index from userdata metatable
+				if mt := ud.Metatable(); mt != nil {
+					index := mt.Get(metaIndex)
+					if index.IsTable() {
+						val, err := vm.tableGetString(index.AsTable(), key)
+						if err != nil {
+							return nil, err
+						}
+						vm.stack[frame.base+a] = val
+					} else if index.IsFunction() || index.IsNativeFunc() {
+						val, err := vm.callMetamethod(index, table, NewString(key))
+						if err != nil {
+							return nil, err
+						}
+						vm.stack[frame.base+a] = val
+						frame = &vm.callStack[len(vm.callStack)-1]
+						proto = frame.closure.Proto
+						code = proto.Code
+					} else {
+						return nil, vm.runtimeError("attempt to index a userdata value")
+					}
+				} else {
+					return nil, vm.runtimeError("attempt to index a userdata value")
+				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
 			}
@@ -832,6 +857,7 @@ func (vm *VM) execute() ([]Value, error) {
 					// Reuse the frame
 					frame.closure = closure
 					frame.pc = 0
+					frame.isTailCall = true
 					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
 

@@ -800,9 +800,23 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	// Body
 	c.compileBlock(s.Body)
 
-	// Close upvalues at the loop variable (base+3) and above before looping back.
-	// This ensures each iteration gets its own closed upvalue copy of i.
-	fs.emit(ABC(OP_CLOSE, base+3, 0, 0, 0), line)
+	// Close upvalues at the loop variable (base+3) and above before looping back,
+	// but only if any variable from the loop variable onwards was captured by an
+	// inner closure or has a <close> attribute. Skipping CLOSE when not needed
+	// avoids inflating instruction counts (which affects debug count hooks).
+	needClose := false
+	for i := len(fs.locals) - 1; i >= 0; i-- {
+		if fs.locals[i].reg < base+3 {
+			break
+		}
+		if fs.locals[i].captured || fs.locals[i].attrib == "close" {
+			needClose = true
+			break
+		}
+	}
+	if needClose {
+		fs.emit(ABC(OP_CLOSE, base+3, 0, 0, 0), line)
+	}
 
 	// FORLOOP — jumps back to just after FORPREP
 	loopPC := fs.emit(ABx(OP_FORLOOP, base, 0), line)
@@ -1194,10 +1208,10 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	fs.proto.NumParams = len(fe.Params)
 	fs.proto.IsVarArg = fe.VarArg
 
-	// _ENV upvalue (inherited from parent — local _ENV or upvalue _ENV)
-	// Use resolveUpvalue so that `local _ENV = expr` in the parent is
-	// correctly captured, not just the parent's upvalue chain.
-	c.resolveUpvalue(fs, "_ENV")
+	// _ENV is NOT unconditionally captured. It will be resolved lazily
+	// by resolveEnv() only when the function body actually references a
+	// global variable. This avoids inflating nups for functions that don't
+	// use globals, matching reference Lua 5.4 behavior.
 
 	fs.enterScope(false)
 

@@ -9,7 +9,14 @@ import (
 
 // Traceback formats a stack trace string. level is the number of frames to
 // skip from the top (0 = current frame, 1 = caller of traceback, etc.).
+// Long traces are truncated: first 10 entries + "..." + last 11 entries
+// (matching Lua 5.4's LEVELS1/LEVELS2 constants).
 func (vm *VM) Traceback(msg string, level int) string {
+	const (
+		levels1 = 10 // number of entries for first part of trace
+		levels2 = 11 // number of entries for last part of trace
+	)
+
 	var b strings.Builder
 	if msg != "" {
 		b.WriteString(msg)
@@ -22,7 +29,25 @@ func (vm *VM) Traceback(msg string, level int) string {
 		start = 0
 	}
 
+	// Count total frames
+	totalFrames := start + 1
+
+	// Determine if we need truncation
+	needTruncate := totalFrames > levels1+levels2
+
+	written := 0
 	for i := start; i >= 0; i-- {
+		// Handle truncation: skip the middle frames
+		if needTruncate && written == levels1 {
+			// Skip to the last levels2 frames
+			remaining := i + 1 // frames from index i down to 0
+			if remaining > levels2 {
+				b.WriteString("\n\t...")
+				i = levels2 // after i-- in for loop, becomes levels2-1
+				continue
+			}
+		}
+
 		frame := &vm.callStack[i]
 		b.WriteByte('\n')
 		b.WriteByte('\t')
@@ -30,11 +55,13 @@ func (vm *VM) Traceback(msg string, level int) string {
 		if frame.closure == nil {
 			// Native frame
 			b.WriteString("[Go]: in ?")
+			written++
 			continue
 		}
 
 		if frame.isTailCall {
 			b.WriteString("(...tail calls...)")
+			written++
 			continue
 		}
 
@@ -71,6 +98,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 			}
 			fmt.Fprintf(&b, "%s:%d: in function '%s'", source, line, name)
 		}
+		written++
 	}
 
 	return b.String()
@@ -329,6 +357,20 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 
 	inst := proto.Code[pc]
 	op := inst.OpCode()
+
+	// For-in iterator call (OP_TFORCALL): name is "for iterator"
+	if op == compiler.OP_TFORCALL {
+		return "for iterator", "for iterator"
+	}
+
+	// Metamethod calls: detect arithmetic/comparison/index metamethods.
+	// In GoLua, metamethods are called from within the arith/index handler,
+	// so pc-1 points to the triggering instruction. For arithmetic ops, the
+	// next instruction (at pc+1) is OP_MMBIN/MMBINI/MMBINK with the tag.
+	if mmName := vm.metamethodNameFromOp(proto, pc); mmName != "" {
+		return mmName, "metamethod"
+	}
+
 	if op != compiler.OP_CALL && op != compiler.OP_TAILCALL {
 		return "", ""
 	}
@@ -395,6 +437,114 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 	}
 
 	return "", ""
+}
+
+// metamethodNameFromOp checks whether the instruction at pc in proto is an
+// opcode that invokes a metamethod (arithmetic, comparison, index, unary, etc.).
+// Returns the metamethod name without the "__" prefix, or "" if not a metamethod call.
+func (vm *VM) metamethodNameFromOp(proto *compiler.Proto, pc int) string {
+	if pc < 0 || pc >= len(proto.Code) {
+		return ""
+	}
+	inst := proto.Code[pc]
+	op := inst.OpCode()
+
+	switch op {
+	// Arithmetic/bitwise ops: the next instruction should be OP_MMBIN/MMBINI/MMBINK
+	// containing the metamethod tag in its C field.
+	case compiler.OP_ADD, compiler.OP_SUB, compiler.OP_MUL, compiler.OP_MOD,
+		compiler.OP_POW, compiler.OP_DIV, compiler.OP_IDIV,
+		compiler.OP_BAND, compiler.OP_BOR, compiler.OP_BXOR,
+		compiler.OP_SHL, compiler.OP_SHR:
+		// Look at next instruction for MMBIN with tag
+		if pc+1 < len(proto.Code) {
+			next := proto.Code[pc+1]
+			nextOp := next.OpCode()
+			if nextOp == compiler.OP_MMBIN || nextOp == compiler.OP_MMBINI || nextOp == compiler.OP_MMBINK {
+				tag := compiler.MetamethodTag(next.C())
+				name := tag.String()
+				if len(name) > 2 && name[:2] == "__" {
+					return name[2:]
+				}
+				return name
+			}
+		}
+		return ""
+
+	case compiler.OP_ADDI:
+		if pc+1 < len(proto.Code) {
+			next := proto.Code[pc+1]
+			if next.OpCode() == compiler.OP_MMBINI {
+				tag := compiler.MetamethodTag(next.C())
+				name := tag.String()
+				if len(name) > 2 && name[:2] == "__" {
+					return name[2:]
+				}
+			}
+		}
+		return ""
+
+	case compiler.OP_ADDK, compiler.OP_SUBK, compiler.OP_MULK, compiler.OP_MODK,
+		compiler.OP_POWK, compiler.OP_DIVK, compiler.OP_IDIVK,
+		compiler.OP_BANDK, compiler.OP_BORK, compiler.OP_BXORK:
+		if pc+1 < len(proto.Code) {
+			next := proto.Code[pc+1]
+			if next.OpCode() == compiler.OP_MMBINK {
+				tag := compiler.MetamethodTag(next.C())
+				name := tag.String()
+				if len(name) > 2 && name[:2] == "__" {
+					return name[2:]
+				}
+			}
+		}
+		return ""
+
+	case compiler.OP_SHLI, compiler.OP_SHRI:
+		if pc+1 < len(proto.Code) {
+			next := proto.Code[pc+1]
+			if next.OpCode() == compiler.OP_MMBINI {
+				tag := compiler.MetamethodTag(next.C())
+				name := tag.String()
+				if len(name) > 2 && name[:2] == "__" {
+					return name[2:]
+				}
+			}
+		}
+		return ""
+
+	// Unary operations
+	case compiler.OP_UNM:
+		return "unm"
+	case compiler.OP_BNOT:
+		return "bnot"
+	case compiler.OP_LEN:
+		return "len"
+
+	// String concatenation
+	case compiler.OP_CONCAT:
+		return "concat"
+
+	// Comparison operations
+	case compiler.OP_EQ, compiler.OP_EQK, compiler.OP_EQI:
+		return "eq"
+	case compiler.OP_LT, compiler.OP_LTI:
+		return "lt"
+	case compiler.OP_LE, compiler.OP_LEI:
+		return "le"
+	case compiler.OP_GTI:
+		return "lt" // __lt with reversed operands
+	case compiler.OP_GEI:
+		return "le" // __le with reversed operands
+
+	// Index operations (when __index metamethod is called)
+	case compiler.OP_GETTABLE, compiler.OP_GETI, compiler.OP_GETFIELD:
+		return "index"
+	case compiler.OP_SETTABLE, compiler.OP_SETI, compiler.OP_SETFIELD:
+		return "newindex"
+
+	default:
+		return ""
+	}
 }
 
 // GetLocal returns the name and value of local variable #index at the given

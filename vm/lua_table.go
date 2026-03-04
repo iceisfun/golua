@@ -27,6 +27,10 @@ type LuaTable interface {
 	Metatable() LuaTable
 	// SetMetatable sets (or clears) the table's metatable.
 	SetMetatable(mt LuaTable)
+	// IsThread returns whether this table represents a coroutine thread.
+	IsThread() bool
+	// VMRef returns the coroutine VM reference, or nil if not set.
+	VMRef() *VM
 }
 
 // Compile-time check that *Table implements LuaTable.

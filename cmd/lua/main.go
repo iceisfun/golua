@@ -105,7 +105,7 @@ done:
 			AllowLoadfile: true,
 			AllowDofile:   true,
 		}))
-		v.SetIoProvider(vm.NewJailedIoProvider(scriptDir))
+		v.SetIoProvider(vm.NewFullIoProvider(scriptDir))
 	}
 	stdlib.Open(v)
 

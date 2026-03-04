@@ -117,6 +117,8 @@ func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 	var mt LuaTable
 	if val.IsTable() {
 		mt = val.AsTable().Metatable()
+	} else if ud := val.AsUserdata(); ud != nil {
+		mt = ud.Metatable()
 	} else {
 		mt = vm.GetTypeMeta(val)
 	}

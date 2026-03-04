@@ -278,11 +278,18 @@ func runCoroutine(co *Coroutine) {
 	coVM := vm.NewCoroutineVM(co.vm, co.yieldCh, co.resumeCh, co.id)
 	coVM.SetThreadObj(co.thread)
 
+	// Store VM reference on thread table for debug.getlocal/setlocal coroutine support
+	if co.thread.IsTable() {
+		if tbl, ok := co.thread.AsTable().(*vm.Table); ok {
+			tbl.SetVMRef(coVM)
+		}
+	}
+
 	if co.fn.IsFunction() {
 		results, err = coVM.CallCoroutine(co.fn.AsClosure(), args)
 	} else if co.fn.IsNativeFunc() {
-		// Native functions can't yield, just call them
-		results, err = co.vm.ProtectedCall(co.fn, args)
+		// Use coroutine VM so yield works from functions called by the native func
+		results, err = coVM.ProtectedCall(co.fn, args)
 	}
 
 	co.mu.Lock()

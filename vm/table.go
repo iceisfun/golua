@@ -27,6 +27,7 @@ type Table struct {
 	deadKeys  int           // count of keys in t.keys not in t.hash
 	metatable LuaTable      // per-table metatable for operator/event overrides
 	isThread  bool          // true if this table represents a coroutine thread
+	vmRef     *VM           // reference to coroutine VM (only set for thread tables)
 }
 
 // SetThread marks this table as a coroutine thread.
@@ -34,6 +35,12 @@ func (t *Table) SetThread(v bool) { t.isThread = v }
 
 // IsThread returns whether this table represents a coroutine thread.
 func (t *Table) IsThread() bool { return t.isThread }
+
+// SetVMRef stores a reference to the coroutine VM on this thread table.
+func (t *Table) SetVMRef(vm *VM) { t.vmRef = vm }
+
+// VMRef returns the coroutine VM reference, or nil if not set.
+func (t *Table) VMRef() *VM { return t.vmRef }
 
 // NewEmptyTable creates a new empty table.
 func NewEmptyTable() *Table {

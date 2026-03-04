@@ -5,6 +5,8 @@ type LuaOsCaps struct {
 	AllowTime   bool
 	AllowDate   bool
 	AllowGetenv bool
+	AllowTmpName bool
+	AllowRemove  bool
 }
 
 // LuaOsProvider is a capability interface for sandboxed OS operations.

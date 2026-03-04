@@ -51,6 +51,25 @@ func (p *JailedIoProvider) Capabilities() LuaIoCaps {
 	}
 }
 
+// Stdin returns nil (not supported in jailed provider).
+func (p *JailedIoProvider) Stdin() LuaFile { return nil }
+
+// Stdout returns nil (not supported in jailed provider).
+func (p *JailedIoProvider) Stdout() LuaFile { return nil }
+
+// Stderr returns nil (not supported in jailed provider).
+func (p *JailedIoProvider) Stderr() LuaFile { return nil }
+
+// TmpName is not supported in jailed provider.
+func (p *JailedIoProvider) TmpName() (string, error) {
+	return "", fmt.Errorf("os.tmpname not available in jailed IO provider")
+}
+
+// Remove is not supported in jailed provider.
+func (p *JailedIoProvider) Remove(name string) error {
+	return fmt.Errorf("os.remove not available in jailed IO provider")
+}
+
 // jailedFile wraps an fs.File with buffered reading.
 type jailedFile struct {
 	file   fs.File
@@ -63,38 +82,38 @@ func (f *jailedFile) Read(format string) (string, error) {
 		return "", fmt.Errorf("attempt to read from a closed file")
 	}
 
-	switch format {
-	case "a", "*a":
-		// Read entire file
-		data, err := io.ReadAll(f.reader)
-		if err != nil {
-			return "", err
+	// Normalize format: strip leading * and check first character
+	// This matches Lua 5.4 behavior where "all" == "a", "line" == "l", etc.
+	cleanFmt := strings.TrimPrefix(format, "*")
+	if len(cleanFmt) > 0 {
+		switch cleanFmt[0] {
+		case 'a':
+			data, err := io.ReadAll(f.reader)
+			if err != nil {
+				return "", err
+			}
+			return string(data), nil
+
+		case 'l':
+			line, err := f.readLine(false)
+			if err != nil {
+				return "", err
+			}
+			return line, nil
+
+		case 'L':
+			line, err := f.readLine(true)
+			if err != nil {
+				return "", err
+			}
+			return line, nil
+
+		case 'n':
+			return f.readNumber()
 		}
-		return string(data), nil
-
-	case "l", "*l":
-		// Read line without trailing newline
-		line, err := f.readLine(false)
-		if err != nil {
-			return "", err
-		}
-		return line, nil
-
-	case "L", "*L":
-		// Read line with trailing newline
-		line, err := f.readLine(true)
-		if err != nil {
-			return "", err
-		}
-		return line, nil
-
-	case "n", "*n":
-		// Read a number
-		return f.readNumber()
-
-	default:
-		return "", fmt.Errorf("invalid read format: %s", format)
 	}
+
+	return "", fmt.Errorf("invalid read format: %s", format)
 }
 
 func (f *jailedFile) ReadBytes(n int) (string, error) {
@@ -120,6 +139,26 @@ func (f *jailedFile) Close() error {
 
 func (f *jailedFile) IsClosed() bool {
 	return f.closed
+}
+
+func (f *jailedFile) Write(data string) error {
+	return fmt.Errorf("write not supported in jailed IO provider")
+}
+
+func (f *jailedFile) Seek(whence string, offset int64) (int64, error) {
+	return 0, fmt.Errorf("seek not supported in jailed IO provider")
+}
+
+func (f *jailedFile) Flush() error {
+	return fmt.Errorf("flush not supported in jailed IO provider")
+}
+
+func (f *jailedFile) SetVBuf(mode string, size int) error {
+	return fmt.Errorf("setvbuf not supported in jailed IO provider")
+}
+
+func (f *jailedFile) IsStd() bool {
+	return false
 }
 
 // readLine reads a line from the buffered reader.

@@ -556,6 +556,13 @@ func (vm *VM) getMetafield(v Value, key string) Value {
 		}
 		return Nil
 	}
+	// Check userdata metatable
+	if ud := v.AsUserdata(); ud != nil {
+		if mt := ud.Metatable(); mt != nil {
+			return mt.Get(NewString(key))
+		}
+		return Nil
+	}
 	// Check type metatables for non-table types
 	if mt := vm.GetTypeMeta(v); mt != nil {
 		return mt.Get(NewString(key))

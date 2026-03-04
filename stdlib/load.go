@@ -253,6 +253,12 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 	if len(stripShebang) > 0 {
 		strip = stripShebang[0]
 	}
+
+	// Strip UTF-8 BOM if present (loadfile and dofile)
+	if strip && len(source) >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF {
+		source = source[3:]
+	}
+
 	// Parse
 	block, parseErr := parser.Parse(chunkName, source, strip)
 	if parseErr != nil {

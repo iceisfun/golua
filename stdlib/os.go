@@ -31,6 +31,17 @@ func openOs(v *vm.VM) {
 		osTable.SetString("getenv", vm.NewNativeFunc(makeOsGetenv(provider)))
 	}
 
+	// tmpname and remove route through the IO provider
+	ioProvider := v.IoProvider()
+	if ioProvider != nil {
+		if caps.AllowTmpName {
+			osTable.SetString("tmpname", vm.NewNativeFunc(makeOsTmpname(ioProvider)))
+		}
+		if caps.AllowRemove {
+			osTable.SetString("remove", vm.NewNativeFunc(makeOsRemove(ioProvider)))
+		}
+	}
+
 	v.SetGlobal("os", vm.NewTable(osTable))
 }
 
@@ -171,6 +182,36 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			panic(err.Error())
 		}
 		v.Set(0, vm.NewString(result))
+		return 1
+	}
+}
+
+// makeOsTmpname creates the os.tmpname() function.
+func makeOsTmpname(ioProvider vm.LuaIoProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		name, err := ioProvider.TmpName()
+		if err != nil {
+			panic(fmt.Sprintf("unable to generate a unique filename: %s", err.Error()))
+		}
+		v.Set(0, vm.NewString(name))
+		return 1
+	}
+}
+
+// makeOsRemove creates the os.remove(filename) function.
+func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		name := v.Get(1)
+		if name.IsNil() {
+			panic("bad argument #1 to 'remove' (string expected, got nil)")
+		}
+		err := ioProvider.Remove(name.AsString())
+		if err != nil {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(err.Error()))
+			return 2
+		}
+		v.Set(0, vm.True)
 		return 1
 	}
 }

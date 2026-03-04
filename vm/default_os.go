@@ -114,9 +114,11 @@ func (p *DefaultOsProvider) Getenv(name string) (string, bool) {
 // Capabilities returns caps with all OS operations enabled.
 func (p *DefaultOsProvider) Capabilities() LuaOsCaps {
 	return LuaOsCaps{
-		AllowTime:   true,
-		AllowDate:   true,
-		AllowGetenv: true,
+		AllowTime:    true,
+		AllowDate:    true,
+		AllowGetenv:  true,
+		AllowTmpName: true,
+		AllowRemove:  true,
 	}
 }
 
