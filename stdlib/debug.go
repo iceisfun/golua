@@ -33,14 +33,25 @@ func openDebug(v *vm.VM) {
 		debug.SetString("getinfo", vm.NewNativeFunc(luaDebugGetInfo))
 	}
 
+	if caps.AllowGetUpvalue {
+		debug.SetString("getupvalue", vm.NewNativeFunc(luaDebugGetUpvalue))
+	}
+
 	v.SetGlobal("debug", vm.NewTable(debug))
 }
 
 // debug.traceback([message [, level]])
+// If message is non-nil and non-string, it is returned unchanged (Lua 5.4).
 func luaDebugTraceback(v *vm.VM) int {
-	msg := ""
-	if !v.Get(1).IsNil() {
-		msg = valueToString(v.Get(1))
+	msg := v.Get(1)
+	if !msg.IsNil() && !msg.IsString() {
+		v.Set(0, msg)
+		return 1
+	}
+
+	msgStr := ""
+	if !msg.IsNil() {
+		msgStr = msg.AsString()
 	}
 
 	level := 1
@@ -50,7 +61,7 @@ func luaDebugTraceback(v *vm.VM) int {
 		}
 	}
 
-	v.Set(0, vm.NewString(v.Traceback(msg, level)))
+	v.Set(0, vm.NewString(v.Traceback(msgStr, level)))
 	return 1
 }
 
@@ -170,4 +181,44 @@ func luaDebugGetInfo(v *vm.VM) int {
 
 	v.Set(0, vm.NewTable(result))
 	return 1
+}
+
+// debug.getupvalue(f, up)
+// Returns the name and value of upvalue #up of function f.
+// Returns nil if the index is out of range.
+// For native (Go) functions, always returns nil.
+func luaDebugGetUpvalue(v *vm.VM) int {
+	arg1 := v.Get(1)
+	if !arg1.IsCallable() {
+		panic("bad argument #1 to 'getupvalue' (function expected)")
+	}
+
+	arg2 := v.Get(2)
+	idx, ok := arg2.ToInt()
+	if !ok {
+		panic("bad argument #2 to 'getupvalue' (number expected)")
+	}
+
+	// Native functions have no inspectable upvalues
+	if arg1.IsNativeFunc() {
+		return 0
+	}
+
+	closure := arg1.AsClosure()
+	if closure == nil {
+		return 0
+	}
+
+	// Check index bounds (1-based)
+	if idx < 1 || int(idx) > len(closure.Upvalues) {
+		return 0
+	}
+
+	i := int(idx) - 1
+	name := closure.Proto.Upvalues[i].Name
+	val := closure.Upvalues[i].Get()
+
+	v.Set(0, vm.NewString(name))
+	v.Set(1, val)
+	return 2
 }

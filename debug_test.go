@@ -137,7 +137,6 @@ func TestDebug_NoMutation(t *testing.T) {
 		assert(debug.setupvalue == nil, "setupvalue should not exist")
 		assert(debug.setmetatable == nil, "debug.setmetatable should not exist")
 		assert(debug.getlocal == nil, "getlocal should not exist")
-		assert(debug.getupvalue == nil, "getupvalue should not exist")
 	`
 	runLuaWithDebug(t, source, "test_debug_no_mutation", provider)
 }
@@ -184,9 +183,7 @@ func TestDebug_ExploitUpvalueLeak(t *testing.T) {
 		local private_key = "SECRET_123"
 		local function my_closure() return private_key end
 
-		-- Verify no upvalue access functions exist
-		assert(debug.getupvalue == nil,
-			"getupvalue must not exist - would leak private upvalues")
+		-- Verify no mutation functions exist
 		assert(debug.setupvalue == nil,
 			"setupvalue must not exist - would mutate private upvalues")
 		assert(debug.getlocal == nil,
@@ -494,4 +491,151 @@ func TestDebug_GetInfo_NameInference(t *testing.T) {
 		assert(info2.namewhat == "global", "should be 'global', got: " .. tostring(info2.namewhat))
 	`
 	runLuaWithDebug(t, source, "test_debug_getinfo_name_inference", provider)
+}
+
+// ---------- debug.getupvalue tests ----------
+
+func TestDebug_GetUpvalue_Basic(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function outer()
+			local x = 42
+			return function() return x end
+		end
+		local f = outer()
+		-- GoLua compiler always adds _ENV as upvalue[0], so x is at index 2
+		local name1, value1 = debug.getupvalue(f, 1)
+		assert(name1 == "_ENV", "first upvalue should be '_ENV', got: " .. tostring(name1))
+
+		local name2, value2 = debug.getupvalue(f, 2)
+		assert(name2 == "x", "second upvalue should be 'x', got: " .. tostring(name2))
+		assert(value2 == 42, "value should be 42, got: " .. tostring(value2))
+	`
+	runLuaWithDebug(t, src, "test_debug_getupvalue_basic", provider)
+}
+
+func TestDebug_GetUpvalue_Multiple(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function make()
+			local a = 1
+			local b = 2
+			return function() return a + b end
+		end
+		local f = make()
+		local n1, v1 = debug.getupvalue(f, 1)
+		local n2, v2 = debug.getupvalue(f, 2)
+		assert(n1 ~= nil, "first upvalue name should not be nil")
+		assert(n2 ~= nil, "second upvalue name should not be nil")
+		assert(type(n1) == "string")
+		assert(type(n2) == "string")
+	`
+	runLuaWithDebug(t, src, "test_debug_getupvalue_multiple", provider)
+}
+
+func TestDebug_GetUpvalue_InvalidIndex(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function f() end
+		assert(debug.getupvalue(f, 100) == nil, "invalid index should return nil")
+		assert(debug.getupvalue(f, 0) == nil, "index 0 should return nil")
+		assert(debug.getupvalue(f, -1) == nil, "negative index should return nil")
+	`
+	runLuaWithDebug(t, src, "test_debug_getupvalue_invalidindex", provider)
+}
+
+func TestDebug_GetUpvalue_TypeError(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local ok = pcall(function()
+			debug.getupvalue(123, 1)
+		end)
+		assert(ok == false, "non-function arg should error")
+	`
+	runLuaWithDebug(t, src, "test_debug_getupvalue_typeerror", provider)
+}
+
+func TestDebug_GetUpvalue_NativeFunc(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		assert(debug.getupvalue(print, 1) == nil, "native func upvalue should be nil")
+	`
+	runLuaWithDebug(t, src, "test_debug_getupvalue_nativefunc", provider)
+}
+
+func TestDebug_GetUpvalue_ClosedUpvalue(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function make()
+			local x = "hello"
+			return function() return x end
+		end
+		local f = make()
+		-- _ENV is upvalue 1, x is upvalue 2
+		local name, value = debug.getupvalue(f, 2)
+		assert(name == "x", "closed upvalue name should be 'x', got: " .. tostring(name))
+		assert(value == "hello", "closed upvalue value should be 'hello', got: " .. tostring(value))
+	`
+	runLuaWithDebug(t, src, "test_debug_getupvalue_closed", provider)
+}
+
+// ---------- debug.traceback enhancement tests ----------
+
+func TestDebug_Traceback_NonStringMessage(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local result = debug.traceback(42)
+		assert(result == 42, "number message should pass through, got: " .. tostring(result))
+
+		local t = {1,2,3}
+		local result2 = debug.traceback(t)
+		assert(result2 == t, "table message should pass through")
+
+		local result3 = debug.traceback(true)
+		assert(result3 == true, "boolean message should pass through")
+	`
+	runLuaWithDebug(t, src, "test_traceback_nonstring", provider)
+}
+
+func TestDebug_Traceback_NilMessage(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local trace = debug.traceback()
+		assert(type(trace) == "string")
+		assert(string.find(trace, "stack traceback"))
+		assert(not string.find(trace, "^nil"), "nil message should not appear in trace")
+	`
+	runLuaWithDebug(t, src, "test_traceback_nil_message", provider)
+}
+
+func TestDebug_Traceback_FunctionNames(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		function myFunc()
+			local trace = debug.traceback()
+			return trace
+		end
+		local trace = myFunc()
+		assert(string.find(trace, "myFunc"), "should contain function name 'myFunc', got: " .. trace)
+		assert(string.find(trace, "main chunk"), "should contain 'main chunk' for top level")
+	`
+	runLuaWithDebug(t, src, "test_traceback_func_names", provider)
+}
+
+func TestDebug_Traceback_NestedNames(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		function a()
+			local trace = b()
+			return trace
+		end
+		function b()
+			local trace = debug.traceback()
+			return trace
+		end
+		local trace = a()
+		assert(type(trace) == "string")
+		assert(string.find(trace, "stack traceback"), "should have header")
+	`
+	runLuaWithDebug(t, src, "test_traceback_nested_names", provider)
 }

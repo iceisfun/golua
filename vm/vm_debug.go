@@ -55,7 +55,20 @@ func (vm *VM) Traceback(msg string, level int) string {
 		if i == 0 && proto.LineDef == 0 {
 			fmt.Fprintf(&b, "%s:%d: in main chunk", source, line)
 		} else {
-			name := vm.frameFuncName(frame)
+			// Try to get the function name from the caller's call site
+			name := ""
+			if i > 0 {
+				callerIdx := i - 1
+				for callerIdx > 0 && vm.callStack[callerIdx].isTailCall {
+					callerIdx--
+				}
+				if !vm.callStack[callerIdx].isTailCall {
+					name, _ = vm.funcNameFromCall(&vm.callStack[callerIdx])
+				}
+			}
+			if name == "" {
+				name = vm.frameFuncName(frame)
+			}
 			fmt.Fprintf(&b, "%s:%d: in function '%s'", source, line, name)
 		}
 	}
