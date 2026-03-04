@@ -389,3 +389,48 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 
 	return "", ""
 }
+
+// GetLocal returns the name and value of local variable #index at the given
+// stack level. Level 0 = current frame, 1 = caller, etc.
+// index is 1-based. Returns ("", Nil, false) if out of range.
+func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
+	idx := len(vm.callStack) - 1 - level
+	if idx < 0 || idx >= len(vm.callStack) {
+		return "", Nil, false
+	}
+
+	frame := &vm.callStack[idx]
+	if frame.closure == nil {
+		return "", Nil, false
+	}
+
+	proto := frame.closure.Proto
+	pc := frame.pc - 1
+	if pc < 0 {
+		pc = 0
+	}
+
+	// The index-th local variable maps to register (index-1).
+	// Use localName to resolve the name from the register number.
+	reg := index - 1
+	name := localName(proto, reg, pc)
+	if name == "?" {
+		return "", Nil, false
+	}
+
+	stackIdx := frame.base + reg
+	val := Nil
+	if stackIdx >= 0 && stackIdx < len(vm.stack) {
+		val = vm.stack[stackIdx]
+	}
+
+	return name, val, true
+}
+
+// GetRegistry returns the VM's registry table, creating it on first access.
+func (vm *VM) GetRegistry() LuaTable {
+	if vm.registry == nil {
+		vm.registry = NewEmptyTable()
+	}
+	return vm.registry
+}

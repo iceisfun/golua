@@ -135,6 +135,12 @@ func NewNativeFunc(f NativeFunc) Value {
 	}}
 }
 
+// NewUpvalueID creates a lightuserdata value wrapping an upvalue pointer.
+// Used by debug.upvalueid to return a unique, comparable identifier.
+func NewUpvalueID(uv *Upvalue) Value {
+	return Value{typ: typeUpvalue, ptr: uv}
+}
+
 // IsNil reports whether v is nil.
 func (v Value) IsNil() bool { return v.typ == typeNil }
 
@@ -185,6 +191,8 @@ func (v Value) Type() string {
 		return "table"
 	case typeFunction, typeNativeFunc:
 		return "function"
+	case typeUpvalue:
+		return "userdata"
 	default:
 		return "unknown"
 	}
@@ -439,6 +447,8 @@ func (v Value) String() string {
 		return fmt.Sprintf("function: %p", v.ptr)
 	case typeNativeFunc:
 		return fmt.Sprintf("function: 0x%x", v.ptr.(*nativeFuncBox).ptr)
+	case typeUpvalue:
+		return fmt.Sprintf("userdata: %p", v.ptr)
 	default:
 		return "???"
 	}
@@ -521,6 +531,8 @@ func (v Value) Equal(other Value) bool {
 	case typeTable, typeFunction:
 		return v.ptr == other.ptr
 	case typeNativeFunc:
+		return v.ptr == other.ptr
+	case typeUpvalue:
 		return v.ptr == other.ptr
 	default:
 		return false

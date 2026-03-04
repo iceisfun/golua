@@ -37,6 +37,22 @@ func openDebug(v *vm.VM) {
 		debug.SetString("getupvalue", vm.NewNativeFunc(luaDebugGetUpvalue))
 	}
 
+	if caps.AllowSetUpvalue {
+		debug.SetString("setupvalue", vm.NewNativeFunc(luaDebugSetUpvalue))
+	}
+
+	if caps.AllowUpvalueID {
+		debug.SetString("upvalueid", vm.NewNativeFunc(luaDebugUpvalueID))
+	}
+
+	if caps.AllowGetLocal {
+		debug.SetString("getlocal", vm.NewNativeFunc(luaDebugGetLocal))
+	}
+
+	if caps.AllowGetRegistry {
+		debug.SetString("getregistry", vm.NewNativeFunc(luaDebugGetRegistry))
+	}
+
 	v.SetGlobal("debug", vm.NewTable(debug))
 }
 
@@ -221,4 +237,108 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 	v.Set(0, vm.NewString(name))
 	v.Set(1, val)
 	return 2
+}
+
+// debug.setupvalue(f, up, value)
+// Sets the value of upvalue #up of function f.
+// Returns the upvalue name, or nil if the index is out of range.
+func luaDebugSetUpvalue(v *vm.VM) int {
+	arg1 := v.Get(1)
+	if !arg1.IsCallable() {
+		panic("bad argument #1 to 'setupvalue' (function expected)")
+	}
+
+	arg2 := v.Get(2)
+	idx, ok := arg2.ToInt()
+	if !ok {
+		panic("bad argument #2 to 'setupvalue' (number expected)")
+	}
+
+	newVal := v.Get(3)
+
+	if arg1.IsNativeFunc() {
+		return 0
+	}
+
+	closure := arg1.AsClosure()
+	if closure == nil {
+		return 0
+	}
+
+	if idx < 1 || int(idx) > len(closure.Upvalues) {
+		return 0
+	}
+
+	i := int(idx) - 1
+	name := closure.Proto.Upvalues[i].Name
+	closure.Upvalues[i].Set(newVal)
+
+	v.Set(0, vm.NewString(name))
+	return 1
+}
+
+// debug.upvalueid(f, n)
+// Returns a unique identifier for the upvalue #n of function f.
+// Two closures sharing the same upvalue return the same ID.
+func luaDebugUpvalueID(v *vm.VM) int {
+	arg1 := v.Get(1)
+	if !arg1.IsCallable() {
+		panic("bad argument #1 to 'upvalueid' (function expected)")
+	}
+
+	arg2 := v.Get(2)
+	idx, ok := arg2.ToInt()
+	if !ok {
+		panic("bad argument #2 to 'upvalueid' (number expected)")
+	}
+
+	if arg1.IsNativeFunc() {
+		return 0
+	}
+
+	closure := arg1.AsClosure()
+	if closure == nil {
+		return 0
+	}
+
+	if idx < 1 || int(idx) > len(closure.Upvalues) {
+		panic(fmt.Sprintf("bad argument #2 to 'upvalueid' (invalid upvalue index %d)", idx))
+	}
+
+	i := int(idx) - 1
+	v.Set(0, vm.NewUpvalueID(closure.Upvalues[i]))
+	return 1
+}
+
+// debug.getlocal([thread,] level, local)
+// Returns the name and value of local variable #local at stack level.
+// Returns nil if out of range.
+func luaDebugGetLocal(v *vm.VM) int {
+	arg1 := v.Get(1)
+	level, ok := arg1.ToInt()
+	if !ok {
+		panic("bad argument #1 to 'getlocal' (number expected)")
+	}
+
+	arg2 := v.Get(2)
+	local, ok := arg2.ToInt()
+	if !ok {
+		panic("bad argument #2 to 'getlocal' (number expected)")
+	}
+
+	name, val, found := v.GetLocal(int(level), int(local))
+	if !found {
+		return 0
+	}
+
+	v.Set(0, vm.NewString(name))
+	v.Set(1, val)
+	return 2
+}
+
+// debug.getregistry()
+// Returns the registry table.
+func luaDebugGetRegistry(v *vm.VM) int {
+	v.Set(0, vm.NewTable(v.GetRegistry()))
+	return 1
 }

@@ -134,9 +134,7 @@ func TestDebug_NoMutation(t *testing.T) {
 	source := `
 		assert(debug.sethook == nil, "sethook should not exist")
 		assert(debug.setlocal == nil, "setlocal should not exist")
-		assert(debug.setupvalue == nil, "setupvalue should not exist")
 		assert(debug.setmetatable == nil, "debug.setmetatable should not exist")
-		assert(debug.getlocal == nil, "getlocal should not exist")
 	`
 	runLuaWithDebug(t, source, "test_debug_no_mutation", provider)
 }
@@ -183,22 +181,21 @@ func TestDebug_ExploitUpvalueLeak(t *testing.T) {
 		local private_key = "SECRET_123"
 		local function my_closure() return private_key end
 
-		-- Verify no mutation functions exist
-		assert(debug.setupvalue == nil,
-			"setupvalue must not exist - would mutate private upvalues")
-		assert(debug.getlocal == nil,
-			"getlocal must not exist - would leak local variables")
+		-- Verify dangerous functions still don't exist
 		assert(debug.setlocal == nil,
 			"setlocal must not exist - would mutate local variables")
-		assert(debug.upvalueid == nil,
-			"upvalueid must not exist - would expose upvalue identity")
 		assert(debug.upvaluejoin == nil,
 			"upvaluejoin must not exist - would alias upvalues")
-		assert(type(debug.getinfo) == "function",
-			"getinfo should exist")
+		assert(debug.sethook == nil,
+			"sethook must not exist")
 
-		-- The closure's private_key remains inaccessible via debug
-		-- Only the closure itself can return it
+		-- These are now available for inspection/mutation
+		assert(type(debug.getinfo) == "function", "getinfo should exist")
+		assert(type(debug.getupvalue) == "function", "getupvalue should exist")
+		assert(type(debug.setupvalue) == "function", "setupvalue should exist")
+		assert(type(debug.upvalueid) == "function", "upvalueid should exist")
+		assert(type(debug.getlocal) == "function", "getlocal should exist")
+
 		assert(my_closure() == "SECRET_123", "closure still works")
 	`
 	runLuaWithDebug(t, source, "test_debug_exploit_upvalue_leak", provider)
@@ -638,4 +635,183 @@ func TestDebug_Traceback_NestedNames(t *testing.T) {
 		assert(string.find(trace, "stack traceback"), "should have header")
 	`
 	runLuaWithDebug(t, src, "test_traceback_nested_names", provider)
+}
+
+// ---------- debug.setupvalue tests ----------
+
+func TestDebug_SetUpvalue_Basic(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function outer()
+			local x = 10
+			return function() return x end
+		end
+		local f = outer()
+		-- _ENV is upvalue 1, x is upvalue 2
+		local name = debug.setupvalue(f, 2, 55)
+		assert(name == "x", "setupvalue should return name 'x', got: " .. tostring(name))
+		assert(f() == 55, "function should return updated value 55, got: " .. tostring(f()))
+	`
+	runLuaWithDebug(t, src, "test_debug_setupvalue_basic", provider)
+}
+
+func TestDebug_SetUpvalue_SharedUpvalue(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function outer()
+			local x = 1
+			return function() return x end,
+			       function(v) x = v end
+		end
+		local getter, setter = outer()
+		assert(getter() == 1)
+		-- _ENV is upvalue 1, x is upvalue 2
+		debug.setupvalue(getter, 2, 99)
+		assert(getter() == 99, "getter should see updated value")
+		-- setter shares the same upvalue, so it should also see the change
+		assert(setter ~= nil)
+	`
+	runLuaWithDebug(t, src, "test_debug_setupvalue_shared", provider)
+}
+
+func TestDebug_SetUpvalue_InvalidIndex(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function f() end
+		assert(debug.setupvalue(f, 100, "x") == nil, "invalid index should return nil")
+	`
+	runLuaWithDebug(t, src, "test_debug_setupvalue_invalid", provider)
+}
+
+func TestDebug_SetUpvalue_NativeFunc(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		assert(debug.setupvalue(print, 1, "x") == nil, "native func should return nil")
+	`
+	runLuaWithDebug(t, src, "test_debug_setupvalue_native", provider)
+}
+
+// ---------- debug.upvalueid tests ----------
+
+func TestDebug_UpvalueID_Shared(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function outer()
+			local x = 1
+			return function() return x end,
+			       function() return x end
+		end
+		local a, b = outer()
+		-- _ENV is upvalue 1, x is upvalue 2
+		local id_a = debug.upvalueid(a, 2)
+		local id_b = debug.upvalueid(b, 2)
+		assert(id_a == id_b, "shared upvalue should have same ID")
+	`
+	runLuaWithDebug(t, src, "test_debug_upvalueid_shared", provider)
+}
+
+func TestDebug_UpvalueID_Different(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function make()
+			local x = 1
+			return function() return x end
+		end
+		local a = make()
+		local b = make()
+		-- Each call to make() creates a separate upvalue for x
+		-- _ENV is upvalue 1, x is upvalue 2
+		local id_a = debug.upvalueid(a, 2)
+		local id_b = debug.upvalueid(b, 2)
+		assert(id_a ~= id_b, "different upvalue instances should have different IDs")
+	`
+	runLuaWithDebug(t, src, "test_debug_upvalueid_different", provider)
+}
+
+func TestDebug_UpvalueID_Type(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function f() local x = 1; return function() return x end end
+		local g = f()
+		local id = debug.upvalueid(g, 1)
+		assert(type(id) == "userdata", "upvalueid should return userdata, got: " .. type(id))
+	`
+	runLuaWithDebug(t, src, "test_debug_upvalueid_type", provider)
+}
+
+// ---------- debug.getlocal tests ----------
+
+func TestDebug_GetLocal_Basic(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function foo()
+			local a = 10
+			local b = 20
+			local name, val = debug.getlocal(1, 1)
+			assert(name == "a", "first local should be 'a', got: " .. tostring(name))
+			assert(val == 10, "value should be 10, got: " .. tostring(val))
+		end
+		foo()
+	`
+	runLuaWithDebug(t, src, "test_debug_getlocal_basic", provider)
+}
+
+func TestDebug_GetLocal_Multiple(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function foo()
+			local a = 10
+			local b = 20
+			local n1, v1 = debug.getlocal(1, 1)
+			local n2, v2 = debug.getlocal(1, 2)
+			assert(n1 == "a", "first local name should be 'a', got: " .. tostring(n1))
+			assert(v1 == 10)
+			assert(n2 == "b", "second local name should be 'b', got: " .. tostring(n2))
+			assert(v2 == 20)
+		end
+		foo()
+	`
+	runLuaWithDebug(t, src, "test_debug_getlocal_multiple", provider)
+}
+
+func TestDebug_GetLocal_InvalidIndex(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function foo()
+			local a = 10
+			assert(debug.getlocal(1, 100) == nil, "invalid local index should return nil")
+		end
+		foo()
+	`
+	runLuaWithDebug(t, src, "test_debug_getlocal_invalid", provider)
+}
+
+func TestDebug_GetLocal_InvalidLevel(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		assert(debug.getlocal(999, 1) == nil, "invalid level should return nil")
+	`
+	runLuaWithDebug(t, src, "test_debug_getlocal_invalid_level", provider)
+}
+
+// ---------- debug.getregistry tests ----------
+
+func TestDebug_GetRegistry_Basic(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local reg = debug.getregistry()
+		assert(type(reg) == "table", "registry should be a table, got: " .. type(reg))
+	`
+	runLuaWithDebug(t, src, "test_debug_getregistry_basic", provider)
+}
+
+func TestDebug_GetRegistry_Persistent(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local reg1 = debug.getregistry()
+		reg1["mykey"] = 42
+		local reg2 = debug.getregistry()
+		assert(reg2["mykey"] == 42, "registry should persist values across calls")
+	`
+	runLuaWithDebug(t, src, "test_debug_getregistry_persistent", provider)
 }

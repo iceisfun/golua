@@ -53,6 +53,7 @@ type VM struct {
 
 	// Debug provider support
 	debugProvider LuaDebugProvider // Provider for diagnostic debug operations (optional)
+	registry      LuaTable         // Debug registry table (created on first access)
 
 	// Channel provider support
 	chanProvider LuaChanProvider // Provider for channel operations (optional)

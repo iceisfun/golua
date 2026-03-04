@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/iceisfun/golua/ast"
 )
@@ -203,6 +204,13 @@ func (c *compiler) closeFuncState() *Proto {
 			})
 		}
 	}
+
+	// Sort locals by StartPC to match Lua 5.4's expected ordering.
+	// Scope-close appends locals in reverse register order; sorting
+	// restores the register-order invariant that localName relies on.
+	sort.SliceStable(p.Locals, func(i, j int) bool {
+		return p.Locals[i].StartPC < p.Locals[j].StartPC
+	})
 
 	p.MaxStack = fs.maxReg
 	p.Upvalues = fs.upvalues
