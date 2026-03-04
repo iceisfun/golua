@@ -34,16 +34,16 @@ assert(utf8.char(0x10FFFF) ~= nil, "utf8.char U+10FFFF should succeed")
 -- Zero arguments
 assert_eq(utf8.char(), "", "utf8.char no args")
 
--- Error: value out of range (> U+10FFFF)
-local ok, err = pcall(utf8.char, 0x110000)
-assert(not ok, "utf8.char > U+10FFFF must error")
+-- Lua 5.4 utf8.char accepts the full extended range 0x00–0x7FFFFFFF
+-- (including surrogates and codepoints above U+10FFFF)
+assert(utf8.char(0x110000) ~= nil, "utf8.char 0x110000 should succeed")
+assert(utf8.char(0x7FFFFFFF) ~= nil, "utf8.char 0x7FFFFFFF should succeed")
+assert(utf8.char(0xD800) ~= nil, "utf8.char surrogate should succeed")
+assert(utf8.char(0xDFFF) ~= nil, "utf8.char surrogate end should succeed")
 
--- Error: surrogate half
-local ok2, err2 = pcall(utf8.char, 0xD800)
-assert(not ok2, "utf8.char surrogate must error")
-
-local ok3, err3 = pcall(utf8.char, 0xDFFF)
-assert(not ok3, "utf8.char surrogate end must error")
+-- Error: value out of range (> 0x7FFFFFFF)
+local ok, err = pcall(utf8.char, 0x7FFFFFFF + 1)
+assert(not ok, "utf8.char > 0x7FFFFFFF must error")
 
 -- Error: negative
 local ok4, err4 = pcall(utf8.char, -1)

@@ -23,6 +23,7 @@ func openUtf8(v *vm.VM) {
 }
 
 // utf8.char(...) — encode codepoints to UTF-8 string
+// Lua 5.4 allows the full extended range 0x00–0x7FFFFFFF (up to 6-byte sequences).
 func luaUtf8Char(v *vm.VM) int {
 	n := v.ArgCount()
 	if n == 0 {
@@ -37,14 +38,99 @@ func luaUtf8Char(v *vm.VM) int {
 		if !ok {
 			panic(fmt.Sprintf("bad argument #%d to 'char' (number has no integer representation)", i))
 		}
-		r := rune(code)
-		if !utf8.ValidRune(r) {
+		if code < 0 || code > 0x7FFFFFFF {
 			panic(fmt.Sprintf("bad argument #%d to 'char' (value out of range)", i))
 		}
-		buf = utf8.AppendRune(buf, r)
+		buf = appendExtendedUTF8(buf, uint32(code))
 	}
 	v.Set(0, vm.NewString(string(buf)))
 	return 1
+}
+
+// appendExtendedUTF8 encodes a codepoint as extended UTF-8 (up to 6 bytes),
+// supporting Lua's full range of 0x00–0x7FFFFFFF.
+func appendExtendedUTF8(buf []byte, cp uint32) []byte {
+	switch {
+	case cp <= 0x7F:
+		return append(buf, byte(cp))
+	case cp <= 0x7FF:
+		return append(buf, byte(0xC0|(cp>>6)), byte(0x80|(cp&0x3F)))
+	case cp <= 0xFFFF:
+		return append(buf, byte(0xE0|(cp>>12)), byte(0x80|((cp>>6)&0x3F)), byte(0x80|(cp&0x3F)))
+	case cp <= 0x1FFFFF:
+		return append(buf, byte(0xF0|(cp>>18)), byte(0x80|((cp>>12)&0x3F)), byte(0x80|((cp>>6)&0x3F)), byte(0x80|(cp&0x3F)))
+	case cp <= 0x3FFFFFF:
+		return append(buf, byte(0xF8|(cp>>24)), byte(0x80|((cp>>18)&0x3F)), byte(0x80|((cp>>12)&0x3F)), byte(0x80|((cp>>6)&0x3F)), byte(0x80|(cp&0x3F)))
+	default: // up to 0x7FFFFFFF
+		return append(buf, byte(0xFC|(cp>>30)), byte(0x80|((cp>>24)&0x3F)), byte(0x80|((cp>>18)&0x3F)), byte(0x80|((cp>>12)&0x3F)), byte(0x80|((cp>>6)&0x3F)), byte(0x80|(cp&0x3F)))
+	}
+}
+
+// decodeExtendedUTF8 decodes one extended UTF-8 character (up to 6 bytes).
+// Returns the codepoint and byte count, or (-1, 1) on error.
+func decodeExtendedUTF8(s string) (int64, int) {
+	if len(s) == 0 {
+		return -1, 0
+	}
+	b := s[0]
+	switch {
+	case b <= 0x7F:
+		return int64(b), 1
+	case b <= 0xBF:
+		return -1, 1 // continuation byte
+	case b <= 0xDF:
+		if len(s) < 2 || s[1]&0xC0 != 0x80 {
+			return -1, 1
+		}
+		cp := int64(b&0x1F)<<6 | int64(s[1]&0x3F)
+		return cp, 2
+	case b <= 0xEF:
+		if len(s) < 3 {
+			return -1, 1
+		}
+		for j := 1; j < 3; j++ {
+			if s[j]&0xC0 != 0x80 {
+				return -1, 1
+			}
+		}
+		cp := int64(b&0x0F)<<12 | int64(s[1]&0x3F)<<6 | int64(s[2]&0x3F)
+		return cp, 3
+	case b <= 0xF7:
+		if len(s) < 4 {
+			return -1, 1
+		}
+		for j := 1; j < 4; j++ {
+			if s[j]&0xC0 != 0x80 {
+				return -1, 1
+			}
+		}
+		cp := int64(b&0x07)<<18 | int64(s[1]&0x3F)<<12 | int64(s[2]&0x3F)<<6 | int64(s[3]&0x3F)
+		return cp, 4
+	case b <= 0xFB:
+		if len(s) < 5 {
+			return -1, 1
+		}
+		for j := 1; j < 5; j++ {
+			if s[j]&0xC0 != 0x80 {
+				return -1, 1
+			}
+		}
+		cp := int64(b&0x03)<<24 | int64(s[1]&0x3F)<<18 | int64(s[2]&0x3F)<<12 | int64(s[3]&0x3F)<<6 | int64(s[4]&0x3F)
+		return cp, 5
+	case b <= 0xFD:
+		if len(s) < 6 {
+			return -1, 1
+		}
+		for j := 1; j < 6; j++ {
+			if s[j]&0xC0 != 0x80 {
+				return -1, 1
+			}
+		}
+		cp := int64(b&0x01)<<30 | int64(s[1]&0x3F)<<24 | int64(s[2]&0x3F)<<18 | int64(s[3]&0x3F)<<12 | int64(s[4]&0x3F)<<6 | int64(s[5]&0x3F)
+		return cp, 6
+	default:
+		return -1, 1
+	}
 }
 
 // utf8.len(s [, i [, j]]) — count UTF-8 characters; soft fail on invalid
@@ -101,7 +187,7 @@ func luaUtf8Len(v *vm.VM) int {
 	return 1
 }
 
-// utf8.codepoint(s [, i [, j]]) — return codepoints as integers
+// utf8.codepoint(s [, i [, j [, lax]]]) — return codepoints as integers
 func luaUtf8Codepoint(v *vm.VM) int {
 	s := getString(v, 1, "codepoint")
 	slen := len(s)
@@ -116,7 +202,8 @@ func luaUtf8Codepoint(v *vm.VM) int {
 		posj = getInt(v, 3, "codepoint")
 	}
 
-	// Accept lax parameter (arg 4) for Lua 5.4 API compatibility.
+	// Lax mode (arg 4): when true, accept extended codepoints (surrogates, > U+10FFFF)
+	lax := v.Get(4).ToBool()
 
 	// Resolve relative positions
 	i := posRelat(posi, slen)
@@ -141,13 +228,23 @@ func luaUtf8Codepoint(v *vm.VM) int {
 
 	n := 0
 	for p := start; p < end; {
-		r, size := utf8.DecodeRuneInString(s[p:])
-		if r == utf8.RuneError && size <= 1 {
-			panic("invalid UTF-8 code")
+		if lax {
+			cp, size := decodeExtendedUTF8(s[p:])
+			if cp < 0 || size == 0 {
+				panic("invalid UTF-8 code")
+			}
+			v.Set(n, vm.NewInt(cp))
+			n++
+			p += size
+		} else {
+			r, size := utf8.DecodeRuneInString(s[p:])
+			if r == utf8.RuneError && size <= 1 {
+				panic("invalid UTF-8 code")
+			}
+			v.Set(n, vm.NewInt(int64(r)))
+			n++
+			p += size
 		}
-		v.Set(n, vm.NewInt(int64(r)))
-		n++
-		p += size
 	}
 	return n
 }
