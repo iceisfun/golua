@@ -72,17 +72,23 @@ done:
 			os.Exit(1)
 		}
 		source = string(src)
-		name = filename
+		name = "@" + filename
 	}
 
-	// Parse
-	block, err := parser.Parse(name, source)
+	// Parse — use the display name (without '@') for parser error messages
+	displayName := name
+	if len(displayName) > 0 && displayName[0] == '@' {
+		displayName = displayName[1:]
+	} else if len(displayName) > 0 && displayName[0] == '=' {
+		displayName = displayName[1:]
+	}
+	block, err := parser.Parse(displayName, source)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Compile
+	// Compile — use the raw name so proto.Source stores it with the '@' prefix
 	proto, err := compiler.Compile(name, block)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Compile error: %v\n", err)
@@ -97,7 +103,12 @@ done:
 		// Determine script directory for jailed IO provider
 		scriptDir := "."
 		if name != "=(command line)" {
-			if d := filepath.Dir(name); d != "" {
+			// Strip '@' prefix for filesystem operations
+			fsName := name
+			if len(fsName) > 0 && fsName[0] == '@' {
+				fsName = fsName[1:]
+			}
+			if d := filepath.Dir(fsName); d != "" {
 				scriptDir = d
 			}
 		}
@@ -116,9 +127,9 @@ done:
 		v.SetContext(ctx)
 	}
 
-	// Set command line arguments
+	// Set command line arguments — use displayName (without '@' prefix)
 	luaArgs := vm.NewEmptyTable()
-	luaArgs.SetInt(0, vm.NewString(name))
+	luaArgs.SetInt(0, vm.NewString(displayName))
 	for i, arg := range scriptArgs {
 		luaArgs.SetInt(i+1, vm.NewString(arg))
 	}

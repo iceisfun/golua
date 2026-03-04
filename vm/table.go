@@ -419,6 +419,8 @@ func keyToValue(k any) Value {
 		return NewFunction(v)
 	case *nativeFuncBox:
 		return Value{typ: typeNativeFunc, ptr: v}
+	case *Userdata:
+		return Value{typ: typeUpvalue, ptr: v}
 	default:
 		return Nil
 	}

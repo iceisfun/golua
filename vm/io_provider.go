@@ -73,3 +73,4 @@ type LuaFile interface {
 	// that should not be closable by the user.
 	IsStd() bool
 }
+

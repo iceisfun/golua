@@ -77,6 +77,19 @@ type VM struct {
 	inHook       bool   // Re-entrancy guard
 	lastHookLine int    // Last line reported by line hook (-1 = none)
 
+	// Pending call name hint for debug.getinfo name inference.
+	// Set before calling vm.call() and consumed by vm.call().
+	pendingCallName     string
+	pendingCallNameWhat string
+
+	// Message handler for xpcall: called inside ProtectedCall's recovery
+	// BEFORE the call stack is truncated, so debug.traceback can see
+	// the full stack. Set by xpcall and cleared after use.
+	MsgHandler         Value
+	MsgHandlerResult   Value
+	MsgHandlerUsed     bool
+	lastErrorCallStack []callFrame // saved call stack from the last error
+
 	// Execution control
 	ctx           context.Context // nil = no cancellation checking
 	limits        Limits          // zero values = no limit
@@ -97,15 +110,17 @@ const (
 
 // callFrame represents a function call on the call stack.
 type callFrame struct {
-	closure    *Closure // Function being executed
-	pc         int      // Program counter (next instruction to execute)
-	base       int      // Base stack index for this frame's registers
-	nResults   int      // Expected number of results (MultiReturn = variable)
-	isVararg   bool     // True if function is vararg
-	varargPos  int      // Stack position where varargs start
-	numVararg  int      // Number of varargs
-	isTailCall bool     // True if this was a tail call
-	argc       int      // Argument count for native functions (UseVMTop = use vm.top)
+	closure      *Closure // Function being executed
+	pc           int      // Program counter (next instruction to execute)
+	base         int      // Base stack index for this frame's registers
+	nResults     int      // Expected number of results (MultiReturn = variable)
+	isVararg     bool     // True if function is vararg
+	varargPos    int      // Stack position where varargs start
+	numVararg    int      // Number of varargs
+	isTailCall   bool     // True if this was a tail call
+	argc         int      // Argument count for native functions (UseVMTop = use vm.top)
+	callName     string   // Override name for debug.getinfo (e.g., "close" for __close)
+	callNameWhat string   // Override nameWhat (e.g., "metamethod")
 }
 
 // New creates a new VM with an empty global environment.
@@ -176,10 +191,52 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				err = fmt.Errorf("%v", r)
 			}
 			results = nil
+
 			// Restore call stack (but NOT vm.top yet — __close handlers need
 			// the stack pointer past the TBC variables to avoid overwriting them)
 			if len(vm.callStack) > savedCallStackLen {
 				vm.callStack = vm.callStack[:savedCallStackLen]
+			}
+
+			// If xpcall set a message handler AND callCloseHandlers saved
+			// an error stack snapshot (from a __close error), call the
+			// message handler with the saved stack context so debug.traceback
+			// can see the __close handler frames.
+			if !vm.MsgHandler.IsNil() && vm.lastErrorCallStack != nil {
+				msgh := vm.MsgHandler
+				vm.MsgHandler = Nil
+				var errVal Value
+				if le, ok := r.(*LuaError); ok {
+					errVal = le.Value
+				} else {
+					errVal = NewString(fmt.Sprintf("%v", r))
+				}
+				// Temporarily swap in the error call stack
+				truncatedStack := vm.callStack
+				vm.callStack = vm.lastErrorCallStack
+				vm.lastErrorCallStack = nil
+				// Call the message handler in a protected context
+				func() {
+					defer func() {
+						if hr := recover(); hr != nil {
+							// Message handler itself errored
+							vm.MsgHandlerResult = NewString("error in error handling")
+						}
+					}()
+					exit := vm.EnterNonYieldable()
+					hResults, hErr := vm.ProtectedCall(msgh, []Value{errVal})
+					exit()
+					if hErr != nil {
+						vm.MsgHandlerResult = NewString("error in error handling")
+					} else if len(hResults) > 0 {
+						vm.MsgHandlerResult = hResults[0]
+					} else {
+						vm.MsgHandlerResult = Nil
+					}
+				}()
+				// Restore the truncated call stack
+				vm.callStack = truncatedStack
+				vm.MsgHandlerUsed = true
 			}
 			// Close TBC variables that were created during the failed call.
 			// Remove them from tbcVars BEFORE calling __close to prevent
@@ -592,9 +649,9 @@ func (vm *VM) GetSourceLocation(level int) string {
 				pc = 0
 			}
 			if pc < len(proto.Lines) {
-				return fmt.Sprintf("%s:%d", proto.Source, proto.Lines[pc])
+				return fmt.Sprintf("%s:%d", shortSrc(proto.Source), proto.Lines[pc])
 			}
-			return proto.Source
+			return shortSrc(proto.Source)
 		}
 		idx--
 	}

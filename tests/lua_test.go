@@ -194,15 +194,29 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 // (write access, standard file handles, os.tmpname, os.remove).
 func needsFullIo(filename string) bool {
 	base := filepath.Base(filename)
-	return strings.HasPrefix(base, "io_")
+	if strings.HasPrefix(base, "io_") {
+		return true
+	}
+	// Tests that reference io.stdin/stdout/stderr as values
+	switch base {
+	case "test_next_all_key_types.lua":
+		return true
+	}
+	return false
 }
 
 func compileLua(name, source string) (*compiler.Proto, error) {
+	// Use "@" prefix for source names to match Lua 5.4 convention
+	// where file-based sources are stored as "@filename".
+	srcName := name
+	if len(srcName) > 0 && srcName[0] != '@' && srcName[0] != '=' {
+		srcName = "@" + srcName
+	}
 	block, err := parser.Parse(name, source)
 	if err != nil {
 		return nil, err
 	}
-	return compiler.Compile(name, block)
+	return compiler.Compile(srcName, block)
 }
 
 // TestDoctest runs doctest-style Lua files from tests/doctest/.

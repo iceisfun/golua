@@ -66,10 +66,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 		}
 
 		proto := frame.closure.Proto
-		source := proto.Source
-		if source == "" {
-			source = "?"
-		}
+		source := shortSrc(proto.Source)
 
 		// Determine line number
 		line := 0
@@ -84,19 +81,29 @@ func (vm *VM) Traceback(msg string, level int) string {
 		} else {
 			// Try to get the function name from the caller's call site
 			name := ""
+			nameWhat := ""
 			if i > 0 {
 				callerIdx := i - 1
 				for callerIdx > 0 && vm.callStack[callerIdx].isTailCall {
 					callerIdx--
 				}
 				if !vm.callStack[callerIdx].isTailCall {
-					name, _ = vm.funcNameFromCall(&vm.callStack[callerIdx])
+					name, nameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
 				}
+			}
+			// Check for override name (e.g., "close" for __close metamethod calls)
+			if name == "" && frame.callName != "" {
+				name = frame.callName
+				nameWhat = frame.callNameWhat
 			}
 			if name == "" {
 				name = vm.frameFuncName(frame)
 			}
-			fmt.Fprintf(&b, "%s:%d: in function '%s'", source, line, name)
+			if nameWhat == "metamethod" {
+				fmt.Fprintf(&b, "%s:%d: in metamethod '%s'", source, line, name)
+			} else {
+				fmt.Fprintf(&b, "%s:%d: in function '%s'", source, line, name)
+			}
 		}
 		written++
 	}
@@ -111,7 +118,7 @@ func (vm *VM) frameFuncName(frame *callFrame) string {
 	}
 	proto := frame.closure.Proto
 	if proto.Source != "" && proto.LineDef > 0 {
-		return fmt.Sprintf("<%s:%d>", proto.Source, proto.LineDef)
+		return fmt.Sprintf("<%s:%d>", shortSrc(proto.Source), proto.LineDef)
 	}
 	return "?"
 }
@@ -136,10 +143,7 @@ func (vm *VM) Where(level int) (source string, line int, ok bool) {
 	}
 
 	proto := frame.closure.Proto
-	source = proto.Source
-	if source == "" {
-		source = "?"
-	}
+	source = shortSrc(proto.Source)
 
 	pc := frame.pc - 1
 	if pc >= 0 && pc < len(proto.Lines) {
@@ -201,7 +205,11 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		info.CurrentLine = -1
 		info.What = "C"
 		info.IsVarArg = true
-		// Native functions don't have inspectable upvalues/params
+		// Name inference: look at the caller frame's bytecode
+		callerIdx := idx - 1
+		if callerIdx >= 0 {
+			info.Name, info.NameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
+		}
 		return info
 	}
 
@@ -242,6 +250,13 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	callerIdx := idx - 1
 	if callerIdx >= 0 {
 		info.Name, info.NameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
+	}
+
+	// If bytecode-based name inference failed, use the frame's override name
+	// (e.g., "close" for __close metamethod calls)
+	if info.NameWhat == "" && frame.callName != "" {
+		info.Name = frame.callName
+		info.NameWhat = frame.callNameWhat
 	}
 
 	// When inside a hook and name couldn't be inferred from caller,
@@ -669,4 +684,56 @@ func (vm *VM) GetRegistry() LuaTable {
 		vm.registry = NewEmptyTable()
 	}
 	return vm.registry
+}
+
+// regObjName returns a descriptive string for the value in register `reg`
+// at the given PC within a prototype, by scanning backwards through bytecode.
+// Returns (name, what) where what is "field", "global", "local", "upvalue",
+// or "" if unknown. This matches Lua 5.4's getobjname / kname behavior.
+func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
+	for i := pc - 1; i >= 0; i-- {
+		inst := proto.Code[i]
+		op := inst.OpCode()
+		a := inst.A()
+		if a != reg {
+			continue
+		}
+		switch op {
+		case compiler.OP_GETFIELD:
+			c := inst.C()
+			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
+				return proto.Constants[c].SVal, "field"
+			}
+			return "", ""
+		case compiler.OP_GETTABUP:
+			c := inst.C()
+			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
+				if inst.B() == 0 {
+					return proto.Constants[c].SVal, "global"
+				}
+				return proto.Constants[c].SVal, "field"
+			}
+			return "", ""
+		case compiler.OP_MOVE:
+			reg = inst.B()
+			continue
+		case compiler.OP_GETUPVAL:
+			b := inst.B()
+			if b < len(proto.Upvalues) && proto.Upvalues[b].Name != "" {
+				return proto.Upvalues[b].Name, "upvalue"
+			}
+			return "", ""
+		default:
+			name := localName(proto, reg, i)
+			if name != "?" {
+				return name, "local"
+			}
+			return "", ""
+		}
+	}
+	name := localName(proto, reg, 0)
+	if name != "?" {
+		return name, "local"
+	}
+	return "", ""
 }

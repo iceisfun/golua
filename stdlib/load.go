@@ -37,18 +37,10 @@ func openLoad(v *vm.VM) {
 // env: environment table for the loaded chunk
 func luaLoad(v *vm.VM) int {
 	chunk := v.Get(1)
-	chunkName := "=(load)"
-	if !v.Get(2).IsNil() {
-		chunkName = v.Get(2).AsString()
-	}
-	// Format chunkname for source display per Lua 5.4 conventions:
-	// "=xxx" → "xxx" (literal), "@xxx" → "xxx" (filename), else → [string "xxx"]
-	if len(chunkName) > 0 && chunkName[0] == '=' {
-		chunkName = chunkName[1:]
-	} else if len(chunkName) > 0 && chunkName[0] == '@' {
-		chunkName = chunkName[1:]
-	} else {
-		chunkName = fmt.Sprintf(`[string "%s"]`, chunkName)
+	hasChunkName := !v.Get(2).IsNil()
+	rawChunkName := "" // set below; stored verbatim in proto.Source
+	if hasChunkName {
+		rawChunkName = v.Get(2).AsString()
 	}
 	mode := "bt"
 	if !v.Get(3).IsNil() {
@@ -66,7 +58,14 @@ func luaLoad(v *vm.VM) int {
 	var source string
 	if chunk.IsString() {
 		source = chunk.AsString()
+		if !hasChunkName {
+			// Default: source text itself (matches Lua 5.4)
+			rawChunkName = source
+		}
 	} else if chunk.IsFunction() || chunk.IsNativeFunc() {
+		if !hasChunkName {
+			rawChunkName = "=(load)"
+		}
 		// Call the function repeatedly to get the source
 		var builder []byte
 		exitNonYieldable := v.EnterNonYieldable()
@@ -97,6 +96,9 @@ func luaLoad(v *vm.VM) int {
 		source = string(builder)
 	} else if chunk.IsNumber() {
 		source = valueToString(chunk)
+		if !hasChunkName {
+			rawChunkName = source
+		}
 	} else {
 		panic(fmt.Sprintf("bad argument #1 to 'load' (function expected, got %s)", chunk.Type()))
 	}
@@ -107,8 +109,12 @@ func luaLoad(v *vm.VM) int {
 		return 2
 	}
 
+	// Format chunkname for parser/compiler error messages (shortSrc-style):
+	// "=xxx" → "xxx", "@xxx" → "xxx", else → [string "xxx"]
+	displayName := chunkNameForDisplay(rawChunkName)
+
 	// Parse and compile
-	fn, errMsg := compileChunk(v, source, chunkName, env, hasEnv)
+	fn, errMsg := compileChunk(v, source, displayName, env, hasEnv, compileChunkOpts{rawSource: rawChunkName})
 	if errMsg != "" {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(errMsg))
@@ -117,6 +123,26 @@ func luaLoad(v *vm.VM) int {
 
 	v.Set(0, fn)
 	return 1
+}
+
+// chunkNameForDisplay formats a raw chunkname into the display form used by
+// the parser/compiler for error messages. This mirrors Lua 5.4's luaO_chunkid.
+func chunkNameForDisplay(name string) string {
+	if len(name) == 0 {
+		return name
+	}
+	switch name[0] {
+	case '=':
+		return name[1:]
+	case '@':
+		return name[1:]
+	default:
+		s := name
+		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+			s = s[:idx]
+		}
+		return fmt.Sprintf(`[string "%s"]`, s)
+	}
 }
 
 // loadfile([filename [, mode [, env]]])
@@ -176,7 +202,8 @@ func luaLoadfile(v *vm.VM) int {
 	}
 
 	// Parse and compile (loadfile should strip shebangs)
-	fn, errMsg := compileChunk(v, string(source), chunkName, env, hasEnv, true)
+	// chunkName from the provider is already formatted (e.g. "@filename")
+	fn, errMsg := compileChunk(v, string(source), chunkName, env, hasEnv, compileChunkOpts{stripShebang: true, rawSource: chunkName})
 	if errMsg != "" {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(errMsg))
@@ -218,7 +245,7 @@ func luaDofile(v *vm.VM) int {
 	}
 
 	// Reuse compileChunk with shebang stripping (like loadfile)
-	fn, errMsg := compileChunk(v, string(source), chunkName, vm.Nil, false, true)
+	fn, errMsg := compileChunk(v, string(source), chunkName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName})
 	if errMsg != "" {
 		panic(errMsg)
 	}
@@ -245,22 +272,28 @@ func luaDofile(v *vm.VM) int {
 	return len(results)
 }
 
+// compileChunkOpts holds optional settings for compileChunk.
+type compileChunkOpts struct {
+	stripShebang bool
+	rawSource    string // if non-empty, override proto.Source for debug info
+}
+
 // compileChunk parses and compiles Lua source, returning a function value.
 // If hasEnv is true, env is bound to the chunk's _ENV upvalue even when it is nil
 // or non-table; otherwise globals are used.
-func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool, stripShebang ...bool) (vm.Value, string) {
-	strip := false
-	if len(stripShebang) > 0 {
-		strip = stripShebang[0]
+func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool, opts ...compileChunkOpts) (vm.Value, string) {
+	var o compileChunkOpts
+	if len(opts) > 0 {
+		o = opts[0]
 	}
 
 	// Strip UTF-8 BOM if present (loadfile and dofile)
-	if strip && len(source) >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF {
+	if o.stripShebang && len(source) >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF {
 		source = source[3:]
 	}
 
 	// Parse
-	block, parseErr := parser.Parse(chunkName, source, strip)
+	block, parseErr := parser.Parse(chunkName, source, o.stripShebang)
 	if parseErr != nil {
 		return vm.Nil, fmt.Sprintf("syntax error: %v", parseErr)
 	}
@@ -270,6 +303,13 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 		compiler.WithLimits(v.GetLimits().CompilerLimits))
 	if compileErr != nil {
 		return vm.Nil, fmt.Sprintf("compile error: %v", compileErr)
+	}
+
+	// Override proto.Source with the raw source name for debug info.
+	// The chunkName used above is formatted for error messages (shortSrc style),
+	// but debug.getinfo().source should return the original chunkname.
+	if o.rawSource != "" {
+		setProtoSource(proto, o.rawSource)
 	}
 
 	// Create closure
@@ -288,4 +328,12 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 	}
 
 	return vm.NewFunction(closure), ""
+}
+
+// setProtoSource recursively sets the Source field on a proto and all nested protos.
+func setProtoSource(proto *compiler.Proto, source string) {
+	proto.Source = source
+	for _, child := range proto.Protos {
+		setProtoSource(child, source)
+	}
 }

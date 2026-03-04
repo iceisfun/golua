@@ -315,28 +315,47 @@ func luaXpcall(v *vm.VM) int {
 		args[i-3] = v.Get(i)
 	}
 
+	// Set message handler so ProtectedCall can call it BEFORE truncating
+	// the call stack (allowing debug.traceback to see the full stack).
+	v.MsgHandler = msgh
+	v.MsgHandlerUsed = false
+	v.MsgHandlerResult = vm.Nil
+
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {
-		// Pass the original Lua error value to the message handler
-		var errVal vm.Value
-		if le, ok := err.(*vm.LuaError); ok {
-			errVal = le.Value
-		} else {
-			errVal = vm.NewString(err.Error())
-		}
-		exitNonYieldable := v.EnterNonYieldable()
-		handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{errVal})
-		exitNonYieldable()
 		v.Set(0, vm.False)
-		if handlerErr != nil {
-			v.Set(1, vm.NewString("error in error handling"))
-		} else if len(handlerResults) > 0 {
-			v.Set(1, handlerResults[0])
+		if v.MsgHandlerUsed {
+			// Message handler was already called inside ProtectedCall
+			v.Set(1, v.MsgHandlerResult)
 		} else {
-			v.Set(1, vm.Nil)
+			// Fallback: call the message handler now (shouldn't normally happen)
+			var errVal vm.Value
+			if le, ok := err.(*vm.LuaError); ok {
+				errVal = le.Value
+			} else {
+				errVal = vm.NewString(err.Error())
+			}
+			exitNonYieldable := v.EnterNonYieldable()
+			handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{errVal})
+			exitNonYieldable()
+			if handlerErr != nil {
+				v.Set(1, vm.NewString("error in error handling"))
+			} else if len(handlerResults) > 0 {
+				v.Set(1, handlerResults[0])
+			} else {
+				v.Set(1, vm.Nil)
+			}
 		}
+		// Clear message handler state
+		v.MsgHandler = vm.Nil
+		v.MsgHandlerUsed = false
+		v.MsgHandlerResult = vm.Nil
 		return 2
 	}
+	// Clear message handler state on success
+	v.MsgHandler = vm.Nil
+	v.MsgHandlerUsed = false
+	v.MsgHandlerResult = vm.Nil
 
 	// Success: return true followed by all results
 	v.EnsureStack(v.Base() + 1 + len(results))

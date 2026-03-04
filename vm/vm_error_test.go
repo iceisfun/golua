@@ -17,7 +17,7 @@ func TestRuntimeErrorCallNilIncludesSourceLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	proto, err := compiler.Compile("test.lua", block)
+	proto, err := compiler.Compile("@test.lua", block)
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestRuntimeErrorCallNonFunctionIncludesSourceLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	proto, err := compiler.Compile("myfile.lua", block)
+	proto, err := compiler.Compile("@myfile.lua", block)
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
@@ -75,7 +75,7 @@ return ok, err
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	proto, err := compiler.Compile("pcall_test.lua", block)
+	proto, err := compiler.Compile("@pcall_test.lua", block)
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}
@@ -133,7 +133,9 @@ func expectRuntimeError(t *testing.T, filename, src, wantLoc, wantMsg string) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	proto, err := compiler.Compile(filename, block)
+	// Use "@" prefix to simulate file-based compilation, matching Lua 5.4
+	// conventions where file sources are stored as "@filename".
+	proto, err := compiler.Compile("@"+filename, block)
 	if err != nil {
 		t.Fatalf("compile error: %v", err)
 	}

@@ -3,17 +3,59 @@ package stdlib
 import (
 	"fmt"
 	"math"
-	"math/rand"
+	"math/bits"
 	"time"
 
 	"github.com/iceisfun/golua/vm"
 )
 
+// xoshiro256ss implements the xoshiro256** pseudo-random number generator
+// used by Lua 5.4. This matches the exact algorithm and seeding behavior
+// so that math.random output is identical to reference Lua.
+type xoshiro256ss struct {
+	s [4]uint64
+}
+
+// seed initializes the RNG state from two seed values, matching Lua 5.4's setseed().
+func (x *xoshiro256ss) seed(n1, n2 int64) {
+	x.s[0] = uint64(n1)
+	x.s[1] = 0xff // avoid a zero state
+	x.s[2] = uint64(n2)
+	x.s[3] = 0
+	// Discard initial values to spread the seed
+	for i := 0; i < 16; i++ {
+		x.next()
+	}
+}
+
+// next generates the next random uint64 using xoshiro256**.
+func (x *xoshiro256ss) next() uint64 {
+	s0 := x.s[0]
+	s1 := x.s[1]
+	s2 := x.s[2] ^ s0
+	s3 := x.s[3] ^ s1
+	res := bits.RotateLeft64(s1*5, 7) * 9
+	x.s[0] = s0 ^ s3
+	x.s[1] = s1 ^ s2
+	x.s[2] = s2 ^ (s1 << 17)
+	x.s[3] = bits.RotateLeft64(s3, 45)
+	return res
+}
+
+// float64 returns a random float64 in [0, 1) with 53 bits of precision,
+// matching Lua 5.4's I2d conversion.
+func (x *xoshiro256ss) float64() float64 {
+	const figs = 53 // significant bits in a double
+	r := x.next() >> (64 - figs)
+	return float64(r) / float64(uint64(1)<<figs)
+}
+
 func openMath(v *vm.VM) {
 	m := vm.NewEmptyTable()
 
-	// Per-VM random source (global rand.Seed is a no-op since Go 1.20)
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// Per-VM xoshiro256** random source (matches Lua 5.4 exactly)
+	rng := &xoshiro256ss{}
+	rng.seed(time.Now().UnixNano(), 0)
 
 	// Constants
 	m.SetString("pi", vm.NewFloat(math.Pi))
@@ -247,25 +289,24 @@ func mathRad(v *vm.VM) int {
 	return 1
 }
 
-func mathRandomClosure(rng *rand.Rand) vm.NativeFunc {
+func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		n := v.ArgCount()
 
 		switch n {
 		case 0:
 			// random() -> [0, 1) with exactly 53 bits of randomness
-			// (matches Lua 5.4; Go's Float64 may produce non-53-bit values)
-			v.Set(0, vm.NewFloat(float64(rng.Int63n(1<<53))/float64(int64(1)<<53)))
+			v.Set(0, vm.NewFloat(rng.float64()))
 		case 1:
-			// random(0) -> full-range random integer (Lua 5.4)
+			// random(0) -> raw internal state as integer (Lua 5.4)
 			// random(n) -> [1, n]
 			upper := getInt(v, 1, "random")
 			if upper == 0 {
-				v.Set(0, vm.NewInt(int64(rng.Uint64())))
+				v.Set(0, vm.NewInt(int64(rng.next())))
 			} else if upper < 1 {
 				panic("bad argument #1 to 'random' (interval is empty)")
 			} else {
-				v.Set(0, vm.NewInt(randRange(rng, 1, upper)))
+				v.Set(0, vm.NewInt(xoshiroRange(rng, 1, upper)))
 			}
 		case 2:
 			// random(m, n) -> [m, n]
@@ -274,7 +315,7 @@ func mathRandomClosure(rng *rand.Rand) vm.NativeFunc {
 			if lower > upper {
 				panic("bad argument #2 to 'random' (interval is empty)")
 			}
-			v.Set(0, vm.NewInt(randRange(rng, lower, upper)))
+			v.Set(0, vm.NewInt(xoshiroRange(rng, lower, upper)))
 		default:
 			panic("wrong number of arguments")
 		}
@@ -282,21 +323,30 @@ func mathRandomClosure(rng *rand.Rand) vm.NativeFunc {
 	}
 }
 
-// randRange returns a random int64 in [lower, upper] (inclusive).
-// Uses uint64 arithmetic to avoid overflow when the range spans
-// the full 64-bit integer space (e.g., [MinInt64, MaxInt64]).
-func randRange(rng *rand.Rand, lower, upper int64) int64 {
+// xoshiroRange returns a random int64 in [lower, upper] (inclusive)
+// using the xoshiro256** RNG, matching Lua 5.4's project() function.
+func xoshiroRange(rng *xoshiro256ss, lower, upper int64) int64 {
 	r := uint64(upper) - uint64(lower)
 	if r == 0 {
 		return lower
 	}
 	if r == math.MaxUint64 {
-		return int64(rng.Uint64())
+		return int64(rng.next())
 	}
-	return lower + int64(rng.Uint64()%(r+1))
+	// Lua 5.4's project(): unbiased modular reduction
+	// lim = (2^64 - 1) / (r + 1) * (r + 1)
+	lim := (math.MaxUint64 / (r + 1)) * (r + 1)
+	var ran uint64
+	for {
+		ran = rng.next()
+		if ran < lim {
+			break
+		}
+	}
+	return lower + int64(ran%(r+1))
 }
 
-func mathRandomseedClosure(rng *rand.Rand) vm.NativeFunc {
+func mathRandomseedClosure(rng *xoshiro256ss) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		n := v.ArgCount()
 		var seed1, seed2 int64
@@ -316,9 +366,7 @@ func mathRandomseedClosure(rng *rand.Rand) vm.NativeFunc {
 			seed2 = getInt(v, 2, "randomseed")
 		}
 
-		// Combine seed1 and seed2 into a single seed
-		combined := seed1 ^ (seed2 * 6364136223846793005)
-		rng.Seed(combined)
+		rng.seed(seed1, seed2)
 
 		// Return the two seed state values per Lua 5.4
 		v.Set(0, vm.NewInt(seed1))

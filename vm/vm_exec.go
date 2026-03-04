@@ -59,15 +59,19 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 
 	// Push call frame
 	frame := callFrame{
-		closure:   closure,
-		pc:        0,
-		base:      base,
-		nResults:  nResults,
-		isVararg:  proto.IsVarArg,
-		varargPos: varargPos,
-		numVararg: numVararg,
-		argc:      UseVMTop, // Lua frames use vm.top for ArgCount
+		closure:      closure,
+		pc:           0,
+		base:         base,
+		nResults:     nResults,
+		isVararg:     proto.IsVarArg,
+		varargPos:    varargPos,
+		numVararg:    numVararg,
+		argc:         UseVMTop, // Lua frames use vm.top for ArgCount
+		callName:     vm.pendingCallName,
+		callNameWhat: vm.pendingCallNameWhat,
 	}
+	vm.pendingCallName = ""
+	vm.pendingCallNameWhat = ""
 	vm.callStack = append(vm.callStack, frame)
 
 	// Update vm.top to point past this frame's registers
@@ -407,6 +411,14 @@ func (vm *VM) execute() ([]Value, error) {
 			kv := vm.constToValue(proto.Constants[c])
 			result, err := vm.bitwiseK(op, v, kv)
 			if err != nil {
+				// Enhance "number has no integer representation" with register name
+				if strings.Contains(err.Error(), "number has no integer representation") {
+					if v.IsNumber() {
+						if _, ok := v.ToInt(); !ok {
+							return nil, vm.runtimeErrorForNumber(b)
+						}
+					}
+				}
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
@@ -420,7 +432,7 @@ func (vm *VM) execute() ([]Value, error) {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(int64(sc) << uint(i))
 				} else if v.IsNumber() {
-					return nil, vm.runtimeError("number has no integer representation")
+					return nil, vm.runtimeErrorForNumber(b)
 				} else {
 					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}
@@ -437,7 +449,7 @@ func (vm *VM) execute() ([]Value, error) {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
 				} else if v.IsNumber() {
-					return nil, vm.runtimeError("number has no integer representation")
+					return nil, vm.runtimeErrorForNumber(b)
 				} else {
 					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}
@@ -463,6 +475,20 @@ func (vm *VM) execute() ([]Value, error) {
 			v2 := vm.stack[frame.base+c]
 			result, err := vm.bitwise(op, v1, v2)
 			if err != nil {
+				// Enhance "number has no integer representation" with register name
+				if strings.Contains(err.Error(), "number has no integer representation") {
+					// Try the first operand, then the second
+					if v1.IsNumber() {
+						if _, ok := v1.ToInt(); !ok {
+							return nil, vm.runtimeErrorForNumber(b)
+						}
+					}
+					if v2.IsNumber() {
+						if _, ok := v2.ToInt(); !ok {
+							return nil, vm.runtimeErrorForNumber(c)
+						}
+					}
+				}
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
@@ -523,7 +549,7 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 					vm.stack[frame.base+a] = result
 				} else if v.IsNumber() {
-					return nil, vm.runtimeError("number has no integer representation")
+					return nil, vm.runtimeErrorForNumber(b)
 				} else {
 					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
 				}
@@ -946,13 +972,8 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			_ = c // c contains info about closing upvalues
 
-			// Fire return hook before closing upvalues
-			vm.fireReturnHook()
-
-			// Close upvalues
-			vm.closeUpvalues(frame.base)
-
-			// Collect return values
+			// Collect return values BEFORE closing upvalues, since closeUpvalues
+			// may modify the stack (running __close metamethods).
 			var results []Value
 			if b == 0 {
 				// Return values from a to top
@@ -962,18 +983,27 @@ func (vm *VM) execute() ([]Value, error) {
 				results = make([]Value, b-1)
 				copy(results, vm.stack[frame.base+a:frame.base+a+b-1])
 			}
+
+			// Close upvalues and run __close metamethods BEFORE the return hook.
+			// Lua 5.4 runs __close before the return hook for the function itself.
+			vm.closeUpvalues(frame.base)
+
+			// Fire return hook after __close metamethods
+			vm.fireReturnHook()
+
 			return results, nil
 
 		case compiler.OP_RETURN0:
-			vm.fireReturnHook()
 			vm.closeUpvalues(frame.base)
+			vm.fireReturnHook()
 			return nil, nil
 
 		case compiler.OP_RETURN1:
 			a := inst.A()
-			vm.fireReturnHook()
+			result := vm.stack[frame.base+a]
 			vm.closeUpvalues(frame.base)
-			return []Value{vm.stack[frame.base+a]}, nil
+			vm.fireReturnHook()
+			return []Value{result}, nil
 
 		case compiler.OP_FORLOOP:
 			a, bx := inst.A(), inst.Bx()
@@ -1472,6 +1502,9 @@ dispatch:
 		nResults := fn.AsNativeFunc()(vm)
 		results = make([]Value, nResults)
 		copy(results, vm.stack[nativeBase:nativeBase+nResults])
+
+		// Fire return hook for native function before popping its frame
+		vm.fireReturnHook()
 
 		// Pop the native frame
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]

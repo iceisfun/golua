@@ -217,7 +217,7 @@ func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 			}
 
 			// Compile and return loader
-			fn, errMsg := compileChunk(v, string(source), chunkName, vm.Nil, false, true)
+			fn, errMsg := compileChunk(v, string(source), chunkName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName})
 			if errMsg != "" {
 				panic(fmt.Sprintf("error loading module '%s' from file '%s':\n\t%s", name, path, errMsg))
 			}

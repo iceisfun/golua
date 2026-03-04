@@ -350,27 +350,34 @@ func tableUnpack(v *vm.VM) int {
 	if j < i {
 		return 0
 	}
-	// Match Lua behavior: reject pathological ranges that would produce an
-	// impractically large number of return values.
-	if i < 0 && j > 0 && j-i < 0 {
+	// Compute result count carefully to avoid overflow.
+	// The number of results is j - i + 1. Since j >= i (checked above),
+	// the subtraction j - i is non-negative but could overflow int64 when
+	// i and j are at opposite extremes (e.g., minI..maxI).
+	// Use unsigned arithmetic: n = uint64(j) - uint64(i) + 1.
+	// If this wraps (when j - i + 1 > 2^64 - 1, impossible for int64 range)
+	// or if n >= MaxInt32, reject.
+	n := uint64(j) - uint64(i) + 1
+	// If n == 0, uint64 wrapped around (the full int64 range).
+	// Match Lua 5.4: reject if n >= INT_MAX (C 32-bit int) or n == 0 (overflow).
+	if n == 0 || n >= math.MaxInt32 {
 		panic("too many results to unpack")
 	}
-	n64 := j - i + 1
-	if n64 <= 0 || n64 > math.MaxInt32 {
-		panic("too many results to unpack")
-	}
-	n := int(n64)
-	if n > 0 {
-		v.EnsureStack(v.Base() + n)
+	nResults := int(n)
+	if nResults > 0 {
+		v.EnsureStack(v.Base() + nResults)
 	}
 
-	count := 0
+	k := 0
 	for idx := i; idx <= j; idx++ {
 		val := tableGetIdx(v, tbl, int(idx))
-		v.Set(count, val)
-		count++
+		v.Set(k, val)
+		k++
+		if idx == j {
+			break // avoid int64 overflow on idx++ when j == math.MaxInt64
+		}
 	}
-	return count
+	return k
 }
 
 // table.pack(...)

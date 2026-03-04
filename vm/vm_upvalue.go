@@ -77,6 +77,15 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
 					} else {
 						errVal = NewString(fmt.Sprintf("%v", r))
 					}
+
+					// Save the call stack snapshot for the message handler.
+					// The last error's stack will be used by ProtectedCall
+					// to call xpcall's message handler.
+					if !vm.MsgHandler.IsNil() {
+						vm.lastErrorCallStack = make([]callFrame, len(vm.callStack))
+						copy(vm.lastErrorCallStack, vm.callStack)
+					}
+
 					// Restore call stack in case the panic left it dirty
 					if len(vm.callStack) > savedCallStackLen {
 						vm.callStack = vm.callStack[:savedCallStackLen]
@@ -149,6 +158,9 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 		if mt != nil {
 			closeFunc := mt.Get(metaClose)
 			if !closeFunc.IsNil() {
+				// Set call name hint so debug.getinfo reports "close" as the name
+				vm.pendingCallName = "close"
+				vm.pendingCallNameWhat = "metamethod"
 				_, err := vm.callMetamethod(closeFunc, val, errVal)
 				if err != nil {
 					panic(err.Error())
