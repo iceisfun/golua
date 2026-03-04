@@ -72,14 +72,19 @@ See the `examples/` directory for complete examples:
 - **[basic](examples/basic/)** - Simple Lua execution
 - **[call_lua](examples/call_lua/)** - Calling Lua functions from Go
 - **[expose_go](examples/expose_go/)** - Exposing Go functions to Lua
+- **[expose_object](examples/expose_object/)** - Go-backed objects with explicit adapter layer and Lua companion module
+- **[capture_output](examples/capture_output/)** - Intercept print() output with WithCaptureOutput for testing or processing
+- **[print_provider](examples/print_provider/)** - Redirect print/warn output with LuaPrintProvider
 - **[code_provider](examples/code_provider/)** - Sandboxed file loading with LuaCodeProvider
 - **[jailed_io](examples/jailed_io/)** - Sandboxed IO and OS with JailedIoProvider and DefaultOsProvider
 - **[debug](examples/debug/)** - Diagnostic debug with DefaultDebugProvider (not the standard Lua debug library)
 - **[table](examples/table/)** - LuaTable interface and deterministic iteration
 - **[chan](examples/chan/)** - Go↔Lua channels with chan.select ([go_to_lua](examples/chan/go_to_lua/), [lua_to_go](examples/chan/lua_to_go/), [multi_go_to_lua](examples/chan/multi_go_to_lua/))
 - **[glob](examples/glob/)** - Go-style case-insensitive pattern matching from Go and Lua
-- **[time](examples/time/)** - Millisecond timing: now, since, and periodic tick
-- **[print_provider](examples/print_provider/)** - Intercept and redirect print/warn output with LuaPrintProvider
+- **[time](examples/time/)** - Millisecond timing: now, since, tick, and once
+- **[check](examples/check/)** - Parse Lua source and emit diagnostics as JSON (for editor integration)
+- **[editor](examples/editor/)** - Browser-based Monaco editor with live diagnostics and sandboxed execution
+- **[editor_advanced](examples/editor_advanced/)** - Full IDE with JSON-RPC 2.0 language services (completion, hover, diagnostics)
 
 ## Go Interop
 
@@ -293,6 +298,9 @@ end
 
 -- explicit key (shared across callsites)
 if time.tick("heartbeat", 500) then send_heartbeat() end
+
+-- one-time initialization guard
+if time.once() then load_resources() end
 ```
 
 | Function                | Description                                              |
@@ -300,8 +308,9 @@ if time.tick("heartbeat", 500) then send_heartbeat() end
 | `time.now()`            | Current time in milliseconds (integer)                   |
 | `time.since(t)`         | Milliseconds elapsed since `t`                           |
 | `time.tick([name,] ms)` | Returns `true` once per `ms` interval, `false` otherwise |
+| `time.once([name])`     | Returns `true` on the first call for a given key, `false` on all subsequent calls |
 
-When `name` is omitted, `time.tick` auto-keys by callsite (`source:line`), so each call location gets an independent timer. The `time` table is **absent by default** and only appears when the host sets a `LuaTimeProvider`.
+`time.tick` and `time.once` are **GoLua extensions** (not part of standard Lua). When `name` is omitted, both functions auto-key by callsite — the VM inspects the calling function's source file and line number (`source:line`) so each call location gets independent state. Pass an explicit `name` string to share state across call locations. The `time` table is **absent by default** and only appears when the host sets a `LuaTimeProvider`.
 
 ### LuaTable Interface
 
