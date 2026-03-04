@@ -472,11 +472,15 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 // compileSetGlobal compiles _ENV[name] = value.
 func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 	fs := c.fs
-	envUV := c.resolveEnv()
 	nameK := fs.stringConstant(name)
 	tempReg := fs.reserveReg()
 	c.compileExprToReg(value, tempReg)
-	fs.emitSetTabUp(envUV, nameK, tempReg, line)
+	if envReg, ok := fs.lookupLocal("_ENV"); ok {
+		fs.emitSetField(envReg, nameK, tempReg, line)
+	} else {
+		envUV := c.resolveEnv()
+		fs.emitSetTabUp(envUV, nameK, tempReg, line)
+	}
 	fs.freeReg = tempReg
 }
 
@@ -1078,6 +1082,9 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 				return
 			}
 			fs.emit(ABC(OP_SETUPVAL, reg, uvIdx, 0, 0), line)
+		} else if envReg, ok := fs.lookupLocal("_ENV"); ok {
+			nameK := fs.stringConstant(name.Name)
+			fs.emitSetField(envReg, nameK, reg, line)
 		} else {
 			envUV := c.resolveEnv()
 			nameK := fs.stringConstant(name.Name)
@@ -1133,13 +1140,17 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 		return // global * is a parser directive, no codegen
 	}
 
-	envUV := c.resolveEnv()
 	for i, name := range s.Names {
 		nameK := fs.stringConstant(name.Name)
 		if i < len(s.Values) {
 			reg := fs.reserveReg()
 			c.compileExprToReg(s.Values[i], reg)
-			fs.emitSetTabUp(envUV, nameK, reg, line)
+			if envReg, ok := fs.lookupLocal("_ENV"); ok {
+				fs.emitSetField(envReg, nameK, reg, line)
+			} else {
+				envUV := c.resolveEnv()
+				fs.emitSetTabUp(envUV, nameK, reg, line)
+			}
 			fs.freeReg = reg
 		}
 	}
@@ -1154,9 +1165,13 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	reg := fs.reserveReg()
 	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), line)
 
-	envUV := c.resolveEnv()
 	nameK := fs.stringConstant(s.Name.Name)
-	fs.emitSetTabUp(envUV, nameK, reg, line)
+	if envReg, ok := fs.lookupLocal("_ENV"); ok {
+		fs.emitSetField(envReg, nameK, reg, line)
+	} else {
+		envUV := c.resolveEnv()
+		fs.emitSetTabUp(envUV, nameK, reg, line)
+	}
 
 	fs.freeReg = reg
 }
@@ -1179,14 +1194,10 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	fs.proto.NumParams = len(fe.Params)
 	fs.proto.IsVarArg = fe.VarArg
 
-	// _ENV upvalue (inherited from parent)
-	parentEnv := -1
-	if idx, ok := parentFS.lookupUpvalue("_ENV"); ok {
-		parentEnv = idx
-	}
-	if parentEnv >= 0 {
-		fs.addUpvalue("_ENV", false, parentEnv)
-	}
+	// _ENV upvalue (inherited from parent — local _ENV or upvalue _ENV)
+	// Use resolveUpvalue so that `local _ENV = expr` in the parent is
+	// correctly captured, not just the parent's upvalue chain.
+	c.resolveUpvalue(fs, "_ENV")
 
 	fs.enterScope(false)
 
