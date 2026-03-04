@@ -115,6 +115,7 @@ func runLuaTest(t *testing.T, filename string) {
 	// Run
 	v := vm.New()
 	v.SetOsProvider(vm.NewDefaultOsProvider())
+	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 	stdlib.Open(v)
 
 	// Capture panics from assert() failures
@@ -264,6 +265,7 @@ func runLuaDoctest(t *testing.T, filename string) {
 		vm.WithContext(ctx),
 		vm.WithLimits(doctestLimits()),
 	)
+	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 	stdlib.Open(v)
 	registerDoctestHelpers(v, cfg)
 
