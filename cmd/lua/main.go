@@ -16,6 +16,7 @@ import (
 func main() {
 	var timeoutMs int
 	var evalCode string
+	var testMode bool
 	args := os.Args[1:]
 
 	// Parse flags
@@ -40,6 +41,9 @@ func main() {
 			}
 			evalCode = args[1]
 			args = args[2:]
+		case "--test":
+			testMode = true
+			args = args[1:]
 		default:
 			goto done
 		}
@@ -56,7 +60,7 @@ done:
 		scriptArgs = args
 	} else {
 		if len(args) < 1 {
-			fmt.Fprintln(os.Stderr, "Usage: lua [--timeout <ms>] [-e <code>] [<script.lua> [args...]]")
+			fmt.Fprintln(os.Stderr, "Usage: lua [--timeout <ms>] [-e <code>] [--test] [<script.lua> [args...]]")
 			os.Exit(1)
 		}
 		filename := args[0]
@@ -87,6 +91,9 @@ done:
 	// Create VM and register standard library
 	v := vm.New()
 	v.SetOsProvider(vm.NewDefaultOsProvider())
+	if testMode {
+		v.SetDebugProvider(vm.NewDefaultDebugProvider())
+	}
 	stdlib.Open(v)
 
 	// Set timeout context if requested
