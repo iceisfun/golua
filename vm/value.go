@@ -432,8 +432,17 @@ func (v Value) String() string {
 		return fmt.Sprintf("%d", v.integer)
 	case typeFloat:
 		f := v.num
+		if math.IsInf(f, 1) {
+			return "inf"
+		}
+		if math.IsInf(f, -1) {
+			return "-inf"
+		}
+		if math.IsNaN(f) {
+			return "-nan"
+		}
 		s := fmt.Sprintf("%.14g", f)
-		if !strings.ContainsAny(s, ".eEnNiI") {
+		if !strings.ContainsAny(s, ".eE") {
 			s += ".0"
 		}
 		return s

@@ -516,22 +516,22 @@ func TestStringRepresentation(t *testing.T) {
 
 func TestStringInfinity(t *testing.T) {
 	s := NewFloat(math.Inf(1)).String()
-	if s != "+Inf" {
-		t.Errorf("expected '+Inf', got %q", s)
+	if s != "inf" {
+		t.Errorf("expected 'inf', got %q", s)
 	}
 }
 
 func TestStringNegativeInfinity(t *testing.T) {
 	s := NewFloat(math.Inf(-1)).String()
-	if s != "-Inf" {
-		t.Errorf("expected '-Inf', got %q", s)
+	if s != "-inf" {
+		t.Errorf("expected '-inf', got %q", s)
 	}
 }
 
 func TestStringNaN(t *testing.T) {
 	s := NewFloat(math.NaN()).String()
-	if s != "NaN" {
-		t.Errorf("expected 'NaN', got %q", s)
+	if s != "-nan" {
+		t.Errorf("expected '-nan', got %q", s)
 	}
 }
 

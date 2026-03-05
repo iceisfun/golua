@@ -578,10 +578,12 @@ func (vm *VM) execute() ([]Value, error) {
 					vm.stack[frame.base+a] = NewFloat(-v.AsFloat())
 				}
 			} else if v.IsString() {
-				if i, ok := v.ToInt(); ok {
-					vm.stack[frame.base+a] = NewInt(-i)
-				} else if n, ok := v.ToNumber(); ok {
-					vm.stack[frame.base+a] = NewFloat(-n)
+				if nv, ok := StringToNumericValue(v.AsString()); ok {
+					if nv.IsInt() {
+						vm.stack[frame.base+a] = NewInt(-nv.AsInt())
+					} else {
+						vm.stack[frame.base+a] = NewFloat(-nv.AsFloat())
+					}
 				} else {
 					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
 				}

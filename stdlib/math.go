@@ -274,6 +274,9 @@ func mathModf(v *vm.VM) int {
 		return 2
 	}
 	i, f := math.Modf(n)
+	if f == 0 {
+		f = 0 // normalize negative zero to positive zero
+	}
 	if !math.IsNaN(i) && i >= -9223372036854775808 && i < 9223372036854775808 {
 		v.Set(0, vm.NewInt(int64(i)))
 	} else {
