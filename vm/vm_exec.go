@@ -219,12 +219,16 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+b]
 			key := vm.stack[frame.base+c]
-			if t := table.AsTable(); t != nil {
-				val, err := vm.tableGet(t, key)
-				if err != nil {
-					return nil, err
+			if table.typ == typeTable {
+				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+					vm.stack[frame.base+a] = ct.Get(key)
+				} else {
+					val, err := vm.tableGet(table.ptr.(LuaTable), key)
+					if err != nil {
+						return nil, err
+					}
+					vm.stack[frame.base+a] = val
 				}
-				vm.stack[frame.base+a] = val
 			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
 				// Type metatable __index
 				val, err := vm.resolveIndex(mm, table, key)
@@ -305,8 +309,12 @@ func (vm *VM) execute() ([]Value, error) {
 			table := vm.stack[frame.base+a]
 			key := vm.stack[frame.base+b]
 			value := vm.getRK(frame, c, inst.K())
-			if t := table.AsTable(); t != nil {
-				if err := vm.tableSet(t, key, value); err != nil {
+			if table.typ == typeTable {
+				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+					if err := ct.Set(key, value); err != nil {
+						return nil, err
+					}
+				} else if err := vm.tableSet(table.ptr.(LuaTable), key, value); err != nil {
 					return nil, err
 				}
 			} else {
