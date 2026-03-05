@@ -341,8 +341,23 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_NEWTABLE:
 			a := inst.A()
-			// vB and vC encode size hints (we ignore them for now)
-			vm.stack[frame.base+a] = NewTable(NewEmptyTable())
+			// IvABC: vB (bits 16-21, 6 bits) = hash log, vC (bits 22-31, 10 bits) = array size
+			vB := int((uint32(inst) >> 16) & 0x3F)
+			vC := int((uint32(inst) >> 22) & 0x3FF)
+			if inst.K() != 0 {
+				// Array size in next EXTRAARG instruction
+				frame.pc++
+				vC = code[frame.pc-1].Ax()
+			}
+			nHash := 0
+			if vB > 0 {
+				nHash = 1 << (vB - 1)
+			}
+			if vC > 0 || nHash > 0 {
+				vm.stack[frame.base+a] = NewTable(NewTableWithSize(vC, nHash))
+			} else {
+				vm.stack[frame.base+a] = NewTable(NewEmptyTable())
+			}
 
 		case compiler.OP_SELF:
 			a, b, c := inst.A(), inst.B(), inst.C()
