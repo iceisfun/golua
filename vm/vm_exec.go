@@ -1490,14 +1490,24 @@ func (vm *VM) getRK(frame *callFrame, c, k int) Value {
 func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 	fn := vm.stack[frame.base+a]
 
-	// Collect arguments
+	// Collect arguments using a stack-allocated buffer for the common case
+	// (≤8 args) to avoid a heap allocation per function call.
+	var argBuf [8]Value
 	var args []Value
+	var nArgs int
 	if b == 0 {
-		// Use all values from a+1 to top
-		args = make([]Value, vm.top-(frame.base+a+1))
+		nArgs = vm.top - (frame.base + a + 1)
+	} else {
+		nArgs = b - 1
+	}
+	if nArgs <= len(argBuf) {
+		args = argBuf[:nArgs]
+	} else {
+		args = make([]Value, nArgs)
+	}
+	if b == 0 {
 		copy(args, vm.stack[frame.base+a+1:vm.top])
 	} else {
-		args = make([]Value, b-1)
 		copy(args, vm.stack[frame.base+a+1:frame.base+a+b])
 	}
 
