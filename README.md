@@ -27,6 +27,7 @@ A Lua 5.4 interpreter written in Go, with experimental 5.5 features. Pure Go, ze
 - Sandboxed OS via `LuaOsProvider` (includes `DefaultOsProvider` with optional env filtering)
 - Capability-gated channels for Go↔Lua message passing via `LuaChanProvider`
 - Millisecond-precision timing via `LuaTimeProvider` (`time.now`, `time.since`, `time.tick`)
+- Optional HTTP client module (`http.get`, `http.post`, `http.fetch`) with automatic JSON coercion
 - Output interception via `LuaPrintProvider` (redirect `print()`/`warn()` to logging, per-VM warn isolation)
 - Context cancellation and execution limits (call depth, stack, instructions)
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
@@ -121,6 +122,7 @@ See the `examples/` directory for complete examples:
 - **[chan](examples/chan/)** - Go↔Lua channels with chan.select ([go_to_lua](examples/chan/go_to_lua/), [lua_to_go](examples/chan/lua_to_go/), [multi_go_to_lua](examples/chan/multi_go_to_lua/))
 - **[glob](examples/glob/)** - Go-style case-insensitive pattern matching from Go and Lua
 - **[time](examples/time/)** - Millisecond timing: now, since, tick, and once
+- **[http](examples/http/)** - HTTP requests: GET, POST, custom headers, timeouts
 - **[check](examples/check/)** - Parse Lua source and emit diagnostics as JSON (for editor integration)
 - **[editor](examples/editor/)** - Browser-based Monaco editor with live diagnostics and sandboxed execution
 - **[editor_advanced](examples/editor_advanced/)** - Full IDE with JSON-RPC 2.0 language services (completion, hover, diagnostics)
@@ -394,6 +396,7 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 | `debug`     | `LuaDebugProvider` | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)   |
 | `chan`      | `LuaChanProvider`  | Go↔Lua message passing channels (absent by default)                                |
 | `time`      | `LuaTimeProvider`  | Millisecond timing: now, since, periodic tick (absent by default)                  |
+| `http`      | Separate module    | HTTP client: get, post, put, patch, delete, fetch ([docs](docs/http.md))           |
 
 ## Security Model
 
