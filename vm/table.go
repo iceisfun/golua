@@ -53,13 +53,16 @@ func NewEmptyTable() *Table {
 	return &Table{}
 }
 
-// NewTableWithSize creates a table with preallocated array space.
-// The hash part is lazily allocated on first use since we cannot
+// NewTableWithSize creates a table with preallocated array and keys space.
+// The hash maps themselves are lazily allocated on first use since we cannot
 // predict whether keys will be strings, integers, or other types.
 func NewTableWithSize(narray, nhash int) *Table {
 	t := &Table{}
 	if narray > 0 {
 		t.array = make([]Value, 0, narray)
+	}
+	if nhash > 0 {
+		t.keys = make([]any, 0, nhash)
 	}
 	return t
 }
