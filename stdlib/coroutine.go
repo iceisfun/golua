@@ -595,6 +595,10 @@ func coClose(v *vm.VM) int {
 		panic("cannot close a running coroutine")
 	}
 
+	if status == statusNormal {
+		panic("cannot close a normal coroutine")
+	}
+
 	if status == statusDead {
 		// Already dead — check if it died with an error. The first close
 		// after an error returns false + error (Lua 5.4 behavior), then
