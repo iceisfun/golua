@@ -17,7 +17,9 @@ func openUtf8(v *vm.VM) {
 	u.SetString("offset", vm.NewNativeFunc(luaUtf8Offset))
 
 	// utf8.charpattern: matches exactly one UTF-8 byte sequence
-	u.SetString("charpattern", vm.NewString("[\x00-\x7F\xC2-\xF4][\x80-\xBF]*"))
+	// Range \xC2-\xFD covers lead bytes for 2-byte through 6-byte sequences,
+	// matching Lua 5.4's extended UTF-8 support.
+	u.SetString("charpattern", vm.NewString("[\x00-\x7F\xC2-\xFD][\x80-\xBF]*"))
 
 	v.SetGlobal("utf8", vm.NewTable(u))
 }
@@ -133,7 +135,7 @@ func decodeExtendedUTF8(s string) (int64, int) {
 	}
 }
 
-// utf8.len(s [, i [, j]]) — count UTF-8 characters; soft fail on invalid
+// utf8.len(s [, i [, j [, lax]]]) — count UTF-8 characters; soft fail on invalid
 func luaUtf8Len(v *vm.VM) int {
 	s := getString(v, 1, "len")
 	slen := len(s)
@@ -148,10 +150,8 @@ func luaUtf8Len(v *vm.VM) int {
 		posj = getInt(v, 3, "len")
 	}
 
-	// Accept lax parameter (arg 4) for API compatibility with Lua 5.4.
-	// golua uses Go's unicode/utf8 for all decoding, so lax mode behaves
-	// identically to strict mode on valid UTF-8. Invalid sequences still
-	// error regardless of the flag.
+	// Lax mode (arg 4): when true, accept extended codepoints (> U+10FFFF)
+	lax := v.Get(4).ToBool()
 
 	// Resolve relative positions (1-indexed)
 	i := posRelat(posi, slen)
@@ -172,14 +172,24 @@ func luaUtf8Len(v *vm.VM) int {
 	count := int64(0)
 	p := start
 	for p < end {
-		r, size := utf8.DecodeRuneInString(s[p:])
-		if r == utf8.RuneError && size <= 1 {
-			// Invalid UTF-8: return nil, byte position (1-indexed)
-			v.Set(0, vm.Nil)
-			v.Set(1, vm.NewInt(int64(p+1)))
-			return 2
+		if lax {
+			cp, size := decodeExtendedUTF8(s[p:])
+			if cp < 0 || size == 0 {
+				v.Set(0, vm.Nil)
+				v.Set(1, vm.NewInt(int64(p+1)))
+				return 2
+			}
+			p += size
+		} else {
+			r, size := utf8.DecodeRuneInString(s[p:])
+			if r == utf8.RuneError && size <= 1 {
+				// Invalid UTF-8: return nil, byte position (1-indexed)
+				v.Set(0, vm.Nil)
+				v.Set(1, vm.NewInt(int64(p+1)))
+				return 2
+			}
+			p += size
 		}
-		p += size
 		count++
 	}
 
@@ -249,11 +259,12 @@ func luaUtf8Codepoint(v *vm.VM) int {
 	return n
 }
 
-// utf8.codes(s) — iterator factory
+// utf8.codes(s [, lax]) — iterator factory
 func luaUtf8Codes(v *vm.VM) int {
 	s := getString(v, 1, "codes")
 
-	// Accept lax parameter (arg 2) for Lua 5.4 API compatibility.
+	// Lax mode (arg 2): when true, accept extended codepoints (> U+10FFFF)
+	lax := v.Get(2).ToBool()
 
 	// Validate first byte is not a continuation byte
 	if len(s) > 0 && !utf8.RuneStart(s[0]) {
@@ -281,6 +292,16 @@ func luaUtf8Codes(v *vm.VM) int {
 		if n >= len(str) {
 			v.Set(0, vm.Nil)
 			return 1
+		}
+
+		if lax {
+			cp, size := decodeExtendedUTF8(str[n:])
+			if cp < 0 || size == 0 {
+				panic("invalid UTF-8 code")
+			}
+			v.Set(0, vm.NewInt(int64(n+1)))
+			v.Set(1, vm.NewInt(cp))
+			return 2
 		}
 
 		r, size := utf8.DecodeRuneInString(str[n:])
