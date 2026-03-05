@@ -473,12 +473,6 @@ func stringGmatch(v *vm.VM) int {
 		init = int(getInt(v, 3, "gmatch"))
 	}
 
-	// Handle anchor
-	searchPat := pattern
-	if len(searchPat) > 0 && searchPat[0] == '^' {
-		searchPat = searchPat[1:]
-	}
-
 	// Resolve negative init
 	if init < 0 {
 		init = len(s) + init + 1
@@ -492,7 +486,7 @@ func stringGmatch(v *vm.VM) int {
 
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
 		for pos <= len(s) {
-			end, caps, ok := luaMatchAt(s, searchPat, pos)
+			end, caps, ok := luaMatchAt(s, pattern, pos)
 			if ok && end != lastMatch {
 				// Valid match
 				matchStart := pos
@@ -521,8 +515,7 @@ func stringGmatch(v *vm.VM) int {
 			}
 			pos++
 		}
-		v.Set(0, vm.Nil)
-		return 1
+		return 0
 	})
 
 	v.Set(0, iter)

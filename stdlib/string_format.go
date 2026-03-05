@@ -33,8 +33,14 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		}
 
 		if i+1 >= len(format) {
-			result.WriteByte('%')
-			break
+			// Trailing % with no conversion specifier.
+			// Lua 5.4 checks for an argument first, then errors on the
+			// missing conversion character.
+			if argIdx >= len(vals) {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (no value)", argIdx+2))
+			}
+			argIdx++
+			panic("invalid conversion '%\x00' to 'format'")
 		}
 
 		i++
@@ -53,6 +59,10 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			i++
 		}
 		if i >= len(format) {
+			if argIdx >= len(vals) {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (no value)", argIdx+2))
+			}
+			argIdx++
 			panic(fmt.Sprintf("invalid conversion '%s'", spec))
 		}
 
@@ -90,8 +100,13 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
 		case 'o', 'x', 'X':
-			goSpec := spec + string(specChar)
+			goSpec := spec
 			if i, ok := val.ToInt(); ok {
+				// C printf: # flag has no effect when value is 0
+				if uint64(i) == 0 {
+					goSpec = strings.Replace(goSpec, "#", "", 1)
+				}
+				goSpec += string(specChar)
 				result.WriteString(fmt.Sprintf(goSpec, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number has no integer representation)", argIdx+1))
@@ -442,34 +457,43 @@ func validateConversion(spec string, conv byte) {
 	hasDot := j < len(spec) && spec[j] == '.'
 	hasModifiers := len(spec) > 1
 
+	// Lua 5.4 valid flags per conversion:
+	//   a/A/e/E/f/F/g/G: "-+#0 " (all flags), precision allowed
+	//   o/x/X:           "-#0"   (no + or space), precision allowed
+	//   d/i:             "-+0 "  (no #), precision allowed
+	//   u:               "-0"    (no +, space, or #), precision allowed
+	//   c/p/s:           "-"     only
+	//   c/p: no precision; s: precision allowed
 	switch conv {
 	case 'c':
-		// %c allows width and '-' flag only. No precision, no '0', no '#', no '+', no ' '.
-		if hasDot || strings.ContainsAny(flags, "0# +") {
+		if hasDot || strings.ContainsAny(flags, "0#+ ") {
 			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
 		}
 	case 'q':
-		// %q does not accept any modifiers
 		if hasModifiers {
 			panic("cannot have modifiers with '%q'")
 		}
 	case 's':
-		// %s: no '0' flag, no '#' flag
-		if strings.ContainsAny(flags, "0#") {
+		if strings.ContainsAny(flags, "0#+ ") {
 			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
 		}
-	case 'd', 'i', 'u':
-		// %d/%i/%u: no '#' flag
+	case 'o', 'x', 'X':
+		if strings.ContainsAny(flags, "+ ") {
+			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+		}
+	case 'd', 'i':
 		if strings.Contains(flags, "#") {
 			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
 		}
+	case 'u':
+		if strings.ContainsAny(flags, "#+ ") {
+			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+		}
 	case 'p':
-		// %p: no precision
-		if hasDot {
+		if hasDot || strings.ContainsAny(flags, "0#+ ") {
 			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
 		}
 	case 'F':
-		// %F is not valid in Lua 5.4
 		panic(fmt.Sprintf("invalid conversion '%%%c'", conv))
 	}
 }
