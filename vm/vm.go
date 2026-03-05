@@ -337,7 +337,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		return vm.ProtectedCall(mm, newArgs)
 	}
 
-	return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
+	return nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
 }
 
 // NewCoroutineVM creates a new VM for running a coroutine. The child VM shares
@@ -556,7 +556,7 @@ func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {
 		return result, nil
 	}
 
-	return Nil, vm.runtimeError("attempt to call a %s value", fn.Type())
+	return Nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
 }
 
 // callMetamethod3 calls a metamethod with 3 arguments
@@ -602,7 +602,7 @@ func (vm *VM) callMetamethod3(fn, arg1, arg2, arg3 Value) (Value, error) {
 		return result, nil
 	}
 
-	return Nil, vm.runtimeError("attempt to call a %s value", fn.Type())
+	return Nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
 }
 
 // getMetafield retrieves a metafield from a value's metatable

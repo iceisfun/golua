@@ -199,7 +199,13 @@ func coResume(v *vm.VM) int {
 	select {
 	case results := <-co.yieldCh:
 		restoreCallerStatus()
-		v.EnsureStack(v.Base() + 1 + len(results))
+		needed := v.Base() + 1 + len(results)
+		if !v.CheckStack(needed) {
+			v.Set(0, vm.False)
+			v.Set(1, vm.NewString("stack overflow"))
+			return 2
+		}
+		v.EnsureStack(needed)
 		v.Set(0, vm.True)
 		for i, r := range results {
 			v.Set(i+1, r)
@@ -223,7 +229,13 @@ func coResume(v *vm.VM) int {
 			return 2
 		}
 
-		v.EnsureStack(v.Base() + 1 + len(result))
+		needed := v.Base() + 1 + len(result)
+		if !v.CheckStack(needed) {
+			v.Set(0, vm.False)
+			v.Set(1, vm.NewString("stack overflow"))
+			return 2
+		}
+		v.EnsureStack(needed)
 		v.Set(0, vm.True)
 		for i, r := range result {
 			v.Set(i+1, r)
@@ -499,7 +511,11 @@ func coWrap(v *vm.VM) int {
 		select {
 		case results := <-co.yieldCh:
 			restoreCallerStatus()
-			v.EnsureStack(v.Base() + len(results))
+			needed := v.Base() + len(results)
+			if !v.CheckStack(needed) {
+				panic("stack overflow")
+			}
+			v.EnsureStack(needed)
 			for i, r := range results {
 				v.Set(i, r)
 			}
@@ -516,7 +532,11 @@ func coWrap(v *vm.VM) int {
 				panic(err)
 			}
 
-			v.EnsureStack(v.Base() + len(result))
+			needed := v.Base() + len(result)
+			if !v.CheckStack(needed) {
+				panic("stack overflow")
+			}
+			v.EnsureStack(needed)
 			for i, r := range result {
 				v.Set(i, r)
 			}

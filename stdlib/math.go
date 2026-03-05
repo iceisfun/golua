@@ -437,5 +437,5 @@ func getNumber(v *vm.VM, idx int, fname string) float64 {
 	if n, ok := val.ToNumber(); ok {
 		return n
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, val.Type()))
+	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, v.ObjTypeName(val)))
 }

@@ -199,7 +199,8 @@ func needsFullIo(filename string) bool {
 	}
 	// Tests that reference io.stdin/stdout/stderr as values
 	switch base {
-	case "test_next_all_key_types.lua":
+	case "test_next_all_key_types.lua",
+		"test_error_named_objects.lua":
 		return true
 	}
 	return false

@@ -86,26 +86,30 @@ func luaToString(v *vm.VM) int {
 		panic("bad argument #1 to 'tostring' (value expected)")
 	}
 	val := v.Get(1)
-	// Check for __tostring metamethod on tables
+	// Check for __tostring metamethod on tables and userdata
+	var mt vm.LuaTable
 	if val.IsTable() {
-		if mt := val.AsTable().Metatable(); mt != nil {
-			if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
-				exitNonYieldable := v.EnterNonYieldable()
-				defer exitNonYieldable()
-				results, err := v.ProtectedCall(ts, []vm.Value{val})
-				if err != nil {
-					panic(err)
-				}
-				if len(results) == 0 {
-					panic("'__tostring' must return a string")
-				}
-				ret := results[0]
-				if ret.IsString() || ret.IsNumber() {
-					v.Set(0, vm.NewString(valueToString(ret)))
-					return 1
-				}
+		mt = val.AsTable().Metatable()
+	} else if ud := val.AsUserdata(); ud != nil {
+		mt = ud.Metatable()
+	}
+	if mt != nil {
+		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+			exitNonYieldable := v.EnterNonYieldable()
+			defer exitNonYieldable()
+			results, err := v.ProtectedCall(ts, []vm.Value{val})
+			if err != nil {
+				panic(err)
+			}
+			if len(results) == 0 {
 				panic("'__tostring' must return a string")
 			}
+			ret := results[0]
+			if ret.IsString() || ret.IsNumber() {
+				v.Set(0, vm.NewString(valueToString(ret)))
+				return 1
+			}
+			panic("'__tostring' must return a string")
 		}
 	}
 	v.Set(0, vm.NewString(valueToString(val)))
@@ -676,24 +680,28 @@ func luaSetmetatable(v *vm.VM) int {
 
 // tolstring resolves __tostring metamethods, matching luaL_tolstring.
 func tolstring(v *vm.VM, val vm.Value) string {
+	var mt vm.LuaTable
 	if val.IsTable() {
-		if mt := val.AsTable().Metatable(); mt != nil {
-			if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
-				exitNonYieldable := v.EnterNonYieldable()
-				results, err := v.ProtectedCall(ts, []vm.Value{val})
-				exitNonYieldable()
-				if err != nil {
-					panic(err)
-				}
-				if len(results) == 0 {
-					panic("'__tostring' must return a string")
-				}
-				ret := results[0]
-				if ret.IsString() || ret.IsNumber() {
-					return valueToString(ret)
-				}
+		mt = val.AsTable().Metatable()
+	} else if ud := val.AsUserdata(); ud != nil {
+		mt = ud.Metatable()
+	}
+	if mt != nil {
+		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+			exitNonYieldable := v.EnterNonYieldable()
+			results, err := v.ProtectedCall(ts, []vm.Value{val})
+			exitNonYieldable()
+			if err != nil {
+				panic(err)
+			}
+			if len(results) == 0 {
 				panic("'__tostring' must return a string")
 			}
+			ret := results[0]
+			if ret.IsString() || ret.IsNumber() {
+				return valueToString(ret)
+			}
+			panic("'__tostring' must return a string")
 		}
 	}
 	return valueToString(val)
@@ -744,6 +752,14 @@ func valueToString(val vm.Value) string {
 		return fmt.Sprintf("function: %p", val.AsClosure())
 	case val.IsNativeFunc():
 		return "function: (native)"
+	case val.IsUserdata():
+		ud := val.AsUserdata()
+		if mt := ud.Metatable(); mt != nil {
+			if name := mt.Get(vm.NewString("__name")); name.IsString() {
+				return fmt.Sprintf("%s: %p", name.AsString(), ud)
+			}
+		}
+		return fmt.Sprintf("userdata: %p", ud)
 	default:
 		return "?"
 	}

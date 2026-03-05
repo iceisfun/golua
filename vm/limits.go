@@ -13,6 +13,11 @@ import (
 // goroutine stack (which is fatal and unrecoverable).
 const DefaultMaxCallDepth = 200
 
+// DefaultMaxStackSlots is the default stack slot limit, matching Lua 5.4's
+// LUAI_MAXSTACK. Prevents a single unpack or deep call chain from allocating
+// unbounded memory.
+const DefaultMaxStackSlots = 1000000
+
 // DefaultMaxMetaDepth is the default __index/__newindex chain depth limit,
 // matching Lua 5.4's MAXTAGLOOP. This is a safety bound to prevent infinite
 // loops from metatable cycles, not a semantic limit.
@@ -22,7 +27,7 @@ const DefaultMaxMetaDepth = 2000
 // Zero values mean no limit (except MaxMetaDepth, where 0 means use DefaultMaxMetaDepth).
 type Limits struct {
 	MaxCallDepth    int                    // Maximum call stack depth (0 = DefaultMaxCallDepth, negative = unlimited)
-	MaxStackSlots   int                    // Maximum stack slots (0 = unlimited)
+	MaxStackSlots   int                    // Maximum stack slots (0 = DefaultMaxStackSlots, negative = unlimited)
 	MaxInstructions int64                  // Maximum checkpoint visits (0 = unlimited)
 	MaxMetaDepth    int                    // Maximum __index/__newindex chain depth (0 = DefaultMaxMetaDepth)
 	CompilerLimits  compiler.CompilerLimits // Compiler limits passed to load()/dofile() (zero = defaults)

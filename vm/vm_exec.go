@@ -211,7 +211,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_GETTABLE:
@@ -235,7 +235,7 @@ func (vm *VM) execute() ([]Value, error) {
 				proto = frame.closure.Proto
 				code = proto.Code
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_GETI:
@@ -257,7 +257,7 @@ func (vm *VM) execute() ([]Value, error) {
 				proto = frame.closure.Proto
 				code = proto.Code
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_GETFIELD:
@@ -280,7 +280,7 @@ func (vm *VM) execute() ([]Value, error) {
 				proto = frame.closure.Proto
 				code = proto.Code
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_SETTABUP:
@@ -293,7 +293,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_SETTABLE:
@@ -306,7 +306,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_SETI:
@@ -318,7 +318,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_SETFIELD:
@@ -331,7 +331,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_NEWTABLE:
@@ -379,7 +379,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, vm.runtimeError("attempt to index a userdata value")
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", table.Type())
+				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
 		case compiler.OP_ADDI:
@@ -391,7 +391,7 @@ func (vm *VM) execute() ([]Value, error) {
 			} else if n, ok := v.ToNumber(); ok {
 				vm.stack[frame.base+a] = NewFloat(n + float64(sc))
 			} else {
-				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v.Type())
+				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
 			}
 
 		case compiler.OP_ADDK, compiler.OP_SUBK, compiler.OP_MULK, compiler.OP_MODK,
@@ -434,10 +434,10 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				} else {
-					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
+				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
 			}
 
 		case compiler.OP_SHRI:
@@ -451,10 +451,10 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				} else {
-					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
+				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
 			}
 
 		case compiler.OP_ADD, compiler.OP_SUB, compiler.OP_MUL, compiler.OP_MOD,
@@ -512,7 +512,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if n, ok := v.ToNumber(); ok {
 					vm.stack[frame.base+a] = NewFloat(-n)
 				} else {
-					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
 				}
 			} else if mm := vm.getMetafield(v, "__unm"); !mm.IsNil() {
 				if !mm.IsCallable() {
@@ -524,7 +524,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = result
 			} else {
-				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v.Type())
+				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
 			}
 
 		case compiler.OP_BNOT:
@@ -551,7 +551,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				} else {
-					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
 				}
 			}
 
@@ -1395,9 +1395,13 @@ func (vm *VM) execute() ([]Value, error) {
 // Lua's longjmp-based error propagation and avoids threading error returns
 // through the entire instruction dispatch loop.
 func (vm *VM) ensureStack(n int) {
-	if vm.limits.MaxStackSlots > 0 && n >= vm.limits.MaxStackSlots {
+	limit := vm.limits.MaxStackSlots
+	if limit == 0 {
+		limit = DefaultMaxStackSlots
+	}
+	if limit > 0 && n >= limit {
 		panic(fmt.Sprintf("stack overflow: %d slots exceeds limit %d",
-			n, vm.limits.MaxStackSlots))
+			n, limit))
 	}
 	for len(vm.stack) <= n {
 		vm.stack = append(vm.stack, make([]Value, 256)...)
@@ -1409,6 +1413,16 @@ func (vm *VM) ensureStack(n int) {
 // NativeFunc). Panics on stack overflow, caught by ProtectedCall's recover.
 func (vm *VM) EnsureStack(n int) {
 	vm.ensureStack(n)
+}
+
+// CheckStack returns true if the stack can accommodate n slots without
+// exceeding the configured limit. Does not modify the stack.
+func (vm *VM) CheckStack(n int) bool {
+	limit := vm.limits.MaxStackSlots
+	if limit == 0 {
+		limit = DefaultMaxStackSlots
+	}
+	return limit < 0 || n < limit
 }
 
 // constToValue converts a compile-time constant to a runtime Value.

@@ -107,9 +107,9 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 
 	// No metamethod found, report error
 	if !ok1 {
-		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", orig1.Type())
+		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(orig1))
 	}
-	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", orig2.Type())
+	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(orig2))
 }
 
 // arithK performs a register-constant arithmetic operation.
@@ -193,9 +193,9 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 	}
 
 	if !ok1 {
-		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", v.Type())
+		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
 	}
-	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", kv.Type())
+	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(kv))
 }
 
 // arithMetamethod returns the metamethod name for an arithmetic opcode

@@ -21,6 +21,16 @@ func (vm *VM) runtimeError(format string, args ...any) error {
 	return fmt.Errorf("%s", msg)
 }
 
+// ObjTypeName returns the type name for a value, checking __name in
+// the metatable first (matching Lua 5.4's luaT_objtypename).
+func (vm *VM) ObjTypeName(v Value) string {
+	name := vm.getMetafield(v, "__name")
+	if name.IsString() {
+		return name.AsString()
+	}
+	return v.Type()
+}
+
 // runtimeErrorForNumber creates a "number has no integer representation" error
 // that includes the name of the offending value (e.g., "field 'huge'")
 // when it can be determined from the bytecode, matching Lua 5.4's luaG_forerror.

@@ -49,10 +49,10 @@ func makeFileHandle(f vm.LuaFile) vm.Value {
 }
 
 // getFileHandle extracts the fileHandle from a userdata value, or panics.
-func getFileHandle(val vm.Value, funcName string) *fileHandle {
+func getFileHandle(v *vm.VM, val vm.Value, funcName string) *fileHandle {
 	ud := val.AsUserdata()
 	if ud == nil {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", funcName, val.Type()))
+		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", funcName, v.ObjTypeName(val)))
 	}
 	fh, ok := ud.Data.(*fileHandle)
 	if !ok {
@@ -180,7 +180,7 @@ func makeIoClose(provider vm.LuaIoProvider) vm.NativeFunc {
 			panic("cannot close default output file")
 		}
 
-		fh := getFileHandle(val, "close")
+		fh := getFileHandle(v, val, "close")
 		if fh.file.IsStd() {
 			// Cannot close standard files - return nil, error
 			v.Set(0, vm.Nil)
@@ -285,7 +285,7 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 		}
 
 		// Assume it's a file handle - set as default input
-		_ = getFileHandle(arg, "input") // validate it's a file handle
+		_ = getFileHandle(v, arg, "input") // validate it's a file handle
 		ioTable.SetString("__input", arg)
 		v.Set(0, arg)
 		return 1
@@ -315,7 +315,7 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 		}
 
 		// Assume it's a file handle - set as default output
-		_ = getFileHandle(arg, "output") // validate it's a file handle
+		_ = getFileHandle(v, arg, "output") // validate it's a file handle
 		ioTable.SetString("__output", arg)
 		v.Set(0, arg)
 		return 1
@@ -332,7 +332,7 @@ func makeIoRead(provider vm.LuaIoProvider) vm.NativeFunc {
 		}
 		ioTable := ioVal.AsTable()
 		inputVal := ioTable.Get(vm.NewString("__input"))
-		fh := getFileHandle(inputVal, "read")
+		fh := getFileHandle(v, inputVal, "read")
 		fh.checkOpen("read")
 
 		return doFileRead(v, fh.file, 1)
@@ -349,7 +349,7 @@ func makeIoWrite(provider vm.LuaIoProvider) vm.NativeFunc {
 		}
 		ioTable := ioVal.AsTable()
 		outputVal := ioTable.Get(vm.NewString("__output"))
-		fh := getFileHandle(outputVal, "write")
+		fh := getFileHandle(v, outputVal, "write")
 		fh.checkOpen("write")
 
 		return doFileWrite(v, fh.file, outputVal, 1)
@@ -358,7 +358,7 @@ func makeIoWrite(provider vm.LuaIoProvider) vm.NativeFunc {
 
 // fileRead implements f:read(...) method.
 func fileRead(v *vm.VM) int {
-	fh := getFileHandle(v.Get(1), "read")
+	fh := getFileHandle(v, v.Get(1), "read")
 	fh.checkOpen("read")
 
 	return doFileRead(v, fh.file, 2)
@@ -436,7 +436,7 @@ func doFileRead(v *vm.VM, f vm.LuaFile, firstArg int) int {
 // fileWrite implements f:write(...) method.
 func fileWrite(v *vm.VM) int {
 	self := v.Get(1)
-	fh := getFileHandle(self, "write")
+	fh := getFileHandle(v, self, "write")
 	fh.checkOpen("write")
 
 	return doFileWrite(v, fh.file, self, 2)
@@ -472,7 +472,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 // fileClose implements f:close() method.
 func fileClose(v *vm.VM) int {
 	self := v.Get(1)
-	fh := getFileHandle(self, "close")
+	fh := getFileHandle(v, self, "close")
 
 	if fh.file.IsStd() {
 		// Cannot close standard files
@@ -499,7 +499,7 @@ func fileClose(v *vm.VM) int {
 
 // fileLines implements f:lines() method.
 func fileLines(v *vm.VM) int {
-	fh := getFileHandle(v.Get(1), "lines")
+	fh := getFileHandle(v, v.Get(1), "lines")
 	fh.checkOpen("lines")
 	f := fh.file
 
@@ -520,7 +520,7 @@ func fileLines(v *vm.VM) int {
 
 // fileSeek implements f:seek([whence [, offset]]) method.
 func fileSeek(v *vm.VM) int {
-	fh := getFileHandle(v.Get(1), "seek")
+	fh := getFileHandle(v, v.Get(1), "seek")
 	fh.checkOpen("seek")
 
 	whence := "cur"
@@ -551,7 +551,7 @@ func fileSeek(v *vm.VM) int {
 // fileSetVBuf implements f:setvbuf(mode [, size]) method.
 func fileSetVBuf(v *vm.VM) int {
 	self := v.Get(1)
-	fh := getFileHandle(self, "setvbuf")
+	fh := getFileHandle(v, self, "setvbuf")
 	fh.checkOpen("setvbuf")
 
 	mode := v.Get(2)
@@ -583,7 +583,7 @@ func fileSetVBuf(v *vm.VM) int {
 // fileFlush implements f:flush() method.
 func fileFlush(v *vm.VM) int {
 	self := v.Get(1)
-	fh := getFileHandle(self, "flush")
+	fh := getFileHandle(v, self, "flush")
 	fh.checkOpen("flush")
 
 	err := fh.file.Flush()
