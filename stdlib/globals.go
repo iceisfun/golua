@@ -146,6 +146,11 @@ func luaToNumber(v *vm.VM) int {
 			v.Set(0, vm.NewInt(int64(u)))
 			return 1
 		}
+		// Lua 5.4 wraps overflows modulo 2^64 for explicit base
+		if result, ok := parseIntWrapping(s, int(bi)); ok {
+			v.Set(0, vm.NewInt(result))
+			return 1
+		}
 
 		v.Set(0, vm.Nil)
 		return 1
@@ -581,6 +586,9 @@ func luaRawget(v *vm.VM) int {
 	if tbl == nil {
 		panic("bad argument #1 to 'rawget' (table expected)")
 	}
+	if v.ArgCount() < 2 {
+		panic("bad argument #2 to 'rawget' (value expected)")
+	}
 	key := v.Get(2)
 	v.Set(0, tbl.Get(key))
 	return 1
@@ -591,6 +599,12 @@ func luaRawset(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
 		panic("bad argument #1 to 'rawset' (table expected)")
+	}
+	if v.ArgCount() < 2 {
+		panic("bad argument #2 to 'rawset' (value expected)")
+	}
+	if v.ArgCount() < 3 {
+		panic("bad argument #3 to 'rawset' (value expected)")
 	}
 	key := v.Get(2)
 	val := v.Get(3)
@@ -605,6 +619,9 @@ func luaRawset(v *vm.VM) int {
 func luaRawequal(v *vm.VM) int {
 	if v.ArgCount() < 1 {
 		panic("bad argument #1 to 'rawequal' (value expected)")
+	}
+	if v.ArgCount() < 2 {
+		panic("bad argument #2 to 'rawequal' (value expected)")
 	}
 	v1 := v.Get(1)
 	v2 := v.Get(2)
@@ -778,4 +795,48 @@ func valueToString(val vm.Value) string {
 	default:
 		return "?"
 	}
+}
+
+// parseIntWrapping parses a string in the given base with unsigned wrapping
+// modulo 2^64, matching Lua 5.4's tonumber(s, base) overflow semantics.
+func parseIntWrapping(s string, base int) (int64, bool) {
+	if len(s) == 0 {
+		return 0, false
+	}
+
+	neg := false
+	if s[0] == '-' {
+		neg = true
+		s = s[1:]
+	} else if s[0] == '+' {
+		s = s[1:]
+	}
+
+	if len(s) == 0 {
+		return 0, false
+	}
+
+	var result uint64
+	for _, c := range []byte(s) {
+		var digit uint64
+		switch {
+		case c >= '0' && c <= '9':
+			digit = uint64(c - '0')
+		case c >= 'a' && c <= 'z':
+			digit = uint64(c-'a') + 10
+		case c >= 'A' && c <= 'Z':
+			digit = uint64(c-'A') + 10
+		default:
+			return 0, false
+		}
+		if digit >= uint64(base) {
+			return 0, false
+		}
+		result = result*uint64(base) + digit
+	}
+
+	if neg {
+		return -int64(result), true
+	}
+	return int64(result), true
 }
