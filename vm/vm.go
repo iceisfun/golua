@@ -142,6 +142,7 @@ type callFrame struct {
 func New(opts ...VMOption) *VM {
 	vm := &VM{
 		stack:       make([]Value, 256),
+		callStack:   make([]callFrame, 0, 32),
 		globals:     NewEmptyTable(),
 		warnEnabled: true,
 		closeDepth:  new(int32),
@@ -416,6 +417,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 	return &VM{
 		stack:         make([]Value, 256),
+		callStack:     make([]callFrame, 0, 16),
 		globals:       parent.globals,
 		stringMeta:    parent.stringMeta,
 		numberMeta:    parent.numberMeta,
