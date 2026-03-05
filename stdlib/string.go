@@ -515,8 +515,7 @@ func stringGmatch(v *vm.VM) int {
 			}
 			pos++
 		}
-		v.Set(0, vm.Nil)
-		return 1
+		return 0
 	})
 
 	v.Set(0, iter)
