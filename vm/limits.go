@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/iceisfun/golua/compiler"
 )
@@ -30,6 +31,7 @@ type Limits struct {
 	MaxStackSlots   int                    // Maximum stack slots (0 = DefaultMaxStackSlots, negative = unlimited)
 	MaxInstructions int64                  // Maximum checkpoint visits (0 = unlimited)
 	MaxMetaDepth    int                    // Maximum __index/__newindex chain depth (0 = DefaultMaxMetaDepth)
+	MinGCInterval   time.Duration          // Minimum interval between Lua-triggered GC (0 = no limit, negative = disable)
 	CompilerLimits  compiler.CompilerLimits // Compiler limits passed to load()/dofile() (zero = defaults)
 }
 

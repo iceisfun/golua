@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/iceisfun/golua/compiler"
 )
@@ -97,6 +98,10 @@ type VM struct {
 	instrCount    int64           // only tracked when MaxInstructions > 0
 	callDepthBase int             // inherited call depth from parent VM (for coroutines)
 	closeDepth    *int32          // shared counter tracking nested coroutine.close depth (atomic)
+
+	// GC rate limiting
+	lastLuaGC   time.Time // Last time ProcessGcFinalizers invoked runtime.GC()
+	gcCallCount int       // Number of times runtime.GC() was actually invoked (for testing)
 
 	// Output capture
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout

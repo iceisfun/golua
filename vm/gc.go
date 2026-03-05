@@ -3,6 +3,7 @@ package vm
 import (
 	"runtime"
 	"sync"
+	"time"
 )
 
 // gcEntry is a pending __gc finalization queued by Go's garbage collector.
@@ -50,12 +51,37 @@ func RegisterGcFinalizer(t *Table) {
 
 // ProcessGcFinalizers triggers Go's GC, waits for finalizers to run,
 // then calls pending __gc metamethods in this VM's context.
+//
+// When MinGCInterval is configured in VM limits, repeated calls within the
+// interval skip runtime.GC() to prevent Lua scripts from causing host-level
+// GC denial-of-service. Pending finalizers are always processed regardless
+// of rate limiting.
 func (vm *VM) ProcessGcFinalizers() {
-	// Two GC cycles: first identifies unreachable objects and queues
-	// their Go finalizers; second gives the finalizer goroutine a
-	// chance to process them (standard Go pattern).
-	runtime.GC()
-	runtime.GC()
+	// Rate-limit runtime.GC() calls based on MinGCInterval.
+	// Negative = disable Lua-triggered GC entirely.
+	// Positive = enforce minimum interval between GC cycles.
+	// Zero = no rate limit (default).
+	minInterval := vm.limits.MinGCInterval
+	switch {
+	case minInterval < 0:
+		// Lua-triggered GC disabled; skip runtime.GC()
+	case minInterval > 0:
+		now := time.Now()
+		if vm.lastLuaGC.IsZero() || now.Sub(vm.lastLuaGC) >= minInterval {
+			// Two GC cycles: first identifies unreachable objects and queues
+			// their Go finalizers; second gives the finalizer goroutine a
+			// chance to process them (standard Go pattern).
+			runtime.GC()
+			runtime.GC()
+			vm.lastLuaGC = now
+			vm.gcCallCount++
+		}
+	default:
+		// No rate limit
+		runtime.GC()
+		runtime.GC()
+		vm.gcCallCount++
+	}
 
 	gcPendingMu.Lock()
 	entries := gcPending
