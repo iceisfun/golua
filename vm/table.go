@@ -499,9 +499,12 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 		return Nil, Nil, nil
 	}
 
-	// Find current key and return next
-	if key.IsNumber() {
-		if i, ok := key.ToInt(); ok && i >= 1 && int(i) <= len(t.array) {
+	// Find current key and return next.
+	// Only match array-part keys if the key is exactly an integer (not a
+	// float that happens to represent an integer).  Lua 5.4's next() does
+	// NOT coerce float keys — next(t, 1.0) errors even when t[1] exists.
+	if key.IsInt() {
+		if i := key.AsInt(); i >= 1 && int(i) <= len(t.array) {
 			// Currently in array part — find next non-nil entry
 			if kv, vv, ok := t.nextArrayEntry(int(i)); ok {
 				return kv, vv, nil
@@ -511,6 +514,18 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 				return kv, vv, nil
 			}
 			return Nil, Nil, nil
+		}
+	}
+
+	// Reject float keys that represent integer values.  Table storage
+	// normalises such floats to integers (via hashKey), so a float like 0.0
+	// would incorrectly match the stored integer key 0.  Lua 5.4's next()
+	// treats float-typed keys as distinct from integer-typed keys.
+	if key.IsFloat() {
+		f := key.AsFloat()
+		if i := int64(f); float64(i) == f {
+			// This float equals an integer — it can never be a real key.
+			return Nil, Nil, fmt.Errorf("invalid key to 'next'")
 		}
 	}
 

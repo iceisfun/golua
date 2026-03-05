@@ -422,11 +422,11 @@ func tableMove(v *vm.VM) int {
 		if e-f >= 0 {
 			dest_end := tt + (e - f)
 			if (e-f > 0) && (dest_end < tt) {
-				panic("destination wrap around")
+				panic("bad argument #4 to 'move' (destination wrap around)")
 			}
 			// Also check against math.MaxInt64
 			if tt > 0 && e-f > math.MaxInt64-tt {
-				panic("destination wrap around")
+				panic("bad argument #4 to 'move' (destination wrap around)")
 			}
 		}
 

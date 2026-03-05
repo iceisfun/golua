@@ -28,6 +28,9 @@ func getInt(v *vm.VM, idx int, fname string) int64 {
 	if i, ok := val.ToInt(); ok {
 		return i
 	}
+	if val.IsNumber() {
+		panic(fmt.Sprintf("bad argument #%d to '%s' (number has no integer representation)", idx, fname))
+	}
 	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, val.Type()))
 }
 
