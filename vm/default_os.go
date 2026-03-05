@@ -79,8 +79,11 @@ func (p *DefaultOsProvider) Date(format string, timestamp int64) (string, error)
 }
 
 // DateTable returns a map of date/time components for the given timestamp.
-func (p *DefaultOsProvider) DateTable(timestamp int64) map[string]int {
+func (p *DefaultOsProvider) DateTable(timestamp int64, utc bool) map[string]int {
 	t := time.Unix(timestamp, 0)
+	if utc {
+		t = t.UTC()
+	}
 
 	wday := int(t.Weekday()) + 1 // Lua: Sunday = 1
 	yday := t.YearDay()

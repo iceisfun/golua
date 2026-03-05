@@ -153,12 +153,14 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 
 		// Check for "*t" format — return a table
 		checkFmt := format
+		utc := false
 		if len(checkFmt) > 0 && checkFmt[0] == '!' {
+			utc = true
 			checkFmt = checkFmt[1:]
 		}
 
 		if checkFmt == "*t" {
-			dt := provider.DateTable(timestamp)
+			dt := provider.DateTable(timestamp, utc)
 			t := vm.NewEmptyTable()
 			t.SetString("year", vm.NewInt(int64(dt["year"])))
 			t.SetString("month", vm.NewInt(int64(dt["month"])))

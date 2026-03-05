@@ -29,7 +29,8 @@ type LuaOsProvider interface {
 
 	// DateTable returns a table of date/time components for the given timestamp.
 	// Keys: "year", "month", "day", "hour", "min", "sec", "wday", "yday", "isdst"
-	DateTable(timestamp int64) map[string]int
+	// If utc is true, the components are in UTC; otherwise local time.
+	DateTable(timestamp int64, utc bool) map[string]int
 
 	// Getenv returns the value of an environment variable.
 	Getenv(name string) (string, bool)
