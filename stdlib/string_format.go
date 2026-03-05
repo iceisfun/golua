@@ -90,8 +90,13 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
 		case 'o', 'x', 'X':
-			goSpec := spec + string(specChar)
+			goSpec := spec
 			if i, ok := val.ToInt(); ok {
+				// C printf: # flag has no effect when value is 0
+				if uint64(i) == 0 {
+					goSpec = strings.Replace(goSpec, "#", "", 1)
+				}
+				goSpec += string(specChar)
 				result.WriteString(fmt.Sprintf(goSpec, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number has no integer representation)", argIdx+1))
