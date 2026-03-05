@@ -190,6 +190,10 @@ func (p *parser) parseBlock() *ast.Block {
 		if p.err != nil {
 			break
 		}
+		// return is the last statement in a block; no more statements allowed
+		if _, ok := s.(*ast.ReturnStmt); ok {
+			break
+		}
 	}
 	return block
 }
