@@ -122,11 +122,13 @@ func (vm *VM) CheckInterrupt() error {
 
 // execute runs the current call frame until it returns.
 func (vm *VM) execute() ([]Value, error) {
+	frame := &vm.callStack[len(vm.callStack)-1]
+	proto := frame.closure.Proto
+	code := proto.Code
+	consts := frame.closure.ConstValues()
+
 	for {
-		frame := &vm.callStack[len(vm.callStack)-1]
-		proto := frame.closure.Proto
-		code := proto.Code
-		consts := frame.closure.ConstValues()
+		frame = &vm.callStack[len(vm.callStack)-1]
 
 		if frame.pc >= len(code) {
 			return nil, nil
@@ -140,9 +142,6 @@ func (vm *VM) execute() ([]Value, error) {
 			if vm.checkLineCountHooks(proto, frame.pc-1) {
 				// Re-fetch after hook callback may have modified call stack
 				frame = &vm.callStack[len(vm.callStack)-1]
-				proto = frame.closure.Proto
-				code = proto.Code
-				consts = frame.closure.ConstValues()
 			}
 		}
 
@@ -234,9 +233,6 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 				frame = &vm.callStack[len(vm.callStack)-1]
-				proto = frame.closure.Proto
-				code = proto.Code
-				consts = frame.closure.ConstValues()
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
@@ -257,9 +253,6 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 				frame = &vm.callStack[len(vm.callStack)-1]
-				proto = frame.closure.Proto
-				code = proto.Code
-				consts = frame.closure.ConstValues()
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
@@ -281,9 +274,6 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 				frame = &vm.callStack[len(vm.callStack)-1]
-				proto = frame.closure.Proto
-				code = proto.Code
-				consts = frame.closure.ConstValues()
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
@@ -1028,8 +1018,10 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 			}
 			if fn.IsFunction() {
-				// We broke out of the inner loop to continue the outer instruction loop
-				// because IsFunction setup sets frame.pc=0.
+				// Tailcall replaced the closure; refresh proto/code/consts
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
 				continue
 			}
 
