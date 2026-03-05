@@ -50,18 +50,17 @@ func (t *Table) VMRef() *VM { return t.vmRef }
 
 // NewEmptyTable creates a new empty table.
 func NewEmptyTable() *Table {
-	return &Table{
-		hash: make(map[any]Value),
-	}
+	return &Table{}
 }
 
 // NewTableWithSize creates a table with preallocated space.
 func NewTableWithSize(narray, nhash int) *Table {
-	t := &Table{
-		hash: make(map[any]Value, nhash),
-	}
+	t := &Table{}
 	if narray > 0 {
 		t.array = make([]Value, 0, narray)
+	}
+	if nhash > 0 {
+		t.hash = make(map[any]Value, nhash)
 	}
 	return t
 }
@@ -72,6 +71,14 @@ func (t *Table) ensureStrHash() map[string]Value {
 		t.strHash = make(map[string]Value)
 	}
 	return t.strHash
+}
+
+// ensureHash lazily initializes the general hash map.
+func (t *Table) ensureHash() map[any]Value {
+	if t.hash == nil {
+		t.hash = make(map[any]Value)
+	}
+	return t.hash
 }
 
 // ensureIntHash lazily initializes the integer hash map.
@@ -141,12 +148,15 @@ func hashKey(v Value) any {
 // the ordered keys slice in sync.
 func (t *Table) setHash(k any, value Value) {
 	if value.IsNil() {
-		if _, exists := t.hash[k]; exists {
-			delete(t.hash, k)
-			t.deadKeys++
+		if t.hash != nil {
+			if _, exists := t.hash[k]; exists {
+				delete(t.hash, k)
+				t.deadKeys++
+			}
 		}
 	} else {
-		if _, exists := t.hash[k]; !exists {
+		h := t.ensureHash()
+		if _, exists := h[k]; !exists {
 			revived := false
 			if t.deadKeys > 0 {
 				for _, hk := range t.keys {
@@ -161,7 +171,7 @@ func (t *Table) setHash(k any, value Value) {
 				t.keys = append(t.keys, k)
 			}
 		}
-		t.hash[k] = value
+		h[k] = value
 	}
 }
 
@@ -227,6 +237,9 @@ func (t *Table) getKeyValue(k any) (Value, bool) {
 		v, exists := t.intHash[kk]
 		return v, exists
 	default:
+		if t.hash == nil {
+			return Nil, false
+		}
 		v, exists := t.hash[k]
 		return v, exists
 	}
@@ -265,9 +278,11 @@ func (t *Table) Get(key Value) Value {
 	}
 
 	// General hash lookup (booleans, floats, tables, functions, etc.)
-	k := hashKey(key)
-	if v, ok := t.hash[k]; ok {
-		return v
+	if t.hash != nil {
+		k := hashKey(key)
+		if v, ok := t.hash[k]; ok {
+			return v
+		}
 	}
 	return Nil
 }
@@ -400,13 +415,15 @@ func (t *Table) rehashToArray() {
 			}
 		}
 		// Fall back to general hash (for legacy or float-that-is-integer keys)
-		if v, ok := t.hash[nextIdx]; ok && !v.IsNil() {
-			t.array = append(t.array, v)
-			delete(t.hash, nextIdx)
-			t.removeKey(nextIdx)
-		} else {
-			break
+		if t.hash != nil {
+			if v, ok := t.hash[nextIdx]; ok && !v.IsNil() {
+				t.array = append(t.array, v)
+				delete(t.hash, nextIdx)
+				t.removeKey(nextIdx)
+				continue
+			}
 		}
+		break
 	}
 }
 
