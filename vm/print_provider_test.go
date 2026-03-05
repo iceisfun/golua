@@ -95,7 +95,7 @@ func TestPrintProviderInterceptsPrint(t *testing.T) {
 
 func TestPrintProviderInterceptsWarn(t *testing.T) {
 	cap := &capturePrintProvider{}
-	runLuaWithProvider(t, `warn("danger")`, cap)
+	runLuaWithProvider(t, `warn("@on"); warn("danger")`, cap)
 
 	if len(cap.warns) != 1 {
 		t.Fatalf("expected 1 warn, got %d", len(cap.warns))
@@ -108,6 +108,7 @@ func TestPrintProviderInterceptsWarn(t *testing.T) {
 func TestPrintProviderWarnOff(t *testing.T) {
 	cap := &capturePrintProvider{}
 	runLuaWithProvider(t, `
+		warn("@on")
 		warn("first")
 		warn("@off")
 		warn("silenced")
@@ -137,14 +138,17 @@ func TestDefaultPrintProviderExists(t *testing.T) {
 
 func TestWarnEnabledDefault(t *testing.T) {
 	v := New()
-	if !v.WarnEnabled() {
-		t.Error("expected WarnEnabled to be true by default")
+	if v.WarnEnabled() {
+		t.Error("expected WarnEnabled to be false by default (Lua 5.4 starts with warnings off)")
 	}
 }
 
 func TestWarnEnabledPerVM(t *testing.T) {
 	v1 := New()
 	v2 := New()
+
+	v1.SetWarnEnabled(true)
+	v2.SetWarnEnabled(true)
 
 	v1.SetWarnEnabled(false)
 

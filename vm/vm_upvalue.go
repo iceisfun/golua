@@ -138,16 +138,22 @@ func (vm *VM) CloseAllTBC() {
 	vm.tbcVars = nil
 	// Protect each handler individually so all handlers run even if
 	// one errors. The last error is re-raised so coroutine.close can
-	// report it.
+	// report it. Chain errVal through handlers (Lua 5.4 behavior).
 	var lastPanic interface{}
+	errVal := Nil
 	for i := len(tbcToClose) - 1; i >= 0; i-- {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
 					lastPanic = r
+					if le, ok := r.(*LuaError); ok {
+						errVal = le.Value
+					} else {
+						errVal = NewString(fmt.Sprintf("%v", r))
+					}
 				}
 			}()
-			vm.callCloseMetamethod(tbcToClose[i], Nil)
+			vm.callCloseMetamethod(tbcToClose[i], errVal)
 		}()
 	}
 	if lastPanic != nil {

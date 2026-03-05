@@ -669,8 +669,38 @@ func coClose(v *vm.VM) int {
 	return 1
 }
 
-// coroutine.isyieldable() -> boolean
+// coroutine.isyieldable([co]) -> boolean
 func coIsYieldable(v *vm.VM) int {
+	arg := v.Get(1)
+	if arg.IsTable() {
+		tbl := arg.AsTable()
+		if tbl != nil && tbl.IsThread() {
+			// Check coroutine VM ref first (set after first resume)
+			if coVM := tbl.VMRef(); coVM != nil {
+				v.Set(0, vm.NewBool(coVM.IsYieldableContext()))
+				return 1
+			}
+			// No VM ref yet — check coroutine status via ID
+			idVal := tbl.Get(vm.NewString("__coroutine_id"))
+			if !idVal.IsNil() {
+				id, _ := idVal.ToInt()
+				coroutinesMu.Lock()
+				co := coroutines[int(id)]
+				coroutinesMu.Unlock()
+				if co != nil {
+					co.mu.Lock()
+					status := co.status
+					co.mu.Unlock()
+					// Suspended (never-resumed) coroutines are yieldable
+					v.Set(0, vm.NewBool(status == statusSuspended))
+					return 1
+				}
+				// Dead/collected coroutine
+				v.Set(0, vm.False)
+				return 1
+			}
+		}
+	}
 	v.Set(0, vm.NewBool(v.IsYieldableContext()))
 	return 1
 }

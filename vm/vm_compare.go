@@ -152,5 +152,10 @@ func (vm *VM) concat(v1, v2 Value) (Value, error) {
 		return vm.callMetamethod("concat", mm, v1, v2)
 	}
 
-	return Nil, vm.runtimeError("attempt to concatenate a %s value", v1.Type())
+	// Report the non-concatenable operand (not the valid string/number one)
+	errType := v1.Type()
+	if v1.IsString() || v1.IsNumber() {
+		errType = v2.Type()
+	}
+	return Nil, vm.runtimeError("attempt to concatenate a %s value", errType)
 }

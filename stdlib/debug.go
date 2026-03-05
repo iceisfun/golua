@@ -80,10 +80,47 @@ func openDebug(v *vm.VM) {
 	v.SetGlobal("debug", vm.NewTable(debug))
 }
 
-// debug.traceback([message [, level]])
+// debug.traceback([thread,] [message [, level]])
 // If message is non-nil and non-string, it is returned unchanged (Lua 5.4).
 func luaDebugTraceback(v *vm.VM) int {
-	msg := v.Get(1)
+	arg1 := v.Get(1)
+
+	// Check if first arg is a thread (coroutine)
+	if arg1.IsTable() {
+		tbl := arg1.AsTable()
+		if tbl != nil && tbl.IsThread() {
+			targetVM := tbl.VMRef()
+			// Shift args: (thread, msg, level) → (msg, level)
+			msg := v.Get(2)
+			if !msg.IsNil() && !msg.IsString() {
+				v.Set(0, msg) // non-string, non-nil: return as-is
+				return 1
+			}
+			msgStr := ""
+			if msg.IsString() {
+				msgStr = msg.AsString()
+			}
+			level := 0
+			if !v.Get(3).IsNil() {
+				if l, ok := v.Get(3).ToInt(); ok {
+					level = int(l)
+				}
+			}
+			if targetVM == nil || targetVM.StackDepth() == 0 {
+				// Dead or never-resumed coroutine — empty traceback
+				if msgStr != "" {
+					v.Set(0, vm.NewString(msgStr+"\nstack traceback:"))
+				} else {
+					v.Set(0, vm.NewString("stack traceback:"))
+				}
+				return 1
+			}
+			v.Set(0, vm.NewString(targetVM.Traceback(msgStr, level)))
+			return 1
+		}
+	}
+
+	msg := arg1
 	if !msg.IsNil() && !msg.IsString() {
 		v.Set(0, msg)
 		return 1

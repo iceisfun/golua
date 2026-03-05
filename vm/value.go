@@ -254,6 +254,20 @@ func (v Value) AsNativeFunc() NativeFunc {
 	return nil
 }
 
+// rejectInfNan returns true if the trimmed string is an inf/nan token that
+// Go's strconv.ParseFloat would accept but Lua 5.4 must reject.
+func rejectInfNan(s string) bool {
+	lower := strings.ToLower(s)
+	if len(lower) == 0 {
+		return false
+	}
+	bare := lower
+	if bare[0] == '+' || bare[0] == '-' {
+		bare = bare[1:]
+	}
+	return strings.HasPrefix(bare, "inf") || strings.HasPrefix(bare, "nan")
+}
+
 // StringToNumericValue converts a string to a numeric Value, preserving the
 // integer/float distinction based on the string format.
 func StringToNumericValue(s string) (Value, bool) {
@@ -320,6 +334,11 @@ func StringToNumericValue(s string) (Value, bool) {
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return NewInt(i), true
 	}
+	// Reject textual inf/nan tokens — Go's strconv.ParseFloat accepts these
+	// but Lua 5.4 does not (arithmetic coercion must fail on these strings).
+	if rejectInfNan(s) {
+		return Nil, false
+	}
 	// Try float (accept ErrRange for overflow → ±Inf, matching Lua 5.4 coercion)
 	if f, err := strconv.ParseFloat(s, 64); err == nil || errors.Is(err, strconv.ErrRange) {
 		return NewFloat(f), true
@@ -338,6 +357,10 @@ func (v Value) ToNumber() (float64, bool) {
 	case typeString:
 		s := strings.TrimSpace(v.ptr.(string))
 		if s == "" {
+			return 0, false
+		}
+		// Reject textual inf/nan tokens
+		if rejectInfNan(s) {
 			return 0, false
 		}
 		// Try parsing as float (accept ErrRange for overflow → ±Inf)

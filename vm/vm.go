@@ -144,7 +144,7 @@ func New(opts ...VMOption) *VM {
 		stack:       make([]Value, 256),
 		callStack:   make([]callFrame, 0, 32),
 		globals:     NewEmptyTable(),
-		warnEnabled: true,
+		warnEnabled: false,
 		closeDepth:  new(int32),
 	}
 	for _, opt := range opts {

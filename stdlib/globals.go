@@ -86,12 +86,15 @@ func luaToString(v *vm.VM) int {
 		panic("bad argument #1 to 'tostring' (value expected)")
 	}
 	val := v.Get(1)
-	// Check for __tostring metamethod on tables and userdata
+	// Check for __tostring metamethod on tables, userdata, and type metatables
 	var mt vm.LuaTable
 	if val.IsTable() {
 		mt = val.AsTable().Metatable()
 	} else if ud := val.AsUserdata(); ud != nil {
 		mt = ud.Metatable()
+	}
+	if mt == nil {
+		mt = v.GetTypeMeta(val)
 	}
 	if mt != nil {
 		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
@@ -166,8 +169,11 @@ func luaToNumber(v *vm.VM) int {
 		}
 		// Lua rejects textual inf/nan tokens in tonumber input.
 		lower := strings.ToLower(trimmed)
-		switch lower {
-		case "inf", "+inf", "-inf", "nan", "+nan", "-nan":
+		bare := lower
+		if len(bare) > 0 && (bare[0] == '+' || bare[0] == '-') {
+			bare = bare[1:]
+		}
+		if strings.HasPrefix(bare, "inf") || strings.HasPrefix(bare, "nan") {
 			v.Set(0, vm.Nil)
 			return 1
 		}
@@ -405,9 +411,16 @@ func luaWarn(v *vm.VM) int {
 	if argc < 1 {
 		panic("bad argument #1 to 'warn' (string expected, got no value)")
 	}
+	// Lua 5.4: validate ALL arguments are strings before processing
 	first := v.Get(1)
 	if !first.IsString() {
 		panic(fmt.Sprintf("bad argument #1 to 'warn' (string expected, got %s)", first.Type()))
+	}
+	for i := 2; i <= argc; i++ {
+		arg := v.Get(i)
+		if !arg.IsString() {
+			panic(fmt.Sprintf("bad argument #%d to 'warn' (string expected, got %s)", i, arg.Type()))
+		}
 	}
 	s := first.AsString()
 	if len(s) > 0 && s[0] == '@' {
@@ -424,11 +437,7 @@ func luaWarn(v *vm.VM) int {
 		buf.WriteString("Lua warning: ")
 		buf.WriteString(s)
 		for i := 2; i <= argc; i++ {
-			arg := v.Get(i)
-			if !arg.IsString() {
-				panic(fmt.Sprintf("bad argument #%d to 'warn' (string expected, got %s)", i, arg.Type()))
-			}
-			buf.WriteString(arg.AsString())
+			buf.WriteString(v.Get(i).AsString())
 		}
 		v.Warn(buf.String())
 	}
@@ -685,6 +694,9 @@ func tolstring(v *vm.VM, val vm.Value) string {
 		mt = val.AsTable().Metatable()
 	} else if ud := val.AsUserdata(); ud != nil {
 		mt = ud.Metatable()
+	}
+	if mt == nil {
+		mt = v.GetTypeMeta(val)
 	}
 	if mt != nil {
 		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {

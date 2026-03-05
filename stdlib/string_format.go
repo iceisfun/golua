@@ -100,14 +100,8 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
 		case 'o', 'x', 'X':
-			goSpec := spec
 			if i, ok := val.ToInt(); ok {
-				// C printf: # flag has no effect when value is 0
-				if uint64(i) == 0 {
-					goSpec = strings.Replace(goSpec, "#", "", 1)
-				}
-				goSpec += string(specChar)
-				result.WriteString(fmt.Sprintf(goSpec, uint64(i)))
+				result.WriteString(formatIntHex(spec, specChar, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number has no integer representation)", argIdx+1))
 			} else {
@@ -150,7 +144,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 					if specChar == 'A' {
 						s = strings.ToUpper(s)
 					}
-					// Apply sign flags (+/space) — Go's %s won't handle these
+					// Apply sign flags (+/space)
 					if n >= 0 && !math.Signbit(n) {
 						if strings.Contains(widthSpec, "+") {
 							s = "+" + s
@@ -158,18 +152,20 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 							s = " " + s
 						}
 					}
-					// Strip sign flags from widthSpec since we handled them
-					cleanSpec := "%"
-					for _, c := range widthSpec[1:] {
-						if c != '+' && c != ' ' {
-							cleanSpec += string(c)
+					// Apply width with proper zero-padding (after sign+prefix)
+					width, leftAlign := parseFormatWidth(widthSpec)
+					if width > 0 && len(s) < width {
+						pad := width - len(s)
+						if leftAlign {
+							s = s + strings.Repeat(" ", pad)
+						} else if strings.Contains(widthSpec, "0") {
+							// Zero-pad after sign and "0x"/"0X" prefix
+							s = hexFloatZeroPad(s, width)
+						} else {
+							s = strings.Repeat(" ", pad) + s
 						}
 					}
-					if cleanSpec != "%" {
-						result.WriteString(fmt.Sprintf(cleanSpec+"s", s))
-					} else {
-						result.WriteString(s)
-					}
+					result.WriteString(s)
 				}
 			} else {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (number expected, got %s)", argIdx+1, val.Type()))
@@ -215,6 +211,83 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 	return result.String()
 }
 
+// hexFloatZeroPad inserts zero padding after the sign + "0x"/"0X" prefix
+// in a hex float string, matching C printf behavior for %0Na.
+func hexFloatZeroPad(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	// Find the position after sign + "0x"/"0X"
+	pos := 0
+	if pos < len(s) && (s[pos] == '-' || s[pos] == '+') {
+		pos++
+	}
+	if pos+1 < len(s) && s[pos] == '0' && (s[pos+1] == 'x' || s[pos+1] == 'X') {
+		pos += 2
+	}
+	pad := strings.Repeat("0", width-len(s))
+	return s[:pos] + pad + s[pos:]
+}
+
+// formatIntHex handles %o, %x, %X with proper C-compatible width calculation.
+// Go's fmt.Sprintf with # + 0 flags doesn't count the "0x" prefix in the width,
+// but C/Lua do. This function handles that case manually.
+func formatIntHex(spec string, conv byte, val uint64) string {
+	// Parse flags (before width digits)
+	hasHash := false
+	hasZero := false
+	for j := 1; j < len(spec); j++ {
+		c := spec[j]
+		if c == '#' || c == '0' || c == '-' || c == ' ' || c == '+' {
+			if c == '#' {
+				hasHash = true
+			}
+			if c == '0' {
+				hasZero = true
+			}
+		} else {
+			break // width digits start
+		}
+	}
+
+	// C printf: # flag has no effect when value is 0
+	if val == 0 {
+		hasHash = false
+	}
+
+	// If we have both # and 0 flags with a width for x/X, handle manually
+	// to ensure the 0x/0X prefix is counted in the width.
+	if hasHash && hasZero && (conv == 'x' || conv == 'X') {
+		width, leftAlign := parseFormatWidth(spec)
+		if width > 0 && !leftAlign {
+			// Format digits without prefix or padding
+			var digits string
+			if conv == 'X' {
+				digits = fmt.Sprintf("%X", val)
+			} else {
+				digits = fmt.Sprintf("%x", val)
+			}
+			prefix := "0x"
+			if conv == 'X' {
+				prefix = "0X"
+			}
+			totalLen := len(prefix) + len(digits)
+			if totalLen < width {
+				padding := strings.Repeat("0", width-totalLen)
+				return prefix + padding + digits
+			}
+			return prefix + digits
+		}
+	}
+
+	goSpec := spec
+	if !hasHash {
+		goSpec = strings.Replace(goSpec, "#", "", 1)
+	}
+	goSpec += string(conv)
+	return fmt.Sprintf(goSpec, val)
+}
+
 // normalizeHexExponent rewrites strconv hex-float exponents (+00, -04, ...)
 // to Lua-style minimal exponents (+0, -4, ...).
 func normalizeHexExponent(s string) string {
@@ -244,6 +317,15 @@ func normalizeHexExponent(s string) string {
 // strconv.FormatFloat which renormalizes on carry, this preserves C-style
 // output where the leading digit can be > 1 after rounding.
 func formatHexFloat(f float64, prec int) string {
+	// Handle subnormal floats: Go normalizes them (e.g., 0x1p-1074)
+	// but C/Lua uses denormalized form (e.g., 0x0.0000000000001p-1022).
+	bits := math.Float64bits(f)
+	biasedExp := int((bits >> 52) & 0x7ff)
+	mantissa := bits & ((1 << 52) - 1)
+	if biasedExp == 0 && mantissa != 0 {
+		return formatSubnormalHexFloat(f, mantissa, prec)
+	}
+
 	// Get the full-precision representation from Go
 	full := strconv.FormatFloat(f, 'x', -1, 64)
 	full = normalizeHexExponent(full)
@@ -319,6 +401,74 @@ func formatHexFloat(f float64, prec int) string {
 		}
 	}
 	fmt.Fprintf(&b, "p%+d", exp)
+	return b.String()
+}
+
+// formatSubnormalHexFloat formats a subnormal float64 in denormalized form
+// with exponent -1022, matching C/Lua 5.4 output.
+func formatSubnormalHexFloat(f float64, mantissa uint64, prec int) string {
+	neg := math.Signbit(f)
+	// Subnormal: leading digit is 0, mantissa has 13 hex digits (52 bits)
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+	b.WriteString("0x0.")
+
+	// Format 52-bit mantissa as 13 hex digits
+	hexDigits := fmt.Sprintf("%013x", mantissa)
+
+	if prec < 0 {
+		// Default: strip trailing zeros
+		hexDigits = strings.TrimRight(hexDigits, "0")
+		if hexDigits == "" {
+			hexDigits = "0"
+		}
+		b.WriteString(hexDigits)
+	} else if prec == 0 {
+		// No fractional digits — but we still need to round
+		b.Reset()
+		if neg {
+			b.WriteByte('-')
+		}
+		b.WriteString("0x0")
+		// Check if we need to round up (first hex digit >= 8)
+		if len(hexDigits) > 0 && hexCharToInt(hexDigits[0]) >= 8 {
+			b.Reset()
+			if neg {
+				b.WriteByte('-')
+			}
+			b.WriteString("0x1")
+		}
+	} else {
+		// Specific precision: pad or truncate with rounding
+		digits := make([]int, len(hexDigits))
+		for i, c := range hexDigits {
+			digits[i] = hexCharToInt(byte(c))
+		}
+		for len(digits) <= prec {
+			digits = append(digits, 0)
+		}
+		if prec < len(digits) {
+			roundDigit := digits[prec]
+			digits = digits[:prec]
+			if roundDigit >= 8 {
+				carry := 1
+				for i := len(digits) - 1; i >= 0 && carry > 0; i-- {
+					digits[i] += carry
+					if digits[i] > 15 {
+						digits[i] = 0
+					} else {
+						carry = 0
+					}
+				}
+			}
+		}
+		for _, d := range digits[:prec] {
+			b.WriteByte(intToHexChar(d))
+		}
+	}
+	b.WriteString("p-1022")
 	return b.String()
 }
 
