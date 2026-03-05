@@ -64,6 +64,11 @@ const (
 	OffsetSC  = MaxArgC >> 1  // 127
 	OffsetSJ  = MaxArgSJ >> 1
 
+	// MaxSJ is the largest positive sJ offset that fits in the 25-bit
+	// signed jump field (isJ format). MinSJ is the most negative.
+	MaxSJ = MaxArgSJ - OffsetSJ // +16777216  = 1<<24
+	MinSJ = -OffsetSJ           // -16777215  = -((1<<24)-1)
+
 	// NoReg is the invalid-register sentinel. It equals MaxArgA (255),
 	// the largest value that fits in the 8-bit A field, and is used to
 	// signal "no register" in instruction operands.

@@ -675,7 +675,11 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	// Jump back to condition
 	backJump := fs.emitJump(line)
 	offset := loopStart - (fs.pc()) // negative
-	fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
+	if offset > MaxSJ || offset < MinSJ {
+		c.error(nil, "control structure too long")
+	} else {
+		fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
+	}
 
 	c.leaveScope(line)
 	c.patchJump(exitJump)
@@ -714,7 +718,11 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	fs.emit(ABC(OP_TEST, reg, 0, 0, 0), condLine) // skip next if truthy → exit
 	backJump := fs.emitJump(condLine)             // jump back (cond is false)
 	offset := loopStart - fs.pc()
-	fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
+	if offset > MaxSJ || offset < MinSJ {
+		c.error(nil, "control structure too long")
+	} else {
+		fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
+	}
 
 	// Fall through here when condition is true (exit loop)
 	c.leaveScope(line)
@@ -823,6 +831,9 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 
 	// Patch FORPREP to jump to FORLOOP
 	bodyLen := loopPC - forPrepPC - 1
+	if bodyLen > MaxArgBx {
+		c.error(nil, "control structure too long")
+	}
 	fs.proto.Code[forPrepPC] = fs.proto.Code[forPrepPC].SetBx(bodyLen)
 
 	// Patch FORLOOP to jump back
@@ -929,10 +940,16 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 
 	// Patch TFORPREP to jump to TFORCALL
 	bodyLen := tforCallPC - tforPrepPC - 1
+	if bodyLen > MaxArgBx {
+		c.error(nil, "control structure too long")
+	}
 	fs.proto.Code[tforPrepPC] = fs.proto.Code[tforPrepPC].SetBx(bodyLen)
 
 	// Patch TFORLOOP to jump back to loop body (after TFORPREP)
 	backLen := tforLoopPC - tforPrepPC - 1
+	if backLen > MaxArgBx {
+		c.error(nil, "control structure too long")
+	}
 	fs.proto.Code[tforLoopPC] = fs.proto.Code[tforLoopPC].SetBx(backLen)
 
 	c.leaveScope(line)
@@ -974,7 +991,11 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 			}
 			jpc := fs.emitJump(line)
 			offset := lbl.pc - (jpc + 1)
-			fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
+			if offset > MaxSJ || offset < MinSJ {
+				c.error(nil, "control structure too long")
+			} else {
+				fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
+			}
 			return
 		}
 	}
@@ -1054,7 +1075,11 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool) {
 				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(labelNLocals)
 			}
 			offset := fs.pc() - (pg.pc + 1)
-			fs.proto.Code[pg.pc] = fs.proto.Code[pg.pc].SetSJ(offset)
+			if offset > MaxSJ || offset < MinSJ {
+				c.error(nil, "control structure too long")
+			} else {
+				fs.proto.Code[pg.pc] = fs.proto.Code[pg.pc].SetSJ(offset)
+			}
 		} else {
 			remaining = append(remaining, pg)
 		}

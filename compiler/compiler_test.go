@@ -711,6 +711,49 @@ func TestAssignMethodCallRegAlloc(t *testing.T) {
 	}
 }
 
+// TestControlStructureTooLong_ForNum verifies that the compiler rejects a
+// numeric for loop whose body exceeds the maximum unsigned Bx field (17-bit,
+// MaxArgBx = 131071). Each "a=1;" compiles to 1 instruction (LOADI into a
+// local register), so MaxArgBx+1 repetitions produces a bodyLen that overflows.
+func TestControlStructureTooLong_ForNum(t *testing.T) {
+	// Build a for-loop whose body has exactly MaxArgBx+1 instructions.
+	// "local a\n for i=1,1 do <body> end"
+	// where body = "a=1\n" repeated (MaxArgBx+1) times.
+	// Each "a=1" into an outer local is 1 LOADI instruction.
+	n := MaxArgBx + 1 // 131072
+	body := strings.Repeat("a=1\n", n)
+	src := "local a\nfor i=1,1 do\n" + body + "end\n"
+
+	block, err := parser.Parse("<test>", src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = Compile("<test>", block)
+	if err == nil {
+		t.Fatal("expected compile error for control structure too long")
+	}
+	if !strings.Contains(err.Error(), "too long") {
+		t.Fatalf("expected 'too long' in error, got: %v", err)
+	}
+}
+
+// TestControlStructureTooLong_ForNumJustFits verifies that a numeric for loop
+// with exactly MaxArgBx body instructions compiles successfully.
+func TestControlStructureTooLong_ForNumJustFits(t *testing.T) {
+	n := MaxArgBx // 131071 -- exactly at the limit
+	body := strings.Repeat("a=1\n", n)
+	src := "local a\nfor i=1,1 do\n" + body + "end\n"
+
+	block, err := parser.Parse("<test>", src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	_, err = Compile("<test>", block)
+	if err != nil {
+		t.Fatalf("unexpected compile error: %v", err)
+	}
+}
+
 // TestAllLuaTestFiles tries to compile all the Lua test files that the parser handles.
 func TestCompileLuaTestFiles(t *testing.T) {
 	// These are the test files from the Lua 5.5 test suite that the parser can handle.

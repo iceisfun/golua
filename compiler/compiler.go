@@ -661,6 +661,10 @@ func (fs *funcState) emitJump(line int) int {
 func (c *compiler) patchJump(jpc int) {
 	fs := c.fs
 	offset := fs.pc() - (jpc + 1) // target - (jpc + 1)
+	if offset > MaxSJ || offset < MinSJ {
+		c.error(nil, "control structure too long")
+		return
+	}
 	fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
 }
 
