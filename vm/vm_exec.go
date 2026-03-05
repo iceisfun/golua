@@ -643,6 +643,17 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_CONCAT:
 			a, b := inst.A(), inst.B()
+
+			// Fast path: 2-operand string concat (most common case: s = s .. "x")
+			if b == 2 {
+				v1 := vm.stack[frame.base+a]
+				v2 := vm.stack[frame.base+a+1]
+				if v1.typ == typeString && v2.typ == typeString {
+					vm.stack[frame.base+a] = NewString(v1.ptr.(string) + v2.ptr.(string))
+					break
+				}
+			}
+
 			// Concatenate b values starting at R[A] which ends at R[A+b-1]
 			// The original implementation was building a string directly.
 			// To support __concat, we must check if simplification is possible.
