@@ -471,14 +471,8 @@ func parseInt(s string) (int64, error) {
 		}
 		return int64(u), nil
 	}
-	// Decimal: try ParseInt first; on overflow try ParseUint.
-	v, err := strconv.ParseInt(s, 10, 64)
-	if err == nil {
-		return v, nil
-	}
-	u, err2 := strconv.ParseUint(s, 10, 64)
-	if err2 != nil {
-		return 0, err // return original error
-	}
-	return int64(u), nil
+	// Decimal: parse as signed int64. On overflow, return error so
+	// the caller (scanNumberBody) promotes to float, matching Lua 5.4
+	// which converts overflowing decimal literals to float.
+	return strconv.ParseInt(s, 10, 64)
 }
