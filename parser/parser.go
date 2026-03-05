@@ -370,6 +370,19 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 		names = append(names, p.parseName())
 		attribs = append(attribs, p.parseAttribOr(defAttrib))
 	}
+
+	// Lua 5.4: at most one <close> variable per local statement.
+	closeCount := 0
+	for _, a := range attribs {
+		if a == "close" {
+			closeCount++
+		}
+	}
+	if closeCount > 1 {
+		p.errorf("multiple to-be-closed variables in local list")
+		return nil
+	}
+
 	var values []ast.Expr
 	if p.match(token.Type('=')) {
 		values = p.parseExprList()
