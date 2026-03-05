@@ -549,7 +549,10 @@ func luaSelect(v *vm.VM) int {
 
 	i, ok := idx.ToInt()
 	if !ok {
-		panic("bad argument #1 to 'select' (number expected)")
+		if idx.IsNumber() {
+			panic("bad argument #1 to 'select' (number has no integer representation)")
+		}
+		panic("bad argument #1 to 'select' (number expected, got " + idx.Type() + ")")
 	}
 
 	if i < 0 {
