@@ -447,34 +447,43 @@ func validateConversion(spec string, conv byte) {
 	hasDot := j < len(spec) && spec[j] == '.'
 	hasModifiers := len(spec) > 1
 
+	// Lua 5.4 valid flags per conversion:
+	//   a/A/e/E/f/F/g/G: "-+#0 " (all flags), precision allowed
+	//   o/x/X:           "-#0"   (no + or space), precision allowed
+	//   d/i:             "-+0 "  (no #), precision allowed
+	//   u:               "-0"    (no +, space, or #), precision allowed
+	//   c/p/s:           "-"     only
+	//   c/p: no precision; s: precision allowed
 	switch conv {
 	case 'c':
-		// %c allows width and '-' flag only. No precision, no '0', no '#', no '+', no ' '.
-		if hasDot || strings.ContainsAny(flags, "0# +") {
+		if hasDot || strings.ContainsAny(flags, "0#+ ") {
 			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
 		}
 	case 'q':
-		// %q does not accept any modifiers
 		if hasModifiers {
 			panic("cannot have modifiers with '%q'")
 		}
 	case 's':
-		// %s: no '0' flag, no '#' flag
-		if strings.ContainsAny(flags, "0#") {
+		if strings.ContainsAny(flags, "0#+ ") {
 			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
 		}
-	case 'd', 'i', 'u':
-		// %d/%i/%u: no '#' flag
+	case 'o', 'x', 'X':
+		if strings.ContainsAny(flags, "+ ") {
+			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+		}
+	case 'd', 'i':
 		if strings.Contains(flags, "#") {
 			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
 		}
+	case 'u':
+		if strings.ContainsAny(flags, "#+ ") {
+			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+		}
 	case 'p':
-		// %p: no precision
-		if hasDot {
+		if hasDot || strings.ContainsAny(flags, "0#+ ") {
 			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
 		}
 	case 'F':
-		// %F is not valid in Lua 5.4
 		panic(fmt.Sprintf("invalid conversion '%%%c'", conv))
 	}
 }
