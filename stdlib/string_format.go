@@ -33,8 +33,14 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		}
 
 		if i+1 >= len(format) {
-			result.WriteByte('%')
-			break
+			// Trailing % with no conversion specifier.
+			// Lua 5.4 checks for an argument first, then errors on the
+			// missing conversion character.
+			if argIdx >= len(vals) {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (no value)", argIdx+2))
+			}
+			argIdx++
+			panic("invalid conversion '%\x00' to 'format'")
 		}
 
 		i++
@@ -53,6 +59,10 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			i++
 		}
 		if i >= len(format) {
+			if argIdx >= len(vals) {
+				panic(fmt.Sprintf("bad argument #%d to 'format' (no value)", argIdx+2))
+			}
+			argIdx++
 			panic(fmt.Sprintf("invalid conversion '%s'", spec))
 		}
 
