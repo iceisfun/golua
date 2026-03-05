@@ -390,7 +390,7 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 | `glob`      | No                 | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`) |
 | `io`        | `LuaIoProvider`    | File I/O (absent by default)                                                       |
 | `os`        | `LuaOsProvider`    | OS functions: clock, time, date, getenv (absent by default)                        |
-| `package`   | No                 | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers`  |
+| `package`   | No                 | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers` |
 | `debug`     | `LuaDebugProvider` | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)   |
 | `chan`      | `LuaChanProvider`  | Go↔Lua message passing channels (absent by default)                                |
 | `time`      | `LuaTimeProvider`  | Millisecond timing: now, since, periodic tick (absent by default)                  |
@@ -400,23 +400,23 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 GoLua is sandboxed by default. The VM starts with no access to the host system. Capabilities are granted explicitly by the host via providers.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                                    Host (Go)                                        │
-│                                                                                     │
-│  ┌────────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐ ┌─────────┐ │
-│  │CodeProvider│ │IoProvider│ │OsProvider│ │DebugProvider│ │ChanProvider│ │  Time   │ │
-│  │ (optional) │ │(optional)│ │(optional)│ │ (optional) │ │ (optional) │ │(optional│ │
-│  └─────┬──────┘ └────┬─────┘ └────┬─────┘ └─────┬──────┘ └─────┬──────┘ └────┬────┘ │
-│        │             │            │              │              │             │      │
-│  ┌─────▼─────────────▼────────────▼──────────────▼──────────────▼─────────────▼──┐   │
-│  │                              VM  (sandbox)                                    │   │
-│  │                                                                               │   │
-│  │  string, math, table, coroutine, utf8, bit32, glob, package                   │   │
-│  │  io*, os*, debug*, chan*, time*                  (* = provider-gated)          │   │
-│  │  require → CodeProvider (Lua file searcher)                                   │   │
-│  │  print/warn → PrintProvider (or stdout/stderr fallback)                       │   │
-│  └───────────────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│                                    Host (Go)                                          │
+│                                                                                       │
+│  ┌────────────┐ ┌──────────┐ ┌──────────┐ ┌─────────────┐ ┌────────────┐ ┌──────────┐ │
+│  │CodeProvider│ │IoProvider│ │OsProvider│ │DebugProvider│ │ChanProvider│ │  Time    │ │
+│  │ (optional) │ │(optional)│ │(optional)│ │ (optional)  │ │ (optional) │ │(optional)│ │
+│  └─────┬──────┘ └────┬─────┘ └────┬─────┘ └──────┬──────┘ └─────┬──────┘ └────┬─────┘ │
+│        │             │            │              │              │             │       │
+│  ┌─────▼─────────────▼────────────▼──────────────▼──────────────▼─────────────▼──┐    │
+│  │                              VM  (sandbox)                                    │    │
+│  │                                                                               │    │
+│  │  string, math, table, coroutine, utf8, bit32, glob, package                   │    │
+│  │  io*, os*, debug*, chan*, time*                  (* = provider-gated)         │    │
+│  │  require → CodeProvider (Lua file searcher)                                   │    │
+│  │  print/warn → PrintProvider (or stdout/stderr fallback)                       │    │
+│  └───────────────────────────────────────────────────────────────────────────────┘    │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - No filesystem access unless explicitly provided
