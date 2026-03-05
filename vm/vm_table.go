@@ -41,7 +41,13 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 // tableGetString gets a value from a table by string key, handling __index metamethod
 func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
-		val := t.Get(NewString(key))
+		// Fast path: use *Table.GetString to avoid NewString allocation
+		var val Value
+		if ct, ok := t.(*Table); ok {
+			val = ct.GetString(key)
+		} else {
+			val = t.Get(NewString(key))
+		}
 		if !val.IsNil() {
 			return val, nil
 		}
@@ -77,7 +83,13 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 // tableGetInt gets a value from a table by int key, handling __index metamethod
 func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
-		val := t.Get(NewInt(int64(key)))
+		// Fast path: use *Table.GetInt to avoid NewInt/hashKey overhead
+		var val Value
+		if ct, ok := t.(*Table); ok {
+			val = ct.GetInt(key)
+		} else {
+			val = t.Get(NewInt(int64(key)))
+		}
 		if !val.IsNil() {
 			return val, nil
 		}
@@ -200,19 +212,50 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 
 // tableSetString sets a value in a table by string key, handling __newindex metamethod
 func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
-	keyVal := NewString(key)
 	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
-		// Check if key already exists (raw access)
+		// Fast path: use *Table methods to avoid NewString allocation
+		if ct, ok := t.(*Table); ok {
+			existing := ct.GetString(key)
+			if !existing.IsNil() {
+				ct.SetString(key, value)
+				return nil
+			}
+
+			mt := ct.Metatable()
+			if mt == nil {
+				ct.SetString(key, value)
+				return nil
+			}
+
+			newindex := mt.Get(metaNewIndex)
+			if newindex.IsNil() {
+				ct.SetString(key, value)
+				return nil
+			}
+
+			if newindex.IsTable() {
+				t = newindex.AsTable()
+				continue
+			}
+
+			if newindex.IsFunction() || newindex.IsNativeFunc() {
+				_, err := vm.callMetamethod3("newindex", newindex, NewTable(t), NewString(key), value)
+				return err
+			}
+
+			return fmt.Errorf("'__newindex' is not a table or function")
+		}
+
+		// Slow path: generic LuaTable interface
+		keyVal := NewString(key)
 		existing := t.Get(keyVal)
 		if !existing.IsNil() {
-			// Key exists, set directly
 			if err := t.Set(keyVal, value); err != nil {
 				return err
 			}
 			return nil
 		}
 
-		// Key doesn't exist, check for __newindex metamethod
 		mt := t.Metatable()
 		if mt == nil {
 			if err := t.Set(keyVal, value); err != nil {
@@ -230,13 +273,11 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 		}
 
 		if newindex.IsTable() {
-			// __newindex is a table, follow the chain
 			t = newindex.AsTable()
 			continue
 		}
 
 		if newindex.IsFunction() || newindex.IsNativeFunc() {
-			// __newindex is a function, call it with (table, key, value)
 			_, err := vm.callMetamethod3("newindex", newindex, NewTable(t), keyVal, value)
 			return err
 		}
@@ -248,19 +289,50 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 
 // tableSetInt sets a value in a table by int key, handling __newindex metamethod
 func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
-	keyVal := NewInt(int64(key))
 	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
-		// Check if key already exists (raw access)
+		// Fast path: use *Table methods to avoid NewInt/hashKey overhead
+		if ct, ok := t.(*Table); ok {
+			existing := ct.GetInt(key)
+			if !existing.IsNil() {
+				ct.SetInt(key, value)
+				return nil
+			}
+
+			mt := ct.Metatable()
+			if mt == nil {
+				ct.SetInt(key, value)
+				return nil
+			}
+
+			newindex := mt.Get(metaNewIndex)
+			if newindex.IsNil() {
+				ct.SetInt(key, value)
+				return nil
+			}
+
+			if newindex.IsTable() {
+				t = newindex.AsTable()
+				continue
+			}
+
+			if newindex.IsFunction() || newindex.IsNativeFunc() {
+				_, err := vm.callMetamethod3("newindex", newindex, NewTable(t), NewInt(int64(key)), value)
+				return err
+			}
+
+			return fmt.Errorf("'__newindex' is not a table or function")
+		}
+
+		// Slow path: generic LuaTable interface
+		keyVal := NewInt(int64(key))
 		existing := t.Get(keyVal)
 		if !existing.IsNil() {
-			// Key exists, set directly
 			if err := t.Set(keyVal, value); err != nil {
 				return err
 			}
 			return nil
 		}
 
-		// Key doesn't exist, check for __newindex metamethod
 		mt := t.Metatable()
 		if mt == nil {
 			if err := t.Set(keyVal, value); err != nil {
@@ -278,13 +350,11 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 		}
 
 		if newindex.IsTable() {
-			// __newindex is a table, follow the chain
 			t = newindex.AsTable()
 			continue
 		}
 
 		if newindex.IsFunction() || newindex.IsNativeFunc() {
-			// __newindex is a function, call it with (table, key, value)
 			_, err := vm.callMetamethod3("newindex", newindex, NewTable(t), keyVal, value)
 			return err
 		}

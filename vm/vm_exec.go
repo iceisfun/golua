@@ -126,6 +126,7 @@ func (vm *VM) execute() ([]Value, error) {
 		frame := &vm.callStack[len(vm.callStack)-1]
 		proto := frame.closure.Proto
 		code := proto.Code
+		consts := frame.closure.ConstValues()
 
 		if frame.pc >= len(code) {
 			return nil, nil
@@ -141,6 +142,7 @@ func (vm *VM) execute() ([]Value, error) {
 				frame = &vm.callStack[len(vm.callStack)-1]
 				proto = frame.closure.Proto
 				code = proto.Code
+				consts = frame.closure.ConstValues()
 			}
 		}
 
@@ -163,7 +165,7 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_LOADK:
 			a, bx := inst.A(), inst.Bx()
-			vm.stack[frame.base+a] = vm.constToValue(proto.Constants[bx])
+			vm.stack[frame.base+a] = consts[bx]
 
 		case compiler.OP_LOADKX:
 			a := inst.A()
@@ -171,7 +173,7 @@ func (vm *VM) execute() ([]Value, error) {
 			extra := code[frame.pc]
 			frame.pc++
 			ax := extra.Ax()
-			vm.stack[frame.base+a] = vm.constToValue(proto.Constants[ax])
+			vm.stack[frame.base+a] = consts[ax]
 
 		case compiler.OP_LOADFALSE:
 			a := inst.A()
@@ -203,7 +205,7 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_GETTABUP:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := frame.closure.Upvalues[b].Get()
-			key := vm.constToValue(proto.Constants[c])
+			key := consts[c]
 			if t := table.AsTable(); t != nil {
 				val, err := vm.tableGet(t, key)
 				if err != nil {
@@ -234,6 +236,7 @@ func (vm *VM) execute() ([]Value, error) {
 				frame = &vm.callStack[len(vm.callStack)-1]
 				proto = frame.closure.Proto
 				code = proto.Code
+				consts = frame.closure.ConstValues()
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
@@ -256,6 +259,7 @@ func (vm *VM) execute() ([]Value, error) {
 				frame = &vm.callStack[len(vm.callStack)-1]
 				proto = frame.closure.Proto
 				code = proto.Code
+				consts = frame.closure.ConstValues()
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
@@ -279,6 +283,7 @@ func (vm *VM) execute() ([]Value, error) {
 				frame = &vm.callStack[len(vm.callStack)-1]
 				proto = frame.closure.Proto
 				code = proto.Code
+				consts = frame.closure.ConstValues()
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
@@ -286,7 +291,7 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_SETTABUP:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := frame.closure.Upvalues[a].Get()
-			key := vm.constToValue(proto.Constants[b])
+			key := consts[b]
 			value := vm.getRK(frame, c, inst.K())
 			if t := table.AsTable(); t != nil {
 				if err := vm.tableSet(t, key, value); err != nil {
@@ -372,6 +377,7 @@ func (vm *VM) execute() ([]Value, error) {
 						frame = &vm.callStack[len(vm.callStack)-1]
 						proto = frame.closure.Proto
 						code = proto.Code
+						consts = frame.closure.ConstValues()
 					} else {
 						return nil, vm.runtimeError("attempt to index a userdata value")
 					}
@@ -422,6 +428,7 @@ func (vm *VM) execute() ([]Value, error) {
 					frame = &vm.callStack[len(vm.callStack)-1]
 					proto = frame.closure.Proto
 					code = proto.Code
+					consts = frame.closure.ConstValues()
 				} else {
 					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(origV), vm.varInfo(b))
 				}
@@ -431,7 +438,7 @@ func (vm *VM) execute() ([]Value, error) {
 			compiler.OP_POWK, compiler.OP_DIVK, compiler.OP_IDIVK:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v := vm.stack[frame.base+b]
-			kv := vm.constToValue(proto.Constants[c])
+			kv := consts[c]
 			result, err := vm.arithK(op, v, kv)
 			if err != nil {
 				return nil, err
@@ -441,7 +448,7 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_BANDK, compiler.OP_BORK, compiler.OP_BXORK:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v := vm.stack[frame.base+b]
-			kv := vm.constToValue(proto.Constants[c])
+			kv := consts[c]
 			result, err := vm.bitwiseK(op, v, kv)
 			if err != nil {
 				// Enhance "number has no integer representation" with register name
@@ -760,7 +767,7 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_EQK:
 			a, b, k := inst.A(), inst.B(), inst.K()
 			v1 := vm.stack[frame.base+a]
-			v2 := vm.constToValue(proto.Constants[b])
+			v2 := consts[b]
 			eq, err := vm.equal(v1, v2)
 			if err != nil {
 				return nil, err
@@ -1468,32 +1475,12 @@ func (vm *VM) CheckStack(n int) bool {
 	return limit < 0 || n < limit
 }
 
-// constToValue converts a compile-time constant to a runtime Value.
-func (vm *VM) constToValue(c compiler.Value) Value {
-	switch c.Type {
-	case compiler.ValNil:
-		return Nil
-	case compiler.ValFalse:
-		return False
-	case compiler.ValTrue:
-		return True
-	case compiler.ValInt:
-		return NewInt(c.IVal)
-	case compiler.ValFloat:
-		return NewFloat(c.FVal)
-	case compiler.ValString:
-		return NewString(c.SVal)
-	default:
-		return Nil
-	}
-}
 
 // getRK returns either a constant (when k != 0) or a register value.
 // Used by instructions that encode an operand as "register or constant".
 func (vm *VM) getRK(frame *callFrame, c, k int) Value {
-	proto := frame.closure.Proto
 	if k != 0 {
-		return vm.constToValue(proto.Constants[c])
+		return frame.closure.ConstValues()[c]
 	}
 	return vm.stack[frame.base+c]
 }

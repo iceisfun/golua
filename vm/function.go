@@ -11,8 +11,9 @@ import (
 //
 // Lua 5.4 Reference: §3.4.11 (function definitions), §2.5.1 (upvalues).
 type Closure struct {
-	Proto    *compiler.Proto // compiled bytecode and metadata
-	Upvalues []*Upvalue      // captured variables from enclosing scopes
+	Proto       *compiler.Proto // compiled bytecode and metadata
+	Upvalues    []*Upvalue      // captured variables from enclosing scopes
+	constValues []Value         // cached conversion of Proto.Constants to vm.Value
 }
 
 // NewClosure creates a new closure from a prototype.
@@ -21,6 +22,33 @@ func NewClosure(proto *compiler.Proto) *Closure {
 		Proto:    proto,
 		Upvalues: make([]*Upvalue, len(proto.Upvalues)),
 	}
+}
+
+// ConstValues returns the cached runtime Value conversions of the Proto's constants.
+// The cache is built on first call and reused thereafter, avoiding repeated
+// NewString allocations when loading string constants in hot loops.
+func (cl *Closure) ConstValues() []Value {
+	if cl.constValues == nil {
+		consts := cl.Proto.Constants
+		cl.constValues = make([]Value, len(consts))
+		for i, c := range consts {
+			switch c.Type {
+			case compiler.ValNil:
+				cl.constValues[i] = Nil
+			case compiler.ValFalse:
+				cl.constValues[i] = False
+			case compiler.ValTrue:
+				cl.constValues[i] = True
+			case compiler.ValInt:
+				cl.constValues[i] = NewInt(c.IVal)
+			case compiler.ValFloat:
+				cl.constValues[i] = NewFloat(c.FVal)
+			case compiler.ValString:
+				cl.constValues[i] = NewString(c.SVal)
+			}
+		}
+	}
+	return cl.constValues
 }
 
 // NativeFunc is a Go function callable from Lua.
