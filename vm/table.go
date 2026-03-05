@@ -21,14 +21,16 @@ import "fmt"
 // a dead key. This allows ongoing pairs() iteration to skip over deleted
 // entries without losing position. Dead keys are revived on re-insertion.
 //
-// String keys are stored in a separate strHash map to avoid the overhead
-// of boxing Go strings into the any interface required by the general hash map.
+// String keys are stored in a separate strHash map, and integer keys in a
+// separate intHash map, to avoid the overhead of boxing Go strings/int64s
+// into the any interface required by the general hash map.
 type Table struct {
 	array     []Value          // sequential integer-keyed part (indices 1..n)
-	hash      map[any]Value    // associative part for non-string, non-sequential keys
+	hash      map[any]Value    // associative part for non-string, non-integer, non-sequential keys
 	strHash   map[string]Value // associative part for string keys (avoids any boxing)
+	intHash   map[int64]Value  // associative part for integer keys outside array range (avoids any boxing)
 	keys      []any            // insertion-ordered hash keys (may contain dead keys)
-	deadKeys  int              // count of keys in t.keys not in t.hash/strHash
+	deadKeys  int              // count of keys in t.keys not in t.hash/strHash/intHash
 	metatable LuaTable         // per-table metatable for operator/event overrides
 	isThread  bool             // true if this table represents a coroutine thread
 	vmRef     *VM              // reference to coroutine VM (only set for thread tables)
@@ -70,6 +72,45 @@ func (t *Table) ensureStrHash() map[string]Value {
 		t.strHash = make(map[string]Value)
 	}
 	return t.strHash
+}
+
+// ensureIntHash lazily initializes the integer hash map.
+func (t *Table) ensureIntHash() map[int64]Value {
+	if t.intHash == nil {
+		t.intHash = make(map[int64]Value)
+	}
+	return t.intHash
+}
+
+// setIntHash inserts, updates, or deletes an integer hash entry while keeping
+// the ordered keys slice in sync.
+func (t *Table) setIntHash(k int64, value Value) {
+	if value.IsNil() {
+		if t.intHash != nil {
+			if _, exists := t.intHash[k]; exists {
+				delete(t.intHash, k)
+				t.deadKeys++
+			}
+		}
+		return
+	}
+	ih := t.ensureIntHash()
+	if _, exists := ih[k]; !exists {
+		revived := false
+		if t.deadKeys > 0 {
+			for _, hk := range t.keys {
+				if hi, ok := hk.(int64); ok && hi == k {
+					t.deadKeys--
+					revived = true
+					break
+				}
+			}
+		}
+		if !revived {
+			t.keys = append(t.keys, k)
+		}
+	}
+	ih[k] = value
 }
 
 // hashKey converts a Value to a map key.
@@ -161,7 +202,7 @@ func (t *Table) removeKey(k any) {
 	for i, existing := range t.keys {
 		if existing == k {
 			// If this was a dead key, update the counter.
-			if _, alive := t.hash[k]; !alive {
+			if _, alive := t.getKeyValue(k); !alive {
 				t.deadKeys--
 			}
 			t.keys = append(t.keys[:i], t.keys[i+1:]...)
@@ -172,15 +213,23 @@ func (t *Table) removeKey(k any) {
 
 // getKeyValue retrieves the value for a key from the appropriate hash map.
 func (t *Table) getKeyValue(k any) (Value, bool) {
-	if s, ok := k.(string); ok {
+	switch kk := k.(type) {
+	case string:
 		if t.strHash == nil {
 			return Nil, false
 		}
-		v, exists := t.strHash[s]
+		v, exists := t.strHash[kk]
+		return v, exists
+	case int64:
+		if t.intHash == nil {
+			return Nil, false
+		}
+		v, exists := t.intHash[kk]
+		return v, exists
+	default:
+		v, exists := t.hash[k]
 		return v, exists
 	}
-	v, exists := t.hash[k]
-	return v, exists
 }
 
 // Get retrieves a value from the table (raw access, no metamethods).
@@ -189,10 +238,19 @@ func (t *Table) Get(key Value) Value {
 		return Nil
 	}
 
-	// Check if it's an integer key in array range
+	// Check if it's an integer key (array range or integer hash)
 	if key.IsNumber() {
-		if i, ok := key.ToInt(); ok && i >= 1 && int(i) <= len(t.array) {
-			return t.array[i-1]
+		if i, ok := key.ToInt(); ok {
+			if i >= 1 && int(i) <= len(t.array) {
+				return t.array[i-1]
+			}
+			// Integer key outside array range — check integer hash
+			if t.intHash != nil {
+				if v, ok := t.intHash[i]; ok {
+					return v
+				}
+			}
+			return Nil
 		}
 	}
 
@@ -206,7 +264,7 @@ func (t *Table) Get(key Value) Value {
 		return Nil
 	}
 
-	// General hash lookup
+	// General hash lookup (booleans, floats, tables, functions, etc.)
 	k := hashKey(key)
 	if v, ok := t.hash[k]; ok {
 		return v
@@ -219,8 +277,10 @@ func (t *Table) GetInt(i int) Value {
 	if i >= 1 && i <= len(t.array) {
 		return t.array[i-1]
 	}
-	if v, ok := t.hash[int64(i)]; ok {
-		return v
+	if t.intHash != nil {
+		if v, ok := t.intHash[int64(i)]; ok {
+			return v
+		}
 	}
 	return Nil
 }
@@ -247,27 +307,32 @@ func (t *Table) Set(key, value Value) error {
 		return fmt.Errorf("table index is NaN")
 	}
 
-	// Check if it's an integer key that could go in array part
+	// Check if it's an integer key (array part or integer hash)
 	if key.IsNumber() {
-		if i, ok := key.ToInt(); ok && i >= 1 {
-			idx := int(i)
-			// If within current array bounds or extending by 1
-			if idx <= len(t.array) {
-				if value.IsNil() {
-					t.array[idx-1] = Nil
-					// Shrink array if trailing nils
-					t.shrinkArray()
-				} else {
-					t.array[idx-1] = value
+		if i, ok := key.ToInt(); ok {
+			if i >= 1 {
+				idx := int(i)
+				// If within current array bounds or extending by 1
+				if idx <= len(t.array) {
+					if value.IsNil() {
+						t.array[idx-1] = Nil
+						// Shrink array if trailing nils
+						t.shrinkArray()
+					} else {
+						t.array[idx-1] = value
+					}
+					return nil
+				} else if idx == len(t.array)+1 && !value.IsNil() {
+					// Extend array
+					t.array = append(t.array, value)
+					// Move any hash entries that now belong in array
+					t.rehashToArray()
+					return nil
 				}
-				return nil
-			} else if idx == len(t.array)+1 && !value.IsNil() {
-				// Extend array
-				t.array = append(t.array, value)
-				// Move any hash entries that now belong in array
-				t.rehashToArray()
-				return nil
 			}
+			// Integer key outside array range — use integer hash
+			t.setIntHash(i, value)
+			return nil
 		}
 	}
 
@@ -277,7 +342,7 @@ func (t *Table) Set(key, value Value) error {
 		return nil
 	}
 
-	// Use general hash part
+	// Use general hash part (booleans, floats, tables, functions, etc.)
 	t.setHash(hashKey(key), value)
 	return nil
 }
@@ -306,7 +371,7 @@ func (t *Table) SetInt(i int, value Value) {
 		t.rehashToArray()
 		return
 	}
-	t.setHash(int64(i), value)
+	t.setIntHash(int64(i), value)
 }
 
 // SetString sets by string key.
@@ -325,6 +390,16 @@ func (t *Table) shrinkArray() {
 func (t *Table) rehashToArray() {
 	for {
 		nextIdx := int64(len(t.array) + 1)
+		// Check integer hash first (most common case)
+		if t.intHash != nil {
+			if v, ok := t.intHash[nextIdx]; ok && !v.IsNil() {
+				t.array = append(t.array, v)
+				delete(t.intHash, nextIdx)
+				t.removeKey(nextIdx)
+				continue
+			}
+		}
+		// Fall back to general hash (for legacy or float-that-is-integer keys)
 		if v, ok := t.hash[nextIdx]; ok && !v.IsNil() {
 			t.array = append(t.array, v)
 			delete(t.hash, nextIdx)
