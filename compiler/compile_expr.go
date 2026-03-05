@@ -216,10 +216,29 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 // Binary operations
 // ---------------------------------------------------------------------------
 
+// smallIntConst checks whether an expression is a small integer constant
+// that fits in the signed C field (sC range: -OffsetSC to +OffsetSC, i.e.
+// -127 to +127). If so, it returns the value and true.
+func smallIntConst(e ast.Expr) (int, bool) {
+	n, ok := e.(*ast.NumberExpr)
+	if !ok {
+		return 0, false
+	}
+	if n.Value >= -int64(OffsetSC) && n.Value <= int64(OffsetSC) {
+		return int(n.Value), true
+	}
+	return 0, false
+}
+
 // compileBinop compiles a binary operation. Short-circuit operators (and, or),
 // concatenation (..), and comparisons are handled by specialized methods.
 // Arithmetic and bitwise ops compile both operands into registers and emit
 // the operation followed by an MMBIN for metamethod fallback.
+//
+// When the "+" operator has a small integer constant on one side, the
+// compiler emits OP_ADDI + OP_MMBINI instead of OP_LOADI + OP_ADD +
+// OP_MMBIN, saving one instruction per addition. This matches reference
+// Lua 5.4's codegen.
 func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
@@ -242,6 +261,30 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	case "==", "~=", "<", "<=", ">", ">=":
 		c.compileComparison(e, reg)
 		return
+	}
+
+	// ADDI optimization: when "+" has a small integer constant operand,
+	// emit OP_ADDI + OP_MMBINI (2 instructions) instead of OP_LOADI +
+	// OP_ADD + OP_MMBIN (3 instructions).
+	if e.Op == "+" {
+		if imm, ok := smallIntConst(e.Right); ok {
+			// a + imm  →  ADDI reg, leftReg, imm; MMBINI leftReg, imm, TM_ADD, 0
+			leftReg := fs.reserveReg()
+			c.compileExprToReg(e.Left, leftReg)
+			fs.emit(ABC(OP_ADDI, reg, leftReg, imm+OffsetSC, 0), line)
+			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_ADD), 0), line)
+			fs.freeReg = leftReg
+			return
+		}
+		if imm, ok := smallIntConst(e.Left); ok {
+			// imm + a  →  ADDI reg, rightReg, imm; MMBINI rightReg, imm, TM_ADD, k=1
+			rightReg := fs.reserveReg()
+			c.compileExprToReg(e.Right, rightReg)
+			fs.emit(ABC(OP_ADDI, reg, rightReg, imm+OffsetSC, 0), line)
+			fs.emit(ABC(OP_MMBINI, rightReg, imm+OffsetSC, int(TM_ADD), 1), line)
+			fs.freeReg = rightReg
+			return
+		}
 	}
 
 	// Arithmetic / bitwise — compile both sides into fresh registers so that
@@ -386,13 +429,94 @@ func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 // Logical and/or
 // ---------------------------------------------------------------------------
 
+// isComparisonOp returns true if op is a comparison operator.
+func isComparisonOp(op string) bool {
+	switch op {
+	case "==", "~=", "<", "<=", ">", ">=":
+		return true
+	}
+	return false
+}
+
+// compileComparisonCond compiles a comparison expression as a condition,
+// emitting the comparison + JMP. Returns the JMP PC to patch to the false
+// path. The comparison is compiled with the given k sense: k=0 means
+// "skip next (JMP) if comparison is TRUE" (used by and),
+// k=1 means "skip next (JMP) if comparison is FALSE" (used by or).
+func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int {
+	fs := c.fs
+	line := e.P.Line
+
+	leftReg := fs.freeReg
+	fs.reserveReg()
+	c.compileExprToReg(e.Left, leftReg)
+	rightReg := fs.reserveReg()
+	c.compileExprToReg(e.Right, rightReg)
+
+	var op OpCode
+	k := 0
+	switch e.Op {
+	case "==":
+		op = OP_EQ
+		k = 0
+	case "~=":
+		op = OP_EQ
+		k = 1
+	case "<":
+		op = OP_LT
+		k = 0
+	case "<=":
+		op = OP_LE
+		k = 0
+	case ">":
+		op = OP_LT
+		k = 0
+		leftReg, rightReg = rightReg, leftReg
+	case ">=":
+		op = OP_LE
+		k = 0
+		leftReg, rightReg = rightReg, leftReg
+	}
+
+	if invertSense {
+		k = 1 - k
+	}
+
+	fs.emit(ABC(op, leftReg, rightReg, 0, k), line)
+	jmp := fs.emitJump(line) // JMP to false/true path
+	fs.freeReg = leftReg
+	return jmp
+}
+
 // compileAnd compiles "a and b" — short-circuits to a if a is falsy.
-// Uses a temporary register for the left operand so that OP_TESTSET does not
-// clobber a local variable that shares the destination register (e.g.
-// "max = false and 99 or max" where max is both destination and operand).
+//
+// When the left operand is a comparison, the comparison's conditional jump
+// is fused with the and short-circuit, avoiding boolean materialization.
+// This matches reference Lua 5.4's codegen and is critical for keeping
+// instruction counts compatible with debug count hooks.
 func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
+
+	// Optimization: if left is a comparison, fuse with and short-circuit.
+	// Instead of: materialize boolean → TESTSET → JMP,
+	// emit: comparison → JMP-to-false (2 instructions, not 7).
+	// Uses LOADFALSE (not LFALSESKIP) on the false path to avoid
+	// skipping the wrong instruction when nested inside or/if.
+	if cmp, ok := e.Left.(*ast.BinopExpr); ok && isComparisonOp(cmp.Op) {
+		// comparison skips JMP if TRUE (invertSense=false → k=0 for <,<=,==)
+		// so JMP fires when comparison is FALSE → short-circuit
+		falseJmp := c.compileComparisonCond(cmp, false)
+
+		// Compile right operand normally.
+		c.compileExprToReg(e.Right, reg)
+
+		endJmp := fs.emitJump(line) // jump over false path
+		c.patchJump(falseJmp)
+		fs.emit(ABC(OP_LOADFALSE, reg, 0, 0, 0), line)
+		c.patchJump(endJmp)
+		return
+	}
 
 	tmp := fs.reserveReg()
 	c.compileExprToReg(e.Left, tmp)
@@ -404,11 +528,28 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 }
 
 // compileOr compiles "a or b" — short-circuits to a if a is truthy.
-// Uses a temporary register for the left operand so that OP_TESTSET does not
-// clobber a local variable that shares the destination register.
+//
+// When the left operand is a comparison, the comparison's conditional jump
+// is fused with the or short-circuit (inverted sense).
 func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
+
+	// Optimization: if left is a comparison, fuse with or short-circuit.
+	if cmp, ok := e.Left.(*ast.BinopExpr); ok && isComparisonOp(cmp.Op) {
+		// For or: skip JMP if comparison is FALSE (invertSense=true),
+		// because or short-circuits when left is truthy.
+		trueJmp := c.compileComparisonCond(cmp, true)
+
+		// Compile right operand
+		c.compileExprToReg(e.Right, reg)
+
+		endJmp := fs.emitJump(line) // jump over true path
+		c.patchJump(trueJmp)
+		fs.emit(ABC(OP_LOADTRUE, reg, 0, 0, 0), line)
+		c.patchJump(endJmp) // both paths converge here
+		return
+	}
 
 	tmp := fs.reserveReg()
 	c.compileExprToReg(e.Left, tmp)

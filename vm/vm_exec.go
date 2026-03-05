@@ -235,7 +235,7 @@ func (vm *VM) execute() ([]Value, error) {
 				proto = frame.closure.Proto
 				code = proto.Code
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
+				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
 
 		case compiler.OP_GETI:
@@ -257,7 +257,7 @@ func (vm *VM) execute() ([]Value, error) {
 				proto = frame.closure.Proto
 				code = proto.Code
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
+				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
 
 		case compiler.OP_GETFIELD:
@@ -280,7 +280,7 @@ func (vm *VM) execute() ([]Value, error) {
 				proto = frame.closure.Proto
 				code = proto.Code
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
+				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
 
 		case compiler.OP_SETTABUP:
@@ -306,7 +306,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
+				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
 			}
 
 		case compiler.OP_SETI:
@@ -318,7 +318,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
+				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
 			}
 
 		case compiler.OP_SETFIELD:
@@ -331,7 +331,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
+				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
 			}
 
 		case compiler.OP_NEWTABLE:
@@ -379,19 +379,52 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, vm.runtimeError("attempt to index a userdata value")
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
+				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
 
 		case compiler.OP_ADDI:
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
-			v := vm.stack[frame.base+b]
+			origV := vm.stack[frame.base+b]
+			v := origV
+			// Coerce string operands to numbers (preserving int/float type),
+			// matching the string coercion in arith() for OP_ADD.
+			if v.IsString() {
+				if nv, ok := StringToNumericValue(v.AsString()); ok {
+					v = nv
+				}
+			}
 			if v.IsInt() {
 				vm.stack[frame.base+a] = NewInt(v.AsInt() + int64(sc))
 			} else if n, ok := v.ToNumber(); ok {
 				vm.stack[frame.base+a] = NewFloat(n + float64(sc))
 			} else {
-				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
+				// Try __add metamethod with correct operand order.
+				// The next instruction is OP_MMBINI whose k flag indicates
+				// whether the immediate was the left operand (k=1) or right (k=0).
+				immVal := NewInt(int64(sc))
+				arg1, arg2 := origV, immVal
+				if frame.pc < len(code) {
+					nextInst := code[frame.pc]
+					if nextInst.OpCode() == compiler.OP_MMBINI && nextInst.K() == 1 {
+						arg1, arg2 = immVal, origV
+					}
+				}
+				if mm := vm.getArithMetamethod(arg1, arg2, "__add"); !mm.IsNil() {
+					if !mm.IsCallable() {
+						return nil, vm.runtimeError("attempt to call a %s value (metamethod 'add')", mm.Type())
+					}
+					result, err := vm.callMetamethod(mm, arg1, arg2)
+					if err != nil {
+						return nil, err
+					}
+					vm.stack[frame.base+a] = result
+					frame = &vm.callStack[len(vm.callStack)-1]
+					proto = frame.closure.Proto
+					code = proto.Code
+				} else {
+					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(origV), vm.varInfo(b))
+				}
 			}
 
 		case compiler.OP_ADDK, compiler.OP_SUBK, compiler.OP_MULK, compiler.OP_MODK,
@@ -524,7 +557,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = result
 			} else {
-				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
+				return nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 			}
 
 		case compiler.OP_BNOT:
@@ -551,7 +584,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				} else {
-					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 				}
 			}
 
@@ -582,7 +615,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsTable() {
 					vm.stack[frame.base+a] = NewInt(int64(v.AsTable().Len()))
 				} else {
-					return nil, vm.runtimeError("attempt to get length of a %s value", v.Type())
+					return nil, vm.runtimeError("attempt to get length of a %s value%s", v.Type(), vm.varInfo(b))
 				}
 			}
 
@@ -857,6 +890,11 @@ func (vm *VM) execute() ([]Value, error) {
 				return nil, err
 			}
 			a, b, _ := inst.A(), inst.B(), inst.C()
+			// Save proto/PC before tail call rewrites the frame, so we can
+			// produce a good error message if the callee turns out to be
+			// non-callable.
+			tailProto := proto
+			tailPC := frame.pc - 1 // PC of the TAILCALL instruction
 			// Fire tail call hook before reusing frame
 			vm.fireTailCallHook()
 			// Tail call optimization - reuse current frame
@@ -959,7 +997,12 @@ func (vm *VM) execute() ([]Value, error) {
 						fn = mm
 						continue // Retry dispatch with metamethod
 					}
-					return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
+					vi := ""
+					name, what := regObjName(tailProto, tailPC, a)
+					if name != "" {
+						vi = fmt.Sprintf(" (%s '%s')", what, name)
+					}
+					return nil, vm.runtimeError("attempt to call a %s value%s", fn.Type(), vi)
 				}
 			}
 			if fn.IsFunction() {
@@ -1497,8 +1540,10 @@ dispatch:
 		// ArgCount uses the stored argc instead of computing from vm.top.
 		nativeBase := frame.base + a
 		nativeFrame := callFrame{
-			base: nativeBase,
-			argc: len(args),
+			base:      nativeBase,
+			argc:      len(args),
+			ftransfer: 2,         // args start at getlocal index 2 (index 1 = function value)
+			ntransfer: len(args), // number of arguments
 		}
 		vm.callStack = append(vm.callStack, nativeFrame)
 
@@ -1513,9 +1558,16 @@ dispatch:
 			vm.stack[i] = Nil
 		}
 
+		// Fire call hook for native function (after frame is pushed)
+		vm.fireCallHook()
+
 		nResults := fn.AsNativeFunc()(vm)
 		results = make([]Value, nResults)
 		copy(results, vm.stack[nativeBase:nativeBase+nResults])
+
+		// Set return transfer info: results start at getlocal index 1 (base+0)
+		vm.callStack[len(vm.callStack)-1].ftransfer = 1
+		vm.callStack[len(vm.callStack)-1].ntransfer = nResults
 
 		// Fire return hook for native function before popping its frame
 		vm.fireReturnHook()
@@ -1526,7 +1578,7 @@ dispatch:
 		// Check for __call metamethod
 		mm := vm.getMetafield(fn, "__call")
 		if mm.IsNil() {
-			return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
+			return nil, vm.runtimeError("attempt to call a %s value%s", fn.Type(), vm.varInfo(a))
 		}
 
 		// Build new args: prepend fn (self) so the call becomes mm(fn, args...)

@@ -176,7 +176,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 
 	// Validate the what string ('>' is C API only, not valid at Lua level)
 	for _, ch := range what {
-		if !strings.ContainsRune("flnStuL", ch) {
+		if !strings.ContainsRune("flnStuLr", ch) {
 			panic(fmt.Sprintf("bad argument #2 to 'getinfo' (invalid option '%c')", ch))
 		}
 	}
@@ -207,6 +207,9 @@ func luaDebugGetInfo(v *vm.VM) int {
 			result.SetString("isvararg", vm.NewBool(info.IsVarArg))
 		case 'f':
 			result.SetString("func", info.Func)
+		case 'r':
+			result.SetString("ftransfer", vm.NewInt(int64(info.FTransfer)))
+			result.SetString("ntransfer", vm.NewInt(int64(info.NTransfer)))
 		case 'L':
 			if info.ActiveLines != nil && len(info.ActiveLines) > 0 {
 				lines := vm.NewEmptyTable()

@@ -127,6 +127,8 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
 
 // CloseAllTBC closes all to-be-closed variables in the VM.
 // Used when a coroutine is closed externally (coroutine.close).
+// If any __close handler panics, the last panic is re-raised after
+// all handlers have run, so the error propagates to runCoroutine.
 func (vm *VM) CloseAllTBC() {
 	if len(vm.tbcVars) == 0 {
 		return
@@ -134,13 +136,22 @@ func (vm *VM) CloseAllTBC() {
 	tbcToClose := make([]int, len(vm.tbcVars))
 	copy(tbcToClose, vm.tbcVars)
 	vm.tbcVars = nil
-	// Protect each handler individually; ignore panics since the
-	// coroutine is being terminated anyway.
+	// Protect each handler individually so all handlers run even if
+	// one errors. The last error is re-raised so coroutine.close can
+	// report it.
+	var lastPanic interface{}
 	for i := len(tbcToClose) - 1; i >= 0; i-- {
 		func() {
-			defer func() { recover() }()
+			defer func() {
+				if r := recover(); r != nil {
+					lastPanic = r
+				}
+			}()
 			vm.callCloseMetamethod(tbcToClose[i], Nil)
 		}()
+	}
+	if lastPanic != nil {
+		panic(lastPanic)
 	}
 }
 

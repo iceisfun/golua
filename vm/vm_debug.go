@@ -177,6 +177,10 @@ type FrameInfo struct {
 	// t fields
 	IsTailCall bool
 
+	// r fields
+	FTransfer int // first "transfer" value index (1-based, for hooks)
+	NTransfer int // number of transfer values
+
 	// f field
 	Func Value // the function value itself
 
@@ -195,6 +199,10 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 
 	frame := &vm.callStack[idx]
 	info := &FrameInfo{}
+
+	// Transfer info (from hooks, set on frame before hook fires)
+	info.FTransfer = frame.ftransfer
+	info.NTransfer = frame.ntransfer
 
 	if frame.closure == nil {
 		// Native (C) function frame
@@ -574,7 +582,26 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 
 	frame := &vm.callStack[idx]
 	if frame.closure == nil {
-		return "", Nil, false
+		// Native (C) function frame: access stack slots directly.
+		// Stack layout: base+0 = function value, base+1 = first arg, ...
+		// getlocal(n) accesses base + (n - 1), matching Lua frames.
+		if index <= 0 {
+			return "", Nil, false
+		}
+		stackIdx := frame.base + (index - 1)
+		// Bounds check: must be within the stack
+		if stackIdx < 0 || stackIdx >= len(vm.stack) {
+			return "", Nil, false
+		}
+		// Upper bound: next frame's base (if any) or vm.top
+		limit := vm.top
+		if idx+1 < len(vm.callStack) {
+			limit = vm.callStack[idx+1].base
+		}
+		if stackIdx >= limit {
+			return "", Nil, false
+		}
+		return "(C temporary)", vm.stack[stackIdx], true
 	}
 
 	// Negative index: access varargs
@@ -691,6 +718,14 @@ func (vm *VM) GetRegistry() LuaTable {
 // Returns (name, what) where what is "field", "global", "local", "upvalue",
 // or "" if unknown. This matches Lua 5.4's getobjname / kname behavior.
 func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
+	// First check if the register is a local variable at the faulting PC.
+	// This handles cases like "local a; a(13)" where the LOADNIL that
+	// initialises register 0 occurs before the local's StartPC.
+	name := localName(proto, reg, pc)
+	if name != "" && name != "?" && !isInternalName(name) {
+		return name, "local"
+	}
+
 	for i := pc - 1; i >= 0; i-- {
 		inst := proto.Code[i]
 		op := inst.OpCode()
@@ -716,6 +751,11 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 			return "", ""
 		case compiler.OP_MOVE:
 			reg = inst.B()
+			// After following OP_MOVE, check if the new register is a local.
+			ln := localName(proto, reg, i)
+			if ln != "" && ln != "?" && !isInternalName(ln) {
+				return ln, "local"
+			}
 			continue
 		case compiler.OP_GETUPVAL:
 			b := inst.B()
@@ -723,17 +763,94 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 				return proto.Upvalues[b].Name, "upvalue"
 			}
 			return "", ""
+		case compiler.OP_SELF:
+			c := inst.C()
+			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
+				return proto.Constants[c].SVal, "method"
+			}
+			return "", ""
+		case compiler.OP_GETTABLE:
+			// R[A] = R[B][R[C]] — try to resolve R[C] to a constant name.
+			// When the table was loaded via GETUPVAL of _ENV (upvalue 0),
+			// report "global" instead of "field". This handles the fallback
+			// path emitGetTabUp uses when constant index > MaxArgC.
+			b := inst.B()
+			c := inst.C()
+			kn := kName(proto, i, c)
+			if kn != "" {
+				what := "field"
+				if isUpvalEnv(proto, i, b) {
+					what = "global"
+				}
+				return kn, what
+			}
+			return "", ""
 		default:
-			name := localName(proto, reg, i)
-			if name != "?" {
-				return name, "local"
+			ln := localName(proto, reg, i)
+			if ln != "" && ln != "?" && !isInternalName(ln) {
+				return ln, "local"
 			}
 			return "", ""
 		}
 	}
-	name := localName(proto, reg, 0)
-	if name != "?" {
-		return name, "local"
-	}
 	return "", ""
+}
+
+// isInternalName returns true if the name is a compiler-generated internal
+// name (starts with '(' such as "(for state)" or "(for control)").
+func isInternalName(name string) bool {
+	return len(name) > 0 && name[0] == '('
+}
+
+// isUpvalEnv checks whether the register at the given PC was loaded via
+// GETUPVAL from upvalue 0 (_ENV). Used to distinguish "global" from "field"
+// when GETTABLE is the fallback for GETTABUP with large constant indices.
+func isUpvalEnv(proto *compiler.Proto, pc int, reg int) bool {
+	for i := pc - 1; i >= 0; i-- {
+		inst := proto.Code[i]
+		if inst.A() != reg {
+			continue
+		}
+		if inst.OpCode() == compiler.OP_GETUPVAL && inst.B() == 0 {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// kName resolves a register reference to a constant name at the given PC.
+// If register reg was loaded from a constant (via OP_LOADK/OP_LOADKX) and
+// the constant is a string, returns that string. Otherwise returns "".
+func kName(proto *compiler.Proto, pc int, reg int) string {
+	for i := pc - 1; i >= 0; i-- {
+		inst := proto.Code[i]
+		op := inst.OpCode()
+		a := inst.A()
+		if a != reg {
+			continue
+		}
+		switch op {
+		case compiler.OP_LOADK:
+			bx := inst.Bx()
+			if bx < len(proto.Constants) && proto.Constants[bx].Type == compiler.ValString {
+				return proto.Constants[bx].SVal
+			}
+			return ""
+		case compiler.OP_LOADKX:
+			if i+1 < len(proto.Code) {
+				ax := proto.Code[i+1].Ax()
+				if ax < len(proto.Constants) && proto.Constants[ax].Type == compiler.ValString {
+					return proto.Constants[ax].SVal
+				}
+			}
+			return ""
+		case compiler.OP_MOVE:
+			reg = inst.B()
+			continue
+		default:
+			return ""
+		}
+	}
+	return ""
 }

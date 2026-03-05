@@ -613,6 +613,16 @@ func coClose(v *vm.VM) int {
 		return 1
 	}
 
+	// Track close-chain depth to detect "C stack overflow" when
+	// __close handlers recursively call coroutine.close.
+	if v.EnterCloseChain() {
+		v.ExitCloseChain()
+		v.Set(0, vm.False)
+		v.Set(1, vm.NewString("C stack overflow"))
+		return 2
+	}
+	defer v.ExitCloseChain()
+
 	// Mark as dead and clean up
 	co.mu.Lock()
 	co.status = statusDead
@@ -625,10 +635,27 @@ func coClose(v *vm.VM) int {
 
 	// If the coroutine goroutine is blocked on resumeCh, unblock it
 	// by closing the channel. coYield detects the closed channel and
-	// calls runtime.Goexit() to terminate the goroutine cleanly.
+	// calls CloseAllTBC() which runs __close handlers. If any handler
+	// errors, CloseAllTBC re-raises the panic, which runCoroutine
+	// catches and stores as co.err.
 	if co.started {
 		close(co.resumeCh)
 		<-co.doneCh
+	}
+
+	// Check if __close handlers produced an error (e.g. from a nested
+	// coroutine.close chain exceeding the depth limit).
+	co.mu.Lock()
+	coErr := co.err
+	co.mu.Unlock()
+	if coErr != nil {
+		v.Set(0, vm.False)
+		if le, ok := coErr.(*vm.LuaError); ok {
+			v.Set(1, le.Value)
+		} else {
+			v.Set(1, vm.NewString(coErr.Error()))
+		}
+		return 2
 	}
 
 	v.Set(0, vm.True)

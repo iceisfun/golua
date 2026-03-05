@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/iceisfun/golua/compiler"
 )
@@ -95,6 +96,7 @@ type VM struct {
 	limits        Limits          // zero values = no limit
 	instrCount    int64           // only tracked when MaxInstructions > 0
 	callDepthBase int             // inherited call depth from parent VM (for coroutines)
+	closeDepth    *int32          // shared counter tracking nested coroutine.close depth (atomic)
 
 	// Output capture
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout
@@ -121,6 +123,8 @@ type callFrame struct {
 	argc         int      // Argument count for native functions (UseVMTop = use vm.top)
 	callName     string   // Override name for debug.getinfo (e.g., "close" for __close)
 	callNameWhat string   // Override nameWhat (e.g., "metamethod")
+	ftransfer    int      // First "transfer" index for debug hooks (1-based, 0 = unavailable)
+	ntransfer    int      // Number of transfer values for debug hooks
 }
 
 // New creates a new VM with an empty global environment.
@@ -130,6 +134,7 @@ func New(opts ...VMOption) *VM {
 		stack:       make([]Value, 256),
 		globals:     NewEmptyTable(),
 		warnEnabled: true,
+		closeDepth:  new(int32),
 	}
 	for _, opt := range opts {
 		opt(vm)
@@ -369,6 +374,7 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		ctx:           parent.ctx,
 		limits:        parent.limits,
 		callDepthBase: parent.callDepthBase + len(parent.callStack),
+		closeDepth:    parent.closeDepth,
 		captureOutput: parent.captureOutput,
 		outputLines:   parent.outputLines,
 	}
@@ -510,6 +516,21 @@ func (vm *VM) checkCallDepth() {
 	if max > 0 && vm.callDepthBase+len(vm.callStack) > max {
 		panic(&LuaError{Value: NewString("C stack overflow")})
 	}
+}
+
+// EnterCloseChain atomically increments the shared close-depth counter and
+// returns true if the new depth exceeds the call-depth limit (i.e. "C stack
+// overflow"). The caller must call ExitCloseChain when done regardless of
+// the return value.
+func (vm *VM) EnterCloseChain() bool {
+	depth := atomic.AddInt32(vm.closeDepth, 1)
+	max := vm.maxCallDepth()
+	return max > 0 && int(depth) > max
+}
+
+// ExitCloseChain decrements the shared close-depth counter.
+func (vm *VM) ExitCloseChain() {
+	atomic.AddInt32(vm.closeDepth, -1)
 }
 
 // callMetamethod calls a metamethod with 2 arguments and returns the first result

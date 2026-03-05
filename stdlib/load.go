@@ -9,6 +9,19 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
+// maxLoadSize is the maximum size (in bytes) that the reader accumulator in
+// load() will accept. This prevents Go OOM crashes when a reader function
+// returns data indefinitely. Lua 5.4 uses MAX_SIZE (~(size_t)0 / 2) and
+// relies on malloc returning NULL; Go has no such safety net, so we use a
+// practical limit. 256 MB is far beyond any realistic Lua source file.
+const maxLoadSize = 1 << 28 // 256 MB
+
+// maxLoadLines is the maximum number of lines accepted during reader
+// accumulation. Lua 5.4 uses MAX_INT; we use a lower limit that is still
+// well beyond any realistic source file but small enough to be caught
+// before the maxLoadSize byte limit fires on all-newline input.
+const maxLoadLines = 1 << 26 // ~67 million lines
+
 // openLoad registers load, loadfile, and dofile functions.
 // These are only registered if a code provider is available and has the right capabilities.
 func openLoad(v *vm.VM) {
@@ -68,6 +81,7 @@ func luaLoad(v *vm.VM) int {
 		}
 		// Call the function repeatedly to get the source
 		var builder []byte
+		lineCount := 0
 		exitNonYieldable := v.EnterNonYieldable()
 		defer exitNonYieldable()
 		for {
@@ -90,6 +104,18 @@ func luaLoad(v *vm.VM) int {
 			}
 			if s == "" {
 				break
+			}
+			lineCount += strings.Count(s, "\n")
+			if lineCount >= maxLoadLines {
+				v.Set(0, vm.Nil)
+				chName := chunkNameForDisplay(rawChunkName)
+				v.Set(1, vm.NewString(fmt.Sprintf("%s: chunk has too many lines", chName)))
+				return 2
+			}
+			if len(builder)+len(s) > maxLoadSize {
+				v.Set(0, vm.Nil)
+				v.Set(1, vm.NewString("not enough memory"))
+				return 2
 			}
 			builder = append(builder, s...)
 		}

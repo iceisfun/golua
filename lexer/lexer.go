@@ -10,6 +10,7 @@ package lexer
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -17,6 +18,18 @@ import (
 )
 
 const eof = -1
+
+// maxLines is the maximum number of lines a Lua source file may contain.
+// Lua 5.4 uses MAX_INT (INT_MAX). We use a lower practical limit that is
+// still far beyond any real source file. This fires during lexing for
+// string-based loads; reader-based loads also check during accumulation.
+const maxLines = math.MaxInt32
+
+// maxTokenLen is the maximum length of a single lexical element (identifier,
+// string literal, number literal). Prevents unbounded memory growth when
+// scanning pathologically large tokens. Lua 5.4 relies on allocator failure;
+// GoLua uses an explicit limit since Go's runtime crashes on OOM.
+const maxTokenLen = 1 << 24 // 16 MB
 
 // Lexer tokenizes Lua source code.
 type Lexer struct {
@@ -49,7 +62,7 @@ func New(source, input string, stripShebang bool) *Lexer {
 			l.readChar()
 		}
 		if isNewline(l.current) {
-			l.incLine()
+			_ = l.incLine() // first line; cannot exceed maxLines
 		}
 	}
 	return l
@@ -131,14 +144,19 @@ func (l *Lexer) stringErrorf(format string, args ...any) error {
 }
 
 // incLine handles newline sequences: \n, \r, \n\r, \r\n.
-func (l *Lexer) incLine() {
+// Returns an error if the line count exceeds maxLines (Lua 5.4 MAX_INT).
+func (l *Lexer) incLine() error {
 	old := l.current
 	l.readChar() // skip \n or \r
 	if isNewline(l.current) && l.current != old {
 		l.readChar() // skip \n\r or \r\n
 	}
 	l.line++
+	if l.line >= maxLines {
+		return l.errorf("chunk has too many lines")
+	}
 	l.col = 1
+	return nil
 }
 
 // skipWhitespace skips spaces, tabs, form feeds, and vertical tabs.
@@ -181,7 +199,9 @@ func (l *Lexer) Next() (token.Token, error) {
 			return token.Token{Type: token.EOS, Pos: pos}, nil
 
 		case isNewline(l.current):
-			l.incLine()
+			if err := l.incLine(); err != nil {
+				return token.Token{}, err
+			}
 			continue
 
 		case l.current == '-':
@@ -286,7 +306,9 @@ func (l *Lexer) scanLongString(buf *strings.Builder, sep int) error {
 
 	// Skip initial newline if present
 	if isNewline(l.current) {
-		l.incLine()
+		if err := l.incLine(); err != nil {
+			return err
+		}
 	}
 
 	for {
@@ -327,7 +349,9 @@ func (l *Lexer) scanLongString(buf *strings.Builder, sep int) error {
 			if buf != nil {
 				buf.WriteByte('\n')
 			}
-			l.incLine()
+			if err := l.incLine(); err != nil {
+				return err
+			}
 
 		default:
 			if buf != nil {

@@ -98,7 +98,9 @@ func (l *Lexer) scanEscape() (rune, bool, error) {
 		l.readChar()
 		return '\'', false, nil
 	case '\n', '\r':
-		l.incLine()
+		if err := l.incLine(); err != nil {
+			return 0, false, err
+		}
 		return '\n', false, nil
 	case 'x':
 		r, err := l.scanHexEscape()
@@ -111,7 +113,9 @@ func (l *Lexer) scanEscape() (rune, bool, error) {
 		l.readChar() // skip 'z'
 		for l.current != eof && isWhitespace(l.current) {
 			if isNewline(l.current) {
-				l.incLine()
+				if err := l.incLine(); err != nil {
+					return 0, false, err
+				}
 			} else {
 				l.readChar()
 			}
@@ -372,6 +376,9 @@ func (l *Lexer) scanIdentifier(pos token.Pos) (token.Token, error) {
 	for (!l.rawByte && isAlpha(l.current)) || isDigit(l.current) {
 		buf.WriteRune(l.current)
 		l.readChar()
+		if buf.Len() > maxTokenLen {
+			return token.Token{}, l.errorf("lexical element too long")
+		}
 	}
 	name := buf.String()
 	typ := token.LookupIdent(name)

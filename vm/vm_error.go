@@ -31,6 +31,25 @@ func (vm *VM) ObjTypeName(v Value) string {
 	return v.Type()
 }
 
+// varInfo returns a parenthesized context string like " (global 'bbbb')" for
+// the value in the given register at the current PC, by inspecting the bytecode.
+// Returns "" if the name cannot be determined. This mirrors Lua 5.4's varinfo()
+// in ldebug.c.
+func (vm *VM) varInfo(reg int) string {
+	if len(vm.callStack) > 0 {
+		frame := &vm.callStack[len(vm.callStack)-1]
+		if frame.closure != nil {
+			proto := frame.closure.Proto
+			pc := frame.pc - 1
+			name, what := regObjName(proto, pc, reg)
+			if name != "" {
+				return fmt.Sprintf(" (%s '%s')", what, name)
+			}
+		}
+	}
+	return ""
+}
+
 // runtimeErrorForNumber creates a "number has no integer representation" error
 // that includes the name of the offending value (e.g., "field 'huge'")
 // when it can be determined from the bytecode, matching Lua 5.4's luaG_forerror.

@@ -158,8 +158,7 @@ do
     print(coroutine.status(co))
     --> =dead
 
-    -- NOTE: TBC (__close) on coroutine.close is not yet implemented.
-    -- The __close metamethod will not fire when closing externally.
+    -- __close errors during coroutine.close propagate as false + error message
     local co = coroutine.create(function()
         local t = {}
         setmetatable(t, {__close=function() error("ERR") end})
@@ -167,8 +166,9 @@ do
         coroutine.yield()
     end)
     coroutine.resume(co)
-    pcall(function() print(coroutine.close(co)) end)
-    --> =true
+    local ok, msg = coroutine.close(co)
+    print(ok, type(msg) == "string" and string.find(msg, "ERR") ~= nil)
+    --> =false	true
 
     print(coroutine.status(co))
     --> =dead

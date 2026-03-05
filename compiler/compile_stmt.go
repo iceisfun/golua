@@ -650,10 +650,47 @@ func (c *compiler) compileCondJump(cond ast.Expr, jumpOnFalse bool, line int) {
 // While
 // ---------------------------------------------------------------------------
 
+// isConstTrue reports whether expr is the literal constant `true`.
+// Used by compileWhileStmt to optimize `while true do ... end` into
+// an unconditional loop (no condition test), matching reference Lua 5.4.
+func isConstTrue(expr ast.Expr) bool {
+	_, ok := expr.(*ast.TrueExpr)
+	return ok
+}
+
 // compileWhileStmt compiles "while cond do ... end".
 func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	fs := c.fs
 	line := s.P.Line
+
+	// Optimization: `while true do ... end` emits no condition test,
+	// matching reference Lua 5.4. The loop body executes unconditionally
+	// and the back-jump targets the first body instruction directly.
+	if isConstTrue(s.Cond) {
+		loopStart := fs.pc()
+		fs.enterScope(true)
+
+		// Body
+		c.compileBlock(s.Body)
+
+		// Close upvalues for body locals before jumping back.
+		scope := fs.scopes[len(fs.scopes)-1]
+		if fs.nActVar > scope.nLocals {
+			fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), line)
+		}
+
+		// Jump back to loop start (unconditional)
+		backJump := fs.emitJump(line)
+		offset := loopStart - (fs.pc()) // negative
+		if offset > MaxSJ || offset < MinSJ {
+			c.error(nil, "control structure too long")
+		} else {
+			fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
+		}
+
+		c.leaveScope(line)
+		return
+	}
 
 	loopStart := fs.pc()
 	fs.enterScope(true)
