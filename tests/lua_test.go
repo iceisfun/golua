@@ -16,6 +16,10 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
+// luaTestTimeout is the maximum time a single Lua test file may run before
+// being terminated. Prevents deadlocks from stalling the entire test suite.
+const luaTestTimeout = 30 * time.Second
+
 // TestLuaFiles runs all .lua test files in the tests directory (root level).
 // Files are categorized by prefix:
 //   - test_*.lua  : Regular tests that should pass
@@ -100,7 +104,7 @@ func runLuaDir(t *testing.T, dir string) {
 	}
 }
 
-// runLuaTest compiles and runs a single Lua test file.
+// runLuaTest compiles and runs a single Lua test file with timeout protection.
 func runLuaTest(t *testing.T, filename string) {
 	t.Helper()
 
@@ -116,8 +120,12 @@ func runLuaTest(t *testing.T, filename string) {
 		t.Fatalf("Compilation failed: %v", err)
 	}
 
+	// Set up context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), luaTestTimeout)
+	defer cancel()
+
 	// Run
-	v := vm.New()
+	v := vm.New(vm.WithContext(ctx))
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 	v.SetIoProvider(vm.NewJailedIoProvider("."))
@@ -127,23 +135,30 @@ func runLuaTest(t *testing.T, filename string) {
 	}))
 	stdlib.Open(v)
 
-	// Capture panics from assert() failures
-	var runErr error
-	func() {
+	// Run in goroutine with panic recovery and timeout
+	resultCh := make(chan error, 1)
+	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				runErr, _ = r.(error)
-				if runErr == nil {
-					// panic was not an error type
-					t.Fatalf("Runtime panic: %v", r)
+				if e, ok := r.(error); ok {
+					resultCh <- e
+				} else {
+					resultCh <- fmt.Errorf("runtime panic: %v", r)
 				}
 			}
 		}()
-		_, runErr = v.Run(proto)
+		_, runErr := v.Run(proto)
+		resultCh <- runErr
 	}()
 
-	if runErr != nil {
-		t.Fatalf("Runtime error: %v", runErr)
+	select {
+	case runErr := <-resultCh:
+		if runErr != nil {
+			t.Fatalf("Runtime error: %v", runErr)
+		}
+	case <-time.After(luaTestTimeout + 2*time.Second):
+		cancel()
+		t.Fatalf("Test timed out after %v (possible deadlock)", luaTestTimeout)
 	}
 }
 
@@ -162,7 +177,11 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 		t.Fatalf("Compilation failed: %v", err)
 	}
 
-	v := vm.New()
+	// Set up context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), luaTestTimeout)
+	defer cancel()
+
+	v := vm.New(vm.WithContext(ctx))
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 	v.SetIoProvider(vm.NewFullIoProvider("."))
@@ -172,21 +191,30 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 	}))
 	stdlib.Open(v)
 
-	var runErr error
-	func() {
+	// Run in goroutine with panic recovery and timeout
+	resultCh := make(chan error, 1)
+	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				runErr, _ = r.(error)
-				if runErr == nil {
-					t.Fatalf("Runtime panic: %v", r)
+				if e, ok := r.(error); ok {
+					resultCh <- e
+				} else {
+					resultCh <- fmt.Errorf("runtime panic: %v", r)
 				}
 			}
 		}()
-		_, runErr = v.Run(proto)
+		_, runErr := v.Run(proto)
+		resultCh <- runErr
 	}()
 
-	if runErr != nil {
-		t.Fatalf("Runtime error: %v", runErr)
+	select {
+	case runErr := <-resultCh:
+		if runErr != nil {
+			t.Fatalf("Runtime error: %v", runErr)
+		}
+	case <-time.After(luaTestTimeout + 2*time.Second):
+		cancel()
+		t.Fatalf("Test timed out after %v (possible deadlock)", luaTestTimeout)
 	}
 }
 
