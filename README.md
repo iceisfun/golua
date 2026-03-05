@@ -92,6 +92,7 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | `stdlib`   | Registers standard library functions (`string`, `math`, `table`, etc.)      |
 | `check`    | Static diagnostics for editor integration                                   |
 | `glob`     | Go-style pattern matching (non-standard extension)                          |
+| `stdlib/http` | Optional HTTP client module (non-standard extension)                     |
 
 **Provider interfaces** (`vm` package) control host-system access:
 
