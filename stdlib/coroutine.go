@@ -459,8 +459,11 @@ func coWrap(v *vm.VM) int {
 		status := co.status
 		co.mu.Unlock()
 
-		if status == statusDead {
-			panic("cannot resume dead coroutine")
+		if status != statusSuspended {
+			if status == statusDead {
+				panic("cannot resume dead coroutine")
+			}
+			panic("cannot resume non-suspended coroutine")
 		}
 
 		// Collect arguments
