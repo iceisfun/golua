@@ -703,24 +703,22 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 
 // getMetafield retrieves a metafield from a value's metatable
 func (vm *VM) getMetafield(v Value, key string) Value {
+	var mt LuaTable
 	if v.IsTable() {
-		if mt := v.AsTable().Metatable(); mt != nil {
-			return mt.Get(NewString(key))
-		}
+		mt = v.AsTable().Metatable()
+	} else if ud := v.AsUserdata(); ud != nil {
+		mt = ud.Metatable()
+	} else {
+		mt = vm.GetTypeMeta(v)
+	}
+	if mt == nil {
 		return Nil
 	}
-	// Check userdata metatable
-	if ud := v.AsUserdata(); ud != nil {
-		if mt := ud.Metatable(); mt != nil {
-			return mt.Get(NewString(key))
-		}
-		return Nil
+	// Fast path: concrete *Table avoids NewString allocation
+	if ct, ok := mt.(*Table); ok {
+		return ct.GetString(key)
 	}
-	// Check type metatables for non-table types
-	if mt := vm.GetTypeMeta(v); mt != nil {
-		return mt.Get(NewString(key))
-	}
-	return Nil
+	return mt.Get(NewString(key))
 }
 
 // GetSourceLocation returns "source:line" for the given call stack level.
