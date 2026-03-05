@@ -240,12 +240,16 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_GETI:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+b]
-			if t := table.AsTable(); t != nil {
-				val, err := vm.tableGetInt(t, c)
-				if err != nil {
-					return nil, err
+			if table.typ == typeTable {
+				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+					vm.stack[frame.base+a] = ct.GetInt(c)
+				} else {
+					val, err := vm.tableGetInt(table.ptr.(LuaTable), c)
+					if err != nil {
+						return nil, err
+					}
+					vm.stack[frame.base+a] = val
 				}
-				vm.stack[frame.base+a] = val
 			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewInt(int64(c)))
 				if err != nil {
@@ -313,9 +317,13 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+a]
 			value := vm.getRK(frame, c, inst.K())
-			if t := table.AsTable(); t != nil {
-				if err := vm.tableSetInt(t, b, value); err != nil {
-					return nil, err
+			if table.typ == typeTable {
+				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+					ct.SetInt(b, value)
+				} else {
+					if err := vm.tableSetInt(table.ptr.(LuaTable), b, value); err != nil {
+						return nil, err
+					}
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
