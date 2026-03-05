@@ -20,14 +20,18 @@ import "fmt"
 // the entry from the map but leaves the key in the ordered keys slice as
 // a dead key. This allows ongoing pairs() iteration to skip over deleted
 // entries without losing position. Dead keys are revived on re-insertion.
+//
+// String keys are stored in a separate strHash map to avoid the overhead
+// of boxing Go strings into the any interface required by the general hash map.
 type Table struct {
-	array     []Value       // sequential integer-keyed part (indices 1..n)
-	hash      map[any]Value // associative part for non-sequential keys
-	keys      []any         // insertion-ordered hash keys (may contain dead keys)
-	deadKeys  int           // count of keys in t.keys not in t.hash
-	metatable LuaTable      // per-table metatable for operator/event overrides
-	isThread  bool          // true if this table represents a coroutine thread
-	vmRef     *VM           // reference to coroutine VM (only set for thread tables)
+	array     []Value          // sequential integer-keyed part (indices 1..n)
+	hash      map[any]Value    // associative part for non-string, non-sequential keys
+	strHash   map[string]Value // associative part for string keys (avoids any boxing)
+	keys      []any            // insertion-ordered hash keys (may contain dead keys)
+	deadKeys  int              // count of keys in t.keys not in t.hash/strHash
+	metatable LuaTable         // per-table metatable for operator/event overrides
+	isThread  bool             // true if this table represents a coroutine thread
+	vmRef     *VM              // reference to coroutine VM (only set for thread tables)
 }
 
 // SetThread marks this table as a coroutine thread.
@@ -60,6 +64,14 @@ func NewTableWithSize(narray, nhash int) *Table {
 	return t
 }
 
+// ensureStrHash lazily initializes the string hash map.
+func (t *Table) ensureStrHash() map[string]Value {
+	if t.strHash == nil {
+		t.strHash = make(map[string]Value)
+	}
+	return t.strHash
+}
+
 // hashKey converts a Value to a map key.
 func hashKey(v Value) any {
 	switch v.typ {
@@ -84,20 +96,16 @@ func hashKey(v Value) any {
 	}
 }
 
-// setHash inserts, updates, or deletes a hash entry while keeping the
-// ordered keys slice in sync. Deleted keys are left in t.keys as dead
-// entries (tombstones) so that ongoing pairs() iteration can skip over
-// them without losing position.
+// setHash inserts, updates, or deletes a non-string hash entry while keeping
+// the ordered keys slice in sync.
 func (t *Table) setHash(k any, value Value) {
 	if value.IsNil() {
 		if _, exists := t.hash[k]; exists {
 			delete(t.hash, k)
-			// Leave key in t.keys as a dead entry for iteration safety.
 			t.deadKeys++
 		}
 	} else {
 		if _, exists := t.hash[k]; !exists {
-			// Check if key already exists as a dead entry in t.keys.
 			revived := false
 			if t.deadKeys > 0 {
 				for _, hk := range t.keys {
@@ -116,6 +124,37 @@ func (t *Table) setHash(k any, value Value) {
 	}
 }
 
+// setStrHash inserts, updates, or deletes a string hash entry while keeping
+// the ordered keys slice in sync.
+func (t *Table) setStrHash(s string, value Value) {
+	if value.IsNil() {
+		if t.strHash != nil {
+			if _, exists := t.strHash[s]; exists {
+				delete(t.strHash, s)
+				t.deadKeys++
+			}
+		}
+		return
+	}
+	sh := t.ensureStrHash()
+	if _, exists := sh[s]; !exists {
+		revived := false
+		if t.deadKeys > 0 {
+			for _, hk := range t.keys {
+				if hs, ok := hk.(string); ok && hs == s {
+					t.deadKeys--
+					revived = true
+					break
+				}
+			}
+		}
+		if !revived {
+			t.keys = append(t.keys, s)
+		}
+	}
+	sh[s] = value
+}
+
 // removeKey removes a key from the ordered keys slice.
 // Used by rehashToArray when moving keys from hash to array part.
 func (t *Table) removeKey(k any) {
@@ -131,6 +170,33 @@ func (t *Table) removeKey(k any) {
 	}
 }
 
+// isKeyAlive checks whether a key in the ordered keys slice is still live
+// in either the general hash or string hash.
+func (t *Table) isKeyAlive(k any) bool {
+	if s, ok := k.(string); ok {
+		if t.strHash == nil {
+			return false
+		}
+		_, alive := t.strHash[s]
+		return alive
+	}
+	_, alive := t.hash[k]
+	return alive
+}
+
+// getKeyValue retrieves the value for a key from the appropriate hash map.
+func (t *Table) getKeyValue(k any) (Value, bool) {
+	if s, ok := k.(string); ok {
+		if t.strHash == nil {
+			return Nil, false
+		}
+		v, exists := t.strHash[s]
+		return v, exists
+	}
+	v, exists := t.hash[k]
+	return v, exists
+}
+
 // Get retrieves a value from the table (raw access, no metamethods).
 func (t *Table) Get(key Value) Value {
 	if key.IsNil() {
@@ -144,7 +210,17 @@ func (t *Table) Get(key Value) Value {
 		}
 	}
 
-	// Hash lookup
+	// String keys use the dedicated string hash map
+	if key.typ == typeString {
+		if t.strHash != nil {
+			if v, ok := t.strHash[key.ptr.(string)]; ok {
+				return v
+			}
+		}
+		return Nil
+	}
+
+	// General hash lookup
 	k := hashKey(key)
 	if v, ok := t.hash[k]; ok {
 		return v
@@ -165,8 +241,10 @@ func (t *Table) GetInt(i int) Value {
 
 // GetString retrieves by string key.
 func (t *Table) GetString(s string) Value {
-	if v, ok := t.hash[s]; ok {
-		return v
+	if t.strHash != nil {
+		if v, ok := t.strHash[s]; ok {
+			return v
+		}
 	}
 	return Nil
 }
@@ -207,7 +285,13 @@ func (t *Table) Set(key, value Value) error {
 		}
 	}
 
-	// Use hash part
+	// String keys use the dedicated string hash map
+	if key.typ == typeString {
+		t.setStrHash(key.ptr.(string), value)
+		return nil
+	}
+
+	// Use general hash part
 	t.setHash(hashKey(key), value)
 	return nil
 }
@@ -241,7 +325,7 @@ func (t *Table) SetInt(i int, value Value) {
 
 // SetString sets by string key.
 func (t *Table) SetString(s string, value Value) {
-	t.setHash(s, value)
+	t.setStrHash(s, value)
 }
 
 // shrinkArray removes trailing nils from the array part.
@@ -358,7 +442,7 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 			// Found key (live or dead) — advance to next live key
 			for j := i + 1; j < len(t.keys); j++ {
 				nextK := t.keys[j]
-				if v, alive := t.hash[nextK]; alive {
+				if v, alive := t.getKeyValue(nextK); alive {
 					return keyToValue(nextK), v, nil
 				}
 			}
@@ -393,7 +477,7 @@ func (t *Table) nextArrayEntry(start int) (Value, Value, bool) {
 // tombstones left by deletions during iteration.
 func (t *Table) firstLiveHashEntry() (Value, Value, bool) {
 	for _, k := range t.keys {
-		if v, alive := t.hash[k]; alive {
+		if v, alive := t.getKeyValue(k); alive {
 			return keyToValue(k), v, true
 		}
 	}
@@ -436,7 +520,7 @@ func (t *Table) ForEach(fn func(key, value Value) bool) {
 		}
 	}
 	for _, k := range t.keys {
-		if v, alive := t.hash[k]; alive {
+		if v, alive := t.getKeyValue(k); alive {
 			if !fn(keyToValue(k), v) {
 				return
 			}
