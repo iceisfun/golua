@@ -261,12 +261,17 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+b]
 			key := proto.Constants[c].SVal
-			if t := table.AsTable(); t != nil {
-				val, err := vm.tableGetString(t, key)
-				if err != nil {
-					return nil, err
+			if table.typ == typeTable {
+				// Fast path: concrete *Table with no metatable (avoids interface assertions)
+				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+					vm.stack[frame.base+a] = ct.GetString(key)
+				} else {
+					val, err := vm.tableGetString(table.ptr.(LuaTable), key)
+					if err != nil {
+						return nil, err
+					}
+					vm.stack[frame.base+a] = val
 				}
-				vm.stack[frame.base+a] = val
 			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewString(key))
 				if err != nil {
@@ -321,9 +326,14 @@ func (vm *VM) execute() ([]Value, error) {
 			table := vm.stack[frame.base+a]
 			key := proto.Constants[b].SVal
 			value := vm.getRK(frame, c, inst.K())
-			if t := table.AsTable(); t != nil {
-				if err := vm.tableSetString(t, key, value); err != nil {
-					return nil, err
+			if table.typ == typeTable {
+				// Fast path: concrete *Table with no metatable
+				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+					ct.SetString(key, value)
+				} else {
+					if err := vm.tableSetString(table.ptr.(LuaTable), key, value); err != nil {
+						return nil, err
+					}
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
