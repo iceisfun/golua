@@ -1039,15 +1039,21 @@ func (vm *VM) execute() ([]Value, error) {
 
 			// Collect return values BEFORE closing upvalues, since closeUpvalues
 			// may modify the stack (running __close metamethods).
-			var results []Value
+			// Use a stack-local buffer to survive __close clobbering vm.retBuf.
+			var nret int
 			if b == 0 {
-				// Return values from a to top
-				results = make([]Value, vm.top-(frame.base+a))
-				copy(results, vm.stack[frame.base+a:vm.top])
+				nret = vm.top - (frame.base + a)
 			} else {
-				results = make([]Value, b-1)
-				copy(results, vm.stack[frame.base+a:frame.base+a+b-1])
+				nret = b - 1
 			}
+			var localBuf [8]Value
+			var saved []Value
+			if nret <= len(localBuf) {
+				saved = localBuf[:nret]
+			} else {
+				saved = make([]Value, nret)
+			}
+			copy(saved, vm.stack[frame.base+a:frame.base+a+nret])
 
 			// Close upvalues and run __close metamethods BEFORE the return hook.
 			// Lua 5.4 runs __close before the return hook for the function itself.
@@ -1056,7 +1062,12 @@ func (vm *VM) execute() ([]Value, error) {
 			// Fire return hook after __close metamethods
 			vm.fireReturnHook()
 
-			return results, nil
+			// Copy to vm.retBuf AFTER close handlers have finished
+			if nret <= len(vm.retBuf) {
+				copy(vm.retBuf[:nret], saved)
+				return vm.retBuf[:nret], nil
+			}
+			return saved, nil
 
 		case compiler.OP_RETURN0:
 			vm.closeUpvalues(frame.base)
@@ -1068,7 +1079,8 @@ func (vm *VM) execute() ([]Value, error) {
 			result := vm.stack[frame.base+a]
 			vm.closeUpvalues(frame.base)
 			vm.fireReturnHook()
-			return []Value{result}, nil
+			vm.retBuf[0] = result
+			return vm.retBuf[:1], nil
 
 		case compiler.OP_FORLOOP:
 			a, bx := inst.A(), inst.Bx()

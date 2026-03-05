@@ -106,6 +106,11 @@ type VM struct {
 	// Output capture
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout
 	outputLines   *[]string // Shared captured output buffer (pointer for coroutine sharing)
+
+	// Pre-allocated return value buffer for OP_RETURN/OP_RETURN1.
+	// Since the VM processes one instruction at a time (no concurrency),
+	// this buffer can be reused across returns without allocation.
+	retBuf [8]Value
 }
 
 // Sentinel values for callFrame fields.
