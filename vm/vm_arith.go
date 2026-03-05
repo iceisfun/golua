@@ -9,6 +9,31 @@ import (
 // arith performs a register-register arithmetic operation, trying integer
 // fast path first, then float, then metamethods.
 func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
+	// Float fast path: both operands are already floats (common in numeric code)
+	if v1.typ == typeFloat && v2.typ == typeFloat {
+		n1, n2 := v1.num, v2.num
+		switch op {
+		case compiler.OP_ADD:
+			return NewFloat(n1 + n2), nil
+		case compiler.OP_SUB:
+			return NewFloat(n1 - n2), nil
+		case compiler.OP_MUL:
+			return NewFloat(n1 * n2), nil
+		case compiler.OP_DIV:
+			return NewFloat(n1 / n2), nil
+		case compiler.OP_IDIV:
+			return NewFloat(math.Floor(n1 / n2)), nil
+		case compiler.OP_MOD:
+			result := math.Mod(n1, n2)
+			if result != 0 && (result < 0) != (n2 < 0) {
+				result += n2
+			}
+			return NewFloat(result), nil
+		case compiler.OP_POW:
+			return NewFloat(math.Pow(n1, n2)), nil
+		}
+	}
+
 	// Save original values for metamethod calls (metamethods receive uncoerced operands)
 	orig1, orig2 := v1, v2
 
@@ -114,6 +139,31 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 
 // arithK performs a register-constant arithmetic operation.
 func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
+	// Float fast path: both operands are already floats
+	if v.typ == typeFloat && kv.typ == typeFloat {
+		n1, n2 := v.num, kv.num
+		switch op {
+		case compiler.OP_ADDK:
+			return NewFloat(n1 + n2), nil
+		case compiler.OP_SUBK:
+			return NewFloat(n1 - n2), nil
+		case compiler.OP_MULK:
+			return NewFloat(n1 * n2), nil
+		case compiler.OP_DIVK:
+			return NewFloat(n1 / n2), nil
+		case compiler.OP_IDIVK:
+			return NewFloat(math.Floor(n1 / n2)), nil
+		case compiler.OP_MODK:
+			result := math.Mod(n1, n2)
+			if result != 0 && (result < 0) != (n2 < 0) {
+				result += n2
+			}
+			return NewFloat(result), nil
+		case compiler.OP_POWK:
+			return NewFloat(math.Pow(n1, n2)), nil
+		}
+	}
+
 	// Integer fast path
 	if v.IsInt() && kv.IsInt() && op != compiler.OP_DIVK && op != compiler.OP_POWK {
 		i1, i2 := v.AsInt(), kv.AsInt()
