@@ -99,3 +99,34 @@ Available as the `doctest` global table in all doctest and proposed test files:
 ```bash
 go test ./... -count=1
 ```
+
+## Running Individual Lua Scripts
+
+The CLI supports a `--test` flag for running individual Lua files with testing infrastructure:
+
+```bash
+go run ./cmd/lua --test script.lua
+```
+
+`--test` enables:
+- `DefaultDebugProvider` (full debug library)
+- `JailedIoProvider` rooted at the script's directory
+- `DirCodeProvider` rooted at the working directory (enables `require` and `dofile`)
+
+## Conformance Status
+
+All imported Lua 5.4 conformance tests pass. The `new/` directory was previously used as a staging area for conformance tests under development — it is now empty, as all tests have been resolved and promoted to `tests/stdlib/`.
+
+## Adding New Tests
+
+Preferred approaches for new tests:
+
+1. **Doctests** (`tests/doctest/*.lua`) — best for testing observable behavior via `print()` output. Use `-->` directives for expected output.
+2. **Stdlib tests** (`tests/stdlib/test_*.lua`) — best for regression tests using `assert()`. One file per module or feature.
+3. **Go tests** (`vm/*_test.go`, `tests/edge_test.go`) — best for testing VM internals or edge cases that need Go-level control.
+
+For bug fixes, the recommended workflow is:
+1. Write a failing test that reproduces the bug
+2. Verify the test fails
+3. Fix the bug
+4. Verify against reference Lua 5.4.8 if applicable
