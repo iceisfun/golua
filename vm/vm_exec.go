@@ -988,7 +988,7 @@ func (vm *VM) execute() ([]Value, error) {
 							vm.stack[frame.base+i] = Nil
 						}
 						if numArgs > numParams {
-							frame.varargPos = frame.base + proto.MaxStack
+							frame.varargPos = frame.base + proto.MaxStack + VarargBufferOffset
 							frame.numVararg = numArgs - numParams
 							vm.ensureStack(frame.varargPos + frame.numVararg)
 							for i := 0; i < frame.numVararg; i++ {
