@@ -170,20 +170,6 @@ func (t *Table) removeKey(k any) {
 	}
 }
 
-// isKeyAlive checks whether a key in the ordered keys slice is still live
-// in either the general hash or string hash.
-func (t *Table) isKeyAlive(k any) bool {
-	if s, ok := k.(string); ok {
-		if t.strHash == nil {
-			return false
-		}
-		_, alive := t.strHash[s]
-		return alive
-	}
-	_, alive := t.hash[k]
-	return alive
-}
-
 // getKeyValue retrieves the value for a key from the appropriate hash map.
 func (t *Table) getKeyValue(k any) (Value, bool) {
 	if s, ok := k.(string); ok {
