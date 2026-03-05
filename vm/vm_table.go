@@ -29,7 +29,7 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 
 		if index.IsFunction() || index.IsNativeFunc() {
 			// __index is a function, call it with (table, key)
-			return vm.callMetamethod(index, NewTable(t), key)
+			return vm.callMetamethod("index", index, NewTable(t), key)
 		}
 
 		// __index is another value — chain through its metatable
@@ -65,7 +65,7 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 
 		if index.IsFunction() || index.IsNativeFunc() {
 			// __index is a function, call it with (table, key)
-			return vm.callMetamethod(index, NewTable(t), NewString(key))
+			return vm.callMetamethod("index", index, NewTable(t), NewString(key))
 		}
 
 		// __index is another value — chain through its metatable
@@ -101,7 +101,7 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 
 		if index.IsFunction() || index.IsNativeFunc() {
 			// __index is a function, call it with (table, key)
-			return vm.callMetamethod(index, NewTable(t), NewInt(int64(key)))
+			return vm.callMetamethod("index", index, NewTable(t), NewInt(int64(key)))
 		}
 
 		// __index is another value — chain through its metatable
@@ -133,7 +133,7 @@ func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 		return vm.tableGet(index.AsTable(), key)
 	}
 	if index.IsFunction() || index.IsNativeFunc() {
-		return vm.callMetamethod(index, val, key)
+		return vm.callMetamethod("index", index, val, key)
 	}
 	return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
 }
@@ -145,7 +145,7 @@ func (vm *VM) resolveIndex(mm Value, obj Value, key Value) (Value, error) {
 		return vm.tableGet(mm.AsTable(), key)
 	}
 	if mm.IsFunction() || mm.IsNativeFunc() {
-		return vm.callMetamethod(mm, obj, key)
+		return vm.callMetamethod("index", mm, obj, key)
 	}
 	return Nil, vm.runtimeError("attempt to index a %s value", obj.Type())
 }
@@ -188,7 +188,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 
 		if newindex.IsFunction() || newindex.IsNativeFunc() {
 			// __newindex is a function, call it with (table, key, value)
-			_, err := vm.callMetamethod3(newindex, NewTable(t), key, value)
+			_, err := vm.callMetamethod3("newindex", newindex, NewTable(t), key, value)
 			return err
 		}
 
@@ -237,7 +237,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 
 		if newindex.IsFunction() || newindex.IsNativeFunc() {
 			// __newindex is a function, call it with (table, key, value)
-			_, err := vm.callMetamethod3(newindex, NewTable(t), keyVal, value)
+			_, err := vm.callMetamethod3("newindex", newindex, NewTable(t), keyVal, value)
 			return err
 		}
 
@@ -285,7 +285,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 
 		if newindex.IsFunction() || newindex.IsNativeFunc() {
 			// __newindex is a function, call it with (table, key, value)
-			_, err := vm.callMetamethod3(newindex, NewTable(t), keyVal, value)
+			_, err := vm.callMetamethod3("newindex", newindex, NewTable(t), keyVal, value)
 			return err
 		}
 
@@ -316,7 +316,7 @@ func (vm *VM) ObjLen(val Value) (int, error) {
 	}
 	mm := vm.getMetafield(val, "__len")
 	if !mm.IsNil() {
-		res, err := vm.callMetamethod(mm, val, Nil)
+		res, err := vm.callMetamethod("len", mm, val, Nil)
 		if err != nil {
 			return 0, err
 		}

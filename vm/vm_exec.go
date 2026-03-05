@@ -364,7 +364,7 @@ func (vm *VM) execute() ([]Value, error) {
 						}
 						vm.stack[frame.base+a] = val
 					} else if index.IsFunction() || index.IsNativeFunc() {
-						val, err := vm.callMetamethod(index, table, NewString(key))
+						val, err := vm.callMetamethod("index", index, table, NewString(key))
 						if err != nil {
 							return nil, err
 						}
@@ -414,7 +414,7 @@ func (vm *VM) execute() ([]Value, error) {
 					if !mm.IsCallable() {
 						return nil, vm.runtimeError("attempt to call a %s value (metamethod 'add')", mm.Type())
 					}
-					result, err := vm.callMetamethod(mm, arg1, arg2)
+					result, err := vm.callMetamethod("add", mm, arg1, arg2)
 					if err != nil {
 						return nil, err
 					}
@@ -551,7 +551,7 @@ func (vm *VM) execute() ([]Value, error) {
 				if !mm.IsCallable() {
 					return nil, vm.runtimeError("attempt to call a %s value (metamethod 'unm')", mm.Type())
 				}
-				result, err := vm.callMetamethod(mm, v, v)
+				result, err := vm.callMetamethod("unm", mm, v, v)
 				if err != nil {
 					return nil, err
 				}
@@ -576,7 +576,7 @@ func (vm *VM) execute() ([]Value, error) {
 					if !mm.IsCallable() {
 						return nil, vm.runtimeError("attempt to call a %s value (metamethod 'bnot')", mm.Type())
 					}
-					result, err := vm.callMetamethod(mm, v, v)
+					result, err := vm.callMetamethod("bnot", mm, v, v)
 					if err != nil {
 						return nil, err
 					}
@@ -607,7 +607,7 @@ func (vm *VM) execute() ([]Value, error) {
 					if !mm.IsCallable() {
 						return nil, vm.runtimeError("attempt to call a %s value (metamethod 'len')", mm.Type())
 					}
-					res, err := vm.callMetamethod(mm, v, v)
+					res, err := vm.callMetamethod("len", mm, v, v)
 					if err != nil {
 						return nil, err
 					}

@@ -169,10 +169,7 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 		if mt != nil {
 			closeFunc := mt.Get(metaClose)
 			if !closeFunc.IsNil() {
-				// Set call name hint so debug.getinfo reports "close" as the name
-				vm.pendingCallName = "close"
-				vm.pendingCallNameWhat = "metamethod"
-				_, err := vm.callMetamethod(closeFunc, val, errVal)
+				_, err := vm.callMetamethod("close", closeFunc, val, errVal)
 				if err != nil {
 					panic(err.Error())
 				}

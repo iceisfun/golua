@@ -197,10 +197,62 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			}
 			results = nil
 
+			// Save the full call stack snapshot before truncation so the
+			// xpcall message handler can see the stack at the error point.
+			var errorCallStack []callFrame
+			if !vm.MsgHandler.IsNil() && vm.lastErrorCallStack == nil {
+				errorCallStack = make([]callFrame, len(vm.callStack))
+				copy(errorCallStack, vm.callStack)
+			}
+
 			// Restore call stack (but NOT vm.top yet — __close handlers need
 			// the stack pointer past the TBC variables to avoid overwriting them)
 			if len(vm.callStack) > savedCallStackLen {
 				vm.callStack = vm.callStack[:savedCallStackLen]
+			}
+
+			// Call xpcall message handler with the saved call stack so
+			// debug.traceback can see the full stack from the error point.
+			if errorCallStack != nil {
+				msgh := vm.MsgHandler
+				vm.MsgHandler = Nil
+				var errVal Value
+				if le, ok := r.(*LuaError); ok {
+					errVal = le.Value
+				} else {
+					errVal = NewString(fmt.Sprintf("%v", r))
+				}
+				// Temporarily swap in the error call stack and give extra
+				// headroom for the handler (like Lua 5.4's EXTRA_STACK).
+				truncatedStack := vm.callStack
+				vm.callStack = errorCallStack
+				savedMaxCallDepth := vm.limits.MaxCallDepth
+				if vm.limits.MaxCallDepth >= 0 {
+					needed := vm.callDepthBase + len(errorCallStack) + 200
+					if needed > vm.limits.MaxCallDepth {
+						vm.limits.MaxCallDepth = needed
+					}
+				}
+				func() {
+					defer func() {
+						if hr := recover(); hr != nil {
+							vm.MsgHandlerResult = NewString("error in error handling")
+						}
+					}()
+					exit := vm.EnterNonYieldable()
+					hResults, hErr := vm.ProtectedCall(msgh, []Value{errVal})
+					exit()
+					if hErr != nil {
+						vm.MsgHandlerResult = NewString("error in error handling")
+					} else if len(hResults) > 0 {
+						vm.MsgHandlerResult = hResults[0]
+					} else {
+						vm.MsgHandlerResult = Nil
+					}
+				}()
+				vm.limits.MaxCallDepth = savedMaxCallDepth
+				vm.callStack = truncatedStack
+				vm.MsgHandlerUsed = true
 			}
 
 			// If xpcall set a message handler AND callCloseHandlers saved
@@ -339,6 +391,8 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		newArgs := make([]Value, len(args)+1)
 		newArgs[0] = fn
 		copy(newArgs[1:], args)
+		vm.pendingCallName = "call"
+		vm.pendingCallNameWhat = "metamethod"
 		return vm.ProtectedCall(mm, newArgs)
 	}
 
@@ -533,9 +587,12 @@ func (vm *VM) ExitCloseChain() {
 	atomic.AddInt32(vm.closeDepth, -1)
 }
 
-// callMetamethod calls a metamethod with 2 arguments and returns the first result
-func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {
+// callMetamethod calls a metamethod with 2 arguments and returns the first result.
+// name is the metamethod name without "__" prefix (e.g. "index", "add").
+func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 	if fn.IsFunction() {
+		vm.pendingCallName = name
+		vm.pendingCallNameWhat = "metamethod"
 		results, err := vm.call(fn.AsClosure(), []Value{arg1, arg2}, 1)
 		if err != nil {
 			return Nil, err
@@ -557,7 +614,12 @@ func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {
 		vm.stack[nativeBase+1] = arg1
 		vm.stack[nativeBase+2] = arg2
 
-		nativeFrame := callFrame{base: nativeBase, argc: 2}
+		nativeFrame := callFrame{
+			base:         nativeBase,
+			argc:         2,
+			callName:     name,
+			callNameWhat: "metamethod",
+		}
 		vm.callStack = append(vm.callStack, nativeFrame)
 		vm.top = nativeBase + 3
 
@@ -580,9 +642,12 @@ func (vm *VM) callMetamethod(fn, arg1, arg2 Value) (Value, error) {
 	return Nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
 }
 
-// callMetamethod3 calls a metamethod with 3 arguments
-func (vm *VM) callMetamethod3(fn, arg1, arg2, arg3 Value) (Value, error) {
+// callMetamethod3 calls a metamethod with 3 arguments.
+// name is the metamethod name without "__" prefix (e.g. "newindex").
+func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, error) {
 	if fn.IsFunction() {
+		vm.pendingCallName = name
+		vm.pendingCallNameWhat = "metamethod"
 		results, err := vm.call(fn.AsClosure(), []Value{arg1, arg2, arg3}, 0)
 		if err != nil {
 			return Nil, err
@@ -604,7 +669,12 @@ func (vm *VM) callMetamethod3(fn, arg1, arg2, arg3 Value) (Value, error) {
 		vm.stack[nativeBase+2] = arg2
 		vm.stack[nativeBase+3] = arg3
 
-		nativeFrame := callFrame{base: nativeBase, argc: 3}
+		nativeFrame := callFrame{
+			base:         nativeBase,
+			argc:         3,
+			callName:     name,
+			callNameWhat: "metamethod",
+		}
 		vm.callStack = append(vm.callStack, nativeFrame)
 		vm.top = nativeBase + 4
 
