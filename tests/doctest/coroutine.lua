@@ -41,9 +41,9 @@ do
     print(pcall(coroutine.yield, 1))
     --> ~false\t.*yield from outside a coroutine
 
-    -- isyieldable(1) does not error in our impl, just returns false
-    print(coroutine.isyieldable(1))
-    --> =false
+    -- isyieldable(non-thread) errors like Lua 5.4
+    print(pcall(coroutine.isyieldable, 1))
+    --> ~false\t.*thread expected, got number
 end
 
 -- Check that coroutine.running() returns false as second argument when
