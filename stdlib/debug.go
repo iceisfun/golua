@@ -423,7 +423,9 @@ func luaDebugGetLocal(v *vm.VM) int {
 		}
 		name, found := v.GetFuncLocal(arg1, int(local))
 		if !found {
-			return 0
+			// Lua 5.4 returns nil (1 value) for out-of-range indices
+			v.Set(0, vm.Nil)
+			return 1
 		}
 		v.Set(0, vm.NewString(name))
 		return 1
@@ -447,7 +449,9 @@ func luaDebugGetLocal(v *vm.VM) int {
 
 	name, val, found := v.GetLocal(int(level), int(local))
 	if !found {
-		return 0
+		// Lua 5.4 returns nil (1 value) for out-of-range indices
+		v.Set(0, vm.Nil)
+		return 1
 	}
 
 	v.Set(0, vm.NewString(name))
@@ -485,7 +489,8 @@ func luaDebugSetLocal(v *vm.VM) int {
 			// own call stack: level 0 = yield, level 1 = function that called yield.
 			name, found := coVM.SetLocal(int(level), int(local), newVal)
 			if !found {
-				return 0
+				v.Set(0, vm.Nil)
+				return 1
 			}
 			v.Set(0, vm.NewString(name))
 			return 1
@@ -511,7 +516,8 @@ func luaDebugSetLocal(v *vm.VM) int {
 
 	name, found := v.SetLocal(int(level), int(local), newVal)
 	if !found {
-		return 0
+		v.Set(0, vm.Nil)
+		return 1
 	}
 
 	v.Set(0, vm.NewString(name))
