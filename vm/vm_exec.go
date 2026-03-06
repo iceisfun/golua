@@ -212,6 +212,13 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 			} else {
+				uvName := ""
+				if b < len(proto.Upvalues) {
+					uvName = proto.Upvalues[b].Name
+				}
+				if uvName != "" {
+					return nil, vm.runtimeError("attempt to index a %s value (upvalue '%s')", vm.ObjTypeName(table), uvName)
+				}
 				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
@@ -301,6 +308,13 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 			} else {
+				uvName := ""
+				if a < len(proto.Upvalues) {
+					uvName = proto.Upvalues[a].Name
+				}
+				if uvName != "" {
+					return nil, vm.runtimeError("attempt to index a %s value (upvalue '%s')", vm.ObjTypeName(table), uvName)
+				}
 				return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(table))
 			}
 
