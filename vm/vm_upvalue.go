@@ -133,6 +133,10 @@ func (vm *VM) CloseAllTBC() {
 	if len(vm.tbcVars) == 0 {
 		return
 	}
+	// Run __close handlers in a non-yieldable context (matches Lua 5.4).
+	// coroutine.close runs handlers where yield is not allowed.
+	exit := vm.EnterNonYieldable()
+	defer exit()
 	tbcToClose := make([]int, len(vm.tbcVars))
 	copy(tbcToClose, vm.tbcVars)
 	vm.tbcVars = nil
