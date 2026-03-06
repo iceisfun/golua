@@ -120,9 +120,9 @@ func (d *dumper) dumpFunction(p *compiler.Proto) {
 		d.writeString(p.Source)
 	}
 
-	// Line info
-	d.writeInt(int64(p.LineDef))
-	d.writeInt(int64(p.LastLine))
+	// Line info (variable-length encoded, matching Lua 5.4's dumpInt)
+	d.writeSize(p.LineDef)
+	d.writeSize(p.LastLine)
 
 	// Function header
 	d.writeByte(byte(p.NumParams))

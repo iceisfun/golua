@@ -129,6 +129,26 @@ func luaLoad(v *vm.VM) int {
 		panic(fmt.Sprintf("bad argument #1 to 'load' (function expected, got %s)", chunk.Type()))
 	}
 
+	// Detect binary chunk (starts with \x1bLua)
+	isBinary := len(source) >= 4 && source[0] == '\x1b' && source[1:4] == "Lua"
+
+	if isBinary {
+		if !strings.Contains(mode, "b") {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a binary chunk (mode is '%s')", mode)))
+			return 2
+		}
+		fn, errMsg := loadBinaryChunk(v, source, rawChunkName, env, hasEnv)
+		if errMsg != "" {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(errMsg))
+			return 2
+		}
+		v.Set(0, fn)
+		return 1
+	}
+
+	// Text chunk
 	if !strings.Contains(mode, "t") {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a text chunk (mode is '%s')", mode)))
@@ -349,6 +369,47 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 			closure.Upvalues[0].SetClosed(env)
 		} else {
 			// Use global environment
+			closure.Upvalues[0].SetClosed(vm.NewTable(v.Globals()))
+		}
+	}
+
+	return vm.NewFunction(closure), ""
+}
+
+// loadBinaryChunk loads a precompiled binary chunk via the undumper.
+func loadBinaryChunk(v *vm.VM, data string, chunkName string, env vm.Value, hasEnv bool) (fn vm.Value, errMsg string) {
+	// Determine display name for error messages
+	name := chunkName
+	if len(name) > 0 {
+		if name[0] == '@' || name[0] == '=' {
+			name = name[1:]
+		} else if name[0] == '\x1b' {
+			name = "binary string"
+		}
+	}
+
+	// Recover from panics in the undumper (truncated chunks, etc.)
+	defer func() {
+		if r := recover(); r != nil {
+			fn = vm.Nil
+			errMsg = fmt.Sprintf("%v", r)
+		}
+	}()
+
+	proto, _, err := compiler.Undump([]byte(data), name)
+	if err != nil {
+		return vm.Nil, err.Error()
+	}
+
+	// Create closure
+	closure := vm.NewClosure(proto)
+
+	// Set up _ENV upvalue
+	if len(proto.Upvalues) > 0 {
+		closure.Upvalues[0] = &vm.Upvalue{}
+		if hasEnv {
+			closure.Upvalues[0].SetClosed(env)
+		} else {
 			closure.Upvalues[0].SetClosed(vm.NewTable(v.Globals()))
 		}
 	}
