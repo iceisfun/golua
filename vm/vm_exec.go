@@ -393,6 +393,16 @@ func (vm *VM) execute() ([]Value, error) {
 					idx := vm.stringMeta.Get(metaIndex)
 					if idx.IsTable() {
 						val, _ = vm.tableGetString(idx.AsTable(), key)
+					} else if idx.IsFunction() || idx.IsNativeFunc() {
+						var err error
+						val, err = vm.callMetamethod("index", idx, table, NewString(key))
+						if err != nil {
+							return nil, err
+						}
+						frame = &vm.callStack[len(vm.callStack)-1]
+						proto = frame.closure.Proto
+						code = proto.Code
+						consts = frame.closure.ConstValues()
 					}
 				}
 				vm.stack[frame.base+a] = val
@@ -973,19 +983,19 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 					break // Continue outer loop (instruction loop)
 				} else if fn.IsNativeFunc() {
-					// Native function tail call - can't truly optimize, just call
+					// Native function tail call - can't truly optimize, just call.
+					// We must push a proper native frame so that stack-walking
+					// functions (e.g. error()'s GetSourceLocation) can correctly
+					// skip this frame, matching Lua 5.4's C-function tail call
+					// behavior where the C frame exists on the call stack.
 					nf := fn.AsNativeFunc()
-					// Reuse current frame's base for the native call
-					vm.stack[frame.base] = fn
+					nativeBase := frame.base
+					vm.stack[nativeBase] = fn
 					for i, arg := range args {
-						vm.stack[frame.base+1+i] = arg
+						vm.stack[nativeBase+1+i] = arg
 					}
-					frame.argc = len(args)
-
-					// Clear slots beyond the arguments to prevent stale register
-					// data from being seen as optional arguments by native functions
-					// (e.g., table.concat checking v.Get(3) for optional start index)
-					clearStart := frame.base + 1 + len(args)
+					// Clear slots beyond arguments
+					clearStart := nativeBase + 1 + len(args)
 					clearEnd := clearStart + 4
 					if clearEnd > len(vm.stack) {
 						clearEnd = len(vm.stack)
@@ -993,12 +1003,16 @@ func (vm *VM) execute() ([]Value, error) {
 					for i := clearStart; i < clearEnd; i++ {
 						vm.stack[i] = Nil
 					}
-
-					// The current frame already exists, just call the native function
-					// vm.Base() will correctly return frame.base
+					// Push native call frame
+					nativeFrame := callFrame{
+						base: nativeBase,
+						argc: len(args),
+					}
+					vm.callStack = append(vm.callStack, nativeFrame)
 					nResults := nf(vm)
+					vm.callStack = vm.callStack[:len(vm.callStack)-1]
 					results := make([]Value, nResults)
-					copy(results, vm.stack[frame.base:frame.base+nResults])
+					copy(results, vm.stack[nativeBase:nativeBase+nResults])
 					return results, nil
 				} else {
 					// Check for __call metamethod

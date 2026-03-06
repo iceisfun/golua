@@ -219,7 +219,7 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 		if node, ok := pos.(ast.Node); ok && node != nil {
 			p := node.Pos()
 			line = p.Line
-			if p.Source != "" {
+			if source == "" && p.Source != "" {
 				source = p.Source
 			}
 		}

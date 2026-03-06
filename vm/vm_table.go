@@ -408,6 +408,14 @@ func (vm *VM) TableSetInt(t LuaTable, key int, value Value) error {
 	return vm.tableSetInt(t, key, value)
 }
 
+// IndexValue retrieves val[key] with __index metamethod support for any value type.
+func (vm *VM) IndexValue(val Value, key Value) (Value, error) {
+	if val.IsTable() {
+		return vm.tableGet(val.AsTable(), key)
+	}
+	return vm.indexValue(val, key)
+}
+
 // ObjLen returns #v with __len metamethod support.
 func (vm *VM) ObjLen(val Value) (int, error) {
 	if val.IsString() {

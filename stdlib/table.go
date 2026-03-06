@@ -337,9 +337,9 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 
 // table.unpack(list [, i [, j]])
 func tableUnpack(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "table.unpack")
+	list := v.Get(1)
 
-	length := tableObjLen(v, v.Get(1))
+	length := tableObjLen(v, list)
 
 	i := int64(1)
 	if !v.Get(2).IsNil() {
@@ -355,15 +355,7 @@ func tableUnpack(v *vm.VM) int {
 		return 0
 	}
 	// Compute result count carefully to avoid overflow.
-	// The number of results is j - i + 1. Since j >= i (checked above),
-	// the subtraction j - i is non-negative but could overflow int64 when
-	// i and j are at opposite extremes (e.g., minI..maxI).
-	// Use unsigned arithmetic: n = uint64(j) - uint64(i) + 1.
-	// If this wraps (when j - i + 1 > 2^64 - 1, impossible for int64 range)
-	// or if n >= MaxInt32, reject.
 	n := uint64(j) - uint64(i) + 1
-	// If n == 0, uint64 wrapped around (the full int64 range).
-	// Match Lua 5.4: reject if n >= INT_MAX (C 32-bit int) or n == 0 (overflow).
 	if n == 0 || n >= math.MaxInt32 {
 		panic("too many results to unpack")
 	}
@@ -376,9 +368,20 @@ func tableUnpack(v *vm.VM) int {
 		v.EnsureStack(v.Base() + nResults)
 	}
 
+	// Use table-optimized path when possible, generic index otherwise
+	tbl := list.AsTable()
 	k := 0
 	for idx := i; idx <= j; idx++ {
-		val := tableGetIdx(v, tbl, int(idx))
+		var val vm.Value
+		if tbl != nil {
+			val = tableGetIdx(v, tbl, int(idx))
+		} else {
+			var err error
+			val, err = v.IndexValue(list, vm.NewInt(idx))
+			if err != nil {
+				panic(err)
+			}
+		}
 		v.Set(k, val)
 		k++
 		if idx == j {
