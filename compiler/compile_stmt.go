@@ -329,7 +329,9 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 
 	// Phase 3: Assign from temp value registers to targets using precomputed
 	// table/key registers for indexed targets.
-	for i := 0; i < nTargets; i++ {
+	// Lua 5.4 assigns right-to-left so that in `t[1], t[1] = "a", "b"`,
+	// t[1] ends up as "a" (the leftmost assignment wins).
+	for i := nTargets - 1; i >= 0; i-- {
 		pc := precomputed[i]
 		if pc.tableReg >= 0 {
 			// Pre-evaluated indexed/field target
