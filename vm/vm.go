@@ -407,7 +407,20 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	}
 
 	if fn.IsFunction() {
-		return vm.call(fn.AsClosure(), args, MultiReturn)
+		results, err = vm.call(fn.AsClosure(), args, MultiReturn)
+		if err != nil {
+			// Clean up TBC variables added during the failed call.
+			// The defer/recover path handles panics, but execute() returns
+			// errors (e.g., from OP_TFORCALL) as regular Go errors.
+			if len(vm.tbcVars) > savedTbcLen {
+				tbcToClose := make([]int, len(vm.tbcVars)-savedTbcLen)
+				copy(tbcToClose, vm.tbcVars[savedTbcLen:])
+				vm.tbcVars = vm.tbcVars[:savedTbcLen]
+				vm.callCloseHandlers(tbcToClose, NewString(err.Error()))
+			}
+			vm.top = savedTop
+		}
+		return results, err
 	}
 
 	// Check for __call metamethod
