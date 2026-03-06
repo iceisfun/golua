@@ -930,21 +930,24 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		fs.maxReg = fs.freeReg
 	}
 
+	// Add internal for-in variables as hidden locals to protect their registers.
+	// These must be registered BEFORE OP_TBC so localName() can resolve the
+	// variable name at the TBC instruction's PC.
+	localStartPC := fs.pc()
+	fs.checkVarLimit(4 + len(s.Names))
+	fs.locals = append(fs.locals,
+		localVar{name: "(for state)", reg: base, startPC: localStartPC},
+		localVar{name: "(for state)", reg: base + 1, startPC: localStartPC},
+		localVar{name: "(for state)", reg: base + 2, startPC: localStartPC},
+		localVar{name: "(for state)", reg: base + 3, startPC: localStartPC, attrib: "close"},
+	)
+	fs.nActVar += 4
+
 	// Mark base+3 as to-be-closed (the 4th return from iterator factory)
 	fs.emit(ABC(OP_TBC, base+3, 0, 0, 0), line)
 
 	// TFORPREP
 	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), line)
-
-	// Add internal for-in variables as hidden locals to protect their registers
-	fs.checkVarLimit(4 + len(s.Names))
-	fs.locals = append(fs.locals,
-		localVar{name: "(for state)", reg: base, startPC: fs.pc()},
-		localVar{name: "(for state)", reg: base + 1, startPC: fs.pc()},
-		localVar{name: "(for state)", reg: base + 2, startPC: fs.pc()},
-		localVar{name: "(for state)", reg: base + 3, startPC: fs.pc(), attrib: "close"},
-	)
-	fs.nActVar += 4
 
 	// Loop variables start at base+4
 	nVars := len(s.Names)

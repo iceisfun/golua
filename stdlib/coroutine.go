@@ -343,7 +343,9 @@ func coYield(v *vm.VM) int {
 		panic("attempt to yield from outside a coroutine")
 	}
 	if !v.IsYieldableContext() {
-		panic("attempt to yield across a C-call boundary")
+		// Use LuaError to avoid addCallerLocation prefix — Lua 5.4 raises
+		// this from C code (lua_yieldk) so no file:line is prepended.
+		panic(&vm.LuaError{Value: vm.NewString("attempt to yield across a C-call boundary")})
 	}
 
 	// Mark coroutine as suspended before yielding
