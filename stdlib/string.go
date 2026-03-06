@@ -648,7 +648,7 @@ func stringMetaUnm(v *vm.VM) int {
 	a := v.Get(1)
 	nv, ok := vm.StringToNumericValue(a.AsString())
 	if !ok {
-		panic("attempt to perform arithmetic on a string value")
+		panic(fmt.Sprintf("attempt to unm a '%s' with a '%s'", a.Type(), a.Type()))
 	}
 	if nv.IsInt() {
 		v.Set(0, vm.NewInt(-nv.AsInt()))
