@@ -30,7 +30,8 @@ type VM struct {
 	openUpvalues []*Upvalue
 
 	// To-be-closed variables (stack index -> true)
-	tbcVars []int
+	tbcVars        []int
+	skipTBCCleanup bool // when true, ProtectedCall error recovery skips TBC cleanup
 
 	// Type metatables (for string, number, bool, nil, function)
 	stringMeta   LuaTable
@@ -197,6 +198,11 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	savedCallStackLen := len(vm.callStack)
 	savedTbcLen := len(vm.tbcVars)
 	savedOpenUpvaluesLen := len(vm.openUpvalues)
+	// Save and clear skipTBCCleanup: this call's recovery uses the saved
+	// value, but nested ProtectedCalls (from pcall) see false so they
+	// still close TBC vars normally.
+	skipTBC := vm.skipTBCCleanup
+	vm.skipTBCCleanup = false
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -307,41 +313,51 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				vm.MsgHandlerUsed = true
 			}
 			// Close TBC variables that were created during the failed call.
-			// Remove them from tbcVars BEFORE calling __close to prevent
-			// double-close: the handler's OP_RETURN calls closeUpvalues which
-			// would find the same entry still in tbcVars.
-			tbcToClose := make([]int, len(vm.tbcVars)-savedTbcLen)
-			copy(tbcToClose, vm.tbcVars[savedTbcLen:])
-			vm.tbcVars = vm.tbcVars[:savedTbcLen]
-			// Extract the Lua error value to pass to __close handlers
-			var errVal Value
-			if le, ok := r.(*LuaError); ok {
-				errVal = le.Value
-			} else {
-				errVal = NewString(fmt.Sprintf("%v", r))
-			}
-			// Use callCloseHandlers to protect each __close call individually.
-			// If a handler errors, it replaces err but other handlers still run.
-			func() {
-				defer func() {
-					if closeR := recover(); closeR != nil {
-						// __close error replaces original error
-						if le, ok := closeR.(*LuaError); ok {
-							err = le
-						} else {
-							err = fmt.Errorf("%v", closeR)
+			// Skip TBC cleanup for coroutine top-level calls: Lua 5.4 does not
+			// close TBC vars when a coroutine dies from an unhandled error.
+			if !skipTBC {
+				// Remove them from tbcVars BEFORE calling __close to prevent
+				// double-close: the handler's OP_RETURN calls closeUpvalues which
+				// would find the same entry still in tbcVars.
+				tbcToClose := make([]int, len(vm.tbcVars)-savedTbcLen)
+				copy(tbcToClose, vm.tbcVars[savedTbcLen:])
+				vm.tbcVars = vm.tbcVars[:savedTbcLen]
+				// Extract the Lua error value to pass to __close handlers
+				var errVal Value
+				if le, ok := r.(*LuaError); ok {
+					errVal = le.Value
+				} else {
+					errVal = NewString(fmt.Sprintf("%v", r))
+				}
+				// Use callCloseHandlers to protect each __close call individually.
+				// If a handler errors, it replaces err but other handlers still run.
+				func() {
+					defer func() {
+						if closeR := recover(); closeR != nil {
+							// __close error replaces original error
+							if le, ok := closeR.(*LuaError); ok {
+								err = le
+							} else {
+								err = fmt.Errorf("%v", closeR)
+							}
 						}
-					}
+					}()
+					vm.callCloseHandlers(tbcToClose, errVal)
 				}()
-				vm.callCloseHandlers(tbcToClose, errVal)
-			}()
-			// Now restore vm.top after __close handlers are done
-			vm.top = savedTop
-			// Close upvalues
-			for i := len(vm.openUpvalues) - 1; i >= savedOpenUpvaluesLen; i-- {
-				vm.openUpvalues[i].Close()
 			}
-			vm.openUpvalues = vm.openUpvalues[:savedOpenUpvaluesLen]
+			// Restore vm.top after __close handlers are done.
+			// When skipTBC is set (coroutine top-level), keep the stack
+			// intact so ClosePendingTBC can access TBC values later.
+			if !skipTBC {
+				vm.top = savedTop
+			}
+			// Close upvalues (but not when skipTBC, since TBC vars may reference them)
+			if !skipTBC {
+				for i := len(vm.openUpvalues) - 1; i >= savedOpenUpvaluesLen; i-- {
+					vm.openUpvalues[i].Close()
+				}
+				vm.openUpvalues = vm.openUpvalues[:savedOpenUpvaluesLen]
+			}
 		}
 	}()
 
@@ -544,7 +560,40 @@ func (vm *VM) CoroutineID() int {
 // CallCoroutine calls a closure as a coroutine, with yield support.
 // Uses ProtectedCall to ensure TBC variables are closed on error.
 func (vm *VM) CallCoroutine(closure *Closure, args []Value) ([]Value, error) {
-	return vm.ProtectedCall(NewFunction(closure), args)
+	return vm.ProtectedCallCoroutine(NewFunction(closure), args)
+}
+
+// ProtectedCallCoroutine is like ProtectedCall but skips TBC cleanup on error.
+// Lua 5.4: TBC vars in a coroutine are NOT closed when it dies from
+// an unhandled error (only closed on GC or coroutine.close).
+func (vm *VM) ProtectedCallCoroutine(fn Value, args []Value) ([]Value, error) {
+	vm.skipTBCCleanup = true
+	return vm.ProtectedCall(fn, args)
+}
+
+// ClosePendingTBC closes all pending to-be-closed variables on this VM.
+// Used by coroutine.close and wrap error recovery. Returns the final error
+// value (which may be from a __close handler if one errors).
+func (vm *VM) ClosePendingTBC(errVal Value) (finalErr error) {
+	if len(vm.tbcVars) == 0 {
+		return nil
+	}
+	tbcToClose := make([]int, len(vm.tbcVars))
+	copy(tbcToClose, vm.tbcVars)
+	vm.tbcVars = vm.tbcVars[:0]
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if le, ok := r.(*LuaError); ok {
+					finalErr = le
+				} else {
+					finalErr = fmt.Errorf("%v", r)
+				}
+			}
+		}()
+		vm.callCloseHandlers(tbcToClose, errVal)
+	}()
+	return finalErr
 }
 
 // ThreadObj returns the thread object representing this VM (for coroutine.running).

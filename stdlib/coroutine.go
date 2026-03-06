@@ -34,6 +34,7 @@ type Coroutine struct {
 	status   coroutineStatus // lifecycle state
 	started  bool          // Whether the goroutine has been started
 	vm       *vm.VM        // Reference to the VM
+	coVM     *vm.VM        // The coroutine's own VM (set after first resume)
 	thread   vm.Value      // Thread object (table) for coroutine.running
 	resumeCh chan []vm.Value // Channel to send resume args
 	yieldCh  chan []vm.Value // Channel to receive yield values
@@ -289,6 +290,9 @@ func runCoroutine(co *Coroutine) {
 	// Create a fresh VM for this coroutine that shares globals but has its own stack
 	coVM := vm.NewCoroutineVM(co.vm, co.yieldCh, co.resumeCh, co.id)
 	coVM.SetThreadObj(co.thread)
+	co.mu.Lock()
+	co.coVM = coVM
+	co.mu.Unlock()
 
 	// Store VM reference on thread table for debug.getlocal/setlocal coroutine support
 	if co.thread.IsTable() {
@@ -301,7 +305,7 @@ func runCoroutine(co *Coroutine) {
 		results, err = coVM.CallCoroutine(co.fn.AsClosure(), args)
 	} else if co.fn.IsNativeFunc() {
 		// Use coroutine VM so yield works from functions called by the native func
-		results, err = coVM.ProtectedCall(co.fn, args)
+		results, err = coVM.ProtectedCallCoroutine(co.fn, args)
 	}
 
 	co.mu.Lock()
@@ -528,9 +532,24 @@ func coWrap(v *vm.VM) int {
 			co.mu.Lock()
 			err := co.err
 			result := co.result
+			coVM := co.coVM
 			co.mu.Unlock()
 
 			if err != nil {
+				// Close TBC vars on the coroutine VM before re-raising.
+				// Lua 5.4: wrap closes TBC vars when the error propagates.
+				// If a __close handler errors, that error replaces the original.
+				if coVM != nil {
+					var errVal vm.Value
+					if le, ok := err.(*vm.LuaError); ok {
+						errVal = le.Value
+					} else {
+						errVal = vm.NewString(err.Error())
+					}
+					if closeErr := coVM.ClosePendingTBC(errVal); closeErr != nil {
+						err = closeErr
+					}
+				}
 				// Preserve the original error (including *LuaError)
 				panic(err)
 			}
@@ -600,13 +619,25 @@ func coClose(v *vm.VM) int {
 	}
 
 	if status == statusDead {
-		// Already dead — check if it died with an error. The first close
-		// after an error returns false + error (Lua 5.4 behavior), then
-		// clears the error so subsequent closes return true.
+		// Close any pending TBC vars on the coroutine VM.
 		co.mu.Lock()
+		coVM := co.coVM
 		coErr := co.err
 		co.err = nil
 		co.mu.Unlock()
+		if coVM != nil {
+			var errVal vm.Value
+			if coErr != nil {
+				if le, ok := coErr.(*vm.LuaError); ok {
+					errVal = le.Value
+				} else {
+					errVal = vm.NewString(coErr.Error())
+				}
+			}
+			if closeErr := coVM.ClosePendingTBC(errVal); closeErr != nil {
+				coErr = closeErr
+			}
+		}
 		if coErr != nil {
 			v.Set(0, vm.False)
 			if le, ok := coErr.(*vm.LuaError); ok {
