@@ -26,33 +26,39 @@ func (vm *VM) runtimeError(format string, args ...any) error {
 
 // addCallerLocation prepends the calling Lua frame's source:line: prefix
 // to a plain error message from a native function. This mirrors Lua 5.4's
-// luaG_addinfo / luaL_where which adds the caller location to stdlib errors.
-// It walks the call stack to find the Lua frame that called the native function.
-// Returns the original message if no Lua frame is found or if the message
-// already has a location prefix.
+// luaG_addinfo / luaL_where(L, 1) which adds the caller location to stdlib errors.
+// Only adds the prefix if the immediate caller of the erroring native function
+// is a Lua frame (not another native function like pcall).
 func (vm *VM) addCallerLocation(msg string) string {
-	// Walk the call stack backwards to find the first Lua frame
-	for i := len(vm.callStack) - 1; i >= 0; i-- {
-		frame := &vm.callStack[i]
-		if frame.closure != nil {
-			proto := frame.closure.Proto
-			pc := frame.pc - 1
-			if pc >= 0 && pc < len(proto.Lines) {
-				prefix := fmt.Sprintf("%s:%d: ", shortSrc(proto.Source), proto.Lines[pc])
-				if strings.HasPrefix(msg, prefix) {
-					return msg // already has this prefix
-				}
-				return prefix + msg
-			}
-			if proto.Source != "" {
-				prefix := shortSrc(proto.Source) + ": "
-				if strings.HasPrefix(msg, prefix) {
-					return msg
-				}
-				return prefix + msg
-			}
-			break
+	// Find the topmost native frame (the erroring function), then check
+	// if the frame directly below it is a Lua frame.
+	n := len(vm.callStack)
+	if n < 2 {
+		return msg
+	}
+	// The top frame is the native function that panicked.
+	// The frame below it should be the Lua frame that called it.
+	// If the frame below is also native (e.g., pcall calling type),
+	// no prefix is added, matching Lua 5.4's behavior.
+	callerFrame := &vm.callStack[n-2]
+	if callerFrame.closure == nil {
+		return msg // caller is also native — no prefix
+	}
+	proto := callerFrame.closure.Proto
+	pc := callerFrame.pc - 1
+	if pc >= 0 && pc < len(proto.Lines) {
+		prefix := fmt.Sprintf("%s:%d: ", shortSrc(proto.Source), proto.Lines[pc])
+		if strings.HasPrefix(msg, prefix) {
+			return msg
 		}
+		return prefix + msg
+	}
+	if proto.Source != "" {
+		prefix := shortSrc(proto.Source) + ": "
+		if strings.HasPrefix(msg, prefix) {
+			return msg
+		}
+		return prefix + msg
 	}
 	return msg
 }
