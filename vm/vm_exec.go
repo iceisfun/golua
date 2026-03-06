@@ -711,7 +711,7 @@ func (vm *VM) execute() ([]Value, error) {
 					current := vm.stack[frame.base+a+b-1]
 					for i := b - 2; i >= 0; i-- {
 						prev := vm.stack[frame.base+a+i]
-						res, err := vm.concat(prev, current)
+						res, err := vm.concat(prev, current, a+i)
 						if err != nil {
 							return nil, err
 						}

@@ -127,8 +127,9 @@ func (vm *VM) compareError(v1, v2 Value) error {
 	return vm.runtimeError("attempt to compare %s with %s", t1, t2)
 }
 
-// concat handles concatenation with __concat support
-func (vm *VM) concat(v1, v2 Value) (Value, error) {
+// concat handles concatenation with __concat support.
+// reg1 is the register of v1 (used for error messages), or -1 if unknown.
+func (vm *VM) concat(v1, v2 Value, reg1 int) (Value, error) {
 	// 1. Primitives (string/number)
 	if (v1.IsString() || v1.IsNumber()) && (v2.IsString() || v2.IsNumber()) {
 		var s1, s2 string
@@ -163,9 +164,16 @@ func (vm *VM) concat(v1, v2 Value) (Value, error) {
 	}
 
 	// Report the non-concatenable operand (not the valid string/number one)
-	errType := v1.Type()
 	if v1.IsString() || v1.IsNumber() {
-		errType = v2.Type()
+		info := ""
+		if reg1 >= 0 {
+			info = vm.varInfo(reg1 + 1)
+		}
+		return Nil, vm.runtimeError("attempt to concatenate a %s value%s", v2.Type(), info)
 	}
-	return Nil, vm.runtimeError("attempt to concatenate a %s value", errType)
+	info := ""
+	if reg1 >= 0 {
+		info = vm.varInfo(reg1)
+	}
+	return Nil, vm.runtimeError("attempt to concatenate a %s value%s", v1.Type(), info)
 }
