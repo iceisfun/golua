@@ -223,8 +223,9 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 			return err
 		}
 
-		// __newindex is a non-table, non-function value — error
-		return fmt.Errorf("'__newindex' is not a table or function")
+		// __newindex is a non-table, non-function value — Lua 5.4 chains
+		// into it, which errors because it can't be indexed.
+		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(newindex))
 	}
 	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
@@ -267,7 +268,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 				return err
 			}
 
-			return fmt.Errorf("'__newindex' is not a table or function")
+			return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(newindex))
 		}
 
 		// Slow path: generic LuaTable interface
@@ -306,7 +307,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 			return err
 		}
 
-		return fmt.Errorf("'__newindex' is not a table or function")
+		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(newindex))
 	}
 	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
@@ -349,7 +350,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 				return err
 			}
 
-			return fmt.Errorf("'__newindex' is not a table or function")
+			return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(newindex))
 		}
 
 		// Slow path: generic LuaTable interface
@@ -388,7 +389,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 			return err
 		}
 
-		return fmt.Errorf("'__newindex' is not a table or function")
+		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(newindex))
 	}
 	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
