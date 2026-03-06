@@ -642,7 +642,7 @@ func (vm *VM) maxCallDepth() int {
 func (vm *VM) checkCallDepth() {
 	max := vm.maxCallDepth()
 	if max > 0 && vm.callDepthBase+len(vm.callStack) > max {
-		panic(&LuaError{Value: NewString("stack overflow")})
+		panic(&LuaError{Value: NewString(vm.runtimeError("stack overflow").Error())})
 	}
 }
 
