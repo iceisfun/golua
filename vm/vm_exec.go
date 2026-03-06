@@ -467,7 +467,7 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v := vm.stack[frame.base+b]
 			kv := consts[c]
-			result, err := vm.arithK(op, v, kv)
+			result, err := vm.arithK(op, v, kv, b)
 			if err != nil {
 				return nil, err
 			}
@@ -477,16 +477,8 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v := vm.stack[frame.base+b]
 			kv := consts[c]
-			result, err := vm.bitwiseK(op, v, kv)
+			result, err := vm.bitwiseK(op, v, kv, b)
 			if err != nil {
-				// Enhance "number has no integer representation" with register name
-				if strings.Contains(err.Error(), "number has no integer representation") {
-					if v.IsNumber() {
-						if _, ok := v.ToInt(); !ok {
-							return nil, vm.runtimeErrorForNumber(b)
-						}
-					}
-				}
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
@@ -502,10 +494,10 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				} else {
-					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
+				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 			}
 
 		case compiler.OP_SHRI:
@@ -519,10 +511,10 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				} else {
-					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
+					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(v))
+				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 			}
 
 		case compiler.OP_ADD, compiler.OP_SUB, compiler.OP_MUL, compiler.OP_MOD,
@@ -530,7 +522,7 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v1 := vm.stack[frame.base+b]
 			v2 := vm.stack[frame.base+c]
-			result, err := vm.arith(op, v1, v2)
+			result, err := vm.arith(op, v1, v2, b, c)
 			if err != nil {
 				return nil, err
 			}
@@ -541,22 +533,8 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v1 := vm.stack[frame.base+b]
 			v2 := vm.stack[frame.base+c]
-			result, err := vm.bitwise(op, v1, v2)
+			result, err := vm.bitwise(op, v1, v2, b, c)
 			if err != nil {
-				// Enhance "number has no integer representation" with register name
-				if strings.Contains(err.Error(), "number has no integer representation") {
-					// Try the first operand, then the second
-					if v1.IsNumber() {
-						if _, ok := v1.ToInt(); !ok {
-							return nil, vm.runtimeErrorForNumber(b)
-						}
-					}
-					if v2.IsNumber() {
-						if _, ok := v2.ToInt(); !ok {
-							return nil, vm.runtimeErrorForNumber(c)
-						}
-					}
-				}
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result

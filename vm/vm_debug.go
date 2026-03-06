@@ -775,6 +775,8 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 				return proto.Constants[c].SVal, "method"
 			}
 			return "", ""
+		case compiler.OP_GETI:
+			return "integer index", "field"
 		case compiler.OP_GETTABLE:
 			// R[A] = R[B][R[C]] — try to resolve R[C] to a constant name.
 			// When the table was loaded via GETUPVAL of _ENV (upvalue 0),

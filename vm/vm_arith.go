@@ -9,7 +9,7 @@ import (
 // arith performs a register-register arithmetic operation.
 // Lua 5.4.6+: strings are NOT coerced at the VM level; coercion is handled
 // by the string metatable's arithmetic metamethods.
-func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
+func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, error) {
 	// Float fast path: both operands are already floats (common in numeric code)
 	if v1.typ == typeFloat && v2.typ == typeFloat {
 		n1, n2 := v1.num, v2.num
@@ -115,14 +115,14 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 
 	// No metamethod found, report error
 	if !v1.IsNumber() {
-		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v1))
+		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(v1), vm.varInfo(regB))
 	}
-	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v2))
+	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(v2), vm.varInfo(regC))
 }
 
 // arithK performs a register-constant arithmetic operation.
 // Lua 5.4.6+: strings are NOT coerced at the VM level.
-func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
+func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 	// Float fast path: both operands are already floats
 	if v.typ == typeFloat && kv.typ == typeFloat {
 		n1, n2 := v.num, kv.num
@@ -226,7 +226,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 	}
 
 	if !v.IsNumber() {
-		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
+		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(v), vm.varInfo(regB))
 	}
 	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(kv))
 }
@@ -254,7 +254,7 @@ func (vm *VM) arithMetamethod(op compiler.OpCode) string {
 }
 
 // bitwise performs a register-register bitwise operation, with metamethod fallback.
-func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
+func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, error) {
 	// Lua 5.4: bitwise ops do NOT coerce strings (unlike arithmetic)
 	var i1, i2 int64
 	var ok1, ok2 bool
@@ -300,18 +300,18 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value) (Value, error) {
 
 	if !ok1 {
 		if v1.IsNumber() {
-			return Nil, vm.runtimeError("number has no integer representation")
+			return Nil, vm.runtimeErrorForNumber(regB)
 		}
-		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v1.Type())
+		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", v1.Type(), vm.varInfo(regB))
 	}
 	if v2.IsNumber() {
-		return Nil, vm.runtimeError("number has no integer representation")
+		return Nil, vm.runtimeErrorForNumber(regC)
 	}
-	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v2.Type())
+	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", v2.Type(), vm.varInfo(regC))
 }
 
 // bitwiseK performs a register-constant bitwise operation.
-func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
+func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 	// Lua 5.4: bitwise ops do NOT coerce strings
 	var i1, i2 int64
 	var ok1, ok2 bool
@@ -345,9 +345,9 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value) (Value, error) {
 
 	if !ok1 {
 		if v.IsNumber() {
-			return Nil, vm.runtimeError("number has no integer representation")
+			return Nil, vm.runtimeErrorForNumber(regB)
 		}
-		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", v.Type())
+		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", v.Type(), vm.varInfo(regB))
 	}
 	if kv.IsNumber() {
 		return Nil, vm.runtimeError("number has no integer representation")
