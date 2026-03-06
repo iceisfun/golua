@@ -735,15 +735,6 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 		fs.emit(Ax(OP_EXTRAARG, nArr), line)
 	}
 
-	// Ensure freeReg is past the table register so that scratch registers
-	// (for hash field values, etc.) don't collide with the table itself.
-	if fs.freeReg <= reg {
-		fs.freeReg = reg + 1
-		if fs.freeReg > fs.maxReg {
-			fs.maxReg = fs.freeReg
-		}
-	}
-
 	// Find the last array-style field to check if it's multi-return
 	lastArrayIdx := -1
 	for i, f := range e.Fields {
