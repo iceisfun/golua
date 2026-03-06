@@ -387,8 +387,15 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 			} else if table.IsString() && vm.stringMeta != nil {
-				// String method call - use string metatable
-				vm.stack[frame.base+a] = vm.stringMeta.Get(NewString(key))
+				// String method call - resolve through __index on string metatable
+				val := vm.stringMeta.Get(NewString(key))
+				if val.IsNil() {
+					idx := vm.stringMeta.Get(metaIndex)
+					if idx.IsTable() {
+						val, _ = vm.tableGetString(idx.AsTable(), key)
+					}
+				}
+				vm.stack[frame.base+a] = val
 			} else if ud := table.AsUserdata(); ud != nil {
 				// Userdata method call - use __index from userdata metatable
 				if mt := ud.Metatable(); mt != nil {
@@ -422,29 +429,19 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_ADDI:
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
-			origV := vm.stack[frame.base+b]
-			v := origV
-			// Coerce string operands to numbers (preserving int/float type),
-			// matching the string coercion in arith() for OP_ADD.
-			if v.IsString() {
-				if nv, ok := StringToNumericValue(v.AsString()); ok {
-					v = nv
-				}
-			}
+			v := vm.stack[frame.base+b]
 			if v.IsInt() {
 				vm.stack[frame.base+a] = NewInt(v.AsInt() + int64(sc))
-			} else if n, ok := v.ToNumber(); ok {
-				vm.stack[frame.base+a] = NewFloat(n + float64(sc))
+			} else if v.IsFloat() {
+				vm.stack[frame.base+a] = NewFloat(v.num + float64(sc))
 			} else {
 				// Try __add metamethod with correct operand order.
-				// The next instruction is OP_MMBINI whose k flag indicates
-				// whether the immediate was the left operand (k=1) or right (k=0).
 				immVal := NewInt(int64(sc))
-				arg1, arg2 := origV, immVal
+				arg1, arg2 := v, immVal
 				if frame.pc < len(code) {
 					nextInst := code[frame.pc]
 					if nextInst.OpCode() == compiler.OP_MMBINI && nextInst.K() == 1 {
-						arg1, arg2 = immVal, origV
+						arg1, arg2 = immVal, v
 					}
 				}
 				if mm := vm.getArithMetamethod(arg1, arg2, "__add"); !mm.IsNil() {
@@ -461,7 +458,7 @@ func (vm *VM) execute() ([]Value, error) {
 					code = proto.Code
 					consts = frame.closure.ConstValues()
 				} else {
-					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(origV), vm.varInfo(b))
+					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 				}
 			}
 
@@ -576,16 +573,6 @@ func (vm *VM) execute() ([]Value, error) {
 					vm.stack[frame.base+a] = NewInt(-v.AsInt())
 				} else {
 					vm.stack[frame.base+a] = NewFloat(-v.AsFloat())
-				}
-			} else if v.IsString() {
-				if nv, ok := StringToNumericValue(v.AsString()); ok {
-					if nv.IsInt() {
-						vm.stack[frame.base+a] = NewInt(-nv.AsInt())
-					} else {
-						vm.stack[frame.base+a] = NewFloat(-nv.AsFloat())
-					}
-				} else {
-					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
 				}
 			} else if mm := vm.getMetafield(v, "__unm"); !mm.IsNil() {
 				if !mm.IsCallable() {

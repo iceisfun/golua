@@ -3,6 +3,7 @@ package stdlib
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/iceisfun/golua/vm"
@@ -29,12 +30,28 @@ func openString(v *vm.VM) {
 	str.SetString("unpack", vm.NewNativeFunc(stringUnpack))
 	str.SetString("packsize", vm.NewNativeFunc(stringPacksize))
 
-	v.SetGlobal("string", vm.NewTable(str))
+	strLib := vm.NewTable(str)
+	v.SetGlobal("string", strLib)
 
-	// Set string metatable so strings can use method syntax (str:find(...))
-	// __index points to the string table itself
-	str.SetString("__index", vm.NewTable(str))
-	v.SetStringMeta(str)
+	// Create a separate string metatable (distinct from the string library).
+	// Lua 5.4: getmetatable("") ~= string (they are different tables).
+	// The metatable has __index pointing to the string library and default
+	// arithmetic metamethods that perform string-to-number coercion.
+	strMeta := vm.NewEmptyTable()
+	strMeta.SetString("__index", strLib)
+
+	// Lua 5.4 default string arithmetic metamethods: coerce to number.
+	// If user sets mt.__add = nil, coercion stops (matches Lua 5.4).
+	strMeta.SetString("__add", vm.NewNativeFunc(makeStringArith("add", func(a, b float64) float64 { return a + b }, func(a, b int64) int64 { return a + b })))
+	strMeta.SetString("__sub", vm.NewNativeFunc(makeStringArith("sub", func(a, b float64) float64 { return a - b }, func(a, b int64) int64 { return a - b })))
+	strMeta.SetString("__mul", vm.NewNativeFunc(makeStringArith("mul", func(a, b float64) float64 { return a * b }, func(a, b int64) int64 { return a * b })))
+	strMeta.SetString("__div", vm.NewNativeFunc(makeStringArith("div", func(a, b float64) float64 { return a / b }, nil)))
+	strMeta.SetString("__idiv", vm.NewNativeFunc(makeStringArithFloorDiv()))
+	strMeta.SetString("__mod", vm.NewNativeFunc(makeStringArithMod()))
+	strMeta.SetString("__pow", vm.NewNativeFunc(makeStringArith("pow", func(a, b float64) float64 { return math.Pow(a, b) }, nil)))
+	strMeta.SetString("__unm", vm.NewNativeFunc(stringMetaUnm))
+
+	v.SetStringMeta(strMeta)
 }
 
 // string.len(s)
@@ -520,4 +537,182 @@ func stringGmatch(v *vm.VM) int {
 
 	v.Set(0, iter)
 	return 1
+}
+
+// makeStringArith creates a string arithmetic metamethod that coerces
+// operands to numbers and performs the operation. If one operand cannot
+// be coerced, it falls back to the other operand's metamethod (matching
+// Lua 5.4.6+ behavior).
+func makeStringArith(opName string, floatOp func(float64, float64) float64, intOp func(int64, int64) int64) func(*vm.VM) int {
+	mmName := "__" + opName
+	return func(v *vm.VM) int {
+		a, b := v.Get(1), v.Get(2)
+		cv1, ok1 := coerceToNumber(a)
+		cv2, ok2 := coerceToNumber(b)
+		if !ok1 || !ok2 {
+			// Try the other operand's metamethod (skip strings to avoid recursion)
+			if result, ok := stringArithFallback(v, a, b, ok1, ok2, mmName); ok {
+				v.Set(0, result)
+				return 1
+			}
+			bad := a
+			if ok1 {
+				bad = b
+			}
+			panic(fmt.Sprintf("attempt to perform arithmetic on a '%s' value", bad.Type()))
+		}
+		// Integer path (when both are int and intOp is available)
+		if intOp != nil && cv1.IsInt() && cv2.IsInt() {
+			v.Set(0, vm.NewInt(intOp(cv1.AsInt(), cv2.AsInt())))
+			return 1
+		}
+		n1, _ := cv1.ToNumber()
+		n2, _ := cv2.ToNumber()
+		v.Set(0, vm.NewFloat(floatOp(n1, n2)))
+		return 1
+	}
+}
+
+func makeStringArithFloorDiv() func(*vm.VM) int {
+	return func(v *vm.VM) int {
+		a, b := v.Get(1), v.Get(2)
+		cv1, ok1 := coerceToNumber(a)
+		cv2, ok2 := coerceToNumber(b)
+		if !ok1 || !ok2 {
+			if result, ok := stringArithFallback(v, a, b, ok1, ok2, "__idiv"); ok {
+				v.Set(0, result)
+				return 1
+			}
+			bad := a
+			if ok1 {
+				bad = b
+			}
+			panic(fmt.Sprintf("attempt to perform arithmetic on a '%s' value", bad.Type()))
+		}
+		if cv1.IsInt() && cv2.IsInt() {
+			i1, i2 := cv1.AsInt(), cv2.AsInt()
+			if i2 == 0 {
+				panic("attempt to divide by zero")
+			}
+			if i2 == -1 {
+				v.Set(0, vm.NewInt(-i1))
+				return 1
+			}
+			q := i1 / i2
+			if (i1^i2) < 0 && q*i2 != i1 {
+				q--
+			}
+			v.Set(0, vm.NewInt(q))
+			return 1
+		}
+		n1, _ := cv1.ToNumber()
+		n2, _ := cv2.ToNumber()
+		v.Set(0, vm.NewFloat(math.Floor(n1/n2)))
+		return 1
+	}
+}
+
+func makeStringArithMod() func(*vm.VM) int {
+	return func(v *vm.VM) int {
+		a, b := v.Get(1), v.Get(2)
+		cv1, ok1 := coerceToNumber(a)
+		cv2, ok2 := coerceToNumber(b)
+		if !ok1 || !ok2 {
+			if result, ok := stringArithFallback(v, a, b, ok1, ok2, "__mod"); ok {
+				v.Set(0, result)
+				return 1
+			}
+			bad := a
+			if ok1 {
+				bad = b
+			}
+			panic(fmt.Sprintf("attempt to perform arithmetic on a '%s' value", bad.Type()))
+		}
+		if cv1.IsInt() && cv2.IsInt() {
+			i1, i2 := cv1.AsInt(), cv2.AsInt()
+			if i2 == 0 {
+				panic("attempt to perform 'n%0'")
+			}
+			if i2 == -1 {
+				v.Set(0, vm.NewInt(0))
+				return 1
+			}
+			r := i1 % i2
+			if r != 0 && (r^i2) < 0 {
+				r += i2
+			}
+			v.Set(0, vm.NewInt(r))
+			return 1
+		}
+		n1, _ := cv1.ToNumber()
+		n2, _ := cv2.ToNumber()
+		result := math.Mod(n1, n2)
+		if result != 0 && (result < 0) != (n2 < 0) {
+			result += n2
+		}
+		v.Set(0, vm.NewFloat(result))
+		return 1
+	}
+}
+
+// stringMetaUnm is the default string unary minus metamethod.
+func stringMetaUnm(v *vm.VM) int {
+	a := v.Get(1)
+	nv, ok := vm.StringToNumericValue(a.AsString())
+	if !ok {
+		panic("attempt to perform arithmetic on a string value")
+	}
+	if nv.IsInt() {
+		v.Set(0, vm.NewInt(-nv.AsInt()))
+	} else {
+		v.Set(0, vm.NewFloat(-nv.AsFloat()))
+	}
+	return 1
+}
+
+// stringArithFallback tries the other operand's metamethod when the string
+// metamethod can't coerce one of the operands. Returns (result, true) if a
+// fallback metamethod was found and called successfully.
+func stringArithFallback(v *vm.VM, a, b vm.Value, ok1, ok2 bool, mmName string) (vm.Value, bool) {
+	// Determine which operand couldn't be coerced and check its metamethod
+	var other vm.Value
+	if !ok1 {
+		other = a
+	} else {
+		other = b
+	}
+	// Skip strings (would recurse back to us)
+	if other.IsString() {
+		return vm.Nil, false
+	}
+	mm := v.GetMetafield(other, mmName)
+	if mm.IsNil() {
+		return vm.Nil, false
+	}
+	results, err := v.ProtectedCall(mm, []vm.Value{a, b})
+	if err != nil {
+		panic(err.Error())
+	}
+	if len(results) > 0 {
+		return results[0], true
+	}
+	return vm.Nil, true
+}
+
+func coerceToNumber(val vm.Value) (vm.Value, bool) {
+	if val.IsInt() || val.IsFloat() {
+		return val, true
+	}
+	if val.IsString() {
+		nv, ok := vm.StringToNumericValue(val.AsString())
+		return nv, ok
+	}
+	return vm.Nil, false
+}
+
+func pickNonNumericType(a, b string) string {
+	if a == "string" {
+		return a
+	}
+	return b
 }

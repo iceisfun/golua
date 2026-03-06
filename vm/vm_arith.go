@@ -6,8 +6,9 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
-// arith performs a register-register arithmetic operation, trying integer
-// fast path first, then float, then metamethods.
+// arith performs a register-register arithmetic operation.
+// Lua 5.4.6+: strings are NOT coerced at the VM level; coercion is handled
+// by the string metatable's arithmetic metamethods.
 func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	// Float fast path: both operands are already floats (common in numeric code)
 	if v1.typ == typeFloat && v2.typ == typeFloat {
@@ -34,22 +35,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 		}
 	}
 
-	// Save original values for metamethod calls (metamethods receive uncoerced operands)
-	orig1, orig2 := v1, v2
-
-	// Coerce string operands to numeric values (preserving integer type)
-	if v1.IsString() {
-		if nv, ok := StringToNumericValue(v1.AsString()); ok {
-			v1 = nv
-		}
-	}
-	if v2.IsString() {
-		if nv, ok := StringToNumericValue(v2.AsString()); ok {
-			v2 = nv
-		}
-	}
-
-	// Integer fast path: both operands are int
+	// Integer fast path: both operands are int (not strings)
 	if v1.IsInt() && v2.IsInt() && op != compiler.OP_DIV && op != compiler.OP_POW {
 		i1, i2 := v1.AsInt(), v2.AsInt()
 		switch op {
@@ -87,11 +73,10 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 		}
 	}
 
-	n1, ok1 := v1.ToNumber()
-	n2, ok2 := v2.ToNumber()
-
-	// If both can be converted to numbers, do the arithmetic
-	if ok1 && ok2 {
+	// Mixed number types (int + float or float + int): promote to float
+	if v1.IsNumber() && v2.IsNumber() {
+		n1, _ := v1.ToNumber()
+		n2, _ := v2.ToNumber()
 		var result float64
 		switch op {
 		case compiler.OP_ADD:
@@ -106,24 +91,22 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 			result = math.Floor(n1 / n2)
 		case compiler.OP_MOD:
 			result = math.Mod(n1, n2)
-			// Lua mod: a % b = a - floor(a/b)*b
 			if result != 0 && (result < 0) != (n2 < 0) {
 				result += n2
 			}
 		case compiler.OP_POW:
 			result = math.Pow(n1, n2)
 		}
-
 		return NewFloat(result), nil
 	}
 
-	// Try metamethods with original (uncoerced) operands
+	// Try metamethods (handles strings via string metatable, tables via their metatable)
 	mmName := vm.arithMetamethod(op)
-	if mm := vm.getArithMetamethod(orig1, orig2, mmName); !mm.IsNil() {
+	if mm := vm.getArithMetamethod(v1, v2, mmName); !mm.IsNil() {
 		if !mm.IsCallable() {
 			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", mm.Type(), mmName[2:])
 		}
-		result, err := vm.callMetamethod(mmName[2:], mm, orig1, orig2)
+		result, err := vm.callMetamethod(mmName[2:], mm, v1, v2)
 		if err != nil {
 			return Nil, err
 		}
@@ -131,13 +114,14 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value) (Value, error) {
 	}
 
 	// No metamethod found, report error
-	if !ok1 {
-		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(orig1))
+	if !v1.IsNumber() {
+		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v1))
 	}
-	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(orig2))
+	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v2))
 }
 
 // arithK performs a register-constant arithmetic operation.
+// Lua 5.4.6+: strings are NOT coerced at the VM level.
 func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 	// Float fast path: both operands are already floats
 	if v.typ == typeFloat && kv.typ == typeFloat {
@@ -201,10 +185,10 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 		}
 	}
 
-	n1, ok1 := v.ToNumber()
-	n2, ok2 := kv.ToNumber()
-
-	if ok1 && ok2 {
+	// Mixed number types (int + float or float + int): promote to float
+	if v.IsNumber() && kv.IsNumber() {
+		n1, _ := v.ToNumber()
+		n2, _ := kv.ToNumber()
 		var result float64
 		switch op {
 		case compiler.OP_ADDK:
@@ -225,7 +209,6 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 		case compiler.OP_POWK:
 			result = math.Pow(n1, n2)
 		}
-
 		return NewFloat(result), nil
 	}
 
@@ -242,7 +225,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value) (Value, error) {
 		return result, nil
 	}
 
-	if !ok1 {
+	if !v.IsNumber() {
 		return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(v))
 	}
 	return Nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(kv))

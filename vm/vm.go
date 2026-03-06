@@ -757,6 +757,11 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 	return Nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
 }
 
+// GetMetafield retrieves a metafield from a value's metatable (exported for stdlib use).
+func (vm *VM) GetMetafield(v Value, key string) Value {
+	return vm.getMetafield(v, key)
+}
+
 // getMetafield retrieves a metafield from a value's metatable
 func (vm *VM) getMetafield(v Value, key string) Value {
 	var mt LuaTable
