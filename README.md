@@ -14,6 +14,7 @@ A Lua 5.4 interpreter written in Go, with experimental 5.5 features. Pure Go, ze
 - Module system (`require`, `package.loaded`, `package.preload`, `package.searchers`, `package.searchpath`)
 - Pattern matching (`string.match`, `string.gsub`, `string.find`, `string.gmatch`)
 - Binary data packing (`string.pack`, `string.unpack`, `string.packsize`)
+- Function serialization (`string.dump` / `load` round-trip, Lua 5.4.8 binary format compatible)
 - Go-style glob matching (`glob.match`, `glob.match_words`, `glob.match_named`)
 - `<const>` and `<close>` variable attributes with to-be-closed support
 - Bitwise operators (`&`, `|`, `~`, `<<`, `>>`) and `bit32` compat library
@@ -384,7 +385,7 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 
 | Module      | Requires Provider  | Description                                                                        |
 | ----------- | ------------------ | ---------------------------------------------------------------------------------- |
-| `string`    | No                 | Pattern matching, formatting, byte manipulation, `pack`/`unpack`                   |
+| `string`    | No                 | Pattern matching, formatting, byte manipulation, `pack`/`unpack`, `dump`           |
 | `math`      | No                 | Math functions with per-VM deterministic random                                    |
 | `table`     | No                 | Table manipulation (sort, concat, insert, remove, move, pack, unpack)              |
 | `coroutine` | No                 | Coroutine creation and control                                                     |
@@ -490,7 +491,7 @@ go run ./cmd/luac script.lua
 - No loading of C shared objects (`.so`/`.dll`) — by design. `require` works for Lua modules via `LuaCodeProvider`, but C modules are not supported.
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design; use `FullIoProvider` for read-write access)
-- No binary chunk loading — `load(string.dump(f))` round-tripping is not supported. `string.dump` produces bytecode but loading binary chunks back is out of scope.
+- Binary chunk format is compatible with Lua 5.4.8 — `load(string.dump(f))` round-tripping works, and chunks dumped by GoLua can be loaded by reference Lua 5.4.8 and vice versa. However, bytecode details may differ between compilers.
 - GC behavior differs from C Lua — GoLua delegates garbage collection entirely to Go's runtime GC. `collectgarbage("collect")` triggers `runtime.GC()` but Go's GC timing is non-deterministic, so tests that depend on exact finalization order or count may not pass.
 
 ## Contributing
