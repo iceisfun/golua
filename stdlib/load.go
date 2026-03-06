@@ -359,22 +359,25 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 		source = source[3:]
 	}
 
-	// Parse
+	// Parse — use display name for parser error messages
 	block, parseErr := parser.Parse(chunkName, source, o.stripShebang)
 	if parseErr != nil {
 		return vm.Nil, parseErr.Error()
 	}
 
-	// Compile
-	proto, compileErr := compiler.Compile(chunkName, block,
+	// Compile — use raw source name so compiler.shortSrc formats correctly.
+	// The display name has [string "..."] wrapping which shortSrc would double-wrap.
+	compileSource := chunkName
+	if o.rawSource != "" {
+		compileSource = o.rawSource
+	}
+	proto, compileErr := compiler.Compile(compileSource, block,
 		compiler.WithLimits(v.GetLimits().CompilerLimits))
 	if compileErr != nil {
 		return vm.Nil, compileErr.Error()
 	}
 
 	// Override proto.Source with the raw source name for debug info.
-	// The chunkName used above is formatted for error messages (shortSrc style),
-	// but debug.getinfo().source should return the original chunkname.
 	if o.rawSource != "" {
 		setProtoSource(proto, o.rawSource)
 	}
