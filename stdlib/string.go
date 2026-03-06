@@ -662,29 +662,26 @@ func stringMetaUnm(v *vm.VM) int {
 // metamethod can't coerce one of the operands. Returns (result, true) if a
 // fallback metamethod was found and called successfully.
 func stringArithFallback(v *vm.VM, a, b vm.Value, ok1, ok2 bool, mmName string) (vm.Value, bool) {
-	// Determine which operand couldn't be coerced and check its metamethod
-	var other vm.Value
-	if !ok1 {
-		other = a
-	} else {
-		other = b
+	// Try each non-string operand's metamethod. When both coercions fail,
+	// we need to check both sides (e.g. "hello" + table_with___add).
+	for _, other := range [2]vm.Value{a, b} {
+		// Skip strings (would recurse back to us)
+		if other.IsString() {
+			continue
+		}
+		mm := v.GetMetafield(other, mmName)
+		if !mm.IsNil() {
+			results, err := v.ProtectedCall(mm, []vm.Value{a, b})
+			if err != nil {
+				panic(err.Error())
+			}
+			if len(results) > 0 {
+				return results[0], true
+			}
+			return vm.Nil, true
+		}
 	}
-	// Skip strings (would recurse back to us)
-	if other.IsString() {
-		return vm.Nil, false
-	}
-	mm := v.GetMetafield(other, mmName)
-	if mm.IsNil() {
-		return vm.Nil, false
-	}
-	results, err := v.ProtectedCall(mm, []vm.Value{a, b})
-	if err != nil {
-		panic(err.Error())
-	}
-	if len(results) > 0 {
-		return results[0], true
-	}
-	return vm.Nil, true
+	return vm.Nil, false
 }
 
 func coerceToNumber(val vm.Value) (vm.Value, bool) {
