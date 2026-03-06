@@ -92,13 +92,15 @@ func luaDebugTraceback(v *vm.VM) int {
 			targetVM := tbl.VMRef()
 			// Shift args: (thread, msg, level) → (msg, level)
 			msg := v.Get(2)
-			if !msg.IsNil() && !msg.IsString() {
-				v.Set(0, msg) // non-string, non-nil: return as-is
+			if !msg.IsNil() && !msg.IsString() && !msg.IsNumber() {
+				v.Set(0, msg) // non-string, non-nil, non-number: return as-is
 				return 1
 			}
 			msgStr := ""
 			if msg.IsString() {
 				msgStr = msg.AsString()
+			} else if msg.IsNumber() {
+				msgStr = valueToString(msg)
 			}
 			level := 0
 			if !v.Get(3).IsNil() {
@@ -121,14 +123,16 @@ func luaDebugTraceback(v *vm.VM) int {
 	}
 
 	msg := arg1
-	if !msg.IsNil() && !msg.IsString() {
+	if !msg.IsNil() && !msg.IsString() && !msg.IsNumber() {
 		v.Set(0, msg)
 		return 1
 	}
 
 	msgStr := ""
-	if !msg.IsNil() {
+	if msg.IsString() {
 		msgStr = msg.AsString()
+	} else if msg.IsNumber() {
+		msgStr = valueToString(msg)
 	}
 
 	level := 1

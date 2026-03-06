@@ -152,7 +152,7 @@ func tableRemove(v *vm.VM) int {
 	// Valid range: 1 <= pos <= length+1
 	if pos != length {
 		if pos < 1 || pos > length+1 {
-			panic("bad argument #2 to 'table.remove' (position out of range)")
+			panic("bad argument #2 to 'table.remove' (position out of bounds)")
 		}
 	}
 

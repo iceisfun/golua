@@ -434,6 +434,17 @@ func luaCollectgarbage(v *vm.VM) int {
 		// No-op, return 0 to match Lua 5.4
 		v.Set(0, vm.NewInt(0))
 		return 1
+	case "generational", "incremental":
+		// No-op: Go has its own GC. Return previous mode values.
+		// Lua 5.4 returns the previous mode name and two mode-specific values.
+		v.Set(0, vm.NewInt(0))
+		v.Set(1, vm.NewInt(0))
+		return 2
+	case "step":
+		// No-op: trigger a GC step. Return false (step did not finish a cycle).
+		v.ProcessGcFinalizers()
+		v.Set(0, vm.False)
+		return 1
 	case "isrunning":
 		v.Set(0, vm.True)
 		return 1

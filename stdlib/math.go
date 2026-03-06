@@ -316,7 +316,7 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 			lower := getInt(v, 1, "math.random")
 			upper := getInt(v, 2, "math.random")
 			if lower > upper {
-				panic("bad argument #2 to 'math.random' (interval is empty)")
+				panic("bad argument #1 to 'math.random' (interval is empty)")
 			}
 			v.Set(0, vm.NewInt(xoshiroRange(rng, lower, upper)))
 		default:

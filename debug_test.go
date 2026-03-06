@@ -576,8 +576,9 @@ func TestDebug_GetUpvalue_ClosedUpvalue(t *testing.T) {
 func TestDebug_Traceback_NonStringMessage(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	src := `
+		-- Lua 5.4: numbers are converted to string (like strings)
 		local result = debug.traceback(42)
-		assert(result == 42, "number message should pass through, got: " .. tostring(result))
+		assert(type(result) == "string", "number should be converted to string, got: " .. type(result))
 
 		local t = {1,2,3}
 		local result2 = debug.traceback(t)

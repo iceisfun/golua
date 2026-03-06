@@ -11,7 +11,7 @@ do
 
     -- Lua 5.4: table.remove({}, 2) errors (pos=2 != size=0, validate fails)
     print(pcall(table.remove, {}, 2))
-    --> ~^false\t.*out of range
+    --> ~^false\t.*out of bounds
 
     local t = {1, 2, 3, 4, 5}
 
