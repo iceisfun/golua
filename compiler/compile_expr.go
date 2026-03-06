@@ -690,6 +690,15 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 	fs := c.fs
 	line := e.P.Line
 
+	// Ensure freeReg is past the table register so that reserveReg() for
+	// field values does not return reg itself, which would clobber the table.
+	if fs.freeReg <= reg {
+		fs.freeReg = reg + 1
+		if fs.freeReg > fs.maxReg {
+			fs.maxReg = fs.freeReg
+		}
+	}
+
 	// Count array and hash parts
 	nArr := 0
 	nHash := 0
@@ -724,6 +733,15 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 
 	if k == 1 {
 		fs.emit(Ax(OP_EXTRAARG, nArr), line)
+	}
+
+	// Ensure freeReg is past the table register so that scratch registers
+	// (for hash field values, etc.) don't collide with the table itself.
+	if fs.freeReg <= reg {
+		fs.freeReg = reg + 1
+		if fs.freeReg > fs.maxReg {
+			fs.maxReg = fs.freeReg
+		}
 	}
 
 	// Find the last array-style field to check if it's multi-return
