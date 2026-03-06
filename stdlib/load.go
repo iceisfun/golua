@@ -126,7 +126,11 @@ func luaLoad(v *vm.VM) int {
 			rawChunkName = source
 		}
 	} else {
-		panic(fmt.Sprintf("bad argument #1 to 'load' (function expected, got %s)", chunk.Type()))
+		got := chunk.Type()
+		if v.ArgCount() < 1 {
+			got = "no value"
+		}
+		panic(fmt.Sprintf("bad argument #1 to 'load' (function expected, got %s)", got))
 	}
 
 	// Detect binary chunk (starts with \x1bLua)
