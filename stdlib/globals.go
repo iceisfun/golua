@@ -10,6 +10,14 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
+// gotDesc returns "got TYPE" or "got no value" for arg error messages.
+func gotDesc(v *vm.VM, argn int) string {
+	if v.ArgCount() < argn {
+		return ", got no value"
+	}
+	return fmt.Sprintf(", got %s", v.Get(argn).Type())
+}
+
 // print(...)
 func luaPrint(v *vm.VM) int {
 	n := v.ArgCount()
@@ -554,7 +562,7 @@ func luaIpairs(v *vm.VM) int {
 func luaNext(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
-		panic("bad argument #1 to 'next' (table expected)")
+		panic("bad argument #1 to 'next' (table expected" + gotDesc(v, 1) + ")")
 	}
 	key := v.Get(2)
 	nextK, nextV, err := tbl.Next(key)
@@ -612,7 +620,7 @@ func luaSelect(v *vm.VM) int {
 func luaRawget(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
-		panic("bad argument #1 to 'rawget' (table expected)")
+		panic("bad argument #1 to 'rawget' (table expected" + gotDesc(v, 1) + ")")
 	}
 	if v.ArgCount() < 2 {
 		panic("bad argument #2 to 'rawget' (value expected)")
@@ -626,7 +634,7 @@ func luaRawget(v *vm.VM) int {
 func luaRawset(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
-		panic("bad argument #1 to 'rawset' (table expected)")
+		panic("bad argument #1 to 'rawset' (table expected" + gotDesc(v, 1) + ")")
 	}
 	if v.ArgCount() < 2 {
 		panic("bad argument #2 to 'rawset' (value expected)")
@@ -668,7 +676,7 @@ func luaRawlen(v *vm.VM) int {
 		v.Set(0, vm.NewInt(int64(val.AsTable().Len())))
 		return 1
 	}
-	panic("bad argument #1 to 'rawlen' (table or string expected)")
+	panic("bad argument #1 to 'rawlen' (table or string expected" + gotDesc(v, 1) + ")")
 }
 
 // getmetatable(object)
@@ -711,7 +719,7 @@ func luaGetmetatable(v *vm.VM) int {
 func luaSetmetatable(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
-		panic("bad argument #1 to 'setmetatable' (table expected)")
+		panic("bad argument #1 to 'setmetatable' (table expected" + gotDesc(v, 1) + ")")
 	}
 	// Check __metatable protection on existing metatable
 	if existingMT := tbl.Metatable(); existingMT != nil {
@@ -725,7 +733,7 @@ func luaSetmetatable(v *vm.VM) int {
 	} else if mt.IsTable() {
 		tbl.SetMetatable(mt.AsTable())
 	} else {
-		panic("bad argument #2 to 'setmetatable' (nil or table expected)")
+		panic("bad argument #2 to 'setmetatable' (nil or table expected" + gotDesc(v, 2) + ")")
 	}
 	// Register __gc finalizer if applicable
 	if concrete, ok := tbl.(*vm.Table); ok {
