@@ -1350,13 +1350,13 @@ func (vm *VM) execute() ([]Value, error) {
 							return nil, err
 						}
 					} else {
-						return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
+						return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", fn.Type())
 					}
 				} else {
-					return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
+					return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", fn.Type())
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to call a %s value", fn.Type())
+				return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", fn.Type())
 			}
 			if err != nil {
 				return nil, err
