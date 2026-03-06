@@ -17,7 +17,11 @@ func getString(v *vm.VM, idx int, fname string) string {
 	if val.IsNumber() {
 		return val.String()
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (string expected, got %s)", idx, fname, val.Type()))
+	got := val.Type()
+	if v.ArgCount() < idx {
+		got = "no value"
+	}
+	panic(fmt.Sprintf("bad argument #%d to '%s' (string expected, got %s)", idx, fname, got))
 }
 
 // getInt returns the integer value at stack index idx.
@@ -31,7 +35,11 @@ func getInt(v *vm.VM, idx int, fname string) int64 {
 	if val.IsNumber() {
 		panic(fmt.Sprintf("bad argument #%d to '%s' (number has no integer representation)", idx, fname))
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, val.Type()))
+	got := val.Type()
+	if v.ArgCount() < idx {
+		got = "no value"
+	}
+	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, got))
 }
 
 func posRelat(pos int64, len int) int {

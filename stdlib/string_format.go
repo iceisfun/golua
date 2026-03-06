@@ -53,7 +53,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		spec := "%"
 		for i < len(format) && !strings.ContainsRune("diouxXeEfFgGaAcspq%", rune(format[i])) {
 			if !strings.ContainsRune("#0- +.0123456789", rune(format[i])) {
-				panic(fmt.Sprintf("invalid conversion '%%%c'", format[i]))
+				panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", format[i]))
 			}
 			spec += string(format[i])
 			i++
@@ -63,7 +63,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				panic(fmt.Sprintf("bad argument #%d to 'format' (no value)", argIdx+2))
 			}
 			argIdx++
-			panic(fmt.Sprintf("invalid conversion '%s'", spec))
+			panic(fmt.Sprintf("invalid conversion '%s' to 'format'", spec))
 		}
 
 		specChar := format[i]
@@ -182,8 +182,8 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				// No modifiers: embed string directly (preserving null bytes)
 				result.WriteString(str)
 			} else {
-				goSpec := spec + "s"
-				result.WriteString(fmt.Sprintf(goSpec, str))
+				// Lua 5.4 counts bytes (not runes) for width/precision
+				result.WriteString(formatStringByBytes(spec, str))
 			}
 		case 'q':
 			result.WriteString(luaQuote(val, argIdx+1))
@@ -640,7 +640,7 @@ func validateConversion(spec string, conv byte) {
 	switch conv {
 	case 'c':
 		if hasDot || strings.ContainsAny(flags, "0#+ ") {
-			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	case 'q':
 		if hasModifiers {
@@ -648,27 +648,66 @@ func validateConversion(spec string, conv byte) {
 		}
 	case 's':
 		if strings.ContainsAny(flags, "0#+ ") {
-			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	case 'o', 'x', 'X':
 		if strings.ContainsAny(flags, "+ ") {
-			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	case 'd', 'i':
 		if strings.Contains(flags, "#") {
-			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	case 'u':
 		if strings.ContainsAny(flags, "#+ ") {
-			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	case 'p':
 		if hasDot || strings.ContainsAny(flags, "0#+ ") {
-			panic(fmt.Sprintf("invalid conversion '%s%c'", spec, conv))
+			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	case 'F':
-		panic(fmt.Sprintf("invalid conversion '%%%c'", conv))
+		panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", conv))
 	}
+}
+
+// formatStringByBytes formats a string with byte-based width and precision,
+// matching Lua 5.4's C sprintf behavior (not Go's rune-based formatting).
+func formatStringByBytes(spec, str string) string {
+	// Parse width and precision from spec (e.g. "%-10.5")
+	s := spec[1:] // skip '%'
+	leftAlign := false
+	if len(s) > 0 && s[0] == '-' {
+		leftAlign = true
+		s = s[1:]
+	}
+	width := 0
+	for len(s) > 0 && s[0] >= '0' && s[0] <= '9' {
+		width = width*10 + int(s[0]-'0')
+		s = s[1:]
+	}
+	prec := -1
+	if len(s) > 0 && s[0] == '.' {
+		s = s[1:]
+		prec = 0
+		for len(s) > 0 && s[0] >= '0' && s[0] <= '9' {
+			prec = prec*10 + int(s[0]-'0')
+			s = s[1:]
+		}
+	}
+	// Apply precision (truncate bytes)
+	if prec >= 0 && prec < len(str) {
+		str = str[:prec]
+	}
+	// Apply width (pad with spaces, counting bytes)
+	if width > len(str) {
+		pad := strings.Repeat(" ", width-len(str))
+		if leftAlign {
+			return str + pad
+		}
+		return pad + str
+	}
+	return str
 }
 
 // luaQuote implements Lua's %q format for proper Lua-parseable quoting.
