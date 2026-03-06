@@ -76,7 +76,7 @@ func openCoroutine(v *vm.VM) {
 func coCreate(v *vm.VM) int {
 	fn := v.Get(1)
 	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		panic("bad argument #1 to 'create' (function expected)")
+		panic("bad argument #1 to 'coroutine.create' (function expected)")
 	}
 
 	coroutinesMu.Lock()
@@ -114,13 +114,13 @@ func coCreate(v *vm.VM) int {
 func coResume(v *vm.VM) int {
 	coVal := v.Get(1)
 	if !coVal.IsTable() {
-		panic(fmt.Sprintf("bad argument #1 to 'resume' (thread expected, got %s)", coVal.Type()))
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.resume' (thread expected, got %s)", coVal.Type()))
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic("bad argument #1 to 'resume' (thread expected)")
+		panic("bad argument #1 to 'coroutine.resume' (thread expected)")
 	}
 
 	id, _ := idVal.ToInt()
@@ -389,13 +389,13 @@ func coYield(v *vm.VM) int {
 func coStatus(v *vm.VM) int {
 	coVal := v.Get(1)
 	if !coVal.IsTable() {
-		panic("bad argument #1 to 'status' (thread expected)")
+		panic("bad argument #1 to 'coroutine.status' (thread expected)")
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic("bad argument #1 to 'status' (thread expected)")
+		panic("bad argument #1 to 'coroutine.status' (thread expected)")
 	}
 
 	id, _ := idVal.ToInt()
@@ -427,7 +427,7 @@ func coRunning(v *vm.VM) int {
 func coWrap(v *vm.VM) int {
 	fn := v.Get(1)
 	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		panic("bad argument #1 to 'wrap' (function expected)")
+		panic("bad argument #1 to 'coroutine.wrap' (function expected)")
 	}
 
 	// Create the coroutine
@@ -577,16 +577,16 @@ func coWrap(v *vm.VM) int {
 func coClose(v *vm.VM) int {
 	coVal := v.Get(1)
 	if coVal.IsNil() {
-		panic("bad argument #1 to 'close' (value expected)")
+		panic("bad argument #1 to 'coroutine.close' (value expected)")
 	}
 	if !coVal.IsTable() {
-		panic("bad argument #1 to 'close' (thread expected)")
+		panic("bad argument #1 to 'coroutine.close' (thread expected)")
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic("bad argument #1 to 'close' (thread expected)")
+		panic("bad argument #1 to 'coroutine.close' (thread expected)")
 	}
 
 	id, _ := idVal.ToInt()

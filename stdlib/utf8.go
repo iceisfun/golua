@@ -38,10 +38,10 @@ func luaUtf8Char(v *vm.VM) int {
 		val := v.Get(i)
 		code, ok := val.ToInt()
 		if !ok {
-			panic(fmt.Sprintf("bad argument #%d to 'char' (number has no integer representation)", i))
+			panic(fmt.Sprintf("bad argument #%d to 'utf8.char' (number has no integer representation)", i))
 		}
 		if code < 0 || code > 0x7FFFFFFF {
-			panic(fmt.Sprintf("bad argument #%d to 'char' (value out of range)", i))
+			panic(fmt.Sprintf("bad argument #%d to 'utf8.char' (value out of range)", i))
 		}
 		buf = appendExtendedUTF8(buf, uint32(code))
 	}
@@ -137,17 +137,17 @@ func decodeExtendedUTF8(s string) (int64, int) {
 
 // utf8.len(s [, i [, j [, lax]]]) — count UTF-8 characters; soft fail on invalid
 func luaUtf8Len(v *vm.VM) int {
-	s := getString(v, 1, "len")
+	s := getString(v, 1, "utf8.len")
 	slen := len(s)
 
 	// Default: i=1, j=-1
 	posi := int64(1)
 	if !v.Get(2).IsNil() {
-		posi = getInt(v, 2, "len")
+		posi = getInt(v, 2, "utf8.len")
 	}
 	posj := int64(-1)
 	if !v.Get(3).IsNil() {
-		posj = getInt(v, 3, "len")
+		posj = getInt(v, 3, "utf8.len")
 	}
 
 	// Lax mode (arg 4): when true, accept extended codepoints (> U+10FFFF)
@@ -199,17 +199,17 @@ func luaUtf8Len(v *vm.VM) int {
 
 // utf8.codepoint(s [, i [, j [, lax]]]) — return codepoints as integers
 func luaUtf8Codepoint(v *vm.VM) int {
-	s := getString(v, 1, "codepoint")
+	s := getString(v, 1, "utf8.codepoint")
 	slen := len(s)
 
 	// Default: i=1, j=i
 	posi := int64(1)
 	if !v.Get(2).IsNil() {
-		posi = getInt(v, 2, "codepoint")
+		posi = getInt(v, 2, "utf8.codepoint")
 	}
 	posj := posi
 	if !v.Get(3).IsNil() {
-		posj = getInt(v, 3, "codepoint")
+		posj = getInt(v, 3, "utf8.codepoint")
 	}
 
 	// Lax mode (arg 4): when true, accept extended codepoints (surrogates, > U+10FFFF)
@@ -261,7 +261,7 @@ func luaUtf8Codepoint(v *vm.VM) int {
 
 // utf8.codes(s [, lax]) — iterator factory
 func luaUtf8Codes(v *vm.VM) int {
-	s := getString(v, 1, "codes")
+	s := getString(v, 1, "utf8.codes")
 
 	// Lax mode (arg 2): when true, accept extended codepoints (> U+10FFFF)
 	lax := v.Get(2).ToBool()
@@ -333,8 +333,8 @@ func luaUtf8Codes(v *vm.VM) int {
 
 // utf8.offset(s, n [, i]) — convert codepoint offset to byte position
 func luaUtf8Offset(v *vm.VM) int {
-	s := getString(v, 1, "offset")
-	n := getInt(v, 2, "offset")
+	s := getString(v, 1, "utf8.offset")
+	n := getInt(v, 2, "utf8.offset")
 	slen := len(s)
 
 	// Default for i depends on n
@@ -345,7 +345,7 @@ func luaUtf8Offset(v *vm.VM) int {
 		posi = int64(slen) + 1
 	}
 	if !v.Get(3).IsNil() {
-		posi = getInt(v, 3, "offset")
+		posi = getInt(v, 3, "utf8.offset")
 	}
 
 	// Resolve relative position

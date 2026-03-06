@@ -92,7 +92,7 @@ func openMath(v *vm.VM) {
 }
 
 func mathAbs(v *vm.VM) int {
-	n := getNumber(v, 1, "abs")
+	n := getNumber(v, 1, "math.abs")
 	if v.Get(1).IsInt() {
 		i := v.Get(1).AsInt()
 		if i < 0 {
@@ -107,22 +107,22 @@ func mathAbs(v *vm.VM) int {
 }
 
 func mathAcos(v *vm.VM) int {
-	n := getNumber(v, 1, "acos")
+	n := getNumber(v, 1, "math.acos")
 	v.Set(0, vm.NewFloat(math.Acos(n)))
 	return 1
 }
 
 func mathAsin(v *vm.VM) int {
-	n := getNumber(v, 1, "asin")
+	n := getNumber(v, 1, "math.asin")
 	v.Set(0, vm.NewFloat(math.Asin(n)))
 	return 1
 }
 
 func mathAtan(v *vm.VM) int {
-	y := getNumber(v, 1, "atan")
+	y := getNumber(v, 1, "math.atan")
 	x := 1.0
 	if !v.Get(2).IsNil() {
-		x = getNumber(v, 2, "atan")
+		x = getNumber(v, 2, "math.atan")
 	}
 	v.Set(0, vm.NewFloat(math.Atan2(y, x)))
 	return 1
@@ -134,7 +134,7 @@ func mathCeil(v *vm.VM) int {
 		v.Set(0, arg)
 		return 1
 	}
-	n := getNumber(v, 1, "ceil")
+	n := getNumber(v, 1, "math.ceil")
 	f := math.Ceil(n)
 	if !math.IsNaN(f) && !math.IsInf(f, 0) && f >= -9223372036854775808 && f < 9223372036854775808 {
 		v.Set(0, vm.NewInt(int64(f)))
@@ -145,19 +145,19 @@ func mathCeil(v *vm.VM) int {
 }
 
 func mathCos(v *vm.VM) int {
-	n := getNumber(v, 1, "cos")
+	n := getNumber(v, 1, "math.cos")
 	v.Set(0, vm.NewFloat(math.Cos(n)))
 	return 1
 }
 
 func mathDeg(v *vm.VM) int {
-	n := getNumber(v, 1, "deg")
+	n := getNumber(v, 1, "math.deg")
 	v.Set(0, vm.NewFloat(n * 180 / math.Pi))
 	return 1
 }
 
 func mathExp(v *vm.VM) int {
-	n := getNumber(v, 1, "exp")
+	n := getNumber(v, 1, "math.exp")
 	v.Set(0, vm.NewFloat(math.Exp(n)))
 	return 1
 }
@@ -168,7 +168,7 @@ func mathFloor(v *vm.VM) int {
 		v.Set(0, arg)
 		return 1
 	}
-	n := getNumber(v, 1, "floor")
+	n := getNumber(v, 1, "math.floor")
 	f := math.Floor(n)
 	if !math.IsNaN(f) && !math.IsInf(f, 0) && f >= -9223372036854775808 && f < 9223372036854775808 {
 		v.Set(0, vm.NewInt(int64(f)))
@@ -181,8 +181,8 @@ func mathFloor(v *vm.VM) int {
 func mathFmod(v *vm.VM) int {
 	v1 := v.Get(1)
 	v2 := v.Get(2)
-	x := getNumber(v, 1, "fmod")
-	y := getNumber(v, 2, "fmod")
+	x := getNumber(v, 1, "math.fmod")
+	y := getNumber(v, 2, "math.fmod")
 	if v1.IsInt() && v2.IsInt() {
 		if y == 0 {
 			panic("bad argument #2 to 'fmod' (zero)")
@@ -198,11 +198,11 @@ func mathFmod(v *vm.VM) int {
 }
 
 func mathLog(v *vm.VM) int {
-	x := getNumber(v, 1, "log")
+	x := getNumber(v, 1, "math.log")
 	if v.Get(2).IsNil() {
 		v.Set(0, vm.NewFloat(math.Log(x)))
 	} else {
-		base := getNumber(v, 2, "log")
+		base := getNumber(v, 2, "math.log")
 		var result float64
 		if base == 10.0 {
 			result = math.Log10(x)
@@ -267,7 +267,7 @@ func mathMin(v *vm.VM) int {
 }
 
 func mathModf(v *vm.VM) int {
-	n := getNumber(v, 1, "modf")
+	n := getNumber(v, 1, "math.modf")
 	if math.IsInf(n, 0) {
 		v.Set(0, vm.NewFloat(n))
 		v.Set(1, vm.NewFloat(0))
@@ -287,7 +287,7 @@ func mathModf(v *vm.VM) int {
 }
 
 func mathRad(v *vm.VM) int {
-	n := getNumber(v, 1, "rad")
+	n := getNumber(v, 1, "math.rad")
 	v.Set(0, vm.NewFloat(n * math.Pi / 180))
 	return 1
 }
@@ -303,7 +303,7 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 		case 1:
 			// random(0) -> raw internal state as integer (Lua 5.4)
 			// random(n) -> [1, n]
-			upper := getInt(v, 1, "random")
+			upper := getInt(v, 1, "math.random")
 			if upper == 0 {
 				v.Set(0, vm.NewInt(int64(rng.next())))
 			} else if upper < 1 {
@@ -313,8 +313,8 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 			}
 		case 2:
 			// random(m, n) -> [m, n]
-			lower := getInt(v, 1, "random")
-			upper := getInt(v, 2, "random")
+			lower := getInt(v, 1, "math.random")
+			upper := getInt(v, 2, "math.random")
 			if lower > upper {
 				panic("bad argument #2 to 'random' (interval is empty)")
 			}
@@ -361,12 +361,12 @@ func mathRandomseedClosure(rng *xoshiro256ss) vm.NativeFunc {
 			seed2 = seed1 >> 16
 		case n == 1:
 			// One argument: use it as seed
-			seed1 = getInt(v, 1, "randomseed")
+			seed1 = getInt(v, 1, "math.randomseed")
 			seed2 = 0
 		default:
 			// Two arguments: combine both
-			seed1 = getInt(v, 1, "randomseed")
-			seed2 = getInt(v, 2, "randomseed")
+			seed1 = getInt(v, 1, "math.randomseed")
+			seed2 = getInt(v, 2, "math.randomseed")
 		}
 
 		rng.seed(seed1, seed2)
@@ -379,19 +379,19 @@ func mathRandomseedClosure(rng *xoshiro256ss) vm.NativeFunc {
 }
 
 func mathSin(v *vm.VM) int {
-	n := getNumber(v, 1, "sin")
+	n := getNumber(v, 1, "math.sin")
 	v.Set(0, vm.NewFloat(math.Sin(n)))
 	return 1
 }
 
 func mathSqrt(v *vm.VM) int {
-	n := getNumber(v, 1, "sqrt")
+	n := getNumber(v, 1, "math.sqrt")
 	v.Set(0, vm.NewFloat(math.Sqrt(n)))
 	return 1
 }
 
 func mathTan(v *vm.VM) int {
-	n := getNumber(v, 1, "tan")
+	n := getNumber(v, 1, "math.tan")
 	v.Set(0, vm.NewFloat(math.Tan(n)))
 	return 1
 }
@@ -429,8 +429,8 @@ func mathType(v *vm.VM) int {
 }
 
 func mathUlt(v *vm.VM) int {
-	m := getInt(v, 1, "ult")
-	n := getInt(v, 2, "ult")
+	m := getInt(v, 1, "math.ult")
+	n := getInt(v, 2, "math.ult")
 	v.Set(0, vm.NewBool(uint64(m) < uint64(n)))
 	return 1
 }
@@ -440,5 +440,9 @@ func getNumber(v *vm.VM, idx int, fname string) float64 {
 	if n, ok := val.ToNumber(); ok {
 		return n
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, v.ObjTypeName(val)))
+	got := v.ObjTypeName(val)
+	if v.ArgCount() < idx {
+		got = "no value"
+	}
+	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, got))
 }

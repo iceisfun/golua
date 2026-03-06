@@ -191,7 +191,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 		// debug.getinfo(level [, what])
 		level, ok := arg1.ToInt()
 		if !ok {
-			panic("bad argument #1 to 'getinfo' (value expected)")
+			panic("bad argument #1 to 'debug.getinfo' (value expected)")
 		}
 		if level < 0 {
 			v.Set(0, vm.Nil)
@@ -214,7 +214,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 	// Validate the what string ('>' is C API only, not valid at Lua level)
 	for _, ch := range what {
 		if !strings.ContainsRune("flnStuLr", ch) {
-			panic(fmt.Sprintf("bad argument #2 to 'getinfo' (invalid option '%c')", ch))
+			panic(fmt.Sprintf("bad argument #2 to 'debug.getinfo' (invalid option '%c')", ch))
 		}
 	}
 
@@ -270,13 +270,13 @@ func luaDebugGetInfo(v *vm.VM) int {
 func luaDebugGetUpvalue(v *vm.VM) int {
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		panic("bad argument #1 to 'getupvalue' (function expected)")
+		panic("bad argument #1 to 'debug.getupvalue' (function expected)")
 	}
 
 	arg2 := v.Get(2)
 	idx, ok := arg2.ToInt()
 	if !ok {
-		panic("bad argument #2 to 'getupvalue' (number expected)")
+		panic("bad argument #2 to 'debug.getupvalue' (number expected)")
 	}
 
 	// Native functions have no inspectable upvalues
@@ -309,13 +309,13 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 func luaDebugSetUpvalue(v *vm.VM) int {
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		panic("bad argument #1 to 'setupvalue' (function expected)")
+		panic("bad argument #1 to 'debug.setupvalue' (function expected)")
 	}
 
 	arg2 := v.Get(2)
 	idx, ok := arg2.ToInt()
 	if !ok {
-		panic("bad argument #2 to 'setupvalue' (number expected)")
+		panic("bad argument #2 to 'debug.setupvalue' (number expected)")
 	}
 
 	newVal := v.Get(3)
@@ -347,13 +347,13 @@ func luaDebugSetUpvalue(v *vm.VM) int {
 func luaDebugUpvalueID(v *vm.VM) int {
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		panic("bad argument #1 to 'upvalueid' (function expected)")
+		panic("bad argument #1 to 'debug.upvalueid' (function expected)")
 	}
 
 	arg2 := v.Get(2)
 	idx, ok := arg2.ToInt()
 	if !ok {
-		panic("bad argument #2 to 'upvalueid' (number expected)")
+		panic("bad argument #2 to 'debug.upvalueid' (number expected)")
 	}
 
 	if arg1.IsNativeFunc() {
@@ -366,7 +366,7 @@ func luaDebugUpvalueID(v *vm.VM) int {
 	}
 
 	if idx < 1 || int(idx) > len(closure.Upvalues) {
-		panic(fmt.Sprintf("bad argument #2 to 'upvalueid' (invalid upvalue index %d)", idx))
+		panic(fmt.Sprintf("bad argument #2 to 'debug.upvalueid' (invalid upvalue index %d)", idx))
 	}
 
 	i := int(idx) - 1
@@ -395,12 +395,12 @@ func luaDebugGetLocal(v *vm.VM) int {
 			arg2 := v.Get(2)
 			level, ok := arg2.ToInt()
 			if !ok {
-				panic("bad argument #2 to 'getlocal' (number expected)")
+				panic("bad argument #2 to 'debug.getlocal' (number expected)")
 			}
 			arg3 := v.Get(3)
 			local, ok := arg3.ToInt()
 			if !ok {
-				panic("bad argument #3 to 'getlocal' (number expected)")
+				panic("bad argument #3 to 'debug.getlocal' (number expected)")
 			}
 			// For suspended coroutines, level numbering matches the coroutine's
 			// own call stack: level 0 = yield, level 1 = function that called yield.
@@ -419,7 +419,7 @@ func luaDebugGetLocal(v *vm.VM) int {
 		arg2 := v.Get(2)
 		local, ok := arg2.ToInt()
 		if !ok {
-			panic("bad argument #2 to 'getlocal' (number expected)")
+			panic("bad argument #2 to 'debug.getlocal' (number expected)")
 		}
 		name, found := v.GetFuncLocal(arg1, int(local))
 		if !found {
@@ -431,18 +431,18 @@ func luaDebugGetLocal(v *vm.VM) int {
 
 	level, ok := arg1.ToInt()
 	if !ok {
-		panic("bad argument #1 to 'getlocal' (number expected)")
+		panic("bad argument #1 to 'debug.getlocal' (number expected)")
 	}
 
 	arg2 := v.Get(2)
 	local, ok := arg2.ToInt()
 	if !ok {
-		panic("bad argument #2 to 'getlocal' (number expected)")
+		panic("bad argument #2 to 'debug.getlocal' (number expected)")
 	}
 
 	// Validate level is in range (level 0 = getlocal itself = native frame)
 	if !v.IsValidLevel(int(level)) {
-		panic("bad argument #1 to 'getlocal' (level out of range)")
+		panic("bad argument #1 to 'debug.getlocal' (level out of range)")
 	}
 
 	name, val, found := v.GetLocal(int(level), int(local))
@@ -473,12 +473,12 @@ func luaDebugSetLocal(v *vm.VM) int {
 			arg2 := v.Get(2)
 			level, ok := arg2.ToInt()
 			if !ok {
-				panic("bad argument #2 to 'setlocal' (number expected)")
+				panic("bad argument #2 to 'debug.setlocal' (number expected)")
 			}
 			arg3 := v.Get(3)
 			local, ok := arg3.ToInt()
 			if !ok {
-				panic("bad argument #3 to 'setlocal' (number expected)")
+				panic("bad argument #3 to 'debug.setlocal' (number expected)")
 			}
 			newVal := v.Get(4)
 			// For suspended coroutines, level numbering matches the coroutine's
@@ -494,19 +494,19 @@ func luaDebugSetLocal(v *vm.VM) int {
 
 	level, ok := arg1.ToInt()
 	if !ok {
-		panic("bad argument #1 to 'setlocal' (number expected)")
+		panic("bad argument #1 to 'debug.setlocal' (number expected)")
 	}
 
 	arg2 := v.Get(2)
 	local, ok := arg2.ToInt()
 	if !ok {
-		panic("bad argument #2 to 'setlocal' (number expected)")
+		panic("bad argument #2 to 'debug.setlocal' (number expected)")
 	}
 
 	newVal := v.Get(3)
 
 	if !v.IsValidLevel(int(level)) {
-		panic("bad argument #1 to 'setlocal' (level out of range)")
+		panic("bad argument #1 to 'debug.setlocal' (level out of range)")
 	}
 
 	name, found := v.SetLocal(int(level), int(local), newVal)
@@ -560,7 +560,7 @@ func luaDebugSetMetatable(v *vm.VM) int {
 	if mt.IsTable() {
 		mtTable = mt.AsTable()
 	} else if !mt.IsNil() {
-		panic("bad argument #2 to 'setmetatable' (nil or table expected)")
+		panic("bad argument #2 to 'debug.setmetatable' (nil or table expected)")
 	}
 
 	if val.IsTable() {
@@ -587,12 +587,12 @@ func luaDebugSetHook(v *vm.VM) int {
 	}
 
 	if !arg1.IsCallable() {
-		panic("bad argument #1 to 'sethook' (function expected)")
+		panic("bad argument #1 to 'debug.sethook' (function expected)")
 	}
 
 	arg2 := v.Get(2)
 	if !arg2.IsString() {
-		panic("bad argument #2 to 'sethook' (string expected)")
+		panic("bad argument #2 to 'debug.sethook' (string expected)")
 	}
 	maskStr := arg2.AsString()
 
@@ -629,19 +629,19 @@ func luaDebugSetHook(v *vm.VM) int {
 func luaDebugUpvalueJoin(v *vm.VM) int {
 	f1 := v.Get(1)
 	if !f1.IsFunction() {
-		panic("bad argument #1 to 'upvaluejoin' (function expected)")
+		panic("bad argument #1 to 'debug.upvaluejoin' (function expected)")
 	}
 	n1, ok := v.Get(2).ToInt()
 	if !ok {
-		panic("bad argument #2 to 'upvaluejoin' (number expected)")
+		panic("bad argument #2 to 'debug.upvaluejoin' (number expected)")
 	}
 	f2 := v.Get(3)
 	if !f2.IsFunction() {
-		panic("bad argument #3 to 'upvaluejoin' (function expected)")
+		panic("bad argument #3 to 'debug.upvaluejoin' (function expected)")
 	}
 	n2, ok := v.Get(4).ToInt()
 	if !ok {
-		panic("bad argument #4 to 'upvaluejoin' (number expected)")
+		panic("bad argument #4 to 'debug.upvaluejoin' (number expected)")
 	}
 
 	c1 := f1.AsClosure()
@@ -651,10 +651,10 @@ func luaDebugUpvalueJoin(v *vm.VM) int {
 	}
 
 	if n1 < 1 || int(n1) > len(c1.Upvalues) {
-		panic(fmt.Sprintf("bad argument #2 to 'upvaluejoin' (invalid upvalue index %d)", n1))
+		panic(fmt.Sprintf("bad argument #2 to 'debug.upvaluejoin' (invalid upvalue index %d)", n1))
 	}
 	if n2 < 1 || int(n2) > len(c2.Upvalues) {
-		panic(fmt.Sprintf("bad argument #4 to 'upvaluejoin' (invalid upvalue index %d)", n2))
+		panic(fmt.Sprintf("bad argument #4 to 'debug.upvaluejoin' (invalid upvalue index %d)", n2))
 	}
 
 	c1.Upvalues[int(n1)-1] = c2.Upvalues[int(n2)-1]

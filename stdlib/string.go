@@ -56,18 +56,18 @@ func openString(v *vm.VM) {
 
 // string.len(s)
 func stringLen(v *vm.VM) int {
-	s := getString(v, 1, "len")
+	s := getString(v, 1, "string.len")
 	v.Set(0, vm.NewInt(int64(len(s))))
 	return 1
 }
 
 // string.sub(s, i [, j])
 func stringSub(v *vm.VM) int {
-	s := getString(v, 1, "sub")
-	i := getInt(v, 2, "sub")
+	s := getString(v, 1, "string.sub")
+	i := getInt(v, 2, "string.sub")
 	j := int64(len(s))
 	if !v.Get(3).IsNil() {
-		j = getInt(v, 3, "sub")
+		j = getInt(v, 3, "string.sub")
 	}
 
 	// Lua uses 1-based indexing, negative indices count from end
@@ -91,7 +91,7 @@ func stringSub(v *vm.VM) int {
 
 // string.upper(s) — ASCII-only, byte-level (Lua strings are byte sequences)
 func stringUpper(v *vm.VM) int {
-	s := getString(v, 1, "upper")
+	s := getString(v, 1, "string.upper")
 	b := []byte(s)
 	for i, c := range b {
 		if c >= 'a' && c <= 'z' {
@@ -104,7 +104,7 @@ func stringUpper(v *vm.VM) int {
 
 // string.lower(s) — ASCII-only, byte-level (Lua strings are byte sequences)
 func stringLower(v *vm.VM) int {
-	s := getString(v, 1, "lower")
+	s := getString(v, 1, "string.lower")
 	b := []byte(s)
 	for i, c := range b {
 		if c >= 'A' && c <= 'Z' {
@@ -117,11 +117,11 @@ func stringLower(v *vm.VM) int {
 
 // string.rep(s, n [, sep])
 func stringRep(v *vm.VM) int {
-	s := getString(v, 1, "rep")
-	n := getInt(v, 2, "rep")
+	s := getString(v, 1, "string.rep")
+	n := getInt(v, 2, "string.rep")
 	sep := ""
 	if !v.Get(3).IsNil() {
-		sep = getString(v, 3, "rep")
+		sep = getString(v, 3, "string.rep")
 	}
 
 	if n <= 0 {
@@ -152,7 +152,7 @@ func stringRep(v *vm.VM) int {
 
 // string.reverse(s)
 func stringReverse(v *vm.VM) int {
-	s := getString(v, 1, "reverse")
+	s := getString(v, 1, "string.reverse")
 	b := []byte(s)
 	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
 		b[i], b[j] = b[j], b[i]
@@ -163,14 +163,14 @@ func stringReverse(v *vm.VM) int {
 
 // string.byte(s [, i [, j]])
 func stringByte(v *vm.VM) int {
-	s := getString(v, 1, "byte")
+	s := getString(v, 1, "string.byte")
 	i := int64(1)
 	if !v.Get(2).IsNil() {
-		i = getInt(v, 2, "byte")
+		i = getInt(v, 2, "string.byte")
 	}
 	j := i
 	if !v.Get(3).IsNil() {
-		j = getInt(v, 3, "byte")
+		j = getInt(v, 3, "string.byte")
 	}
 
 	start := posRelat(i, len(s))
@@ -200,9 +200,9 @@ func stringChar(v *vm.VM) int {
 	n := v.ArgCount()
 	var buf bytes.Buffer
 	for i := 1; i <= n; i++ {
-		c := getInt(v, i, "char")
+		c := getInt(v, i, "string.char")
 		if c < 0 || c > 255 {
-			panic(fmt.Sprintf("bad argument #%d to 'char' (value out of range)", i))
+			panic(fmt.Sprintf("bad argument #%d to 'string.char' (value out of range)", i))
 		}
 		buf.WriteByte(byte(c))
 	}
@@ -212,11 +212,11 @@ func stringChar(v *vm.VM) int {
 
 // string.find(s, pattern [, init [, plain]])
 func stringFind(v *vm.VM) int {
-	s := getString(v, 1, "find")
-	pattern := getString(v, 2, "find")
+	s := getString(v, 1, "string.find")
+	pattern := getString(v, 2, "string.find")
 	init := int64(1)
 	if !v.Get(3).IsNil() {
-		init = getInt(v, 3, "find")
+		init = getInt(v, 3, "string.find")
 	}
 	plain := false
 	if !v.Get(4).IsNil() {
@@ -267,18 +267,18 @@ func stringFind(v *vm.VM) int {
 
 // string.gsub(s, pattern, repl [, n])
 func stringGsub(v *vm.VM) int {
-	s := getString(v, 1, "gsub")
-	pattern := getString(v, 2, "gsub")
+	s := getString(v, 1, "string.gsub")
+	pattern := getString(v, 2, "string.gsub")
 	repl := v.Get(3)
 	// Validate replacement type — Lua 5.4 also accepts numbers (coerced to string)
 	if repl.IsNumber() {
 		repl = vm.NewString(valueToString(repl))
 	} else if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() && !repl.IsTable() {
-		panic(fmt.Sprintf("bad argument #3 to 'gsub' (string/function/table expected, got %s)", repl.Type()))
+		panic(fmt.Sprintf("bad argument #3 to 'string.gsub' (string/function/table expected, got %s)", repl.Type()))
 	}
 	maxRepl := -1
 	if v.ArgCount() >= 4 && !v.Get(4).IsNil() {
-		n := int(getInt(v, 4, "gsub"))
+		n := int(getInt(v, 4, "string.gsub"))
 		if n < 0 {
 			n = 0
 		}
@@ -451,11 +451,11 @@ func lookupGsubTable(v *vm.VM, repl vm.Value, captures []captureValue, wholeMatc
 
 // string.match(s, pattern [, init])
 func stringMatch(v *vm.VM) int {
-	s := getString(v, 1, "match")
-	pattern := getString(v, 2, "match")
+	s := getString(v, 1, "string.match")
+	pattern := getString(v, 2, "string.match")
 	init := int64(1)
 	if !v.Get(3).IsNil() {
-		init = getInt(v, 3, "match")
+		init = getInt(v, 3, "string.match")
 	}
 
 	mStart, mEnd, caps, found := luaMatchFrom(s, pattern, int(init))
@@ -483,11 +483,11 @@ func stringMatch(v *vm.VM) int {
 
 // string.gmatch(s, pattern [, init])
 func stringGmatch(v *vm.VM) int {
-	s := getString(v, 1, "gmatch")
-	pattern := getString(v, 2, "gmatch")
+	s := getString(v, 1, "string.gmatch")
+	pattern := getString(v, 2, "string.gmatch")
 	init := 1
 	if !v.Get(3).IsNil() {
-		init = int(getInt(v, 3, "gmatch"))
+		init = int(getInt(v, 3, "string.gmatch"))
 	}
 
 	// Resolve negative init

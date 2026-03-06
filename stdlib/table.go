@@ -31,7 +31,11 @@ func tableGetTable(v *vm.VM, idx int, fname string) vm.LuaTable {
 	if val.IsTable() {
 		return val.AsTable()
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (table expected, got %s)", idx, fname, val.Type()))
+	got := val.Type()
+	if v.ArgCount() < idx {
+		got = "no value"
+	}
+	panic(fmt.Sprintf("bad argument #%d to '%s' (table expected, got %s)", idx, fname, got))
 }
 
 // tableObjLen returns #val via metamethod-aware ObjLen, panicking on error.
@@ -62,23 +66,23 @@ func tableSetIdx(v *vm.VM, t vm.LuaTable, key int, value vm.Value) {
 
 // table.concat(list [, sep [, i [, j]]])
 func tableConcat(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "concat")
+	tbl := tableGetTable(v, 1, "table.concat")
 
 	sep := ""
 	if !v.Get(2).IsNil() {
-		sep = getString(v, 2, "concat")
+		sep = getString(v, 2, "table.concat")
 	}
 
 	length := tableObjLen(v, v.Get(1))
 
 	i := int64(1)
 	if !v.Get(3).IsNil() {
-		i = getInt(v, 3, "concat")
+		i = getInt(v, 3, "table.concat")
 	}
 
 	j := int64(length)
 	if !v.Get(4).IsNil() {
-		j = getInt(v, 4, "concat")
+		j = getInt(v, 4, "table.concat")
 	}
 
 	var parts []string
@@ -102,11 +106,11 @@ func tableConcat(v *vm.VM) int {
 
 // table.insert(list, [pos,] value)
 func tableInsert(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "insert")
+	tbl := tableGetTable(v, 1, "table.insert")
 
 	n := v.ArgCount()
 	if n < 2 || n > 3 {
-		panic("wrong number of arguments to 'insert'")
+		panic("wrong number of arguments to 'table.insert'")
 	}
 	length := tableObjLen(v, v.Get(1))
 
@@ -115,11 +119,11 @@ func tableInsert(v *vm.VM) int {
 		tableSetIdx(v, tbl, length+1, v.Get(2))
 	} else if n >= 3 {
 		// table.insert(list, pos, value)
-		pos := int(getInt(v, 2, "insert"))
+		pos := int(getInt(v, 2, "table.insert"))
 		val := v.Get(3)
 
 		if pos < 1 || pos > length+1 {
-			panic(fmt.Sprintf("bad argument #2 to 'insert' (position out of bounds)"))
+			panic(fmt.Sprintf("bad argument #2 to 'table.insert' (position out of bounds)"))
 		}
 
 		// Shift elements up
@@ -136,12 +140,12 @@ func tableInsert(v *vm.VM) int {
 // table.remove(list [, pos])
 // Lua 5.4 semantics: pos defaults to #list. If pos != #list, validate 1 <= pos <= #list.
 func tableRemove(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "remove")
+	tbl := tableGetTable(v, 1, "table.remove")
 
 	length := tableObjLen(v, v.Get(1))
 	pos := length
 	if !v.Get(2).IsNil() {
-		pos = int(getInt(v, 2, "remove"))
+		pos = int(getInt(v, 2, "table.remove"))
 	}
 
 	// Lua 5.4: validate only when pos != length (the default)
@@ -175,7 +179,7 @@ func tableRemove(v *vm.VM) int {
 
 // table.sort(list [, comp])
 func tableSort(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "sort")
+	tbl := tableGetTable(v, 1, "table.sort")
 
 	length := tableObjLen(v, v.Get(1))
 	if length <= 1 {
@@ -185,7 +189,7 @@ func tableSort(v *vm.VM) int {
 	// Guard against absurd lengths from __len metamethod
 	const maxSortLen = 1 << 30
 	if length > maxSortLen {
-		panic("bad argument #1 to 'sort' (array too big)")
+		panic("bad argument #1 to 'table.sort' (array too big)")
 	}
 
 	// Extract values into slice via __index
@@ -202,7 +206,7 @@ func tableSort(v *vm.VM) int {
 		auxSort(v, values, 0, length-1, vm.Nil, &sortErr)
 	} else {
 		if !comp.IsFunction() && !comp.IsNativeFunc() {
-			panic(fmt.Sprintf("bad argument #2 to 'sort' (function expected, got %s)", comp.Type()))
+			panic(fmt.Sprintf("bad argument #2 to 'table.sort' (function expected, got %s)", comp.Type()))
 		}
 		// Custom comparator
 		auxSort(v, values, 0, length-1, comp, &sortErr)
@@ -333,18 +337,18 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 
 // table.unpack(list [, i [, j]])
 func tableUnpack(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "unpack")
+	tbl := tableGetTable(v, 1, "table.unpack")
 
 	length := tableObjLen(v, v.Get(1))
 
 	i := int64(1)
 	if !v.Get(2).IsNil() {
-		i = getInt(v, 2, "unpack")
+		i = getInt(v, 2, "table.unpack")
 	}
 
 	j := int64(length)
 	if !v.Get(3).IsNil() {
-		j = getInt(v, 3, "unpack")
+		j = getInt(v, 3, "table.unpack")
 	}
 
 	if j < i {
@@ -396,15 +400,15 @@ func tablePack(v *vm.VM) int {
 
 // table.move(a1, f, e, t [,a2])
 func tableMove(v *vm.VM) int {
-	a1 := tableGetTable(v, 1, "move")
+	a1 := tableGetTable(v, 1, "table.move")
 
-	f := getInt(v, 2, "move")
-	e := getInt(v, 3, "move")
-	tt := getInt(v, 4, "move")
+	f := getInt(v, 2, "table.move")
+	e := getInt(v, 3, "table.move")
+	tt := getInt(v, 4, "table.move")
 
 	a2 := a1
 	if !v.Get(5).IsNil() {
-		a2 = tableGetTable(v, 5, "move")
+		a2 = tableGetTable(v, 5, "table.move")
 	}
 
 	if f <= e {

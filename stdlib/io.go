@@ -124,7 +124,7 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
 		if name.IsNil() {
-			panic("bad argument #1 to 'open' (string expected, got nil)")
+			panic("bad argument #1 to 'io.open' (string expected, got nil)")
 		}
 		nameStr := name.AsString()
 		mode := "r"
@@ -180,7 +180,7 @@ func makeIoClose(provider vm.LuaIoProvider) vm.NativeFunc {
 			panic("cannot close default output file")
 		}
 
-		fh := getFileHandle(v, val, "close")
+		fh := getFileHandle(v, val, "io.close")
 		if fh.file.IsStd() {
 			// Cannot close standard files - return nil, error
 			v.Set(0, vm.Nil)
@@ -285,7 +285,7 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 		}
 
 		// Assume it's a file handle - set as default input
-		_ = getFileHandle(v, arg, "input") // validate it's a file handle
+		_ = getFileHandle(v, arg, "io.input") // validate it's a file handle
 		ioTable.SetString("__input", arg)
 		v.Set(0, arg)
 		return 1
@@ -315,7 +315,7 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 		}
 
 		// Assume it's a file handle - set as default output
-		_ = getFileHandle(v, arg, "output") // validate it's a file handle
+		_ = getFileHandle(v, arg, "io.output") // validate it's a file handle
 		ioTable.SetString("__output", arg)
 		v.Set(0, arg)
 		return 1
@@ -332,7 +332,7 @@ func makeIoRead(provider vm.LuaIoProvider) vm.NativeFunc {
 		}
 		ioTable := ioVal.AsTable()
 		inputVal := ioTable.Get(vm.NewString("__input"))
-		fh := getFileHandle(v, inputVal, "read")
+		fh := getFileHandle(v, inputVal, "io.read")
 		fh.checkOpen("read")
 
 		return doFileRead(v, fh.file, 1)
@@ -349,7 +349,7 @@ func makeIoWrite(provider vm.LuaIoProvider) vm.NativeFunc {
 		}
 		ioTable := ioVal.AsTable()
 		outputVal := ioTable.Get(vm.NewString("__output"))
-		fh := getFileHandle(v, outputVal, "write")
+		fh := getFileHandle(v, outputVal, "io.write")
 		fh.checkOpen("write")
 
 		return doFileWrite(v, fh.file, outputVal, 1)
@@ -454,7 +454,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 		} else if arg.IsNumber() {
 			s = valueToString(arg)
 		} else {
-			panic(fmt.Sprintf("bad argument #%d to 'write' (string expected, got %s)", i-firstArg+1, arg.Type()))
+			panic(fmt.Sprintf("bad argument #%d to 'io.write' (string expected, got %s)", i-firstArg+1, arg.Type()))
 		}
 		err := f.Write(s)
 		if err != nil {
@@ -533,7 +533,7 @@ func fileSeek(v *vm.VM) int {
 		var ok bool
 		offset, ok = v.Get(3).ToInt()
 		if !ok {
-			panic("bad argument #2 to 'seek' (number expected)")
+			panic("bad argument #2 to 'io.seek' (number expected)")
 		}
 	}
 
@@ -556,7 +556,7 @@ func fileSetVBuf(v *vm.VM) int {
 
 	mode := v.Get(2)
 	if mode.IsNil() {
-		panic("bad argument #1 to 'setvbuf' (string expected, got nil)")
+		panic("bad argument #1 to 'io.setvbuf' (string expected, got nil)")
 	}
 	modeStr := mode.AsString()
 
@@ -564,7 +564,7 @@ func fileSetVBuf(v *vm.VM) int {
 	if !v.Get(3).IsNil() {
 		sz, ok := v.Get(3).ToInt()
 		if !ok {
-			panic("bad argument #2 to 'setvbuf' (number expected)")
+			panic("bad argument #2 to 'io.setvbuf' (number expected)")
 		}
 		size = int(sz)
 	}
