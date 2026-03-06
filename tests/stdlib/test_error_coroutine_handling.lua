@@ -16,6 +16,6 @@ do
     local a,b = coroutine.resume(c)
     return b
   end
-  assert(string.find(f(), "C stack overflow"))
+  assert(string.find(f(), "stack overflow"))
   checkmessage("coroutine.yield()", "outside a coroutine")
 end

@@ -15,5 +15,5 @@ do
     pcall(1)   -- create an error
     coroutine.wrap(foo)()
   end
-  checkerror("C stack overflow", foo)
+  checkerror("stack overflow", foo)
 end

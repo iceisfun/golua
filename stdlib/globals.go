@@ -335,7 +335,11 @@ func luaXpcall(v *vm.VM) int {
 	fn := v.Get(1)
 	msgh := v.Get(2)
 	if !msgh.IsFunction() && !msgh.IsNativeFunc() {
-		panic(fmt.Sprintf("bad argument #2 to 'xpcall' (function expected, got %s)", msgh.Type()))
+		got := msgh.Type()
+		if v.ArgCount() < 2 {
+			got = "no value"
+		}
+		panic(fmt.Sprintf("bad argument #2 to 'xpcall' (function expected, got %s)", got))
 	}
 
 	// Collect extra arguments (after fn and msgh)

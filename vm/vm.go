@@ -623,13 +623,13 @@ func (vm *VM) maxCallDepth() int {
 	return DefaultMaxCallDepth
 }
 
-// checkCallDepth panics with "C stack overflow" if the effective call depth
+// checkCallDepth panics with "stack overflow" if the effective call depth
 // (callDepthBase + current callStack length) exceeds the limit. The panic
 // is a *LuaError so pcall/xpcall can catch it.
 func (vm *VM) checkCallDepth() {
 	max := vm.maxCallDepth()
 	if max > 0 && vm.callDepthBase+len(vm.callStack) > max {
-		panic(&LuaError{Value: NewString("C stack overflow")})
+		panic(&LuaError{Value: NewString("stack overflow")})
 	}
 }
 

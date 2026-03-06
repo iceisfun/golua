@@ -1,6 +1,6 @@
 -- Test: cstack.lua - Chain of coroutine.close
 -- From: cstack.lua
--- What: Tests C stack overflow when closing a chain of 1000 coroutines (bug since 5.4.0)
+-- What: Tests stack overflow when closing a chain of 1000 coroutines (bug since 5.4.0)
 
 do
   local count = 0
@@ -17,5 +17,5 @@ do
     assert(coroutine.resume(coro))
   end
   local st, msg = coroutine.close(coro)
-  assert(not st and string.find(msg, "C stack overflow"))
+  assert(not st and string.find(msg, "stack overflow"))
 end

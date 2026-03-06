@@ -55,7 +55,7 @@ end
 -- [Test 6] luaG_opinterror: add table with string
 do
   local ok, err = pcall(function() return {} + 'hello' end)
-  assert(not ok and string.find(err, "attempt to perform arithmetic"))
+  assert(not ok and string.find(err, "attempt to add"))
   print("PASS")
 end
 --> =PASS

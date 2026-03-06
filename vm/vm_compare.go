@@ -66,7 +66,7 @@ func (vm *VM) lessThan(v1, v2 Value) (bool, error) {
 		return res.ToBool(), nil
 	}
 
-	return false, vm.runtimeError("attempt to compare %s with %s", v1.Type(), v2.Type())
+	return false, vm.compareError(v1, v2)
 }
 
 // lessEqual checks for less equal, handling __le metamethod
@@ -114,7 +114,17 @@ func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
 		return !res.ToBool(), nil
 	}
 
-	return false, vm.runtimeError("attempt to compare %s with %s", v1.Type(), v2.Type())
+	return false, vm.compareError(v1, v2)
+}
+
+// compareError generates the appropriate comparison error message.
+// Lua 5.4: same-type uses "two TYPE values", different-type uses "TYPE with TYPE".
+func (vm *VM) compareError(v1, v2 Value) error {
+	t1, t2 := v1.Type(), v2.Type()
+	if t1 == t2 {
+		return vm.runtimeError("attempt to compare two %s values", t1)
+	}
+	return vm.runtimeError("attempt to compare %s with %s", t1, t2)
 }
 
 // concat handles concatenation with __concat support

@@ -555,11 +555,7 @@ func makeStringArith(opName string, floatOp func(float64, float64) float64, intO
 				v.Set(0, result)
 				return 1
 			}
-			bad := a
-			if ok1 {
-				bad = b
-			}
-			panic(fmt.Sprintf("attempt to perform arithmetic on a '%s' value", bad.Type()))
+			panic(fmt.Sprintf("attempt to %s a '%s' with a '%s'", opName, a.Type(), b.Type()))
 		}
 		// Integer path (when both are int and intOp is available)
 		if intOp != nil && cv1.IsInt() && cv2.IsInt() {
@@ -583,11 +579,7 @@ func makeStringArithFloorDiv() func(*vm.VM) int {
 				v.Set(0, result)
 				return 1
 			}
-			bad := a
-			if ok1 {
-				bad = b
-			}
-			panic(fmt.Sprintf("attempt to perform arithmetic on a '%s' value", bad.Type()))
+			panic(fmt.Sprintf("attempt to idiv a '%s' with a '%s'", a.Type(), b.Type()))
 		}
 		if cv1.IsInt() && cv2.IsInt() {
 			i1, i2 := cv1.AsInt(), cv2.AsInt()
@@ -622,11 +614,7 @@ func makeStringArithMod() func(*vm.VM) int {
 				v.Set(0, result)
 				return 1
 			}
-			bad := a
-			if ok1 {
-				bad = b
-			}
-			panic(fmt.Sprintf("attempt to perform arithmetic on a '%s' value", bad.Type()))
+			panic(fmt.Sprintf("attempt to mod a '%s' with a '%s'", a.Type(), b.Type()))
 		}
 		if cv1.IsInt() && cv2.IsInt() {
 			i1, i2 := cv1.AsInt(), cv2.AsInt()
