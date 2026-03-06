@@ -86,7 +86,7 @@ func TestPosError(t *testing.T) {
 		Pos: Pos{Source: "test.lua", Line: 5, Column: 10},
 		Msg: "unexpected symbol",
 	}
-	want := "test.lua:5:10: unexpected symbol"
+	want := "test.lua:5: unexpected symbol"
 	if got := e.Error(); got != want {
 		t.Errorf("PosError.Error() = %q, want %q", got, want)
 	}

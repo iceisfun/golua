@@ -578,8 +578,11 @@ func parseFormatFlags(spec string) (zeroPad, width int, left bool, hash bool) {
 
 // validateFormatWidthPrec panics if width or precision >= 100 (Lua 5.4 limit).
 func validateFormatWidthPrec(spec string, conv byte) {
-	// Check overall spec length (Lua 5.4 limit)
-	if len(spec) > 50 {
+	// Check overall spec length (Lua 5.4 MAX_FORMAT = 32; at most 20 chars
+	// of flags/width/precision between '%' and the conversion character).
+	// spec here is '%' + flags/width/precision (no conversion char yet),
+	// so max len(spec) is 21.
+	if len(spec) > 21 {
 		panic("invalid format (too long)")
 	}
 

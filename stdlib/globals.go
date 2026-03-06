@@ -722,6 +722,9 @@ func luaSetmetatable(v *vm.VM) int {
 	if tbl == nil {
 		panic("bad argument #1 to 'setmetatable' (table expected" + gotDesc(v, 1) + ")")
 	}
+	if v.ArgCount() < 2 {
+		panic("bad argument #2 to 'setmetatable' (nil or table expected, got no value)")
+	}
 	// Check __metatable protection on existing metatable
 	if existingMT := tbl.Metatable(); existingMT != nil {
 		if !existingMT.Get(vm.NewString("__metatable")).IsNil() {

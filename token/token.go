@@ -159,8 +159,11 @@ type PosError struct {
 	Msg string
 }
 
-// Error returns the error message prefixed with its source position.
-func (e *PosError) Error() string { return fmt.Sprintf("%s: %s", e.Pos, e.Msg) }
+// Error returns the error message prefixed with source:line (without column),
+// matching Lua 5.4's error message format.
+func (e *PosError) Error() string {
+	return fmt.Sprintf("%s:%d: %s", e.Pos.Source, e.Pos.Line, e.Msg)
+}
 
 // Token is a single lexical token with its type, value, and position.
 type Token struct {

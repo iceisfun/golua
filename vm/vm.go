@@ -210,7 +210,11 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			if le, ok := r.(*LuaError); ok {
 				err = le
 			} else {
-				err = fmt.Errorf("%v", r)
+				// For string panics from native functions, add the calling
+				// Lua frame's source:line: prefix (like Lua 5.4's luaG_addinfo).
+				msg := fmt.Sprintf("%v", r)
+				msg = vm.addCallerLocation(msg)
+				err = fmt.Errorf("%s", msg)
 			}
 			results = nil
 

@@ -179,13 +179,30 @@ func chunkNameForDisplay(name string) string {
 	}
 	switch name[0] {
 	case '=':
-		return name[1:]
+		s := name[1:]
+		if len(s) > 59 {
+			s = s[:59]
+		}
+		return s
 	case '@':
-		return name[1:]
+		s := name[1:]
+		if len(s) >= 60 {
+			s = "..." + s[len(s)-56:]
+		}
+		return s
 	default:
 		s := name
+		truncated := false
 		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
 			s = s[:idx]
+			truncated = true
+		}
+		if len(s) >= 45 {
+			s = s[:45]
+			truncated = true
+		}
+		if truncated {
+			return fmt.Sprintf(`[string "%s..."]`, s)
 		}
 		return fmt.Sprintf(`[string "%s"]`, s)
 	}
@@ -341,14 +358,14 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 	// Parse
 	block, parseErr := parser.Parse(chunkName, source, o.stripShebang)
 	if parseErr != nil {
-		return vm.Nil, fmt.Sprintf("syntax error: %v", parseErr)
+		return vm.Nil, parseErr.Error()
 	}
 
 	// Compile
 	proto, compileErr := compiler.Compile(chunkName, block,
 		compiler.WithLimits(v.GetLimits().CompilerLimits))
 	if compileErr != nil {
-		return vm.Nil, fmt.Sprintf("compile error: %v", compileErr)
+		return vm.Nil, compileErr.Error()
 	}
 
 	// Override proto.Source with the raw source name for debug info.

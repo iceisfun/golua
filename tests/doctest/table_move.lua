@@ -36,5 +36,5 @@ do
     --> ~false\t.*wrap around
 
     print(pcall(table.move, {}, -10, math.maxinteger, -20))
-    --> ~false\t.*interval too large
+    --> ~false\t.*too many elements to move
 end

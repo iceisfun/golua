@@ -1263,18 +1263,18 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 				}
 			} else {
-				// Float for loop
-				initF, ok1 := init.ToNumber()
+				// Float for loop — validate in Lua 5.4 order: limit, step, initial
 				limitF, ok2 := limit.ToNumber()
 				stepF, ok3 := step.ToNumber()
-				if !ok1 {
-					return nil, vm.runtimeError("bad 'for' initial value (number expected, got %s)", init.Type())
-				}
+				initF, ok1 := init.ToNumber()
 				if !ok2 {
 					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", limit.Type())
 				}
 				if !ok3 {
 					return nil, vm.runtimeError("bad 'for' step (number expected, got %s)", step.Type())
+				}
+				if !ok1 {
+					return nil, vm.runtimeError("bad 'for' initial value (number expected, got %s)", init.Type())
 				}
 				if stepF == 0 {
 					return nil, vm.runtimeError("'for' step is zero")

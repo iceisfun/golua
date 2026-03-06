@@ -399,6 +399,19 @@ func coStatus(v *vm.VM) int {
 	}
 
 	id, _ := idVal.ToInt()
+
+	// The main thread (id=0) is not in the coroutines map.
+	// Its status depends on whether the caller is the main thread itself.
+	if int(id) == 0 {
+		if v.CoroutineID() == 0 {
+			v.Set(0, vm.NewString(string(statusRunning)))
+		} else {
+			// Main thread is suspended while a coroutine runs
+			v.Set(0, vm.NewString(string(statusNormal)))
+		}
+		return 1
+	}
+
 	coroutinesMu.Lock()
 	co := coroutines[int(id)]
 	coroutinesMu.Unlock()

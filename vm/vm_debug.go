@@ -335,27 +335,33 @@ func shortSrc(source string) string {
 	}
 	switch source[0] {
 	case '=':
-		// User-defined short description
+		// User-defined short description (Lua 5.4 LUA_IDSIZE=60, minus null = 59)
 		s := source[1:]
-		if len(s) > 60 {
-			s = s[:60]
+		if len(s) > 59 {
+			s = s[:59]
 		}
 		return s
 	case '@':
-		// File name
+		// File name (max 59 visible chars; longer names get "..." prefix)
 		s := source[1:]
-		if len(s) > 60 {
-			s = "..." + s[len(s)-57:]
+		if len(s) >= 60 {
+			s = "..." + s[len(s)-56:]
 		}
 		return s
 	default:
-		// String source — show first line
+		// String source — show first line, add "..." if truncated
 		s := source
+		truncated := false
 		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
 			s = s[:idx]
+			truncated = true
 		}
-		if len(s) > 45 {
+		if len(s) >= 45 {
 			s = s[:45]
+			truncated = true
+		}
+		if truncated {
+			return "[string \"" + s + "...\"]"
 		}
 		return "[string \"" + s + "\"]"
 	}

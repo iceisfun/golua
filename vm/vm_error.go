@@ -1,6 +1,9 @@
 package vm
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // runtimeError creates a formatted error prefixed with the current source location (source:line:).
 func (vm *VM) runtimeError(format string, args ...any) error {
@@ -19,6 +22,39 @@ func (vm *VM) runtimeError(format string, args ...any) error {
 		}
 	}
 	return fmt.Errorf("%s", msg)
+}
+
+// addCallerLocation prepends the calling Lua frame's source:line: prefix
+// to a plain error message from a native function. This mirrors Lua 5.4's
+// luaG_addinfo / luaL_where which adds the caller location to stdlib errors.
+// It walks the call stack to find the Lua frame that called the native function.
+// Returns the original message if no Lua frame is found or if the message
+// already has a location prefix.
+func (vm *VM) addCallerLocation(msg string) string {
+	// Walk the call stack backwards to find the first Lua frame
+	for i := len(vm.callStack) - 1; i >= 0; i-- {
+		frame := &vm.callStack[i]
+		if frame.closure != nil {
+			proto := frame.closure.Proto
+			pc := frame.pc - 1
+			if pc >= 0 && pc < len(proto.Lines) {
+				prefix := fmt.Sprintf("%s:%d: ", shortSrc(proto.Source), proto.Lines[pc])
+				if strings.HasPrefix(msg, prefix) {
+					return msg // already has this prefix
+				}
+				return prefix + msg
+			}
+			if proto.Source != "" {
+				prefix := shortSrc(proto.Source) + ": "
+				if strings.HasPrefix(msg, prefix) {
+					return msg
+				}
+				return prefix + msg
+			}
+			break
+		}
+	}
+	return msg
 }
 
 // ObjTypeName returns the type name for a value, checking __name in

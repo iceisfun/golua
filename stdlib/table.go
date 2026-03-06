@@ -368,7 +368,11 @@ func tableUnpack(v *vm.VM) int {
 		panic("too many results to unpack")
 	}
 	nResults := int(n)
+	// Check stack capacity before allocating (matches Lua 5.4's luaL_checkstack)
 	if nResults > 0 {
+		if !v.CheckStack(v.Base() + nResults) {
+			panic("too many results to unpack")
+		}
 		v.EnsureStack(v.Base() + nResults)
 	}
 
@@ -415,11 +419,11 @@ func tableMove(v *vm.VM) int {
 		// Check interval too large
 		if f < 0 && e > 0 && e-f < 0 {
 			// overflow in e-f
-			panic("too many elements to move (interval too large)")
+			panic("bad argument #3 to 'table.move' (too many elements to move)")
 		}
 		count := e - f + 1
 		if count < 0 {
-			panic("too many elements to move (interval too large)")
+			panic("bad argument #3 to 'table.move' (too many elements to move)")
 		}
 
 		// Check destination overflow: tt + (e - f) must not wrap

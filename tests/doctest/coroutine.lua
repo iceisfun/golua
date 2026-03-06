@@ -86,9 +86,8 @@ do
     end
     co = coroutine.create(cof)
 
-    -- NOTE: main thread status shows as "dead" in our impl (known limitation)
     print("main/main", coroutine.status(main))
-    --> =main/main	dead
+    --> =main/main	running
 
     print("co/main", coroutine.status(co))
     --> =co/main	suspended
@@ -96,9 +95,8 @@ do
     print("co/co", coroutine.resume(co, co))
     --> =co/co	true	running
 
-    -- NOTE: main thread status from inside coroutine shows "dead" instead of "normal"
     print("main/co", coroutine.resume(co))
-    --> =main/co	true	dead
+    --> =main/co	true	normal
 
     print("co", coroutine.status(co))
     --> =co	dead
