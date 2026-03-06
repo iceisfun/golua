@@ -34,7 +34,7 @@ func ParsePartial(source, input string) (*ast.Block, error) {
 		return block, p.err
 	}
 	if p.tok.Type != token.EOS {
-		return block, p.errorf("unexpected symbol near %s", p.nearToken())
+		return block, p.errorf("<eof> expected near %s", p.nearToken())
 	}
 	return block, nil
 }
@@ -58,7 +58,7 @@ func Parse(source, input string, stripShebang ...bool) (*ast.Block, error) {
 		return nil, p.err
 	}
 	if p.tok.Type != token.EOS {
-		return nil, p.errorf("unexpected symbol near %s", p.nearToken())
+		return nil, p.errorf("<eof> expected near %s", p.nearToken())
 	}
 	return block, nil
 }
@@ -92,7 +92,7 @@ func (p *parser) advance() error {
 
 func (p *parser) expect(typ token.Type) (token.Token, error) {
 	if p.tok.Type != typ {
-		return token.Token{}, p.errorf("'%s' expected near %s", typ, p.nearToken())
+		return token.Token{}, p.errorf("%s expected near %s", tokenForError(typ), p.nearToken())
 	}
 	tok := p.tok
 	if err := p.advance(); err != nil {
@@ -145,10 +145,20 @@ func (p *parser) checkMatch(close token.Type, openLiteral string, openLine int) 
 		return p.advance()
 	}
 	if openLine == p.tok.Pos.Line {
-		return p.errorf("'%s' expected near %s", close, p.nearToken())
+		return p.errorf("%s expected near %s", tokenForError(close), p.nearToken())
 	}
-	return p.errorf("'%s' expected (to close '%s' at line %d) near %s",
-		close, openLiteral, openLine, p.nearToken())
+	return p.errorf("%s expected (to close '%s' at line %d) near %s",
+		tokenForError(close), openLiteral, openLine, p.nearToken())
+}
+
+// tokenForError formats a token type for error messages.
+// Lua 5.4 quotes keywords and single-char tokens but not <name>/<eof>/etc.
+func tokenForError(typ token.Type) string {
+	s := typ.String()
+	if len(s) > 0 && s[0] == '<' {
+		return s
+	}
+	return "'" + s + "'"
 }
 
 // nearToken returns the current token formatted for error messages:

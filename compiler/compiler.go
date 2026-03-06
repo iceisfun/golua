@@ -3,9 +3,46 @@ package compiler
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/iceisfun/golua/ast"
 )
+
+// shortSrc returns a display-friendly source name, matching Lua 5.4's luaO_chunkid.
+func shortSrc(source string) string {
+	if len(source) == 0 {
+		return "[string \"?\"]"
+	}
+	switch source[0] {
+	case '=':
+		s := source[1:]
+		if len(s) > 59 {
+			s = s[:59]
+		}
+		return s
+	case '@':
+		s := source[1:]
+		if len(s) >= 60 {
+			s = "..." + s[len(s)-56:]
+		}
+		return s
+	default:
+		s := source
+		truncated := false
+		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+			s = s[:idx]
+			truncated = true
+		}
+		if len(s) >= 45 {
+			s = s[:45]
+			truncated = true
+		}
+		if truncated {
+			return "[string \"" + s + "...\"]"
+		}
+		return "[string \"" + s + "\"]"
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -173,7 +210,26 @@ func (c *compiler) internString(s string) string {
 // error records the first compilation error; subsequent errors are ignored.
 func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 	if c.err == nil {
-		c.err = fmt.Errorf(format, args...)
+		msg := fmt.Sprintf(format, args...)
+		line := 0
+		source := ""
+		if c.fs != nil {
+			source = c.fs.proto.Source
+		}
+		if node, ok := pos.(ast.Node); ok && node != nil {
+			p := node.Pos()
+			line = p.Line
+			if p.Source != "" {
+				source = p.Source
+			}
+		}
+		if source != "" && line > 0 {
+			c.err = fmt.Errorf("%s:%d: %s", shortSrc(source), line, msg)
+		} else if source != "" {
+			c.err = fmt.Errorf("%s: %s", shortSrc(source), msg)
+		} else {
+			c.err = fmt.Errorf("%s", msg)
+		}
 	}
 }
 

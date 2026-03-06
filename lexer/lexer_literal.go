@@ -257,10 +257,10 @@ func (l *Lexer) scanBinaryNumber(pos token.Pos, buf *strings.Builder) (token.Tok
 	if l.current != '0' && l.current != '1' {
 		if isAlpha(l.current) || isDigit(l.current) {
 			return token.Token{}, &token.PosError{Pos: pos,
-				Msg: fmt.Sprintf("malformed number '%s%c'", buf.String(), l.current)}
+				Msg: fmt.Sprintf("malformed number near '%s%c'", buf.String(), l.current)}
 		}
 		return token.Token{}, &token.PosError{Pos: pos,
-			Msg: fmt.Sprintf("malformed number '%s'", buf.String())}
+			Msg: fmt.Sprintf("malformed number near '%s'", buf.String())}
 	}
 
 	for l.current == '0' || l.current == '1' {
@@ -271,14 +271,14 @@ func (l *Lexer) scanBinaryNumber(pos token.Pos, buf *strings.Builder) (token.Tok
 	// Reject trailing digits or letters (e.g. 0b102, 0b10abc).
 	if isAlpha(l.current) || isDigit(l.current) {
 		return token.Token{}, &token.PosError{Pos: pos,
-			Msg: fmt.Sprintf("malformed number '%s%c'", buf.String(), l.current)}
+			Msg: fmt.Sprintf("malformed number near '%s%c'", buf.String(), l.current)}
 	}
 
 	raw := buf.String()
 	ival, err := parseInt(raw)
 	if err != nil {
 		return token.Token{}, &token.PosError{Pos: pos,
-			Msg: fmt.Sprintf("malformed number '%s'", raw)}
+			Msg: fmt.Sprintf("malformed number near '%s'", raw)}
 	}
 	return token.Token{
 		Type:    token.INT,
@@ -327,7 +327,7 @@ func (l *Lexer) scanNumberBody(pos token.Pos, buf *strings.Builder, isHex bool) 
 	// Check for letter touching numeral (e.g. "123abc")
 	if isAlpha(l.current) {
 		return token.Token{}, &token.PosError{Pos: pos,
-			Msg: fmt.Sprintf("malformed number '%s%c'", buf.String(), l.current)}
+			Msg: fmt.Sprintf("malformed number near '%s%c'", buf.String(), l.current)}
 	}
 
 	raw := buf.String()
@@ -336,7 +336,7 @@ func (l *Lexer) scanNumberBody(pos token.Pos, buf *strings.Builder, isHex bool) 
 		val, err := parseFloat(raw)
 		if err != nil {
 			return token.Token{}, &token.PosError{Pos: pos,
-				Msg: fmt.Sprintf("malformed number '%s'", raw)}
+				Msg: fmt.Sprintf("malformed number near '%s'", raw)}
 		}
 		return token.Token{
 			Type:    token.FLOAT,
@@ -352,7 +352,7 @@ func (l *Lexer) scanNumberBody(pos token.Pos, buf *strings.Builder, isHex bool) 
 		fval, ferr := parseFloat(raw)
 		if ferr != nil {
 			return token.Token{}, &token.PosError{Pos: pos,
-				Msg: fmt.Sprintf("malformed number '%s'", raw)}
+				Msg: fmt.Sprintf("malformed number near '%s'", raw)}
 		}
 		return token.Token{
 			Type:    token.FLOAT,
