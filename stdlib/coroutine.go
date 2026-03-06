@@ -8,6 +8,14 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
+// coArgType returns the type name for error messages, using "no value" when argc is insufficient.
+func coArgType(v *vm.VM, idx int) string {
+	if v.ArgCount() < idx {
+		return "no value"
+	}
+	return v.Get(idx).Type()
+}
+
 // ctxDone returns the Done channel from the VM's context, or nil if no context is set.
 // A nil channel blocks forever in select, which is the correct fallback.
 func ctxDone(v *vm.VM) <-chan struct{} {
@@ -76,7 +84,7 @@ func openCoroutine(v *vm.VM) {
 func coCreate(v *vm.VM) int {
 	fn := v.Get(1)
 	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		panic("bad argument #1 to 'coroutine.create' (function expected)")
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.create' (function expected, got %s)", coArgType(v, 1)))
 	}
 
 	coroutinesMu.Lock()
@@ -114,13 +122,13 @@ func coCreate(v *vm.VM) int {
 func coResume(v *vm.VM) int {
 	coVal := v.Get(1)
 	if !coVal.IsTable() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.resume' (thread expected, got %s)", coVal.Type()))
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.resume' (thread expected, got %s)", coArgType(v, 1)))
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic("bad argument #1 to 'coroutine.resume' (thread expected)")
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.resume' (thread expected, got %s)", coArgType(v, 1)))
 	}
 
 	id, _ := idVal.ToInt()
@@ -389,13 +397,13 @@ func coYield(v *vm.VM) int {
 func coStatus(v *vm.VM) int {
 	coVal := v.Get(1)
 	if !coVal.IsTable() {
-		panic("bad argument #1 to 'coroutine.status' (thread expected)")
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.status' (thread expected, got %s)", coArgType(v, 1)))
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic("bad argument #1 to 'coroutine.status' (thread expected)")
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.status' (thread expected, got %s)", coArgType(v, 1)))
 	}
 
 	id, _ := idVal.ToInt()
@@ -440,7 +448,7 @@ func coRunning(v *vm.VM) int {
 func coWrap(v *vm.VM) int {
 	fn := v.Get(1)
 	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		panic("bad argument #1 to 'coroutine.wrap' (function expected)")
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.wrap' (function expected, got %s)", coArgType(v, 1)))
 	}
 
 	// Create the coroutine
@@ -590,16 +598,16 @@ func coWrap(v *vm.VM) int {
 func coClose(v *vm.VM) int {
 	coVal := v.Get(1)
 	if coVal.IsNil() {
-		panic("bad argument #1 to 'coroutine.close' (value expected)")
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.close' (thread expected, got %s)", coArgType(v, 1)))
 	}
 	if !coVal.IsTable() {
-		panic("bad argument #1 to 'coroutine.close' (thread expected)")
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.close' (thread expected, got %s)", coArgType(v, 1)))
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic("bad argument #1 to 'coroutine.close' (thread expected)")
+		panic(fmt.Sprintf("bad argument #1 to 'coroutine.close' (thread expected, got %s)", coArgType(v, 1)))
 	}
 
 	id, _ := idVal.ToInt()

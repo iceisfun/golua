@@ -138,7 +138,7 @@ end
 -- Test coroutine.close() (5.4)
 do
     print(pcall(coroutine.close))
-    --> ~false\t.*value expected
+    --> ~false\t.*thread expected, got no value
 
     print(pcall(coroutine.close, 1))
     --> ~false\t.*thread expected

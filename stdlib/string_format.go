@@ -251,8 +251,9 @@ func formatIntHex(spec string, conv byte, val uint64) string {
 		}
 	}
 
-	// C printf: # flag has no effect when value is 0
-	if val == 0 {
+	// C printf: # flag has no effect on hex when value is 0 (no 0x prefix).
+	// But for octal, # always ensures a leading 0 (even for value 0).
+	if val == 0 && conv != 'o' {
 		hasHash = false
 	}
 
@@ -286,7 +287,23 @@ func formatIntHex(spec string, conv byte, val uint64) string {
 		goSpec = strings.Replace(goSpec, "#", "", 1)
 	}
 	goSpec += string(conv)
-	return fmt.Sprintf(goSpec, val)
+	result := fmt.Sprintf(goSpec, val)
+	// Go's fmt produces "" for %#.0o with value 0, but C printf produces "0".
+	// The # flag for octal means "ensure leading zero", so fix this.
+	if conv == 'o' && hasHash && val == 0 && !strings.Contains(result, "0") {
+		// Replace the empty digit portion with "0", preserving any padding
+		width, leftAlign := parseFormatWidth(spec)
+		if width > 1 {
+			if leftAlign {
+				result = "0" + strings.Repeat(" ", width-1)
+			} else {
+				result = strings.Repeat(" ", width-1) + "0"
+			}
+		} else {
+			result = "0"
+		}
+	}
+	return result
 }
 
 // normalizeHexExponent rewrites strconv hex-float exponents (+00, -04, ...)
