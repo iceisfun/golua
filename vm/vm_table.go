@@ -8,7 +8,7 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.Get(key), nil
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
 		val := t.Get(key)
 		if !val.IsNil() {
 			return val, nil
@@ -48,7 +48,7 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.GetString(key), nil
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
 		// Fast path: use *Table.GetString to avoid NewString allocation
 		var val Value
 		if ct, ok := t.(*Table); ok {
@@ -94,7 +94,7 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.GetInt(key), nil
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
 		// Fast path: use *Table.GetInt to avoid NewInt/hashKey overhead
 		var val Value
 		if ct, ok := t.(*Table); ok {
@@ -180,7 +180,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.Set(key, value)
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
 		// Check if key already exists (raw access)
 		existing := t.Get(key)
 		if !existing.IsNil() {
@@ -233,7 +233,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 		ct.SetString(key, value)
 		return nil
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
 		// Fast path: use *Table methods to avoid NewString allocation
 		if ct, ok := t.(*Table); ok {
 			existing := ct.GetString(key)
@@ -315,7 +315,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 		ct.SetInt(key, value)
 		return nil
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
 		// Fast path: use *Table methods to avoid NewInt/hashKey overhead
 		if ct, ok := t.(*Table); ok {
 			existing := ct.GetInt(key)
