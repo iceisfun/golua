@@ -67,7 +67,7 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		}
 
 		if !arg.IsTable() {
-			panic("bad argument #1 to 'time' (table expected)")
+			panic("bad argument #1 to 'os.time' (table expected)")
 		}
 
 		t := arg.AsTable()
@@ -125,7 +125,7 @@ func osDifftime(v *vm.VM) int {
 	t2, ok2 := v.Get(1).ToNumber()
 	t1, ok1 := v.Get(2).ToNumber()
 	if !ok1 || !ok2 {
-		panic("bad argument to 'difftime' (number expected)")
+		panic("bad argument to 'os.difftime' (number expected)")
 	}
 	v.Set(0, vm.NewFloat(t2-t1))
 	return 1
@@ -143,7 +143,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		if !v.Get(2).IsNil() {
 			ts, ok := v.Get(2).ToInt()
 			if !ok {
-				panic("bad argument #2 to 'date' (number expected)")
+				panic("bad argument #2 to 'os.date' (number expected)")
 			}
 			timestamp = ts
 		} else {
@@ -205,7 +205,7 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
 		if name.IsNil() {
-			panic("bad argument #1 to 'remove' (string expected, got nil)")
+			panic("bad argument #1 to 'os.remove' (string expected, got nil)")
 		}
 		err := ioProvider.Remove(name.AsString())
 		if err != nil {
@@ -223,7 +223,7 @@ func makeOsGetenv(provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
 		if name.IsNil() {
-			panic("bad argument #1 to 'getenv' (string expected)")
+			panic("bad argument #1 to 'os.getenv' (string expected)")
 		}
 
 		val, ok := provider.Getenv(name.AsString())

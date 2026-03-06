@@ -159,10 +159,10 @@ func luaUtf8Len(v *vm.VM) int {
 
 	// Validate bounds (Lua: 1 <= i <= #s+1, j <= #s)
 	if i < 1 || i > slen+1 {
-		panic("bad argument #2 to 'len' (initial position out of bounds)")
+		panic("bad argument #2 to 'utf8.len' (initial position out of bounds)")
 	}
 	if j > slen {
-		panic("bad argument #3 to 'len' (final position out of bounds)")
+		panic("bad argument #3 to 'utf8.len' (final position out of bounds)")
 	}
 
 	// Convert to 0-indexed byte offsets
@@ -220,10 +220,10 @@ func luaUtf8Codepoint(v *vm.VM) int {
 	j := posRelat(posj, slen)
 
 	if i < 1 {
-		panic("bad argument #2 to 'codepoint' (out of bounds)")
+		panic("bad argument #2 to 'utf8.codepoint' (out of bounds)")
 	}
 	if j > slen {
-		panic("bad argument #3 to 'codepoint' (out of bounds)")
+		panic("bad argument #3 to 'utf8.codepoint' (out of bounds)")
 	}
 	if i > j {
 		return 0 // empty interval
@@ -268,7 +268,7 @@ func luaUtf8Codes(v *vm.VM) int {
 
 	// Validate first byte is not a continuation byte
 	if len(s) > 0 && !utf8.RuneStart(s[0]) {
-		panic("bad argument #1 to 'codes' (invalid UTF-8 code)")
+		panic("bad argument #1 to 'utf8.codes' (invalid UTF-8 code)")
 	}
 
 	// Return iterator, string, initial state (0)
@@ -353,7 +353,7 @@ func luaUtf8Offset(v *vm.VM) int {
 
 	// Validate: 1 <= i <= #s+1 (Lua C: 1 <= posi && --posi <= len)
 	if i < 1 || i > slen+1 {
-		panic("bad argument #3 to 'offset' (position out of bounds)")
+		panic("bad argument #3 to 'utf8.offset' (position out of bounds)")
 	}
 
 	// Convert to 0-indexed

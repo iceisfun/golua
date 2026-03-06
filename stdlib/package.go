@@ -274,7 +274,7 @@ func expandTemplates(name, path string) []string {
 // luaSearchPath implements package.searchpath(name, path [, sep [, rep]]).
 func luaSearchPath(v *vm.VM) int {
 	if v.ArgCount() < 2 {
-		panic("bad argument #1 to 'searchpath' (string expected, got no value)")
+		panic("bad argument #1 to 'package.searchpath' (string expected, got no value)")
 	}
 	name := v.Get(1).AsString()
 	path := v.Get(2).AsString()

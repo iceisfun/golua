@@ -185,7 +185,7 @@ func mathFmod(v *vm.VM) int {
 	y := getNumber(v, 2, "math.fmod")
 	if v1.IsInt() && v2.IsInt() {
 		if y == 0 {
-			panic("bad argument #2 to 'fmod' (zero)")
+			panic("bad argument #2 to 'math.fmod' (zero)")
 		}
 		// Integer fmod: preserve integer type
 		a := v1.AsInt()
@@ -219,18 +219,18 @@ func mathLog(v *vm.VM) int {
 func mathMax(v *vm.VM) int {
 	n := v.ArgCount()
 	if n == 0 {
-		panic("bad argument #1 to 'max' (value expected)")
+		panic("bad argument #1 to 'math.max' (value expected)")
 	}
 
 	maxVal := v.Get(1)
 	if !maxVal.IsNumber() {
-		panic("bad argument #1 to 'max' (number expected)")
+		panic("bad argument #1 to 'math.max' (number expected)")
 	}
 
 	for i := 2; i <= n; i++ {
 		cur := v.Get(i)
 		if !cur.IsNumber() {
-			panic("bad argument #1 to 'max' (number expected)")
+			panic("bad argument #1 to 'math.max' (number expected)")
 		}
 		if lt, _ := maxVal.LessThan(cur); lt {
 			maxVal = cur
@@ -244,18 +244,18 @@ func mathMax(v *vm.VM) int {
 func mathMin(v *vm.VM) int {
 	n := v.ArgCount()
 	if n == 0 {
-		panic("bad argument #1 to 'min' (value expected)")
+		panic("bad argument #1 to 'math.min' (value expected)")
 	}
 
 	minVal := v.Get(1)
 	if !minVal.IsNumber() {
-		panic("bad argument #1 to 'min' (number expected)")
+		panic("bad argument #1 to 'math.min' (number expected)")
 	}
 
 	for i := 2; i <= n; i++ {
 		cur := v.Get(i)
 		if !cur.IsNumber() {
-			panic("bad argument #1 to 'min' (number expected)")
+			panic("bad argument #1 to 'math.min' (number expected)")
 		}
 		if lt, _ := cur.LessThan(minVal); lt {
 			minVal = cur
@@ -307,7 +307,7 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 			if upper == 0 {
 				v.Set(0, vm.NewInt(int64(rng.next())))
 			} else if upper < 1 {
-				panic("bad argument #1 to 'random' (interval is empty)")
+				panic("bad argument #1 to 'math.random' (interval is empty)")
 			} else {
 				v.Set(0, vm.NewInt(xoshiroRange(rng, 1, upper)))
 			}
@@ -316,7 +316,7 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 			lower := getInt(v, 1, "math.random")
 			upper := getInt(v, 2, "math.random")
 			if lower > upper {
-				panic("bad argument #2 to 'random' (interval is empty)")
+				panic("bad argument #2 to 'math.random' (interval is empty)")
 			}
 			v.Set(0, vm.NewInt(xoshiroRange(rng, lower, upper)))
 		default:

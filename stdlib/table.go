@@ -152,7 +152,7 @@ func tableRemove(v *vm.VM) int {
 	// Valid range: 1 <= pos <= length+1
 	if pos != length {
 		if pos < 1 || pos > length+1 {
-			panic("bad argument #2 to 'remove' (position out of range)")
+			panic("bad argument #2 to 'table.remove' (position out of range)")
 		}
 	}
 
@@ -426,11 +426,11 @@ func tableMove(v *vm.VM) int {
 		if e-f >= 0 {
 			dest_end := tt + (e - f)
 			if (e-f > 0) && (dest_end < tt) {
-				panic("bad argument #4 to 'move' (destination wrap around)")
+				panic("bad argument #4 to 'table.move' (destination wrap around)")
 			}
 			// Also check against math.MaxInt64
 			if tt > 0 && e-f > math.MaxInt64-tt {
-				panic("bad argument #4 to 'move' (destination wrap around)")
+				panic("bad argument #4 to 'table.move' (destination wrap around)")
 			}
 		}
 
