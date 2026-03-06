@@ -292,9 +292,24 @@ func luaPcall(v *vm.VM) int {
 		args[i-2] = v.Get(i)
 	}
 
+	// Save and clear the message handler so that a nested pcall inside
+	// xpcall doesn't accidentally trigger the xpcall message handler.
+	savedMsgHandler := v.MsgHandler
+	savedMsgHandlerUsed := v.MsgHandlerUsed
+	savedMsgHandlerResult := v.MsgHandlerResult
+	v.MsgHandler = vm.Nil
+	v.MsgHandlerUsed = false
+	v.MsgHandlerResult = vm.Nil
+
 	// Call the function with error protection
 	// ProtectedCall handles __call metamethods for tables
 	results, err := v.ProtectedCall(fn, args)
+
+	// Restore the outer message handler state
+	v.MsgHandler = savedMsgHandler
+	v.MsgHandlerUsed = savedMsgHandlerUsed
+	v.MsgHandlerResult = savedMsgHandlerResult
+
 	if err != nil {
 		v.Set(0, vm.False)
 		// Preserve the original Lua error value if available
@@ -386,8 +401,12 @@ func luaCollectgarbage(v *vm.VM) int {
 	// Go handles garbage collection automatically
 	// This is a no-op stub that returns 0 for compatibility
 	opt := ""
-	if !v.Get(1).IsNil() {
-		opt = v.Get(1).AsString()
+	arg1 := v.Get(1)
+	if !arg1.IsNil() {
+		if !arg1.IsString() {
+			panic(fmt.Sprintf("bad argument #1 to 'collectgarbage' (invalid option '%s')", arg1.AsString()))
+		}
+		opt = arg1.AsString()
 	}
 
 	switch opt {
@@ -416,18 +435,18 @@ func luaWarn(v *vm.VM) int {
 	if argc < 1 {
 		panic("bad argument #1 to 'warn' (string expected, got no value)")
 	}
-	// Lua 5.4: validate ALL arguments are strings before processing
+	// Lua 5.4: all arguments must be strings or numbers (coerced to string)
 	first := v.Get(1)
-	if !first.IsString() {
+	if !first.IsString() && !first.IsInt() && !first.IsFloat() {
 		panic(fmt.Sprintf("bad argument #1 to 'warn' (string expected, got %s)", first.Type()))
 	}
+	s := first.AsString()
 	for i := 2; i <= argc; i++ {
 		arg := v.Get(i)
-		if !arg.IsString() {
+		if !arg.IsString() && !arg.IsInt() && !arg.IsFloat() {
 			panic(fmt.Sprintf("bad argument #%d to 'warn' (string expected, got %s)", i, arg.Type()))
 		}
 	}
-	s := first.AsString()
 	if len(s) > 0 && s[0] == '@' {
 		switch s {
 		case "@off":
@@ -450,11 +469,13 @@ func luaWarn(v *vm.VM) int {
 }
 
 // pairs(t)
+// Lua 5.4: pairs accepts any value (including nil); next() will error later.
+// But pairs() with no arguments is an error.
 func luaPairs(v *vm.VM) int {
-	arg := v.Get(1)
-	if arg.IsNil() {
-		panic("bad argument #1 to 'pairs' (table expected, got no value)")
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'pairs' (value expected)")
 	}
+	arg := v.Get(1)
 
 	// Check for __pairs metamethod (only on tables)
 	if arg.IsTable() {
@@ -465,8 +486,6 @@ func luaPairs(v *vm.VM) int {
 				if err != nil {
 					panic(err)
 				}
-				// Lua 5.4: __pairs must produce exactly 3 values (f, s, var).
-				// Extra values are discarded; missing values are nil-filled.
 				for i := 0; i < 3; i++ {
 					if i < len(results) {
 						v.Set(i, results[i])
@@ -479,12 +498,16 @@ func luaPairs(v *vm.VM) int {
 		}
 	}
 
-	// Return next, t, nil — next will validate the table arg
-	v.Set(0, vm.NewNativeFunc(luaNext))
+	// Return next, t, nil — next will validate the table arg when called
+	v.Set(0, nextFunc)
 	v.Set(1, arg)
 	v.Set(2, vm.Nil)
 	return 3
 }
+
+// nextFunc is the shared native function for next(), reused by pairs()
+// so that pairs(t) == next holds (identity equality).
+var nextFunc = vm.NewNativeFunc(luaNext)
 
 // ipairsIter is the shared iterator function returned by ipairs().
 // A single Value is reused so that ipairs{} == ipairs{} holds.
@@ -510,12 +533,13 @@ var ipairsIter = vm.NewNativeFunc(func(v *vm.VM) int {
 })
 
 // ipairs(t)
+// Lua 5.4: ipairs accepts any value (including nil); the iterator will error later.
+// But ipairs() with no arguments is an error.
 func luaIpairs(v *vm.VM) int {
-	arg := v.Get(1)
-	if arg.IsNil() {
-		panic("bad argument #1 to 'ipairs' (table expected, got no value)")
+	if v.ArgCount() < 1 {
+		panic("bad argument #1 to 'ipairs' (value expected)")
 	}
-
+	arg := v.Get(1)
 	v.Set(0, ipairsIter)
 	v.Set(1, arg)
 	v.Set(2, vm.NewInt(0))

@@ -51,7 +51,7 @@ func Open(v *vm.VM) {
 	v.SetGlobal("xpcall", vm.NewNativeFunc(luaXpcall))
 	v.SetGlobal("pairs", vm.NewNativeFunc(luaPairs))
 	v.SetGlobal("ipairs", vm.NewNativeFunc(luaIpairs))
-	v.SetGlobal("next", vm.NewNativeFunc(luaNext))
+	v.SetGlobal("next", nextFunc)
 	v.SetGlobal("select", vm.NewNativeFunc(luaSelect))
 	v.SetGlobal("rawget", vm.NewNativeFunc(luaRawget))
 	v.SetGlobal("rawset", vm.NewNativeFunc(luaRawset))

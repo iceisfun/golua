@@ -140,7 +140,8 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 					if dotIdx := strings.IndexByte(widthSpec, '.'); dotIdx >= 0 {
 						widthSpec = widthSpec[:dotIdx]
 					}
-					s := formatHexFloat(n, prec)
+					hashFlag := strings.Contains(spec, "#")
+				s := formatHexFloat(n, prec, hashFlag)
 					if specChar == 'A' {
 						s = strings.ToUpper(s)
 					}
@@ -153,12 +154,12 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 						}
 					}
 					// Apply width with proper zero-padding (after sign+prefix)
-					width, leftAlign := parseFormatWidth(widthSpec)
+					isZeroPad, width, leftAlign, _ := parseFormatFlags(widthSpec)
 					if width > 0 && len(s) < width {
 						pad := width - len(s)
 						if leftAlign {
 							s = s + strings.Repeat(" ", pad)
-						} else if strings.Contains(widthSpec, "0") {
+						} else if isZeroPad != 0 {
 							// Zero-pad after sign and "0x"/"0X" prefix
 							s = hexFloatZeroPad(s, width)
 						} else {
@@ -316,7 +317,8 @@ func normalizeHexExponent(s string) string {
 // precision (number of hex digits after the decimal point). Unlike Go's
 // strconv.FormatFloat which renormalizes on carry, this preserves C-style
 // output where the leading digit can be > 1 after rounding.
-func formatHexFloat(f float64, prec int) string {
+func formatHexFloat(f float64, prec int, hashFlag ...bool) string {
+	forceDecimal := len(hashFlag) > 0 && hashFlag[0]
 	// Handle subnormal floats: Go normalizes them (e.g., 0x1p-1074)
 	// but C/Lua uses denormalized form (e.g., 0x0.0000000000001p-1022).
 	bits := math.Float64bits(f)
@@ -390,7 +392,7 @@ func formatHexFloat(f float64, prec int) string {
 	}
 	b.WriteString("0x")
 	b.WriteByte(intToHexChar(lead))
-	if prec > 0 {
+	if prec > 0 || forceDecimal {
 		b.WriteByte('.')
 		for i := 0; i < prec; i++ {
 			if i < len(digits) {
@@ -497,12 +499,21 @@ func formatSpecialFloat(spec string, specChar byte, n float64) (string, bool) {
 	}
 
 	upper := specChar == 'E' || specChar == 'G' || specChar == 'A'
+	hasPlus := strings.Contains(spec, "+")
+	hasSpace := strings.Contains(spec, " ")
 	var token string
 	if math.IsNaN(n) {
 		if upper {
-			token = "-NAN"
+			token = "NAN"
 		} else {
-			token = "-nan"
+			token = "nan"
+		}
+		if math.Signbit(n) {
+			token = "-" + token
+		} else if hasPlus {
+			token = "+" + token
+		} else if hasSpace {
+			token = " " + token
 		}
 	} else if math.IsInf(n, -1) {
 		if upper {
@@ -516,8 +527,10 @@ func formatSpecialFloat(spec string, specChar byte, n float64) (string, bool) {
 		} else {
 			token = "inf"
 		}
-		if strings.Contains(spec, "+") {
+		if hasPlus {
 			token = "+" + token
+		} else if hasSpace {
+			token = " " + token
 		}
 	}
 
@@ -534,10 +547,20 @@ func formatSpecialFloat(spec string, specChar byte, n float64) (string, bool) {
 }
 
 func parseFormatWidth(spec string) (width int, left bool) {
+	_, width, left, _ = parseFormatFlags(spec)
+	return width, left
+}
+
+func parseFormatFlags(spec string) (zeroPad, width int, left bool, hash bool) {
 	i := 1 // skip '%'
 	for i < len(spec) && strings.ContainsRune("#0- +", rune(spec[i])) {
-		if spec[i] == '-' {
+		switch spec[i] {
+		case '-':
 			left = true
+		case '0':
+			zeroPad = 1
+		case '#':
+			hash = true
 		}
 		i++
 	}
@@ -550,7 +573,7 @@ func parseFormatWidth(spec string) (width int, left bool) {
 			width = w
 		}
 	}
-	return width, left
+	return zeroPad, width, left, hash
 }
 
 // validateFormatWidthPrec panics if width or precision >= 100 (Lua 5.4 limit).
