@@ -312,7 +312,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if table.typ == typeTable {
 				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
 					if err := ct.Set(key, value); err != nil {
-						return nil, err
+						return nil, vm.runtimeError("%s", err)
 					}
 				} else if err := vm.tableSet(table.ptr.(LuaTable), key, value); err != nil {
 					return nil, err

@@ -39,7 +39,7 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 		// __index is another value — chain through its metatable
 		return vm.indexValue(index, key)
 	}
-	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
+	return Nil, vm.runtimeError("'__index' chain too long; possible loop")
 }
 
 // tableGetString gets a value from a table by string key, handling __index metamethod
@@ -85,7 +85,7 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 		// __index is another value — chain through its metatable
 		return vm.indexValue(index, NewString(key))
 	}
-	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
+	return Nil, vm.runtimeError("'__index' chain too long; possible loop")
 }
 
 // tableGetInt gets a value from a table by int key, handling __index metamethod
@@ -131,7 +131,7 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 		// __index is another value — chain through its metatable
 		return vm.indexValue(index, NewInt(int64(key)))
 	}
-	return Nil, fmt.Errorf("'__index' chain too long; possible loop")
+	return Nil, vm.runtimeError("'__index' chain too long; possible loop")
 }
 
 // indexValue tries to index a non-table value by looking up its metatable.
@@ -178,7 +178,10 @@ func (vm *VM) resolveIndex(mm Value, obj Value, key Value) (Value, error) {
 func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 	// Fast path: concrete table with no metatable (skip existence check)
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
-		return ct.Set(key, value)
+		if err := ct.Set(key, value); err != nil {
+			return vm.runtimeError("%s", err)
+		}
+		return nil
 	}
 	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
 		// Check if key already exists (raw access)
@@ -186,7 +189,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		if !existing.IsNil() {
 			// Key exists, set directly
 			if err := t.Set(key, value); err != nil {
-				return err
+				return vm.runtimeError("%s", err)
 			}
 			return nil
 		}
@@ -195,7 +198,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		mt := t.Metatable()
 		if mt == nil {
 			if err := t.Set(key, value); err != nil {
-				return err
+				return vm.runtimeError("%s", err)
 			}
 			return nil
 		}
@@ -203,7 +206,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		newindex := mt.Get(metaNewIndex)
 		if newindex.IsNil() {
 			if err := t.Set(key, value); err != nil {
-				return err
+				return vm.runtimeError("%s", err)
 			}
 			return nil
 		}
@@ -223,7 +226,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		// __newindex is a non-table, non-function value — error
 		return fmt.Errorf("'__newindex' is not a table or function")
 	}
-	return fmt.Errorf("'__newindex' chain too long; possible loop")
+	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
 
 // tableSetString sets a value in a table by string key, handling __newindex metamethod
@@ -305,7 +308,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 
 		return fmt.Errorf("'__newindex' is not a table or function")
 	}
-	return fmt.Errorf("'__newindex' chain too long; possible loop")
+	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
 
 // tableSetInt sets a value in a table by int key, handling __newindex metamethod
@@ -387,7 +390,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 
 		return fmt.Errorf("'__newindex' is not a table or function")
 	}
-	return fmt.Errorf("'__newindex' chain too long; possible loop")
+	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
 
 // TableGet retrieves t[key] with __index metamethod support.
