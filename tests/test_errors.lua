@@ -40,18 +40,14 @@ end
 -- Verifies: all assert() calls pass without error
 do
   assert(doit("error('hi', 0)") == 'hi')
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 2] [test-suite] errors: test error message with no info
 -- Verifies: all assert() calls pass without error
 do
   assert(doit("error()") == nil)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 3] [test-suite] errors: test common errors/errors that crashed in the past
@@ -74,9 +70,7 @@ do
 
   ]])
   assert(msg)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 4] [test-suite] errors: tests for better error messages
@@ -97,9 +91,7 @@ do
 
   -- Skip variable-name checks
   assert(not doit"local aaa={bbb={ddd=next}}; aaa.bbb:ddd(nil)")
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 5] [test-suite] errors: float->integer conversions
@@ -121,9 +113,7 @@ do
   checkmessage("return 34 >> {}", "table value")
   checkmessage("a = 24 // 0", "divide by zero")
   checkmessage("a = 1 % 0", "'n%0'")
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 6] [test-suite] errors: concatenate
@@ -132,9 +122,7 @@ do
   checkmessage([[x = print .. "a"]], "concatenate")
   checkmessage([[x = "a" .. false]], "concatenate")
   checkmessage([[x = {} .. 2]], "concatenate")
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 7] [test-suite] errors: errors in coroutines
@@ -151,9 +139,7 @@ do
 
   local f2 = coroutine.wrap(function () table.sort({1,2,3}, coroutine.yield) end)
   checkerr("yield across", f2)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 8] [test-suite] errors: testing size of 'source' info
@@ -171,9 +157,7 @@ do
     checksize(string.rep("x", i - 10))
     checksize("=" .. string.rep("x", i))
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 9] [test-suite] errors: several tests that exhaust the Lua stack
@@ -189,9 +173,7 @@ do
   assert(checkstackmessage(doit('y()')))
   assert(checkstackmessage(doit('y()')))
   assert(checkstackmessage(doit('y()')))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 10] [test-suite] errors: error in error handling
@@ -209,9 +191,7 @@ do
     end
   end
   f(3)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 11] [test-suite] errors: non string messages
@@ -250,9 +230,7 @@ do
     res, msg = pcall(assert)
     assert(not res and string.find(msg, "value expected"))
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 12] [test-suite] errors: xpcall with arguments
@@ -262,9 +240,7 @@ do
   assert(a and b == 1 and c == 2)
   a, b, c = xpcall(string.find, function (x) return {} end, true, "al")
   assert(not a and type(b) == "table" and c == nil)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 13] [test-suite] errors: lots of errors
@@ -275,18 +251,14 @@ do
     doit('a = ')
     doit('a = 4+nil')
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 14] [test-suite] errors: syntax limits (too many registers)
 -- Verifies: all assert() calls pass without error
 do
   checkmessage("a = f(x" .. string.rep(",x", 260) .. ")", "too many registers")
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 15] [test-suite] errors: non-printable char in a chunk
@@ -295,9 +267,7 @@ do
   -- just verify we get a syntax error for non-printable chars
   local m = doit("a\1a = 1")
   assert(m)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 16] [test-suite] errors: 255 as first char in a chunk
@@ -308,6 +278,4 @@ do
 
   doit('I = load("a=9+"); a=3')
   assert(a==3 and I == nil)
-  print("PASS")
 end
---> =PASS

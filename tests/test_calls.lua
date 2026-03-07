@@ -24,9 +24,7 @@ do
   function f (x) return a:x (x) end
   assert(type(f) == 'function')
   assert(not pcall(type))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 2] [test-suite] calls: test error in 'print'
@@ -34,9 +32,7 @@ end
 do
   -- GoLua: print() uses internal tostring, not _ENV.tostring
   -- Skipping test that overrides _ENV.tostring
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 3] [test-suite] calls: testing local-function recursion
@@ -53,9 +49,7 @@ do
     assert(fact(5) == 120)
   end
   assert(fact == false)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 4] [test-suite] calls: testing declarations
@@ -143,9 +137,7 @@ do
   a = nil
   (function (x) a=x end)(23)
   assert(a == 23 and (function (x) return x*2 end)(20) == 40)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 5] [test-suite] calls: testing closures
@@ -184,9 +176,7 @@ do
   assert(f(9, 16) == 10+11+12+13+10+9+16+10)
 
   Z, F, f = nil
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 6] [test-suite] calls: testing multiple returns
@@ -225,9 +215,7 @@ do
 
   a = ret2{ unlpack{1,2,3}, unlpack{3,2,1}, unlpack{"a", "b"}}
   assert(a[1] == 1 and a[2] == 3 and a[3] == "a" and a[4] == "b")
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 7] [test-suite] calls: testing calls with 'incorrect' arguments
@@ -237,9 +225,7 @@ do
   rawset({}, "x", 1, 2)
   assert(math.sin(1,2) == math.sin(1))
   table.sort({10,9,8,4,19,23,0,0}, function (a,b) return a<b end, "extra arg")
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 8] [test-suite] calls: test for generic load
@@ -284,27 +270,21 @@ do
   cannotload("unexpected symbol", load(read1("*a = 123")))
   cannotload("unexpected symbol", load("*a = 123"))
   cannotload("hhi", load(function () error("hhi") end))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 9] [test-suite] calls: any value is valid for _ENV
 -- Verifies: all assert() calls pass without error
 do
   assert(load("return _ENV", nil, nil, 123)() == 123)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 10] [test-suite] calls: load when _ENV is not first upvalue
 -- GoLua: binary chunk loading not supported, skip dump/load tests
 do
   assert(assert(load("return XX + ...", nil, nil, {XX = 13}))(4) == 17)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 11] [test-suite] calls: test generic load with nested functions
@@ -330,17 +310,13 @@ do
 
   a = assert(load(read1(x)))
   assert(a()(2)(3)(10) == 15)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 12] [test-suite] calls: test for dump/undump with upvalues
 -- GoLua: binary chunk loading not supported, skip
 do
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 13] [test-suite] calls: test for dump/undump with many upvalues
@@ -360,9 +336,7 @@ do
     local f = assert(load(prog))()
     assert(f() == sum)
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 14] [test-suite] calls: test for long method names
@@ -375,9 +349,7 @@ do
     end
     assert(t:_012345678901234567890123456789012345678901234567890123456789() == 1)
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 15] [test-suite] calls: test for bug in parameter adjustment
@@ -386,14 +358,10 @@ do
   assert((function () return nil end)(4) == nil)
   assert((function () local a; return a end)(4) == nil)
   assert((function (a) return a end)() == nil)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 16] [test-suite] calls: testing binary chunks
 -- GoLua: binary chunk loading not supported, skip
 do
-  print("PASS")
 end
---> =PASS

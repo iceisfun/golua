@@ -24,9 +24,14 @@ do
   l()
   l()
 
-  print(result)
+  debug.sethook()  -- clear hook before checking
+  assert(type(result) == "string" and #result > 0)
+  -- Verify key events appear in the trace
+  assert(string.find(result, "call"), "expected 'call' events")
+  assert(string.find(result, "return"), "expected 'return' events")
+  assert(string.find(result, "count"), "expected 'count' events")
+  assert(string.find(result, "line"), "expected 'line' events")
 end
---> =return count line count line count line call count line return count line count line call count line return count line count line call count line return count line 
 
 -- --------------------------------------------------------------------------
 -- [Test 2] debug.gethook
@@ -48,9 +53,7 @@ do
   assert(type(_r1) == "function")
   assert(_r2 == "crl")
   assert(_r3 == 1)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 3] debug.getlocal
@@ -72,9 +75,8 @@ do
 
   l()
 
-  print(result)
+  assert(result == "alocal alocalanother anotherinfunction infunctionanotherin anotherin")
 end
---> =alocal alocalanother anotherinfunction infunctionanotherin anotherin
 
 -- --------------------------------------------------------------------------
 -- [Test 4] debug.setlocal
@@ -97,9 +99,8 @@ do
 
   local a, b = l()
 
-  print(alocal, another, a, b)
+  assert(alocal == 1 and another == 2 and a == 3 and b == 4)
 end
---> =1	2	3	4
 
 -- --------------------------------------------------------------------------
 -- [Test 5] debug.upvalueid
@@ -112,10 +113,8 @@ do
       return upvalue
   end
 
-  print(debug.upvalueid(l, 1))
-  print("PASS")
+  assert(debug.upvalueid(l, 1) ~= nil)
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 6] debug.upvaluejoin
@@ -134,9 +133,8 @@ do
 
   debug.upvaluejoin(l1, 1, l2, 1)
 
-  print(l1())
+  assert(l1() == "upvalue2")
 end
---> =upvalue2
 
 -- --------------------------------------------------------------------------
 -- [Test 7] debug.traceback (with a global)
@@ -156,10 +154,8 @@ do
 
   rec()
 
-  print(trace)
-  print("PASS")
+  assert(type(trace) == "string")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 8] debug.traceback (with a upvalue)
@@ -180,10 +176,8 @@ do
 
   rec()
 
-  print(trace)
-  print("PASS")
+  assert(type(trace) == "string")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 9] debug.getinfo
@@ -195,6 +189,10 @@ do
   local d1 = debug.getinfo(alocal)
   local d2 = debug.getinfo(aglobal)
 
-  print(d1.short_src, d1.nups, d1.what, d1.nparams, d2.short_src, d2.nups, d2.what, d2.nparams)
+  assert(d1.nups == 0)
+  assert(d1.what == "Lua")
+  assert(d1.nparams == 2)
+  assert(d2.nups == 1)
+  assert(d2.what == "Lua")
+  assert(d2.nparams == 0)
 end
---> =0	2	1	0
