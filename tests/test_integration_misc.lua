@@ -5,10 +5,9 @@ local pass, fail = 0, 0
 local function check(name, cond)
     if cond then
         pass = pass + 1
-        print(name, true)
     else
         fail = fail + 1
-        print(name, "** FAIL **")
+        error("FAIL: " .. name, 2)
     end
 end
 
@@ -32,11 +31,9 @@ if _VERSION and _VERSION >= "Lua 5.2" or not _VERSION then
         check("gc_finalizer", true)
     else
         check("gc_finalizer", true) -- not crashing is acceptable
-        print("  (__gc not triggered — may not be supported)")
     end
 else
     check("gc_finalizer", true)
-    print("  (skipped — version check unavailable)")
 end
 
 -- ============================================================
@@ -83,7 +80,6 @@ if pairs_ok and custom_pairs_data.virtual_a then
         custom_pairs_data.virtual_c == 30)
 else
     check("pairs_metamethod", true)
-    print("  (__pairs not supported or standard pairs used — OK)")
 end
 
 -- ============================================================
@@ -124,7 +120,6 @@ if fn then
     check("format_q_roundtrip", fn() == weird)
 else
     check("format_q_roundtrip", false)
-    print("  (%q produced un-loadable string)")
 end
 
 -- ============================================================
@@ -167,7 +162,6 @@ if table.move then
 else
     check("table_move_right", true)
     check("table_move_left", true)
-    print("  (table.move not available — OK)")
 end
 
 -- ============================================================
@@ -240,7 +234,6 @@ if goto_supported then
 else
     check("goto_loop", true)
     check("goto_skip_locals_rejected", true)
-    print("  (goto not supported — OK)")
 end
 
 -- ============================================================
@@ -266,7 +259,6 @@ if math.maxinteger then
     check("integer_overflow", ov_ok)
 else
     check("integer_overflow", true)
-    print("  (no integer subtype — float math)")
 end
 
 -- ============================================================
@@ -298,13 +290,10 @@ if f_ok and f1 == true then
     check("deep_integration", f2 == 60 and f3 == 3)
 elseif f_ok and f1 == false then
     check("deep_integration", true)
-    print("  (varargs didn't propagate through load — acceptable)")
 elseif f_ok then
     check("deep_integration", true)
-    print("  (unexpected result: " .. tostring(f1) .. " — but no crash)")
 else
     check("deep_integration", false)
-    print("  (coroutine failed: " .. tostring(f1) .. ")")
 end
 
 local f2_ok, f2_val = coroutine.resume(final_co)
@@ -337,10 +326,4 @@ check("string_byte_500", sb_ok and sb_err == 33000) -- 'B' = 66, 500*66 = 33000
 -- ============================================================
 -- SCOREBOARD
 -- ============================================================
-print("=====================================")
-print(string.format("RESULTS: %d passed, %d failed, %d total",
-    pass, fail, pass + fail))
-print("=====================================")
-if fail == 0 then
-    print("VM STATUS: PASS")
-end
+assert(fail == 0, string.format("%d of %d tests failed", fail, pass + fail))

@@ -10,9 +10,7 @@ local obj = setmetatable({}, mt)
 -- tostring() already works (verify baseline)
 assert(tostring(obj) == "custom", "tostring should respect __tostring")
 
--- print() should also invoke __tostring
+-- print() should also invoke __tostring (outputs "custom" as side effect)
 called = false
 print(obj)
 assert(called, "print() should have invoked __tostring metamethod")
-
-print("PASS")

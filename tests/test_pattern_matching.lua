@@ -276,7 +276,6 @@ end
 do
   _soft = true -- TODO
   if not _soft then
-    print("big strings")
     local a = string.rep('a', 300000)
     assert(string.find(a, '^a*.?$'))
     assert(not string.find(a, '^a*.?b$'))
