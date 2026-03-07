@@ -8,16 +8,13 @@
 -- (GETTABUP, ADDI, MMBINI, SETTABUP).
 
 do
-  print("control structure too long")
   local lim = ((1 << 24) - 2) // 4
   local s = string.rep("a = a + 1\n", lim)
   s = "while true do " .. s .. "end"
   assert(load(s))
-  print("ok with " .. lim .. " lines")
   lim = lim + 3
   s = string.rep("a = a + 1\n", lim)
   s = "while true do " .. s .. "end"
   local st, msg = load(s)
   assert(not st and string.find(msg, "too long"))
-  print(msg)
 end

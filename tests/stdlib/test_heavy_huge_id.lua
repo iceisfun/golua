@@ -12,16 +12,12 @@ do
       return s
     end
     local st, msg = load(f, "=big")
-    print("\nmemory: ", collectgarbage'count' * 1024)
     msg = string.match(msg, "^[^\n]+")
-    print(string.format("total: 0x%x %s ('%s')", count, what, msg))
     return st, msg
   end
 
-  print("loading chunk with huge identifier")
   local st, msg = loadrep("a", "chars")
   assert(not st and
     (string.find(msg, "lexical element too long") or
      string.find(msg, "not enough memory")))
-  print('+')
 end

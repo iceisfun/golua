@@ -12,14 +12,10 @@ do
       return s
     end
     local st, msg = load(f, "=big")
-    print("\nmemory: ", collectgarbage'count' * 1024)
     msg = string.match(msg, "^[^\n]+")
-    print(string.format("total: 0x%x %s ('%s')", count, what, msg))
     return st, msg
   end
 
-  print("loading chunk with too many lines")
   local st, msg = loadrep("\n", "lines")
   assert(not st and string.find(msg, "too many lines"))
-  print('+')
 end

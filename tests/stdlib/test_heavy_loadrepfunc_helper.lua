@@ -18,17 +18,13 @@ do
       end
     end
     local st, msg = load(aux, "k")
-    print("\nmemory: ", collectgarbage'count' * 1024)
     msg = string.match(msg, "^[^\n]+")
-    print("expected error: ", msg)
   end
 
   -- Test: loading a function with many numeric constants
-  print("testing loadrepfunc helper")
   loadrepfunc("function foo () return {0,",
       function (n)
         -- generate simple numeric constants until hitting a limit
         return tostring(n) .. ","
       end)
-  print("loadrepfunc helper test completed")
 end

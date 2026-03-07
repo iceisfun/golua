@@ -16,9 +16,7 @@ do
       return s
     end
     local st, msg = load(f, "=big")
-    print("\nmemory: ", collectgarbage'count' * 1024)
     msg = string.match(msg, "^[^\n]+")
-    print(string.format("total: 0x%x %s ('%s')", count, what, msg))
     return st, msg
   end
 
@@ -26,5 +24,4 @@ do
   -- but eventually hit some limit or succeed
   local st, msg = loadrep(";", "semicolons")
   -- The result depends on implementation limits, just verify it doesn't crash
-  print("loadrep helper test completed")
 end
