@@ -6,6 +6,20 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
+// luaNumMod computes Lua's float modulo: result = fmod(a, b), then adjusts
+// the sign to match b when they differ. When the result is NaN, it returns
+// negative NaN to match C's fmod behavior (Go's math.Mod returns positive NaN).
+func luaNumMod(a, b float64) float64 {
+	result := math.Mod(a, b)
+	if result != 0 && (result < 0) != (b < 0) {
+		result += b
+	}
+	if math.IsNaN(result) {
+		return math.Copysign(math.NaN(), -1)
+	}
+	return result
+}
+
 // arith performs a register-register arithmetic operation.
 // Lua 5.4.6+: strings are NOT coerced at the VM level; coercion is handled
 // by the string metatable's arithmetic metamethods.
@@ -25,11 +39,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, er
 		case compiler.OP_IDIV:
 			return NewFloat(math.Floor(n1 / n2)), nil
 		case compiler.OP_MOD:
-			result := math.Mod(n1, n2)
-			if result != 0 && (result < 0) != (n2 < 0) {
-				result += n2
-			}
-			return NewFloat(result), nil
+			return NewFloat(luaNumMod(n1, n2)), nil
 		case compiler.OP_POW:
 			return NewFloat(math.Pow(n1, n2)), nil
 		}
@@ -90,10 +100,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, er
 		case compiler.OP_IDIV:
 			result = math.Floor(n1 / n2)
 		case compiler.OP_MOD:
-			result = math.Mod(n1, n2)
-			if result != 0 && (result < 0) != (n2 < 0) {
-				result += n2
-			}
+			result = luaNumMod(n1, n2)
 		case compiler.OP_POW:
 			result = math.Pow(n1, n2)
 		}
@@ -138,11 +145,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 		case compiler.OP_IDIVK:
 			return NewFloat(math.Floor(n1 / n2)), nil
 		case compiler.OP_MODK:
-			result := math.Mod(n1, n2)
-			if result != 0 && (result < 0) != (n2 < 0) {
-				result += n2
-			}
-			return NewFloat(result), nil
+			return NewFloat(luaNumMod(n1, n2)), nil
 		case compiler.OP_POWK:
 			return NewFloat(math.Pow(n1, n2)), nil
 		}
@@ -202,10 +205,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 		case compiler.OP_IDIVK:
 			result = math.Floor(n1 / n2)
 		case compiler.OP_MODK:
-			result = math.Mod(n1, n2)
-			if result != 0 && (result < 0) != (n2 < 0) {
-				result += n2
-			}
+			result = luaNumMod(n1, n2)
 		case compiler.OP_POWK:
 			result = math.Pow(n1, n2)
 		}

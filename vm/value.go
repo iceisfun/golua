@@ -462,7 +462,10 @@ func (v Value) String() string {
 			return "-inf"
 		}
 		if math.IsNaN(f) {
-			return "-nan"
+			if math.Signbit(f) {
+				return "-nan"
+			}
+			return "nan"
 		}
 		s := fmt.Sprintf("%.14g", f)
 		if !strings.ContainsAny(s, ".eE") {

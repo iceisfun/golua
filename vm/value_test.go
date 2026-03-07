@@ -529,9 +529,16 @@ func TestStringNegativeInfinity(t *testing.T) {
 }
 
 func TestStringNaN(t *testing.T) {
+	// Go's math.NaN() is positive NaN
 	s := NewFloat(math.NaN()).String()
-	if s != "-nan" {
-		t.Errorf("expected '-nan', got %q", s)
+	if s != "nan" {
+		t.Errorf("expected 'nan', got %q", s)
+	}
+	// Negative NaN (like C's 0/0 result)
+	negNaN := math.Copysign(math.NaN(), -1)
+	s2 := NewFloat(negNaN).String()
+	if s2 != "-nan" {
+		t.Errorf("expected '-nan', got %q", s2)
 	}
 }
 
