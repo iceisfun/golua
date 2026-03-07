@@ -573,8 +573,18 @@ func coWrap(v *vm.VM) int {
 						err = closeErr
 					}
 				}
-				// Preserve the original error (including *LuaError)
-				panic(err)
+				// Lua 5.4: coroutine.wrap adds caller location to string
+				// errors via luaL_where(L,1) before re-raising. For string
+				// errors, use a plain string panic so the VM's panic handler
+				// adds the caller prefix via addCallerLocation. For non-string
+				// errors (tables, etc.), preserve as *LuaError.
+				if le, ok := err.(*vm.LuaError); ok {
+					if le.Value.IsString() {
+						panic(le.Value.AsString())
+					}
+					panic(le)
+				}
+				panic(err.Error())
 			}
 
 			needed := v.Base() + len(result)
