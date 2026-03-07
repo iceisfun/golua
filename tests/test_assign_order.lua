@@ -31,4 +31,3 @@ do
     assert(t[1] == 3, "expected 3, got " .. tostring(t[1]))
 end
 
-print("PASS")

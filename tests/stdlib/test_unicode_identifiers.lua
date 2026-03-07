@@ -25,4 +25,3 @@ assert(ok5, "Underscore identifier should be accepted")
 local s = "café"
 assert(#s == 5, "Unicode string should preserve bytes")
 
-print("OK")

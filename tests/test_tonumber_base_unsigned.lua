@@ -23,4 +23,3 @@ assert(r4 == math.maxinteger,
 local r5 = tonumber("1777777777777777777777", 8)
 assert(r5 == -1, "octal max unsigned should be -1, got " .. tostring(r5))
 
-print("PASS")

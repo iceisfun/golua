@@ -17,4 +17,3 @@ assert(not ok3)
 assert(err3:find("number expected"), "select(true) error: " .. tostring(err3))
 assert(err3:find("got boolean"), "select(true) missing 'got boolean': " .. tostring(err3))
 
-print("PASSED")

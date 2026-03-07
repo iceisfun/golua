@@ -16,4 +16,3 @@ warn("@off") -- disable again
 warn("@off")
 warn("this should also not appear")
 
-print("PASS")

@@ -20,4 +20,3 @@ assert(string.format("%#X", 255) == "0XFF")
 -- Width formatting with # and zero value
 assert(string.format("%#8x", 0) == "       0", "got: [" .. string.format("%#8x", 0) .. "]")
 
-print("OK")

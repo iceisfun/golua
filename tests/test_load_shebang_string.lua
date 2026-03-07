@@ -11,4 +11,3 @@ assert(f == nil, "load() should NOT strip shebang from string args, but it loade
 assert(err:find("unexpected symbol") or err:find("#"),
   "error should mention unexpected symbol near #, got: " .. tostring(err))
 
-print("PASS")

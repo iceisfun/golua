@@ -26,4 +26,3 @@ assert(#results == 3, "should iterate 3 times")
 assert(results[1] == 10 and results[2] == 20 and results[3] == 30)
 assert(closed, "4th return value should be closed when loop ends")
 
-print("PASS")

@@ -16,4 +16,3 @@ local ok3, err3 = pcall(table.concat, {"a", print, "c"}, ",")
 assert(not ok3, "should error on function")
 assert(err3:find("function"), "error should mention 'function', got: " .. err3)
 
-print("PASS")

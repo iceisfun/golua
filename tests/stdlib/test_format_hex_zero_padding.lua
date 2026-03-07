@@ -35,4 +35,3 @@ assert(string.format("%.1a", 1.5) == "0x1.8p+0",
 assert(string.format("%.0a", 1.0) == "0x1p+0",
   "got: " .. string.format("%.0a", 1.0))
 
-print("PASS")

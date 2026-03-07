@@ -43,4 +43,3 @@ expect_error("%#u", 0, "%#u")
 assert(string.format("%#x", 1) == "0x1")
 assert(string.format("%#o", 1) == "01")
 
-print("OK")

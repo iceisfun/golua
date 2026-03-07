@@ -23,5 +23,4 @@ do
   assert(string.format("%5s", "hi") == "   hi")
   assert(string.format("%.3s", "hello") == "hel")
 
-  print("PASS: format %s byte-based width/precision")
 end

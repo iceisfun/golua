@@ -25,4 +25,3 @@ assert(results[1] == "1=1", "first: " .. tostring(results[1]))
 assert(results[2] == "2=4", "second: " .. tostring(results[2]))
 assert(results[3] == "3=9", "third: " .. tostring(results[3]))
 
-print("PASS")

@@ -22,4 +22,3 @@ local ok2, err2 = pcall(w2)
 assert(not ok2)
 assert(type(err2) == "table" and err2.code == 42, "table error preserved")
 
-print("OK")

@@ -3,7 +3,6 @@
 -- What: Tests -0.0 equality with 0.0, distinguishing via 1/mz, NaN self-inequality, NaN comparison operators, and NaN as table key (rawset should fail).
 
 do
-  print("testing -0 and NaN")
   local mz <const> = -0.0
   local z <const> = 0.0
   assert(mz == z)

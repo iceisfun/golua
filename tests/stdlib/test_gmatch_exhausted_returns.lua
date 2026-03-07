@@ -28,4 +28,3 @@ for w in ("hello"):gmatch("%a") do
 end
 assert(count == 5, "for-in with gmatch should iterate correctly")
 
-print("OK")

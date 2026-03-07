@@ -39,4 +39,3 @@ assert("hello" .. " " .. "world" == "hello world")
 assert(42 .. "" == "42")
 assert("" .. 3.14 == "3.14")
 
-print("PASS")

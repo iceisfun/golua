@@ -24,5 +24,4 @@ do
   assert(string.format("% f", nan) == "-nan" or string.format("% f", nan) == "nan" or string.format("% f", nan) == " nan",
     "space flag on nan, got: " .. string.format("% f", nan))
 
-  print("PASS: format space flag on infinity")
 end

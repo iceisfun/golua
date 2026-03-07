@@ -21,4 +21,3 @@ assert(math.type(0/0) == "float")
 assert(tostring(1.5) == "1.5")
 assert(tostring(1.0) == "1.0")
 
-print("OK")

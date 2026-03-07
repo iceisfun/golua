@@ -52,5 +52,5 @@ do
   assert(tonumber("gg", 16) == nil)
   assert(tonumber("", 16) == nil)
 
-  print("PASS: tonumber base overflow wrapping")
+
 end

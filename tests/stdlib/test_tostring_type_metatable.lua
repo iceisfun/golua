@@ -33,4 +33,4 @@ assert(tostring(true) == "true")
 assert(tostring("hello") == "hello")
 assert(tostring(nil) == "nil")
 
-print("PASS")
+

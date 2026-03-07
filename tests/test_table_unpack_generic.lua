@@ -30,4 +30,3 @@ assert(not ok3 and err3:find("attempt to get length of a nil value"), "unpack(ni
 local a, b, c = table.unpack({10, 20, 30})
 assert(a == 10 and b == 20 and c == 30)
 
-print("PASS")

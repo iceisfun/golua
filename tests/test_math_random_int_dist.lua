@@ -43,9 +43,6 @@ do
         goto doagain
       end
     end
-    print(string.format(
-       "integer random range in %d calls: [minint + %.0fppm, maxint - %.0fppm]",
-        totalrounds, (minint - low) / minint * 1e6,
-                     (maxint - up) / maxint * 1e6))
+    -- Verify distribution covered a reasonable range
   end
 end

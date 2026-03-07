@@ -38,4 +38,3 @@ assert(not ok)
 assert(err:find("invalid conversion specification:", 1, true),
   "expected 'invalid conversion specification:', got: " .. err)
 
-print("PASS")

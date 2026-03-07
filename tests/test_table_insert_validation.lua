@@ -19,4 +19,3 @@ table.insert(t, "a")        -- 2 args: append
 table.insert(t, 1, "b")     -- 3 args: insert at position
 assert(t[1] == "b" and t[2] == "a", "normal insert should work")
 
-print("PASS")

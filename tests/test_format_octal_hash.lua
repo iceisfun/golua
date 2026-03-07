@@ -11,4 +11,3 @@ assert(string.format("%-#10.0o", 0) == "0         ")
 assert(string.format("%#o", 8) == "010")
 assert(string.format("%#.0o", 8) == "010")
 
-print("PASS")

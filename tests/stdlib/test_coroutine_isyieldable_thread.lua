@@ -43,4 +43,3 @@ assert(coroutine.isyieldable(co3) == true,
 assert(coroutine.isyieldable() == false,
   "main chunk should not be yieldable")
 
-print("PASS")

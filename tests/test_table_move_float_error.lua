@@ -20,4 +20,3 @@ assert(ok3 == false)
 assert(err3:find("no integer representation"),
   "table.remove float pos should say 'no integer representation', got: " .. tostring(err3))
 
-print("PASSED")

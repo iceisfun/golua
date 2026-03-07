@@ -47,4 +47,3 @@ assert(log2[1] ~= nil and string.find(log2[1], "y:.*original"),
 assert(log2[2] ~= nil and string.find(log2[2], "x:.*y%-fail"),
   "x should receive y's error (which replaced original), got: " .. tostring(log2[2]))
 
-print("PASS")

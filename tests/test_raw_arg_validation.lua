@@ -26,4 +26,3 @@ assert(rawget(t, "x") == 42)
 assert(rawequal(1, 1) == true)
 assert(rawequal(1, 2) == false)
 
-print("PASSED")

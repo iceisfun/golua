@@ -40,4 +40,3 @@ end, function(e) return e end)
 assert(not ok4)
 assert(type(err4) == "string" and err4:find("SHALLOW"), "expected SHALLOW, got: " .. tostring(err4))
 
-print("PASS")

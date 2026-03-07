@@ -31,4 +31,3 @@ local t5 = {10, 20, 30}
 local ok5, err5 = pcall(next, t5, 2.0)
 assert(ok5 == false, "next(t, 2.0) should fail for integer key 2")
 
-print("PASSED")

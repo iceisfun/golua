@@ -24,4 +24,3 @@ assert(t2[1].val == 3, "reverse sort: expected 3, got " .. t2[1].val)
 assert(t2[2].val == 2, "reverse sort: expected 2, got " .. t2[2].val)
 assert(t2[3].val == 1, "reverse sort: expected 1, got " .. t2[3].val)
 
-print("PASS")

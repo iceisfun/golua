@@ -29,4 +29,3 @@ assert(not ok3)
 assert(err3:find("for iterator"),
   "should include 'for iterator' context, got: " .. err3)
 
-print("PASSED")

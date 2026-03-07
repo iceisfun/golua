@@ -28,5 +28,4 @@ do
   assert(string.format("#%+010a#", 1.0) == "#+0x0001p+0#",
     "%+010a should zero-pad with +, got: " .. string.format("#%+010a#", 1.0))
 
-  print("PASS: format %a width padding")
 end

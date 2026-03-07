@@ -188,4 +188,3 @@ local function with_up() return upval end
 local dup = string.dump(with_up)
 assert(type(dup) == "string" and #dup > 0)
 
-print("PASS")

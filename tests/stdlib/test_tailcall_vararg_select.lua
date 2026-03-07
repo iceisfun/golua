@@ -51,4 +51,3 @@ local m, n = tc4()
 assert(m == 10 and n == 20,
   string.format("Test 4 failed: expected 10, 20 got %s, %s", tostring(m), tostring(n)))
 
-print("PASS")

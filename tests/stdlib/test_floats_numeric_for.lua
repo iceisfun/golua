@@ -3,7 +3,6 @@
 -- What: Tests numeric for loops with float boundaries and steps, verifying integer vs float iteration counts.
 
 do
-  print("testing floats in numeric for")
   local a
   -- integer count
   a = 0; for i=1, 1, 1 do a=a+1 end; assert(a==1)

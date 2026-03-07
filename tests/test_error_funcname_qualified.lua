@@ -24,4 +24,3 @@ local ok, err = pcall(math.abs)
 assert(string.find(err, "got no value", 1, true),
   "expected 'got no value' in: " .. err)
 
-print("PASS")

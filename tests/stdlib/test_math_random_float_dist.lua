@@ -61,7 +61,5 @@ do
         goto doagain
       end
     end
-    print(string.format("float random range in %d calls: [%f, %f]",
-                        totalrounds, low, up))
   end
 end

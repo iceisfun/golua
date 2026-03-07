@@ -25,4 +25,3 @@ local i4, f4 = math.modf(-3.5)
 assert(i4 == -3)
 assert(f4 == -0.5)
 
-print("OK")

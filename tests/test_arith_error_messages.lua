@@ -32,4 +32,3 @@ local ok2, err2 = pcall(function() return "abc" + "def" end)
 assert(err2:find("attempt to add"), "got: " .. err2)
 assert(err2:find("'string'"), "should mention 'string', got: " .. err2)
 
-print("PASSED")

@@ -44,5 +44,4 @@ do
   assert(not eqT(1, 1.0))  -- same value, different type
   checkerror("attempt to call", function() local x = 1; x() end)
 
-  print("helper functions OK")
 end

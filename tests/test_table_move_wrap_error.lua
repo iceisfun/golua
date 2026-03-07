@@ -7,4 +7,3 @@ assert(ok == false, "table.move should fail on wrap-around")
 assert(err:find("bad argument"), "error should start with 'bad argument', got: " .. tostring(err))
 assert(err:find("destination wrap around"), "error should mention 'destination wrap around', got: " .. tostring(err))
 
-print("PASSED")

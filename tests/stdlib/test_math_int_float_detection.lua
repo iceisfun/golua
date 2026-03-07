@@ -34,8 +34,6 @@ do
     local x = 2.0^floatbits
     assert(x > x - 1.0 and x == x + 1.0)
 
-    print(string.format("%d-bit integers, %d-bit (mantissa) floats",
-                         intbits, floatbits))
   end
 
   assert(math.type(0) == "integer" and math.type(0.0) == "float"

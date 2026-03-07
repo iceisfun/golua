@@ -42,4 +42,3 @@ assert(results[1] == "a")
 assert(results[2] == "b")
 assert(results[3] == "c")
 
-print("OK")

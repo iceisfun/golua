@@ -23,4 +23,3 @@ assert(not ok3)
 assert(err3:find("attempt to call a boolean value"), err3)
 assert(err3:find("(metamethod 'close')", 1, true), "missing metamethod context: " .. err3)
 
-print("OK")

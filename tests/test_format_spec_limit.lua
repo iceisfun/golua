@@ -13,4 +13,3 @@ assert(string.find(err, "too long"), "wrong error: " .. tostring(err))
 ok, err = pcall(string.format, "%" .. string.rep("0", 21) .. "f", 1.0)
 assert(not ok, "21 zeros with %f should be too long")
 
-print("PASS")

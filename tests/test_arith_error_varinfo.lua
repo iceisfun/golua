@@ -109,4 +109,3 @@ do
     assert(ctx(err) == "upvalue 't'", "right band: expected local 't', got " .. ctx(err))
 end
 
-print("PASS")

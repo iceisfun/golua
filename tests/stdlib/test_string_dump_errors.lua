@@ -43,4 +43,3 @@ assert(ok9 == nil, "wrong version should not load")
 local ok10, err10 = load("\x1bLua")
 assert(ok10 == nil, "truncated should not load")
 
-print("PASS")

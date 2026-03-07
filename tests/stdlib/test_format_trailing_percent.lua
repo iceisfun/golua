@@ -29,4 +29,3 @@ local ok5, err5 = pcall(string.format, "%0", 1)
 assert(not ok5, "% with flag but no conversion (with arg) should error")
 assert(tostring(err5):find("invalid conversion"), "expected 'invalid conversion', got: " .. tostring(err5))
 
-print("OK")

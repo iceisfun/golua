@@ -19,4 +19,3 @@ assert(math.type(-9223372036854775808) == "float", "-2^63 literal should be floa
 -- Very large decimal should be float (not error)
 assert(math.type(99999999999999999999) == "float", "large decimal should be float")
 
-print("OK")

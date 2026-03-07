@@ -11,5 +11,4 @@ do
   math.randomseed(x, y)    -- again should repeat the state
   assert(math.random(0) == res)
   -- keep the random seed for following tests
-  print(string.format("random seeds: %d, %d", x, y))
 end

@@ -39,7 +39,6 @@ do
   end
 
   if floatbits < intbits then
-    print("testing order (floats cannot represent all integers)")
     local fmax = 2^floatbits
     local ifmax = fmax | 0
     assert(fmax < ifmax + 1)
@@ -57,7 +56,6 @@ do
     assert(maxint <= 2^intbits)
     assert(minint >= -2^intbits)
   else
-    print("testing order (floats can represent all integers)")
     assert(maxint < maxint + 1.0)
     assert(maxint < maxint + 0.5)
     assert(maxint - 1.0 < maxint)

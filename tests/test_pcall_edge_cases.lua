@@ -36,4 +36,3 @@ assert(not ok6, "xpcall with string handler should error immediately")
 assert(tostring(err6):find("function expected"),
   "xpcall string handler error should say 'function expected', got: " .. tostring(err6))
 
-print("PASS")

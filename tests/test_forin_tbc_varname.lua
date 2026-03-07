@@ -6,4 +6,3 @@ assert(not ok)
 assert(err:find("%(for state%)"), "expected '(for state)' in: " .. tostring(err))
 assert(not err:find("'%?'"), "should not contain '?' in: " .. tostring(err))
 
-print("PASS")

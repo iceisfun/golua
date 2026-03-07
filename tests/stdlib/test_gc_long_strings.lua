@@ -4,7 +4,6 @@
 --       Checks string length correctness.
 
 do
-  print('long strings')
   local x = "01234567890123456789012345678901234567890123456789012345678901234567890123456789"
   assert(string.len(x)==80)
   local s = ''

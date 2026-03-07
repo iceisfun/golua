@@ -4,7 +4,6 @@
 --       gracefully without crashing. Exercises the parser and error handling.
 
 do
-  print("functions with errors")
   local prog = [[
 do
   a = 10;

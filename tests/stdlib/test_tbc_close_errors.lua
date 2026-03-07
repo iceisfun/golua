@@ -12,7 +12,6 @@ do
     end
   end
 
-  print("testing errors in __close")
 
   -- original error is in __close
   local function foo ()

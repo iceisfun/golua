@@ -4,7 +4,6 @@
 --       replaced with integer keys. Pure table manipulation test.
 
 do
-  print("clearing tables")
   local lim = 15
   local a = {}
   for i=1,lim do a[{}] = i end

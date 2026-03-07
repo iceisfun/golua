@@ -25,7 +25,7 @@ do
   assert(string.find(string.format("%a", -0.0), "^%-0x0"))
 
   if not pcall(string.format, "%.3a", 0) then
-    print("\n >>> modifiers for format '%a' not available <<<\n")
+
   else
     assert(string.find(string.format("%+.2A", 12), "^%+0X%x%.%x0P%+?%d$"))
     assert(string.find(string.format("%.4A", -12), "^%-0X%x%.%x000P%+?%d$"))

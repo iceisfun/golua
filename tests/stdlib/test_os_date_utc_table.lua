@@ -29,5 +29,5 @@ do
   -- (unless running in UTC timezone)
   assert(utc_tbl.sec == local_tbl.sec, "seconds should match")
 
-  print("PASS: os.date('!*t') returns UTC time")
+
 end

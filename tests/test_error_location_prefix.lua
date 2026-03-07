@@ -31,4 +31,3 @@ do
     -- This is fine with or without prefix
 end
 
-print("PASS")

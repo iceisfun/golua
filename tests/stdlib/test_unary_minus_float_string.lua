@@ -26,4 +26,3 @@ assert(math.type(-" 3.0 ") == "float", "expected float for padded float string")
 -- Negative zero string
 assert(math.type(-"0.0") == "float", "expected float for -0.0 string")
 
-print("OK")

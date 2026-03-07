@@ -3,7 +3,6 @@
 -- What: Tests that next correctly handles GC collection of dead keys during iteration (bug fix from 5.4.1), using coroutines to interleave iteration with GC.
 
 do
-  print("testing next x GC of deleted keys")
   -- bug in 5.4.1
   local co = coroutine.wrap(function (t)
     for k, v in pairs(t) do

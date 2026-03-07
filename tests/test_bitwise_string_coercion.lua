@@ -38,4 +38,3 @@ assert(not ok, "expected error for int << string")
 ok, err = pcall(function() return 8 >> "1" end)
 assert(not ok, "expected error for int >> string")
 
-print("PASS")

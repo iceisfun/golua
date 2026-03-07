@@ -26,4 +26,3 @@ assert(ok5, "<const> + <close> should be accepted")
 local ok6, err6 = load("local a <close>, b, c <close> = nil, nil, nil")
 assert(not ok6, "two <close> in three vars should be rejected")
 
-print("OK")

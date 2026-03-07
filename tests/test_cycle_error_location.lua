@@ -22,4 +22,3 @@ assert(not ok2)
 assert(err2:find(":%d+:"), "error should have source location, got: " .. err2)
 assert(err2:find("'__newindex' chain too long"), "got: " .. err2)
 
-print("PASSED")

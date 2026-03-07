@@ -21,4 +21,3 @@ ok, err = pcall(function() for i = "a", 10, 1 do end end)
 assert(not ok)
 assert(string.find(err, "bad 'for' initial"), "expected initial error, got: " .. tostring(err))
 
-print("PASS")

@@ -4,7 +4,6 @@
 --       Pure Lua stress test of object creation, string operations, and load().
 
 do
-  print("creating many objects")
 
   local limit = 5000
 

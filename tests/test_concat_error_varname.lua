@@ -33,4 +33,3 @@ assert(not ok3)
 assert(err3:find("%(global 'someGlobal'%)"),
   "should include (global 'someGlobal'), got: " .. err3)
 
-print("PASSED")

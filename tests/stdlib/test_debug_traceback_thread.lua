@@ -46,4 +46,3 @@ local result4 = debug.traceback(co3, "dead-msg", 0)
 assert(type(result4) == "string",
   "dead coroutine traceback should return string, got: " .. type(result4))
 
-print("PASS")

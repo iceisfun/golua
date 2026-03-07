@@ -16,4 +16,3 @@ assert(not ok2)
 assert(err2:find(":%d+:"), "NaN key error should have source location, got: " .. err2)
 assert(err2:find("table index is NaN"), "got: " .. err2)
 
-print("PASSED")

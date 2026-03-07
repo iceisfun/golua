@@ -42,4 +42,3 @@ assert(tonumber("3.14") == 3.14)
 assert(tonumber("0xff") == 255)
 assert(tonumber("1e10") == 1e10)
 
-print("PASS")

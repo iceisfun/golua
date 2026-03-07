@@ -29,4 +29,3 @@ local ok, err = pcall(function() for k in 42 do end end)
 assert(not ok)
 assert(P("test", err:match("for iterator")) == "test: for iterator")
 
-print("PASS")

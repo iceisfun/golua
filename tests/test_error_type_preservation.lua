@@ -26,4 +26,3 @@ assert(not ok3, "pcall should fail")
 assert(type(err3) == "number", "error should be number, got " .. type(err3))
 assert(err3 == 42, "error should be 42, got " .. tostring(err3))
 
-print("PASS")

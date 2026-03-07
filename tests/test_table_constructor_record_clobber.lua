@@ -40,4 +40,3 @@ for i = 1, 5 do
 end
 assert(prev.val == 5)
 
-print("PASS")

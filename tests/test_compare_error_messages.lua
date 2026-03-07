@@ -22,4 +22,3 @@ end)
 check("number with string", function() return 1 < "hello" end)
 check("string with table", function() return "x" < {} end)
 
-print("PASSED")
