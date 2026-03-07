@@ -6,102 +6,94 @@
 -- ==========================================================================
 -- Extracted from the fengari Lua 5.3 implementation test suite.
 -- Each test is wrapped in a do...end block for scope isolation.
--- Doctest directives (--> =expected) verify print() output.
--- Self-verifying tests use assert() and print "PASS" on success.
 
 -- [Test 1] math.abs, math.sin, math.cos, math.tan, math.asin, math.acos, math.atan
--- Verifies: output matches expected value via print()
 do
-  print(math.abs(-10), math.abs(-10.5), math.cos(10), math.tan(10), math.asin(1), math.acos(0.5), math.atan(10))
+  assert(math.abs(-10) == 10)
+  assert(math.abs(-10.5) == 10.5)
+  assert(math.cos(10) - (-0.8390715290764524) < 1e-12)
+  assert(math.tan(10) - 0.6483608274590866 < 1e-12)
+  assert(math.asin(1) - 1.5707963267948966 < 1e-12)
+  assert(math.acos(0.5) - 1.0471975511965979 < 1e-12)
+  assert(math.atan(10) - 1.4711276743037347 < 1e-12)
 end
---> =10	10.5	-0.8390715290764524	0.6483608274590866	1.5707963267948966	1.0471975511965979	1.4711276743037347
 
 -- --------------------------------------------------------------------------
 -- [Test 2] math.ceil, math.floor
--- Verifies: output matches expected value via print()
 do
-  print(math.ceil(10.5), math.floor(10.5))
+  assert(math.ceil(10.5) == 11)
+  assert(math.floor(10.5) == 10)
 end
---> =11	10
 
 -- --------------------------------------------------------------------------
 -- [Test 3] math.deg, math.rad
--- Verifies: output matches expected value via print()
 do
-  print(math.deg(10), math.rad(10))
+  assert(math.deg(10) - 572.9577951308232 < 1e-6)
+  assert(math.rad(10) - 0.17453292519943295 < 1e-12)
 end
---> =572.9577951308232	0.17453292519943295
 
 -- --------------------------------------------------------------------------
 -- [Test 4] math.log
--- Verifies: output matches expected value via print()
 do
-  print(math.log(10), math.log(10, 2), math.log(10, 10))
+  assert(math.log(10) - 2.302585092994046 < 1e-12)
+  assert(math.log(10, 2) - 3.321928094887362 < 1e-12)
+  assert(math.log(10, 10) == 1.0)
 end
---> =2.302585092994046	3.321928094887362	1
 
 -- --------------------------------------------------------------------------
 -- [Test 5] math.min, math.max
--- Verifies: output matches expected value via print()
 do
-  print(math.max(10, 5, 23), math.min(10, 5, 23))
+  assert(math.max(10, 5, 23) == 23)
+  assert(math.min(10, 5, 23) == 5)
 end
---> =23	5
 
 -- --------------------------------------------------------------------------
 -- [Test 6] math.random
--- Verifies: code executes without runtime error
--- NOTE: Output varies or cannot be predicted; verify manually
 do
-  print(math.random(), math.random(10, 15))
-  print("PASS")
+  local r1 = math.random()
+  assert(r1 >= 0 and r1 < 1)
+  local r2 = math.random(10, 15)
+  assert(r2 >= 10 and r2 <= 15 and math.type(r2) == "integer")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 7] math.sqrt
--- Verifies: output matches expected value via print()
 do
-  print(math.sqrt(10))
+  assert(math.sqrt(10) - 3.1622776601683795 < 1e-12)
 end
---> =3.1622776601683795
 
 -- --------------------------------------------------------------------------
 -- [Test 8] math.tointeger
--- Verifies: output matches expected value via print()
 do
-  print(math.tointeger('10'))
+  assert(math.tointeger(10) == 10)
+  assert(math.tointeger(10.0) == 10)
+  assert(math.tointeger('10') == 10)
 end
---> =10
 
 -- --------------------------------------------------------------------------
 -- [Test 9] math.type
--- Verifies: output matches expected value via print()
 do
-  print(math.type(10), math.type(10.5), math.type('hello'))
+  assert(math.type(10) == "integer")
+  assert(math.type(10.5) == "float")
+  assert(not math.type('hello'))
 end
---> =integer	float
 
 -- --------------------------------------------------------------------------
 -- [Test 10] math.ult
--- Verifies: output matches expected value via print()
 do
-  print(math.ult(5, 200))
+  assert(math.ult(5, 200) == true)
 end
---> =true
 
 -- --------------------------------------------------------------------------
 -- [Test 11] math.fmod
--- Verifies: output matches expected value via print()
 do
-  print(math.fmod(2,5))
+  assert(math.fmod(2,5) == 2)
 end
---> =2
 
 -- --------------------------------------------------------------------------
 -- [Test 12] math.modf
--- Verifies: output matches expected value via print()
 do
-  print(math.modf(3.4, 0.6))
+  local i, f = math.modf(3.4, 0.6)
+  assert(i == 3)
+  assert(f - 0.4 < 1e-12)
 end
---> =3	0.3999999999999999

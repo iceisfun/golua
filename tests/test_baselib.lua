@@ -6,21 +6,15 @@
 -- ==========================================================================
 -- Extracted from the fengari Lua 5.3 implementation test suite.
 -- Each test is wrapped in a do...end block for scope isolation.
--- Doctest directives (--> =expected) verify print() output.
--- Self-verifying tests use assert() and print "PASS" on success.
 
 -- [Test 1] print
--- Verifies: code executes without runtime error
--- NOTE: Run-only test (verifies no runtime error)
+-- Verifies print doesn't error (output goes to stdout)
 do
   print("hello", "world", 123)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 2] setmetatable, getmetatable
--- Verifies: all assert() calls pass without error
 do
   local mt = {
       __index = function ()
@@ -29,19 +23,15 @@ do
   }
 
   local t = {}
-
   setmetatable(t, mt);
 
-  local _r1, _r2 = t[1], getmetatable(t)
-  assert(_r1 == "hello")
-  assert(type(_r2) == "table")
-  print("PASS")
+  assert(t[1] == "hello")
+  assert(type(getmetatable(t)) == "table")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 3] rawequal
--- Verifies: output matches expected value via print()
+-- rawequal bypasses __eq metamethod
 do
   local mt = {
       __eq = function ()
@@ -51,16 +41,15 @@ do
 
   local t1 = {}
   local t2 = {}
-
   setmetatable(t1, mt);
 
-  print(rawequal(t1, t2), t1 == t2)
+  assert(rawequal(t1, t2) == false)
+  assert(t1 == t2)
 end
---> =false	true
 
 -- --------------------------------------------------------------------------
 -- [Test 4] rawset, rawget
--- Verifies: output matches expected value via print()
+-- rawset/rawget bypass __newindex/__index metamethods
 do
   local mt = {
       __newindex = function (table, key, value)
@@ -69,60 +58,52 @@ do
   }
 
   local t = {}
-
   setmetatable(t, mt);
 
   t["yo"] = "bye"
   rawset(t, "yoyo", "bye")
 
-  print(rawget(t, "yo"), t["yo"], rawget(t, "yoyo"), t["yoyo"])
+  assert(rawget(t, "yo") == "hello" and t["yo"] == "hello")
+  assert(rawget(t, "yoyo") == "bye" and t["yoyo"] == "bye")
 end
---> =hello	hello	bye	bye
 
 -- --------------------------------------------------------------------------
 -- [Test 5] type
--- Verifies: output matches expected value via print()
 do
-  print(type(1), type(true), type("hello"), type({}), type(nil))
+  assert(type(1) == "number")
+  assert(type(true) == "boolean")
+  assert(type("hello") == "string")
+  assert(type({}) == "table")
+  assert(type(nil) == "nil")
 end
---> =number	boolean	string	table	nil
 
 -- --------------------------------------------------------------------------
 -- [Test 6] error
--- Extraction error: these tests were meant to be inside pcall. Fixed.
 do
   local ok, msg = pcall(error, "you fucked up")
   assert(not ok and string.find(msg, "you fucked up"))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 7] error, protected
 do
   local ok, msg = pcall(error, "you fucked up")
   assert(not ok and string.find(msg, "you fucked up"))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 8] pcall
--- Verifies: code executes without runtime error
--- NOTE: Output varies or cannot be predicted; verify manually
 do
   local willFail = function ()
       error("you fucked up")
   end
 
-  print(pcall(willFail))
-  print("PASS")
+  local ok, msg = pcall(willFail)
+  assert(not ok and string.find(msg, "you fucked up"))
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 9] xpcall
--- Verifies: all assert() calls pass without error
 do
   local willFail = function ()
       error("you fucked up")
@@ -135,13 +116,10 @@ do
   local ok, msg = xpcall(willFail, msgh)
   assert(ok == false)
   assert(type(msg) == "string" and string.find(msg, "Something's wrong"))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 10] ipairs
--- Verifies: output matches expected value via print()
 do
   local t = {1, 2, 3, 4, 5, ['yo'] = 'lo'}
 
@@ -150,94 +128,72 @@ do
       sum = sum + v
   end
 
-  print(sum)
+  assert(sum == 15)
 end
---> =15
 
 -- --------------------------------------------------------------------------
 -- [Test 11] select
--- Verifies: code executes without runtime error
--- NOTE: Output varies or cannot be predicted; verify manually
 do
-  print({select('#', 1, 2, 3)}, {select(2, 1, 2, 3)}, {select(-2, 1, 2, 3)})
-  print("PASS")
+  assert(select('#', 1, 2, 3) == 3)
+  local a, b = select(2, 1, 2, 3)
+  assert(a == 2 and b == 3)
+  local c, d = select(-2, 1, 2, 3)
+  assert(c == 2 and d == 3)
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 12] tonumber
--- Verifies: all assert() calls pass without error
 do
-  local _r1, _r2, _r3, _r4, _r5 = tonumber('foo'), tonumber('123'), tonumber('12.3'), tonumber('az', 36), tonumber('10', 2)
-  assert(_r1 == nil)
-  assert(_r2 == 123)
-  assert(_r3 == 12.3)
-  assert(_r4 == 395)
-  assert(_r5 == 2)
-  print("PASS")
+  assert(tonumber('foo') == nil)
+  assert(tonumber('123') == 123)
+  assert(tonumber('12.3') == 12.3)
+  assert(tonumber('az', 36) == 395)
+  assert(tonumber('10', 2) == 2)
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
--- [Test 13] assert (extraction error: original tested pcall(assert, 1<0, msg))
+-- [Test 13] assert (pcall catches assert failure)
 do
   local ok, msg = pcall(assert, 1 < 0, "this doesn't makes sense")
   assert(not ok and string.find(msg, "this doesn't makes sense"))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 14] rawlen
--- Verifies: output matches expected value via print()
 do
-  print(rawlen({1, 2, 3}), rawlen('hello'))
+  assert(rawlen({1, 2, 3}) == 3)
+  assert(rawlen('hello') == 5)
 end
---> =3	5
 
 -- --------------------------------------------------------------------------
 -- [Test 15] next
--- Verifies: output matches expected value via print()
 do
   local total = 0
-  local t = {
-      1,
-      two = 2,
-      3,
-      four = 4
-  }
+  local t = { 1, two = 2, 3, four = 4 }
 
   for k,v in next, t, nil do
       total = total + v
   end
 
-  print(total)
+  assert(total == 10)
 end
---> =10
 
 -- --------------------------------------------------------------------------
 -- [Test 16] pairs
--- Verifies: output matches expected value via print()
 do
   local total = 0
-  local t = {
-      1,
-      two = 2,
-      3,
-      four = 4
-  }
+  local t = { 1, two = 2, 3, four = 4 }
 
   for k,v in pairs(t) do
       total = total + v
   end
 
-  print(total)
+  assert(total == 10)
 end
---> =10
 
 -- --------------------------------------------------------------------------
 -- [Test 17] pairs with __pairs
--- Verifies: output matches expected value via print()
+-- __pairs metamethod overrides the default iterator
 do
   local total = 0
 
@@ -247,19 +203,12 @@ do
       end
   }
 
-  local t = {
-      1,
-      two = 2,
-      3,
-      four = 4
-  }
-
+  local t = { 1, two = 2, 3, four = 4 }
   setmetatable(t, mt)
 
   for k,v in pairs(t) do
       total = total + v
   end
 
-  print(total)
+  assert(total == 26)
 end
---> =26
