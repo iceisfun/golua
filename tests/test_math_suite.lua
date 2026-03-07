@@ -62,9 +62,7 @@ end
 do
   assert(minint == 1 << (intbits - 1))
   assert(maxint == minint - 1)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 2] [test-suite] math: number of bits in the mantissa of a floating-point number
@@ -84,9 +82,7 @@ do
 
   assert(math.type(0) == "integer" and math.type(0.0) == "float"
          and math.type("10") == nil)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 3] [test-suite] math: basic float notation
@@ -131,9 +127,7 @@ do
     a,b = math.modf(minint)
     assert(eqT(a, minint) and eqT(b, 0.0))
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 4] [test-suite] math: math.huge
@@ -141,9 +135,7 @@ end
 do
   assert(math.huge > 10e30)
   assert(-math.huge < -10e30)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 5] [test-suite] math: integer arithmetic
@@ -154,9 +146,7 @@ do
   assert(0 - minint == minint)
   assert(minint * minint == 0)
   assert(maxint * maxint * maxint == maxint)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 6] [test-suite] math: testing floor division and conversions
@@ -192,9 +182,7 @@ do
   assert(minint // -1 == -minint)
   assert(minint // -2 == 2^(intbits - 2))
   assert(maxint // -1 == -maxint)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 7] [test-suite] math: negative exponents
@@ -212,9 +200,7 @@ do
       end
     end
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 8] [test-suite] math: comparison between floats and integers (border cases)
@@ -235,9 +221,7 @@ do
   assert(maxint + 0.0 == 2.0^(intbits - 1) - 1.0)
   assert(minint + 0.0 == minint)
   assert(minint + 0.0 == -2.0^(intbits - 1))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 9] [test-suite] math: order between floats and integers
@@ -267,9 +251,7 @@ do
     assert(minint <= -2^(intbits - 1))
     assert(-2^(intbits - 1) <= minint)
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 10] [test-suite] math: testing order (floats can represent all integers)
@@ -277,7 +259,6 @@ end
 -- Only applicable when float mantissa bits >= integer bits (not typical for 64-bit ints)
 do
   if floatbits < intbits then
-    print("PASS")  -- skip: float precision < integer precision
     goto test10_end
   end
   assert(floatbits >= intbits)
@@ -309,10 +290,8 @@ do
   assert(not (minint + 1.0 <= minint))
   assert(not (minint + 0.5 <= minint))
   assert(not (minint <= minint - 1.0))
-  print("PASS")
   ::test10_end::
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 11] [test-suite] math: NaN order
@@ -326,9 +305,7 @@ do
   assert(not (NaN < maxint))
   assert(not (minint <= NaN))
   assert(not (minint < NaN))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 12] [test-suite] math: avoiding errors at compile time
@@ -340,9 +317,7 @@ do
   checkcompt("field 'huge'", "return math.huge << 1")
   checkcompt(msgf2i, ("return 1 | 2.0^%d"):format(intbits - 1))
   checkcompt(msgf2i, "return 2.3 ~ '0.0'")
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 13] [test-suite] math: testing overflow errors when converting from float to integer (runtime)
@@ -377,9 +352,7 @@ do
 
   -- 'minint' should be representable as a float no matter the precision
   assert(f2i(minint + 0.0) == minint)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 14] [test-suite] math: testing numeric strings
@@ -389,9 +362,7 @@ do
   assert("2 " + 1 == 3)
   assert(" -2 " + 1 == -1)
   assert(" -0xa " + 1 == -9)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 15] [test-suite] math: Literal integer Overflows (new behavior in 5.3.3)
@@ -430,9 +401,7 @@ do
     assert(eqT(10000000000000000000000.0, 10000000000000000000000))
     assert(eqT(-10000000000000000000000.0, -10000000000000000000000))
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 16] [test-suite] math: 'tonumber' with numbers
@@ -442,9 +411,7 @@ do
   assert(eqT(tonumber(3), 3))
   assert(eqT(tonumber(maxint), maxint) and eqT(tonumber(minint), minint))
   assert(tonumber(1/0) == 1/0)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 17] [test-suite] math: 'tonumber' with strings
@@ -487,9 +454,7 @@ do
     local i10 = i2 * i2 * i2 * i2 * i2      -- i^10
     assert(tonumber('\t10000000000\t', i) == i10)
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 18] [test-suite] math: tests with very long numerals
@@ -508,9 +473,7 @@ do
 
   assert(tonumber('0xe03' .. string.rep('0', 1000) .. 'p-4000') == 3587.0)
   assert(tonumber('0x.' .. string.rep('0', 1000) .. '74p4004') == 0x7.4)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 19] [test-suite] math: testing 'tonumber' for invalid formats
@@ -547,9 +510,7 @@ do
   assert(f(tonumber('e1')) == nil)
   assert(f(tonumber('e  1')) == nil)
   assert(f(tonumber(' 3.4.5 ')) == nil)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 20] [test-suite] math: testing 'tonumber' for invalid hexadecimal formats
@@ -567,9 +528,7 @@ do
   assert(tonumber('-0xaaP ') == nil)   -- no exponent
   assert(tonumber('0x0.51p') == nil)
   assert(tonumber('0x5p+-2') == nil)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 21] [test-suite] math: testing hexadecimal numerals
@@ -584,9 +543,7 @@ do
 
   -- possible confusion with decimal exponent
   assert(0E+1 == 0 and 0xE+1 == 15 and 0xe-1 == 13)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 22] [test-suite] math: floating hexas
@@ -615,9 +572,7 @@ do
   assert(0.123456 > 0.123455)
 
   assert(tonumber('+1.23E18') == 1.23*10.0^18)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 23] [test-suite] math: testing order operators
@@ -632,9 +587,7 @@ do
   assert((1>=1) and not(1>=2) and (2>=1))
   assert(('a'>='a') and not('a'>='b') and ('b'>='a'))
   assert(1.3 < 1.4 and 1.3 <= 1.4 and not (1.3 < 1.3) and 1.3 <= 1.3)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 24] [test-suite] math: testing mod operator
@@ -656,9 +609,7 @@ do
   assert(minint % -1 == 0)
   assert(minint % -2 == 0)
   assert(maxint % -2 == -1)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 25] [test-suite] math: non-portable tests because Windows C library cannot compute fmod(1, huge) correctly
@@ -676,9 +627,7 @@ do
   assert(1e30 % -math.huge == -math.huge)
   assert(-1 % math.huge == math.huge)
   assert(-1 % -math.huge == -1)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 26] [test-suite] math: testing unsigned comparisons
@@ -715,9 +664,7 @@ do
 
   assert(tonumber(' 1.3e-2 ') == 1.3e-2)
   assert(tonumber(' -1.00000000000001 ') == -1.00000000000001)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 27] [test-suite] math: testing constant limits
@@ -726,9 +673,7 @@ do
   assert(8388609 + -8388609 == 0)
   assert(8388608 + -8388608 == 0)
   assert(8388607 + -8388607 == 0)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 28] [test-suite] math: testing floor & ceil
@@ -776,9 +721,7 @@ do
     assert(math.tointeger({}) == nil)
     assert(math.tointeger(0/0) == nil)    -- NaN
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 29] [test-suite] math: testing fmod for integers
@@ -803,9 +746,7 @@ do
   assert(eqT(math.fmod(maxint - 1, maxint), maxint - 1))
 
   checkerror("zero", math.fmod, 3, 0)
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 30] [test-suite] math: testing max/min
@@ -826,9 +767,7 @@ do
     assert(eqT(math.min(maxint, maxint - 1), maxint - 1))
     assert(eqT(math.min(maxint - 2, maxint, maxint - 1), maxint - 2))
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 31] [test-suite] math: testing implicit convertions
@@ -837,9 +776,7 @@ do
   local a,b = '10', '20'
   assert(a*b == 200 and a+b == 30 and a-b == -10 and a/b == 0.5 and -b == -20)
   assert(a == '10' and b == '20')
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 32] [test-suite] math: testing -0 and NaN
@@ -878,9 +815,7 @@ do
     assert(a1 == a2 and a2 == a4 and a1 ~= a3)
     assert(a3 == a5)
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 33] [test-suite] math: test random for floats
@@ -904,9 +839,7 @@ do
     assert(false)
    ::ok::
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 34] [test-suite] math: test random for small intervals
@@ -943,9 +876,7 @@ do
     aux({minint, minint + 9})
     aux({maxint - 3, maxint})
   end
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 35] [test-suite] math: test random for large intervals
@@ -984,9 +915,7 @@ do
   end
 
   assert(not pcall(math.random, 1, 2, 3))    -- too many arguments
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 36] [test-suite] math: test random for empty interval
@@ -995,9 +924,7 @@ do
   assert(not pcall(math.random, minint + 1, minint))
   assert(not pcall(math.random, maxint, maxint - 1))
   assert(not pcall(math.random, maxint, minint))
-  print("PASS")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 37] [test-suite] math: interval too large
@@ -1007,6 +934,4 @@ do
   -- assert(not pcall(math.random, minint, 0))
   -- assert(not pcall(math.random, -1, maxint))
   -- assert(not pcall(math.random, minint // 2, maxint // 2 + 1))
-  print("PASS")
 end
---> =PASS

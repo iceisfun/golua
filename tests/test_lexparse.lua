@@ -13,9 +13,8 @@
 -- Verifies: output matches expected value via print()
 do
   local a = "hello world"
-  print(a)
+  assert(a == "hello world")
 end
---> =hello world
 
 -- --------------------------------------------------------------------------
 -- [Test 2] MOVE
@@ -23,9 +22,8 @@ end
 do
   local a = "hello world"
   local b = a
-  print(b)
+  assert(b == "hello world")
 end
---> =hello world
 
 -- --------------------------------------------------------------------------
 -- [Test 3] Binary op
@@ -33,9 +31,19 @@ end
 do
   local a = 5
   local b = 10
-  print(a + b, a - b, a * b, a / b, a % b, a^b, a // b, a & b, a | b, a ~ b, a << b, a >> b)
+  assert(a + b == 15)
+  assert(a - b == -5)
+  assert(a * b == 50)
+  assert(a / b == 0.5)
+  assert(a % b == 5)
+  assert(a^b == 9765625.0)
+  assert(a // b == 0)
+  assert(a & b == 0)
+  assert(a | b == 15)
+  assert(a ~ b == 15)
+  assert(a << b == 5120)
+  assert(a >> b == 0)
 end
---> =15	-5	50	0.5	5	9765625.0	0	0	15	15	5120	0
 
 -- --------------------------------------------------------------------------
 -- [Test 4] Unary op, LOADBOOL
@@ -43,9 +51,10 @@ end
 do
   local a = 5
   local b = false
-  print(-a, not b, ~a)
+  assert(-a == -5)
+  assert((not b) == true)
+  assert(~a == -6)
 end
---> =-5	true	-6
 
 -- --------------------------------------------------------------------------
 -- [Test 5] NEWTABLE
@@ -53,10 +62,8 @@ end
 -- NOTE: Output varies or cannot be predicted; verify manually
 do
   local a = {}
-  print(a)
-  print("PASS")
+  assert(type(a) == "table")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 6] CALL
@@ -68,9 +75,8 @@ do
 
   local c = f(1, 2)
 
-  print(c)
+  assert(c == 3)
 end
---> =3
 
 -- --------------------------------------------------------------------------
 -- [Test 7] Multiple return
@@ -86,9 +92,8 @@ do
 
   c, d, e = f(1,2)
 
-  print(c, d, e)
+  assert(c == 3 and d == -1 and e == 2)
 end
---> =3	-1	2
 
 -- --------------------------------------------------------------------------
 -- [Test 8] TAILCALL
@@ -98,9 +103,8 @@ do
       return a + b
   end
 
-  print(f(1,2))
+  assert(f(1,2) == 3)
 end
---> =3
 
 -- --------------------------------------------------------------------------
 -- [Test 9] VARARG
@@ -110,9 +114,9 @@ do
       return ...
   end
 
-  print(f(1,2,3))
+  local a, b, c = f(1,2,3)
+  assert(a == 1 and b == 2 and c == 3)
 end
---> =1	2	3
 
 -- --------------------------------------------------------------------------
 -- [Test 10] LE, JMP
@@ -120,9 +124,8 @@ end
 do
   local a, b = 1, 1
 
-  print(a >= b)
+  assert(a >= b)
 end
---> =true
 
 -- --------------------------------------------------------------------------
 -- [Test 11] LT
@@ -130,9 +133,8 @@ end
 do
   local a, b = 1, 1
 
-  print(a > b)
+  assert(not (a > b))
 end
---> =false
 
 -- --------------------------------------------------------------------------
 -- [Test 12] EQ
@@ -140,9 +142,8 @@ end
 do
   local a, b = 1, 1
 
-  print(a == b)
+  assert(a == b)
 end
---> =true
 
 -- --------------------------------------------------------------------------
 -- [Test 13] TESTSET (and)
@@ -151,9 +152,8 @@ do
   local a = true
   local b = "hello"
 
-  print(a and b)
+  assert((a and b) == "hello")
 end
---> =hello
 
 -- --------------------------------------------------------------------------
 -- [Test 14] TESTSET (or)
@@ -162,24 +162,23 @@ do
   local a = false
   local b = "hello"
 
-  print(a or b)
+  assert((a or b) == "hello")
 end
---> =hello
 
 -- --------------------------------------------------------------------------
 -- [Test 15] TEST (false)
--- Verifies: output matches expected value via print()
+-- Verifies: if-branch is skipped when condition is false
 do
   local a = false
   local b = "hello"
+  local result = "goodbye"
 
   if a then
-      return b
+      result = b
   end
 
-  print("goodbye")
+  assert(result == "goodbye")
 end
---> =goodbye
 
 -- --------------------------------------------------------------------------
 -- [Test 16] FORPREP, FORLOOP (int)
@@ -191,9 +190,8 @@ do
       total = total + i
   end
 
-  print(total)
+  assert(total == 55)
 end
---> =55
 
 -- --------------------------------------------------------------------------
 -- [Test 17] FORPREP, FORLOOP (float)
@@ -205,9 +203,8 @@ do
       total = total + i
   end
 
-  print(total)
+  assert(total == 60.5)
 end
---> =60.5
 
 -- --------------------------------------------------------------------------
 -- [Test 18] SETTABLE, GETTABLE
@@ -219,10 +216,9 @@ do
   t[1] = "hello"
   t["two"] = "world"
 
-  print(t)
-  print("PASS")
+  assert(t[1] == "hello")
+  assert(t["two"] == "world")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 19] SETUPVAL, GETUPVAL
@@ -236,9 +232,8 @@ do
       return up;
   end
 
-  print(f())
+  assert(f() == "world")
 end
---> =world
 
 -- --------------------------------------------------------------------------
 -- [Test 20] SETTABUP, GETTABUP
@@ -250,10 +245,9 @@ do
   t[1] = "hello"
   t["two"] = "world"
 
-  print(t)
-  print("PASS")
+  assert(t[1] == "hello")
+  assert(t["two"] == "world")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 21] SELF
@@ -266,9 +260,8 @@ do
       return self.value
   end
 
-  print(t:get())
+  assert(t:get() == "hello")
 end
---> =hello
 
 -- --------------------------------------------------------------------------
 -- [Test 22] SETLIST
@@ -277,10 +270,9 @@ end
 do
   local t = {1, 2, 3, 4, 5, 6, 7, 8, 9}
 
-  print(t)
-  print("PASS")
+  assert(#t == 9)
+  assert(t[1] == 1 and t[9] == 9)
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 23] Variable SETLIST
@@ -293,10 +285,9 @@ do
 
   local t = {1, 2, 3, 4, 5, a()}
 
-  print(t)
-  print("PASS")
+  assert(#t == 9)
+  assert(t[6] == 6 and t[9] == 9)
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 24] Long SETLIST
@@ -305,10 +296,8 @@ end
 do
   local t = {1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5}
 
-  print(t)
-  print("PASS")
+  assert(#t == 75)
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 25] TFORCALL, TFORLOOP
@@ -332,9 +321,8 @@ do
       r = r + v
   end
 
-  print(r)
+  assert(r == 6)
 end
---> =6
 
 -- --------------------------------------------------------------------------
 -- [Test 26] LEN
@@ -344,14 +332,14 @@ do
   local t2 = {1, 2, 3}
   local s = "hello"
 
-  print(#t, #t2, #s)
+  assert(#t == 0)
+  assert(#t2 == 3)
+  assert(#s == 5)
 end
---> =0	3	5
 
 -- --------------------------------------------------------------------------
 -- [Test 27] CONCAT
 -- Verifies: output matches expected value via print()
 do
-  print("hello " .. 2 .. " you")
+  assert("hello " .. 2 .. " you" == "hello 2 you")
 end
---> =hello 2 you

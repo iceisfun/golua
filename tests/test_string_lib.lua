@@ -13,83 +13,86 @@
 -- Verifies: output matches expected value via print()
 do
   local a = "world"
-  print(string.len("hello"), a:len())
+  assert(string.len("hello") == 5)
+  assert(a:len() == 5)
 end
---> =5	5
 
 -- --------------------------------------------------------------------------
 -- [Test 2] string.char
 -- Verifies: output matches expected value via print()
 do
-  print(string.char(104, 101, 108, 108, 111))
+  assert(string.char(104, 101, 108, 108, 111) == "hello")
 end
---> =hello
 
 -- --------------------------------------------------------------------------
 -- [Test 3] string.upper, string.lower
 -- Verifies: output matches expected value via print()
 do
-  print(string.upper("hello"), string.lower("HELLO"))
+  assert(string.upper("hello") == "HELLO")
+  assert(string.lower("HELLO") == "hello")
 end
---> =HELLO	hello
 
 -- --------------------------------------------------------------------------
 -- [Test 4] string.rep
 -- Verifies: output matches expected value via print()
 do
-  print(string.rep("hello", 3, ", "))
+  assert(string.rep("hello", 3, ", ") == "hello, hello, hello")
 end
---> =hello, hello, hello
 
 -- --------------------------------------------------------------------------
 -- [Test 5] string.reverse
 -- Verifies: output matches expected value via print()
 do
-  print(string.reverse("olleh"))
+  assert(string.reverse("olleh") == "hello")
 end
---> =hello
 
 -- --------------------------------------------------------------------------
 -- [Test 6] string.byte
 -- Verifies: output matches expected value via print()
 do
-  print(string.byte("hello", 2, 4))
+  local b1, b2, b3 = string.byte("hello", 2, 4)
+  assert(b1 == 101 and b2 == 108 and b3 == 108)
 end
---> =101	108	108
 
 -- --------------------------------------------------------------------------
 -- [Test 7] string.format
 -- Verifies: output matches expected value via print()
 do
-  print(string.format("%%%d %010d", 10, 23))
+  assert(string.format("%%%d %010d", 10, 23) == "%10 0000000023")
 end
---> =%10 0000000023
 
 -- --------------------------------------------------------------------------
 -- [Test 8] string.format
 -- Verifies: output matches expected value via print()
 do
-  print(string.format("%07X", 0xFFFFFFF))
+  assert(string.format("%07X", 0xFFFFFFF) == "FFFFFFF")
 end
---> =FFFFFFF
 
 -- --------------------------------------------------------------------------
 -- [Test 9] string.format
 -- Verifies: code executes without runtime error
 -- NOTE: Output varies or cannot be predicted; verify manually
 do
-  print(string.format("%q", 'a string with "quotes" and \\n new line'))
-  print("PASS")
+  local q = string.format("%q", 'a string with "quotes" and \\n new line')
+  assert(type(q) == "string")
 end
---> =PASS
 
 -- --------------------------------------------------------------------------
 -- [Test 10] string.sub
 -- Verifies: output matches expected value via print()
 do
-  print(string.sub("123456789",2,4), string.sub("123456789",7), string.sub("123456789",7,6), string.sub("123456789",7,7), string.sub("123456789",0,0), string.sub("123456789",-10,10), string.sub("123456789",1,9), string.sub("123456789",-10,-20), string.sub("123456789",-1), string.sub("123456789",-4), string.sub("123456789",-6, -4))
+  assert(string.sub("123456789",2,4) == "234")
+  assert(string.sub("123456789",7) == "789")
+  assert(string.sub("123456789",7,6) == "")
+  assert(string.sub("123456789",7,7) == "7")
+  assert(string.sub("123456789",0,0) == "")
+  assert(string.sub("123456789",-10,10) == "123456789")
+  assert(string.sub("123456789",1,9) == "123456789")
+  assert(string.sub("123456789",-10,-20) == "")
+  assert(string.sub("123456789",-1) == "9")
+  assert(string.sub("123456789",-4) == "6789")
+  assert(string.sub("123456789",-6, -4) == "456")
 end
---> =234	789		7		123456789	123456789		9	6789	456
 
 -- --------------------------------------------------------------------------
 -- [Test 11] string.dump
@@ -104,9 +107,8 @@ do
   local dumped = string.dump(todump)
   assert(type(dumped) == "string")
   -- Can't load binary chunks in GoLua, verify function directly
-  print(todump())
+  assert(todump() == "hello1212.5")
 end
---> =hello1212.5
 
 -- --------------------------------------------------------------------------
 -- [Test 12] string.pack/unpack/packsize
@@ -115,41 +117,41 @@ do
   local s1, n, s2 = "hello", 2, "you"
   local packed = string.pack("c5jc3", s1, n, s2)
   local us1, un, us2 = string.unpack("c5jc3", packed)
-  print(string.packsize("c5jc3"), s1 == us1 and n == un and s2 == us2)
+  assert(string.packsize("c5jc3") == 16)
+  assert(s1 == us1 and n == un and s2 == us2)
 end
---> =12	true
 
 -- --------------------------------------------------------------------------
 -- [Test 13] string.find without pattern
 -- Verifies: output matches expected value via print()
 do
-  print(string.find("hello to you", " to "))
+  local s, e = string.find("hello to you", " to ")
+  assert(s == 6 and e == 9)
 end
---> =6	9
 
 -- --------------------------------------------------------------------------
 -- [Test 14] string.find with special pattern (issue #185)
 -- Verifies: output matches expected value via print()
 do
-  print(string.find("-", "-"))
+  local s, e = string.find("-", "-")
+  assert(s == 1 and e == 1)
 end
---> =1	1
 
 -- --------------------------------------------------------------------------
 -- [Test 15] string.match
 -- Verifies: output matches expected value via print()
 do
-  print(string.match("foo: 123 bar: 456", "(%a+):%s*(%d+)"))
+  local m1, m2 = string.match("foo: 123 bar: 456", "(%a+):%s*(%d+)")
+  assert(m1 == "foo" and m2 == "123")
 end
---> =foo	123
 
 -- --------------------------------------------------------------------------
 -- [Test 16] string.find
 -- Verifies: output matches expected value via print()
 do
-  print(string.find("foo: 123 bar: 456", "(%a+):%s*(%d+)"))
+  local s, e, m1, m2 = string.find("foo: 123 bar: 456", "(%a+):%s*(%d+)")
+  assert(s == 1 and e == 8 and m1 == "foo" and m2 == "123")
 end
---> =1	8	foo	123
 
 -- --------------------------------------------------------------------------
 -- [Test 17] string.gmatch
@@ -162,33 +164,33 @@ do
       table.insert(t, w)
   end
 
-  print(table.unpack(t))
+  assert(#t == 4)
+  assert(t[1] == "hello" and t[2] == "world" and t[3] == "from" and t[4] == "Lua")
 end
---> =hello	world	from	Lua
 
 -- --------------------------------------------------------------------------
 -- [Test 18] string.gsub
 -- Verifies: output matches expected value via print()
 do
-  print(string.gsub("hello world", "(%w+)", "%1 %1"))
+  local r, n = string.gsub("hello world", "(%w+)", "%1 %1")
+  assert(r == "hello hello world world" and n == 2)
 end
---> =hello hello world world	2
 
 -- --------------------------------------------------------------------------
 -- [Test 19] string.gsub (number)
 -- Verifies: output matches expected value via print()
 do
-  print(string.gsub("hello world", "%w+", "%0 %0", 1))
+  local r, n = string.gsub("hello world", "%w+", "%0 %0", 1)
+  assert(r == "hello hello world" and n == 1)
 end
---> =hello hello world	1
 
 -- --------------------------------------------------------------------------
 -- [Test 20] string.gsub (pattern)
 -- Verifies: output matches expected value via print()
 do
-  print(string.gsub("hello world from Lua", "(%w+)%s*(%w+)", "%2 %1"))
+  local r, n = string.gsub("hello world from Lua", "(%w+)%s*(%w+)", "%2 %1")
+  assert(r == "world hello Lua from" and n == 2)
 end
---> =world hello Lua from	2
 
 -- --------------------------------------------------------------------------
 -- [Test 21] string.gsub (function)
@@ -199,7 +201,6 @@ do
       return load(s)()
   end)
   assert(result == "4+5 = 9")
-  print("PASS")
 end
 
 -- --------------------------------------------------------------------------
@@ -207,6 +208,6 @@ end
 -- Verifies: output matches expected value via print()
 do
   local t = {name="lua", version="5.3"}
-  print(string.gsub("$name-$version.tar.gz", "%$(%w+)", t))
+  local r, n = string.gsub("$name-$version.tar.gz", "%$(%w+)", t)
+  assert(r == "lua-5.3.tar.gz" and n == 2)
 end
---> =lua-5.3.tar.gz	2
