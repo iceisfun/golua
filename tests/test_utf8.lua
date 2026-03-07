@@ -6,49 +6,38 @@
 -- ==========================================================================
 -- Extracted from the fengari Lua 5.3 implementation test suite.
 -- Each test is wrapped in a do...end block for scope isolation.
--- Doctest directives (--> =expected) verify print() output.
--- Self-verifying tests use assert() and print "PASS" on success.
 
 -- [Test 1] utf8.offset
--- Verifies: output matches expected value via print()
 do
-  print(utf8.offset("( ͡° ͜ʖ ͡° )", 5))
+  assert(utf8.offset("( ͡° ͜ʖ ͡° )", 5) == 7)
 end
---> =7
 
 -- --------------------------------------------------------------------------
--- [Test 2] utf8.codepoint
--- Verifies: output matches expected value via print()
+-- [Test 2] utf8.codepoint (multi-return)
 do
-  print(utf8.codepoint("( ͡° ͜ʖ ͡° )", 5, 8))
+  local a, b, c = utf8.codepoint("( ͡° ͜ʖ ͡° )", 5, 8)
+  assert(a == 176 and b == 32 and c == 860)
 end
---> =176	32	860
 
 -- --------------------------------------------------------------------------
 -- [Test 3] utf8.char
--- Verifies: output matches expected value via print()
 do
-  print(utf8.char(40, 32, 865, 176, 32, 860, 662, 32, 865, 176, 32, 41))
+  assert(utf8.char(40, 32, 865, 176, 32, 860, 662, 32, 865, 176, 32, 41) == "( ͡° ͜ʖ ͡° )")
 end
---> =( ͡° ͜ʖ ͡° )
 
 -- --------------------------------------------------------------------------
 -- [Test 4] utf8.len
--- Verifies: output matches expected value via print()
 do
-  print(utf8.len("( ͡° ͜ʖ ͡° )"))
+  assert(utf8.len("( ͡° ͜ʖ ͡° )") == 12)
 end
---> =12
 
 -- --------------------------------------------------------------------------
 -- [Test 5] utf8.codes
--- Verifies: output matches expected value via print()
 do
   local s = "( ͡° ͜ʖ ͡° )"
-  local results = ""
+  local results = {}
   for p, c in utf8.codes(s) do
-      results = results .. "[" .. p .. "," .. c .. "] "
+      results[#results + 1] = "[" .. p .. "," .. c .. "]"
   end
-  print(results)
+  assert(table.concat(results, " ") == "[1,40] [2,32] [3,865] [5,176] [7,32] [8,860] [10,662] [12,32] [13,865] [15,176] [17,32] [18,41]")
 end
---> =[1,40] [2,32] [3,865] [5,176] [7,32] [8,860] [10,662] [12,32] [13,865] [15,176] [17,32] [18,41] 

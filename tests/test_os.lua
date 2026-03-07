@@ -23,11 +23,11 @@ end
 -- Verifies: code executes without runtime error
 -- NOTE: Output varies or cannot be predicted; verify manually
 do
-  print(os.time({
+  assert(math.type(os.time({
       day = 8,
       month = 2,
       year = 2015
-  }))
+  })) == "integer")
   print("PASS")
 end
 --> =PASS
@@ -46,15 +46,13 @@ end
 
 -- --------------------------------------------------------------------------
 -- [Test 4] os.date
--- Verifies: output matches expected value via print()
 do
-  print(os.date('%Y-%m-%d', os.time({
+  assert(os.date('%Y-%m-%d', os.time({
       day = 8,
       month = 2,
       year = 2015
-  })))
+  })) == "2015-02-08")
 end
---> =2015-02-08
 
 -- --------------------------------------------------------------------------
 -- [Test 5] os.date normalisation
@@ -102,7 +100,7 @@ end
 -- Verifies: code executes without runtime error
 -- NOTE: Output varies or cannot be predicted; verify manually
 do
-  print(os.getenv('PATH'))
+  assert(type(os.getenv('PATH')) == "string")
   print("PASS")
 end
 --> =PASS
