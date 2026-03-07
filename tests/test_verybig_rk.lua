@@ -3,7 +3,6 @@
 -- What: Tests that the compiler and VM correctly handle functions with more than 256 constants.
 
 do
-print "testing RK"
 
 local function foo ()
   local dummy = {

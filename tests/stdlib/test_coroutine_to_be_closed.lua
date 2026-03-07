@@ -8,8 +8,8 @@ do
   end
 
   -- ok to close a dead coroutine
-  local co = coroutine.create(print)
-  assert(coroutine.resume(co, "testing 'coroutine.close'"))
+  local co = coroutine.create(function() end)
+  assert(coroutine.resume(co))
   assert(coroutine.status(co) == "dead")
   local st, msg = coroutine.close(co)
   assert(st and msg == nil)

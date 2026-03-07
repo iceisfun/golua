@@ -27,6 +27,7 @@ local b,c = next(_G)
 assert(a[1] == b and a[2] == c and a.n == 2)
 a = vararg(call(call, {c12, {1,2}}))
 assert(a.n == 2 and a[1] == 55 and a[2] == 2)
-a = call(print, {'+'})
+-- call() with a function that returns nil
+a = call(function() end, {'+'})
 assert(a == nil)
 end
