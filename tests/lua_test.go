@@ -48,6 +48,9 @@ func TestLuaFiles(t *testing.T) {
 
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			if strings.HasPrefix(file, "test_heavy_") && !*full {
+				t.Skip("heavy test requires -full flag")
+			}
 			runLuaTest(t, file)
 		})
 	}
