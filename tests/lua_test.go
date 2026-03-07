@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,10 @@ import (
 	"github.com/iceisfun/golua/stdlib"
 	"github.com/iceisfun/golua/vm"
 )
+
+// full enables resource-intensive tests (test_heavy_*) that may use large
+// amounts of memory and CPU. Pass -full to include them.
+var full = flag.Bool("full", false, "run resource-intensive heavy tests")
 
 // luaTestTimeout is the maximum time a single Lua test file may run before
 // being terminated. Prevents deadlocks from stalling the entire test suite.
@@ -95,6 +100,9 @@ func runLuaDir(t *testing.T, dir string) {
 
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			if strings.HasPrefix(filepath.Base(file), "test_heavy_") && !*full {
+				t.Skip("heavy test requires -full flag")
+			}
 			if needsFullIo(file) {
 				runLuaTestFullIo(t, file)
 			} else {

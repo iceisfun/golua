@@ -11,7 +11,7 @@ do
       if count == 0 then
         return prefix
       else
-        if count % (0x100000) == 0 then
+        if count % (0x100000) == 0 and io and io.stderr then
           io.stderr:write("(", count // 2^20, " M)")
         end
         return f(count)

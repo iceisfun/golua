@@ -7,7 +7,7 @@ do
   local a = {}
   local st, msg = pcall(function ()
     for i = 1, math.huge do
-      if i % (0x100000) == 0 then
+      if i % (0x100000) == 0 and io and io.stderr then
         io.stderr:write("(", i // 2^20, " M)")
       end
       a[i] = i

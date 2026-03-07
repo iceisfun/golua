@@ -10,7 +10,7 @@ do
     local count = 0
     local function f()
       count = count + p
-      if count % (0x80*p) == 0 then
+      if count % (0x80*p) == 0 and io and io.stderr then
         io.stderr:write("(", count // 2^20, " M)")
       end
       return s
