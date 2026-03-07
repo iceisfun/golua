@@ -170,7 +170,17 @@ func (p *parser) nearToken() string {
 	case token.EOS:
 		return "<eof>"
 	default:
-		return "'" + p.tok.Literal + "'"
+		lit := p.tok.Literal
+		// Escape non-printable/non-ASCII chars using Lua 5.4's <\NNN> format.
+		// The lexer may produce multi-byte UTF-8 for raw bytes (e.g., U+0080
+		// is encoded as 0xc2 0x80 in Go strings). We check the first rune.
+		if len(lit) > 0 {
+			r := []rune(lit)
+			if len(r) == 1 && (r[0] < 0x20 || r[0] >= 0x7f) {
+				return fmt.Sprintf("'<\\%d>'", r[0])
+			}
+		}
+		return "'" + lit + "'"
 	}
 }
 
