@@ -289,8 +289,15 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 			return
 		}
 
-		// Pivot is a[p]
+		// Pivot is a[p]; validate invariant: !(pivot < a[lo])
 		pivot := a[p]
+		if sortComp(v, pivot, a[lo], comp, err) {
+			*err = fmt.Errorf("invalid order function for sorting")
+			return
+		}
+		if *err != nil {
+			return
+		}
 		a[p], a[up-1] = a[up-1], a[p]
 
 		i := lo
@@ -324,6 +331,14 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 				break
 			}
 			a[i], a[j] = a[j], a[i]
+		}
+		// Validate invariant: !(a[up] < pivot)
+		if sortComp(v, a[up], pivot, comp, err) {
+			*err = fmt.Errorf("invalid order function for sorting")
+			return
+		}
+		if *err != nil {
+			return
 		}
 		a[up-1], a[i] = a[i], a[up-1]
 

@@ -1227,7 +1227,13 @@ func (vm *VM) execute() ([]Value, error) {
 						limitI = math.MinInt64
 						limitIsInt = true
 					} else if math.IsNaN(limitF) {
-						return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", limit.Type())
+						// NaN limit: force float mode and skip loop body.
+						// No comparison with NaN is true, so the loop runs 0 iterations.
+						vm.stack[frame.base+a] = NewFloat(float64(initI))
+						vm.stack[frame.base+a+1] = NewFloat(limitF)
+						vm.stack[frame.base+a+2] = NewFloat(float64(stepI))
+						frame.pc += bx + 1
+						break
 					} else if stepI > 0 {
 						fl := math.Floor(limitF)
 						if fl < float64(math.MinInt64) {
@@ -1294,7 +1300,10 @@ func (vm *VM) execute() ([]Value, error) {
 				vm.stack[frame.base+a] = NewFloat(initF)
 				vm.stack[frame.base+a+1] = NewFloat(limitF)
 				vm.stack[frame.base+a+2] = NewFloat(stepF)
-				if stepF >= 0 {
+				if math.IsNaN(limitF) || math.IsNaN(initF) || math.IsNaN(stepF) {
+					// NaN in any operand: skip loop body (no comparison with NaN is true)
+					frame.pc += bx + 1
+				} else if stepF >= 0 {
 					if initF > limitF {
 						frame.pc += bx + 1
 					} else {

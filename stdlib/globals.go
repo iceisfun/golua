@@ -537,14 +537,13 @@ var nextFunc = vm.NewNativeFunc(luaNext)
 // ipairsIter is the shared iterator function returned by ipairs().
 // A single Value is reused so that ipairs{} == ipairs{} holds.
 var ipairsIter = vm.NewNativeFunc(func(v *vm.VM) int {
-	t := v.Get(1).AsTable()
-	if t == nil {
-		callerArgError(v, 1, "ipairs", fmt.Sprintf("table expected, got %s", v.Get(1).Type()))
-	}
+	tval := v.Get(1)
 	i := v.Get(2)
 	idx, _ := i.ToInt()
 	idx++
-	val, err := v.TableGetInt(t, int(idx))
+	// Use IndexValue to support any indexable type and produce natural
+	// "attempt to index" errors for non-indexable types (like numbers).
+	val, err := v.IndexValue(tval, vm.NewInt(idx))
 	if err != nil {
 		panic(err)
 	}
@@ -580,7 +579,10 @@ func luaNext(v *vm.VM) int {
 	key := v.Get(2)
 	nextK, nextV, err := tbl.Next(key)
 	if err != nil {
-		panic(err.Error())
+		// Use LuaError to avoid AddCallerLocation adding a file:line prefix.
+		// In Lua 5.4, luaG_runerror from C code doesn't add the prefix
+		// because the current frame is a C function, not a Lua frame.
+		panic(&vm.LuaError{Value: vm.NewString(err.Error())})
 	}
 	if nextK.IsNil() {
 		v.Set(0, vm.Nil)

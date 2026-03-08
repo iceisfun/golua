@@ -61,7 +61,7 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 	for _, o := range opts {
 		o(&cfg)
 	}
-	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string)}
+	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: cfg.endLine}
 	p := c.compileChunk(source, block)
 	if c.err != nil {
 		return nil, c.err
@@ -193,6 +193,7 @@ type compiler struct {
 	err        error
 	limits     CompilerLimits
 	stringPool map[string]string // intern pool for string constants
+	endLine    int               // last line of the source (for compile error messages)
 }
 
 // internString returns a string that shares the same backing memory as
@@ -238,6 +239,27 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 	}
 }
 
+// errorAtEOF records a compilation error using the EOF line number for the
+// file:line prefix, matching Lua 5.4's behavior for errors detected after
+// parsing (e.g., goto scope violations, unresolved labels).
+func (c *compiler) errorAtEOF(format string, args ...interface{}) {
+	if c.err == nil {
+		msg := fmt.Sprintf(format, args...)
+		source := ""
+		if c.fs != nil {
+			source = c.fs.proto.Source
+		}
+		line := c.endLine
+		if source != "" && line > 0 {
+			c.err = fmt.Errorf("%s:%d: %s", shortSrc(source), line, msg)
+		} else if source != "" {
+			c.err = fmt.Errorf("%s: %s", shortSrc(source), msg)
+		} else {
+			c.err = fmt.Errorf("%s", msg)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Function state helpers
 // ---------------------------------------------------------------------------
@@ -265,7 +287,7 @@ func (c *compiler) closeFuncState() *Proto {
 
 	// Check for unresolved gotos (label not visible)
 	for _, pg := range fs.pendGotos {
-		c.error(pg.line, "no visible label '%s' for <goto> at line %d", pg.name, pg.line)
+		c.errorAtEOF("no visible label '%s' for <goto> at line %d", pg.name, pg.line)
 	}
 
 	// Close all remaining locals
