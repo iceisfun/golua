@@ -725,6 +725,22 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 		return "(C temporary)", true
 	}
 
+	// Negative index: access varargs
+	if index < 0 {
+		if !frame.isVararg || frame.numVararg == 0 {
+			return "", false
+		}
+		varIdx := -index - 1 // 0-based vararg index
+		if varIdx >= frame.numVararg {
+			return "", false
+		}
+		stackIdx := frame.varargPos + varIdx
+		if stackIdx >= 0 && stackIdx < len(vm.stack) {
+			vm.stack[stackIdx] = val
+		}
+		return "(vararg)", true
+	}
+
 	proto := frame.closure.Proto
 	pc := frame.pc - 1
 	if pc < 0 {
