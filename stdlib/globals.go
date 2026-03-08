@@ -730,6 +730,21 @@ func luaGetmetatable(v *vm.VM) int {
 		}
 		return 1
 	}
+	// Check userdata per-instance metatable
+	if ud := val.AsUserdata(); ud != nil {
+		if mt := ud.Metatable(); mt != nil {
+			// Check for __metatable field - if present, return that instead
+			protected := mt.Get(vm.NewString("__metatable"))
+			if !protected.IsNil() {
+				v.Set(0, protected)
+				return 1
+			}
+			v.Set(0, vm.NewTable(mt))
+			return 1
+		}
+		v.Set(0, vm.Nil)
+		return 1
+	}
 	// Check type metatables for non-table types (and threads)
 	if mt := v.GetTypeMeta(val); mt != nil {
 		// Check for __metatable field

@@ -654,6 +654,15 @@ func luaDebugGetMetatable(v *vm.VM) int {
 		}
 		return 1
 	}
+	// Check userdata per-instance metatable
+	if ud := val.AsUserdata(); ud != nil {
+		if mt := ud.Metatable(); mt != nil {
+			v.Set(0, vm.NewTable(mt))
+			return 1
+		}
+		v.Set(0, vm.Nil)
+		return 1
+	}
 	// Non-table: return type metatable
 	if mt := v.GetTypeMeta(val); mt != nil {
 		v.Set(0, vm.NewTable(mt))
@@ -680,6 +689,8 @@ func luaDebugSetMetatable(v *vm.VM) int {
 
 	if val.IsTable() && !val.AsTable().IsThread() {
 		val.AsTable().SetMetatable(mtTable)
+	} else if ud := val.AsUserdata(); ud != nil {
+		ud.SetMetatable(mtTable)
 	} else {
 		v.SetTypeMeta(val, mtTable)
 	}
