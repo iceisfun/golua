@@ -31,6 +31,7 @@ type Table struct {
 	intHash   map[int64]Value  // associative part for integer keys outside array range (avoids any boxing)
 	keys      []any            // insertion-ordered hash keys (may contain dead keys)
 	deadKeys  int              // count of keys in t.keys not in t.hash/strHash/intHash
+	iterBound int              // upper bound on keys slice for next() iteration (0 = no limit)
 	metatable LuaTable         // per-table metatable for operator/event overrides
 	isThread  bool             // true if this table represents a coroutine thread
 	vmRef     *VM              // reference to coroutine VM (only set for thread tables)
@@ -116,7 +117,7 @@ func (t *Table) setIntHash(k int64, value Value) {
 			}
 		}
 		if !revived {
-			t.keys = append(t.keys, k)
+			t.reuseOrAppendKey(k)
 		}
 	}
 	ih[k] = value
@@ -170,7 +171,7 @@ func (t *Table) setHash(k any, value Value) {
 				}
 			}
 			if !revived {
-				t.keys = append(t.keys, k)
+				t.reuseOrAppendKey(k)
 			}
 		}
 		h[k] = value
@@ -202,10 +203,27 @@ func (t *Table) setStrHash(s string, value Value) {
 			}
 		}
 		if !revived {
-			t.keys = append(t.keys, s)
+			t.reuseOrAppendKey(s)
 		}
 	}
 	sh[s] = value
+}
+
+// reuseOrAppendKey inserts a new key into the ordered keys slice. If there is
+// a dead (tombstone) slot it is overwritten in-place, which bounds the slice
+// length and prevents next()-based iteration from looping infinitely when
+// new keys are added during traversal. Only appends if no dead slot exists.
+func (t *Table) reuseOrAppendKey(k any) {
+	if t.deadKeys > 0 {
+		for i, hk := range t.keys {
+			if _, alive := t.getKeyValue(hk); !alive {
+				t.keys[i] = k
+				t.deadKeys--
+				return
+			}
+		}
+	}
+	t.keys = append(t.keys, k)
 }
 
 // removeKey removes a key from the ordered keys slice.
@@ -488,6 +506,9 @@ func (t *Table) SetMetatable(mt LuaTable) {
 // Array entries with nil values (holes) are skipped, matching Lua semantics.
 func (t *Table) Next(key Value) (Value, Value, error) {
 	if key.IsNil() {
+		// Start iteration: snapshot the hash key count so that keys added
+		// during traversal don't extend iteration indefinitely.
+		t.iterBound = len(t.keys)
 		// Start iteration: find first non-nil array entry
 		if kv, vv, ok := t.nextArrayEntry(0); ok {
 			return kv, vv, nil
@@ -496,6 +517,7 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 		if kv, vv, ok := t.firstLiveHashEntry(); ok {
 			return kv, vv, nil
 		}
+		t.iterBound = 0
 		return Nil, Nil, nil
 	}
 
@@ -513,6 +535,7 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 			if kv, vv, ok := t.firstLiveHashEntry(); ok {
 				return kv, vv, nil
 			}
+			t.iterBound = 0
 			return Nil, Nil, nil
 		}
 	}
@@ -531,16 +554,25 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 
 	// In hash part — find current key in ordered keys, return the next live one.
 	// The key may be dead (deleted during iteration) but still present in t.keys.
+	// Use iterBound to cap the search so that keys added during iteration
+	// cannot extend traversal indefinitely (matches Lua 5.4 fixed-size hash
+	// behavior where new keys beyond the table size are not visited).
 	k := hashKey(key)
-	for i, hk := range t.keys {
+	bound := len(t.keys)
+	if t.iterBound > 0 && t.iterBound < bound {
+		bound = t.iterBound
+	}
+	for i := 0; i < bound; i++ {
+		hk := t.keys[i]
 		if hk == k {
 			// Found key (live or dead) — advance to next live key
-			for j := i + 1; j < len(t.keys); j++ {
+			for j := i + 1; j < bound; j++ {
 				nextK := t.keys[j]
 				if v, alive := t.getKeyValue(nextK); alive {
 					return keyToValue(nextK), v, nil
 				}
 			}
+			t.iterBound = 0
 			return Nil, Nil, nil
 		}
 	}
@@ -569,9 +601,15 @@ func (t *Table) nextArrayEntry(start int) (Value, Value, bool) {
 }
 
 // firstLiveHashEntry returns the first live (non-dead) hash entry, skipping
-// tombstones left by deletions during iteration.
+// tombstones left by deletions during iteration. Respects iterBound so that
+// keys added during iteration are not visited.
 func (t *Table) firstLiveHashEntry() (Value, Value, bool) {
-	for _, k := range t.keys {
+	bound := len(t.keys)
+	if t.iterBound > 0 && t.iterBound < bound {
+		bound = t.iterBound
+	}
+	for i := 0; i < bound; i++ {
+		k := t.keys[i]
 		if v, alive := t.getKeyValue(k); alive {
 			return keyToValue(k), v, true
 		}

@@ -262,8 +262,27 @@ func (l *Lexer) Next() (token.Token, error) {
 			return l.scanIdentifier(pos)
 
 		default:
-			// Single-character token
+			// Single-character token. For multi-byte UTF-8 characters,
+			// consume only the first byte (matching Lua 5.4's byte-by-byte
+			// behaviour) so that error messages report the raw first byte
+			// value rather than the decoded Unicode codepoint.
 			ch := l.current
+			if !l.rawByte && utf8.RuneLen(ch) > 1 {
+				// Rewind: re-position to just after the first byte.
+				firstByte := l.input[l.pos-utf8.RuneLen(ch)]
+				l.pos = l.pos - utf8.RuneLen(ch) + 1
+				// Re-read next character so lexer state is consistent.
+				ch = rune(firstByte)
+				l.current = eof // will be set by next readChar
+				l.rawByte = false
+				// Advance to set l.current for the next token.
+				l.readChar()
+				return token.Token{
+					Type:    token.Type(firstByte),
+					Literal: string(rune(firstByte)),
+					Pos:     pos,
+				}, nil
+			}
 			l.readChar()
 			return token.Token{
 				Type:    token.Type(ch),
