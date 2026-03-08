@@ -127,6 +127,22 @@ func (p *FullIoProvider) Remove(name string) error {
 	return os.Remove(path)
 }
 
+// TmpFile creates and opens a temporary file for read/write.
+// The file is automatically removed when closed.
+func (p *FullIoProvider) TmpFile() (LuaFile, error) {
+	f, err := os.CreateTemp("", "lua_tmpfile_")
+	if err != nil {
+		return nil, err
+	}
+	// Remove the file immediately so it's cleaned up when closed
+	os.Remove(f.Name())
+	return &fullFile{
+		file:   f,
+		reader: bufio.NewReader(f),
+		writer: bufio.NewWriter(f),
+	}, nil
+}
+
 // Rename renames (moves) a file within the provider's root directory.
 func (p *FullIoProvider) Rename(oldname, newname string) error {
 	oldpath, err := p.resolvePath(oldname)
@@ -347,7 +363,33 @@ func (f *fullFile) readLine(keepNewline bool) (string, error) {
 }
 
 // readNumber reads and parses a number from the stream, skipping leading whitespace.
+// On failure, the file position is restored to its original location.
 func (f *fullFile) readNumber() (string, error) {
+	// Save position so we can restore on failure.
+	// Flush writer first if any, then get the underlying file position
+	// accounting for unread buffered data.
+	if f.writer != nil {
+		f.writer.Flush()
+	}
+	buffered := f.reader.Buffered()
+	rawPos, err := f.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return "", err
+	}
+	startPos := rawPos - int64(buffered)
+
+	result, parseErr := f.tryReadNumber()
+	if parseErr != nil {
+		// Restore file position
+		f.file.Seek(startPos, io.SeekStart)
+		f.reader.Reset(f.file)
+		return "", parseErr
+	}
+	return result, nil
+}
+
+// tryReadNumber attempts to read a number from the stream.
+func (f *fullFile) tryReadNumber() (string, error) {
 	for {
 		b, err := f.reader.ReadByte()
 		if err != nil {

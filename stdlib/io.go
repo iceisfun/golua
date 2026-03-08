@@ -3,9 +3,9 @@ package stdlib
 import (
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/iceisfun/golua/vm"
 )
@@ -88,29 +88,35 @@ func openIo(v *vm.VM) {
 	ioTable.SetString("type", vm.NewNativeFunc(ioType))
 	ioTable.SetString("read", vm.NewNativeFunc(makeIoRead(provider)))
 	ioTable.SetString("write", vm.NewNativeFunc(makeIoWrite(provider)))
+	ioTable.SetString("tmpfile", vm.NewNativeFunc(makeIoTmpfile(provider)))
 
-	// Standard file handles
+	// Standard file handles - create once and share between io.stdin/io.stdout/io.stderr
+	// and __input/__output so identity comparisons work (io.input() == io.stdin).
+	var stdinHandle, stdoutHandle, stderrHandle vm.Value
 	if f := provider.Stdin(); f != nil {
-		ioTable.SetString("stdin", makeFileHandle(f))
+		stdinHandle = makeFileHandle(f)
+		ioTable.SetString("stdin", stdinHandle)
 	}
 	if f := provider.Stdout(); f != nil {
-		ioTable.SetString("stdout", makeFileHandle(f))
+		stdoutHandle = makeFileHandle(f)
+		ioTable.SetString("stdout", stdoutHandle)
 	}
 	if f := provider.Stderr(); f != nil {
-		ioTable.SetString("stderr", makeFileHandle(f))
+		stderrHandle = makeFileHandle(f)
+		ioTable.SetString("stderr", stderrHandle)
 	}
 
 	// io.input() / io.output() default input/output streams
 	// We store the current default input/output in the io table itself
-	// as __input and __output keys.
+	// as __input and __output keys. These share identity with io.stdin/io.stdout.
 	ioVal := vm.NewTable(ioTable)
 
-	// Set defaults to stdin/stdout
-	if f := provider.Stdin(); f != nil {
-		ioTable.SetString("__input", makeFileHandle(f))
+	// Set defaults to the same handle objects as stdin/stdout
+	if !stdinHandle.IsNil() {
+		ioTable.SetString("__input", stdinHandle)
 	}
-	if f := provider.Stdout(); f != nil {
-		ioTable.SetString("__output", makeFileHandle(f))
+	if !stdoutHandle.IsNil() {
+		ioTable.SetString("__output", stdoutHandle)
 	}
 
 	ioTable.SetString("input", vm.NewNativeFunc(makeIoInput(v, provider, ioTable)))
@@ -132,18 +138,20 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			mode = v.Get(2).AsString()
 		}
 
+		// Validate mode before calling provider (invalid mode is a hard error)
+		cleanMode := strings.TrimSuffix(mode, "b")
+		switch cleanMode {
+		case "r", "w", "a", "r+", "w+", "a+":
+			// valid
+		default:
+			callerArgError(v, 2, "io.open", "invalid mode")
+		}
+
 		f, err := provider.Open(nameStr, mode)
 		if err != nil {
 			v.Set(0, vm.Nil)
-			// Extract error message and errno
-			errMsg := err.Error()
-			var errno int
-			if pathErr, ok := err.(*syscall.Errno); ok {
-				errno = int(*pathErr)
-			} else {
-				errno = extractErrno(err)
-			}
-			v.Set(1, vm.NewString(fmt.Sprintf("%s: %s", nameStr, errMsg)))
+			msg, errno := formatOpenError(nameStr, err)
+			v.Set(1, vm.NewString(msg))
 			v.Set(2, vm.NewInt(int64(errno)))
 			return 3
 		}
@@ -153,22 +161,42 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 	}
 }
 
-// extractErrno tries to extract an errno from a nested error.
-func extractErrno(err error) int {
-	// Walk the error chain
-	for err != nil {
-		if errno, ok := err.(syscall.Errno); ok {
-			return int(errno)
-		}
-		// Try to unwrap
-		if unwrapper, ok := err.(interface{ Unwrap() error }); ok {
-			err = unwrapper.Unwrap()
-		} else {
-			break
-		}
+// formatOpenError formats an io.open error for Lua.
+// Go's os.OpenFile returns "*os.PathError" with format "open /path: error".
+// Lua expects "/path: Error description" with errno.
+func formatOpenError(name string, err error) (string, int) {
+	return formatPathError(name, err)
+}
+
+// extractLuaFileError extracts a human-readable error description from a Go error,
+// stripping the operation prefix. Returns (errno, description).
+func extractLuaFileError(err error) (int, string) {
+	_, errno := formatPathError("", err)
+	// Get just the error description, capitalized
+	msg := err.Error()
+	// Try to extract the inner error from PathError
+	if pe, ok := err.(*os.PathError); ok {
+		msg = capitalizeError(pe.Err.Error())
+	} else if le, ok := err.(*os.LinkError); ok {
+		msg = capitalizeError(le.Err.Error())
+	} else {
+		msg = capitalizeError(msg)
 	}
-	// Default errno for generic errors
-	return 2 // ENOENT as a reasonable default
+	return errno, msg
+}
+
+// makeIoTmpfile creates the io.tmpfile() function.
+func makeIoTmpfile(provider vm.LuaIoProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		f, err := provider.TmpFile()
+		if err != nil {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(err.Error()))
+			return 2
+		}
+		v.Set(0, makeFileHandle(f))
+		return 1
+	}
 }
 
 // makeIoClose creates the io.close([file]) function.
@@ -206,6 +234,9 @@ func makeIoClose(provider vm.LuaIoProvider) vm.NativeFunc {
 
 // ioType implements io.type(obj).
 func ioType(v *vm.VM) int {
+	if v.ArgCount() < 1 {
+		callerArgError(v, 1, "io.type", "value expected")
+	}
 	val := v.Get(1)
 	ud := val.AsUserdata()
 	if ud == nil {
@@ -251,7 +282,8 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			var err error
 			f, err = provider.Open(name, "r")
 			if err != nil {
-				panic(fmt.Sprintf("cannot open '%s': %s", name, err.Error()))
+				_, errDesc := extractLuaFileError(err)
+				panic(fmt.Sprintf("cannot open file '%s' (%s)", name, errDesc))
 			}
 			toClose = true
 		}
@@ -458,6 +490,12 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 			}
 		} else if arg.IsString() {
 			format := arg.AsString()
+			// Validate format before calling provider
+			cleanFmt := strings.TrimPrefix(format, "*")
+			if len(cleanFmt) == 0 || (cleanFmt[0] != 'a' && cleanFmt[0] != 'l' && cleanFmt[0] != 'L' && cleanFmt[0] != 'n') {
+				// Use results+1 as the argument index (1-based, for the format arg)
+				callerArgError(v, results+1, "read", "invalid format")
+			}
 			data, err := f.Read(format)
 			if err != nil {
 				v.Set(results, vm.Nil)
@@ -465,9 +503,17 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 				// Check if format is "n" or "*n" for number parsing
 				cleanFmt := strings.TrimPrefix(format, "*")
 				if len(cleanFmt) > 0 && cleanFmt[0] == 'n' {
-					// Parse as number
-					if fv, err := strconv.ParseFloat(data, 64); err == nil {
-						v.Set(results, vm.NewFloat(fv))
+					// Parse as number: try integer first, then float
+					if iv, err := strconv.ParseInt(data, 0, 64); err == nil {
+						v.Set(results, vm.NewInt(iv))
+					} else if fv, err := strconv.ParseFloat(data, 64); err == nil {
+						// Check if float has integer value
+						iv := int64(fv)
+						if fv == float64(iv) && !strings.ContainsAny(data, ".eE") {
+							v.Set(results, vm.NewInt(iv))
+						} else {
+							v.Set(results, vm.NewFloat(fv))
+						}
 					} else {
 						v.Set(results, vm.Nil)
 					}
@@ -601,12 +647,20 @@ func fileSeek(v *vm.VM) int {
 		whence = v.Get(2).AsString()
 	}
 
+	// Validate whence before calling provider (invalid whence is a hard error)
+	switch whence {
+	case "set", "cur", "end":
+		// valid
+	default:
+		callerArgError(v, 1, "seek", fmt.Sprintf("invalid option '%s'", whence))
+	}
+
 	var offset int64
 	if !v.Get(3).IsNil() {
 		var ok bool
 		offset, ok = v.Get(3).ToInt()
 		if !ok {
-			callerArgError(v, 2, "io.seek", "number expected")
+			callerArgError(v, 2, "seek", "number expected")
 		}
 	}
 
@@ -642,6 +696,14 @@ func fileSetVBuf(v *vm.VM) int {
 		size = int(sz)
 	}
 
+	// Validate mode before calling provider (invalid mode is a hard error)
+	switch modeStr {
+	case "no", "full", "line":
+		// valid
+	default:
+		callerArgError(v, 1, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
+	}
+
 	err := fh.file.SetVBuf(modeStr, size)
 	if err != nil {
 		v.Set(0, vm.Nil)
@@ -649,7 +711,8 @@ func fileSetVBuf(v *vm.VM) int {
 		return 2
 	}
 
-	v.Set(0, self)
+	// Lua 5.4: setvbuf returns true on success (not the file handle)
+	v.Set(0, vm.True)
 	return 1
 }
 

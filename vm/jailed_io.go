@@ -70,6 +70,11 @@ func (p *JailedIoProvider) Remove(name string) error {
 	return fmt.Errorf("os.remove not available in jailed IO provider")
 }
 
+// TmpFile is not supported in jailed provider.
+func (p *JailedIoProvider) TmpFile() (LuaFile, error) {
+	return nil, fmt.Errorf("io.tmpfile not available in jailed IO provider")
+}
+
 // Rename is not supported in jailed provider.
 func (p *JailedIoProvider) Rename(oldname, newname string) error {
 	return fmt.Errorf("os.rename not available in jailed IO provider")
@@ -192,7 +197,35 @@ func (f *jailedFile) readLine(keepNewline bool) (string, error) {
 }
 
 // readNumber reads and parses a number from the stream, skipping leading whitespace.
+// On failure, the file position is restored if the underlying file supports seeking.
 func (f *jailedFile) readNumber() (string, error) {
+	// Try to save position for restore on failure
+	var startPos int64
+	var canSeek bool
+	if seeker, ok := f.file.(io.Seeker); ok {
+		buffered := f.reader.Buffered()
+		rawPos, err := seeker.Seek(0, io.SeekCurrent)
+		if err == nil {
+			startPos = rawPos - int64(buffered)
+			canSeek = true
+		}
+	}
+
+	result, parseErr := f.tryReadNumber()
+	if parseErr != nil && canSeek {
+		if seeker, ok := f.file.(io.Seeker); ok {
+			seeker.Seek(startPos, io.SeekStart)
+			f.reader.Reset(f.file)
+		}
+	}
+	if parseErr != nil {
+		return "", parseErr
+	}
+	return result, nil
+}
+
+// tryReadNumber attempts to read a number token from the stream.
+func (f *jailedFile) tryReadNumber() (string, error) {
 	// Skip whitespace
 	for {
 		b, err := f.reader.ReadByte()

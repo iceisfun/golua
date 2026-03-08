@@ -42,6 +42,11 @@ type LuaIoProvider interface {
 	// Rename renames (moves) a file.
 	// Returns error if not supported or if the operation fails.
 	Rename(oldname, newname string) error
+
+	// TmpFile creates and opens a temporary file for read/write.
+	// The file is automatically removed when closed.
+	// Returns error if not supported.
+	TmpFile() (LuaFile, error)
 }
 
 // LuaFile represents an open file handle.

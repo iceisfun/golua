@@ -2,10 +2,66 @@ package stdlib
 
 import (
 	"fmt"
+	"os"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/iceisfun/golua/vm"
 )
+
+// formatPathError formats an OS error for Lua, stripping the Go operation prefix.
+// Go returns "remove /path: error" or "rename /old /new: error".
+// Lua expects "/path: Error description" with errno.
+func formatPathError(name string, err error) (string, int) {
+	var errno int
+	var errMsg string
+
+	if pathErr, ok := err.(*os.PathError); ok {
+		if sysErr, ok := pathErr.Err.(syscall.Errno); ok {
+			errno = int(sysErr)
+		} else {
+			errno = extractErrnoFromError(err)
+		}
+		// Capitalize the first letter of the error description
+		errMsg = capitalizeError(pathErr.Err.Error())
+	} else if linkErr, ok := err.(*os.LinkError); ok {
+		if sysErr, ok := linkErr.Err.(syscall.Errno); ok {
+			errno = int(sysErr)
+		} else {
+			errno = extractErrnoFromError(err)
+		}
+		errMsg = capitalizeError(linkErr.Err.Error())
+	} else {
+		errno = extractErrnoFromError(err)
+		errMsg = err.Error()
+	}
+
+	return fmt.Sprintf("%s: %s", name, errMsg), errno
+}
+
+// capitalizeError capitalizes the first letter of an error string to match Lua format.
+func capitalizeError(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// extractErrnoFromError extracts an errno from an error chain.
+func extractErrnoFromError(err error) int {
+	for err != nil {
+		if errno, ok := err.(syscall.Errno); ok {
+			return int(errno)
+		}
+		if unwrapper, ok := err.(interface{ Unwrap() error }); ok {
+			err = unwrapper.Unwrap()
+		} else {
+			break
+		}
+	}
+	return 2 // ENOENT as default
+}
 
 // openOs registers the os library if an OsProvider is set.
 func openOs(v *vm.VM) {
@@ -260,11 +316,14 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 		if name.IsNil() {
 			panic("bad argument #1 to 'os.remove' (string expected, got nil)")
 		}
-		err := ioProvider.Remove(name.AsString())
+		nameStr := name.AsString()
+		err := ioProvider.Remove(nameStr)
 		if err != nil {
+			msg, errno := formatPathError(nameStr, err)
 			v.Set(0, vm.Nil)
-			v.Set(1, vm.NewString(err.Error()))
-			return 2
+			v.Set(1, vm.NewString(msg))
+			v.Set(2, vm.NewInt(int64(errno)))
+			return 3
 		}
 		v.Set(0, vm.True)
 		return 1
@@ -304,9 +363,11 @@ func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 		newname := v.Get(2).AsString()
 		err := ioProvider.Rename(oldname, newname)
 		if err != nil {
+			msg, errno := formatPathError(oldname, err)
 			v.Set(0, vm.Nil)
-			v.Set(1, vm.NewString(err.Error()))
-			return 2
+			v.Set(1, vm.NewString(msg))
+			v.Set(2, vm.NewInt(int64(errno)))
+			return 3
 		}
 		v.Set(0, vm.True)
 		return 1
