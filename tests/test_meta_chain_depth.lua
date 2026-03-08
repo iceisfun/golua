@@ -1,36 +1,28 @@
--- Test __index chain depth matches Lua 5.4 (MAXTAGLOOP=2000)
-local function make_chain(depth)
+-- Test that metamethod chain depth limit matches Lua 5.4 (MAXTAGLOOP=2000)
+-- Lua 5.4 allows a chain of 2001 tables (2000 __index hops) and
+-- errors at 2002 tables (2001 hops).
+
+-- Build a chain of 2001 tables with __index pointing to the next
+local first = {}
+local prev = first
+for i = 2, 2001 do
   local t = {}
-  for i = 1, depth do
-    t = setmetatable({}, {__index = t})
-  end
-  return t
+  setmetatable(prev, {__index = t})
+  prev = t
 end
+prev.val = 42
 
--- Depth 2000 should succeed
-local chain = make_chain(2000)
-chain_base = chain
--- Walk to find the base
-local c = chain
-for i = 1, 2000 do
-  c = getmetatable(c).__index
-end
--- Set value on base
-c.x = 42
--- Access through 2000-deep chain should work
-local ok, val = pcall(function() return chain.x end)
-assert(ok, "depth 2000 should work, got: " .. tostring(val))
-assert(val == 42, "expected 42, got " .. tostring(val))
+-- Should succeed at exactly 2001 tables deep
+assert(first.val == 42, "chain of 2001 tables should work")
 
--- Depth 2001 should error
-local chain2 = make_chain(2001)
-local c2 = chain2
-for i = 1, 2001 do
-  c2 = getmetatable(c2).__index
-end
-c2.x = 99
-local ok2, err2 = pcall(function() return chain2.x end)
-assert(not ok2, "depth 2001 should error")
-assert(tostring(err2):find("too long"), "expected 'too long' error, got: " .. tostring(err2))
+-- Now extend to 2002 tables - should fail
+-- Remove the value from prev so it must traverse to extra
+prev.val = nil
+local extra = {}
+setmetatable(prev, {__index = extra})
+extra.val = 99
+local ok, err = pcall(function() return first.val end)
+assert(not ok, "chain of 2002 tables should fail")
+assert(tostring(err):find("loop"), "should mention loop in error: " .. tostring(err))
 
-print("PASS")
+print("OK")
