@@ -193,7 +193,13 @@ func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
 	}
 
 	// Register all local variables occupying base..base+nNames-1
-	fs.checkVarLimit(nNames)
+	nearToken := ""
+	if nValues > 0 {
+		nearToken = "="
+	} else if nNames > 0 {
+		nearToken = s.Names[nNames-1].Name
+	}
+	fs.checkVarLimitAt(nNames, line, nearToken)
 
 	fs.freeReg = base + nNames
 	if fs.freeReg > fs.maxReg {
@@ -840,7 +846,7 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 
 	// Add internal for loop variables as hidden locals to protect their registers
 	// This ensures freeReg won't be reset below base+4 during the loop body
-	fs.checkVarLimit(4)
+	fs.checkVarLimitAt(4, line, "for")
 	fs.locals = append(fs.locals,
 		localVar{name: "(for state)", reg: base, startPC: fs.pc()},
 		localVar{name: "(for state)", reg: base + 1, startPC: fs.pc()},
@@ -946,7 +952,7 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// These must be registered BEFORE OP_TBC so localName() can resolve the
 	// variable name at the TBC instruction's PC.
 	localStartPC := fs.pc()
-	fs.checkVarLimit(4 + len(s.Names))
+	fs.checkVarLimitAt(4+len(s.Names), line, "in")
 	fs.locals = append(fs.locals,
 		localVar{name: "(for state)", reg: base, startPC: localStartPC},
 		localVar{name: "(for state)", reg: base + 1, startPC: localStartPC},
@@ -1203,7 +1209,7 @@ func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 	line := s.P.Line
 
 	// Register the local first (allows recursion)
-	fs.checkVarLimit(1)
+	fs.checkVarLimitAt(1, line, s.Name.Name)
 	localIdx := len(fs.locals)
 	reg := fs.freeReg
 	fs.locals = append(fs.locals, localVar{
@@ -1295,7 +1301,11 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	fs.enterScope(false)
 
 	// Parameters are local variables
-	fs.checkVarLimit(len(fe.Params))
+	nearToken := ""
+	if len(fe.Params) > 0 {
+		nearToken = fe.Params[len(fe.Params)-1].Name
+	}
+	fs.checkVarLimitAt(len(fe.Params), fe.P.Line, nearToken)
 	for _, param := range fe.Params {
 		reg := fs.freeReg
 		fs.locals = append(fs.locals, localVar{

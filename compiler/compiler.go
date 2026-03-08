@@ -469,8 +469,23 @@ func (fs *funcState) stringConstant(s string) int {
 
 // checkVarLimit checks that adding count new locals won't exceed the limit.
 func (fs *funcState) checkVarLimit(count int) {
+	fs.checkVarLimitAt(count, 0, "")
+}
+
+// checkVarLimitAt checks that adding count new locals won't exceed the limit,
+// with explicit source line and near-token context for Lua 5.4-style messages.
+func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
 	if fs.nActVar+count > fs.c.limits.MaxVars {
-		fs.c.error(nil, "too many local variables (limit is %d)", fs.c.limits.MaxVars)
+		msg := fmt.Sprintf("too many local variables (limit is %d)", fs.c.limits.MaxVars)
+		if fs.proto.LineDef == 0 {
+			msg += " in main function"
+		} else {
+			msg += fmt.Sprintf(" in function at line %d", fs.proto.LineDef)
+		}
+		if near != "" {
+			msg += fmt.Sprintf(" near '%s'", near)
+		}
+		fs.c.error(line, msg)
 	}
 }
 

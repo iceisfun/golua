@@ -120,7 +120,7 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 
 	case *ast.VarArgExpr: // e.g. ... — single vararg result
 		if !fs.proto.IsVarArg {
-			c.error(e, "cannot use '...' outside a vararg function")
+			c.error(e, "cannot use '...' outside a vararg function near '...'")
 		}
 		fs.emit(ABC(OP_VARARG, reg, 0, 2, 0), e.P.Line) // C=2 → 1 result
 
@@ -157,7 +157,7 @@ func (c *compiler) compileExprMultiRet(expr ast.Expr, n int) {
 
 	case *ast.VarArgExpr:
 		if !fs.proto.IsVarArg {
-			c.error(e, "cannot use '...' outside a vararg function")
+			c.error(e, "cannot use '...' outside a vararg function near '...'")
 		}
 		vc := 0
 		if n > 0 {
