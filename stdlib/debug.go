@@ -678,6 +678,13 @@ func luaDebugGetHook(v *vm.VM) int {
 
 	v.Set(0, hookFunc)
 
+	// Lua 5.4: when no hook is set, gethook returns nil, nil, nil (not nil, "", 0).
+	if hookFunc == vm.Nil {
+		v.Set(1, vm.Nil)
+		v.Set(2, vm.Nil)
+		return 3
+	}
+
 	// Build mask string
 	var maskStr string
 	if mask&vm.HookMaskCall != 0 {

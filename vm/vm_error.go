@@ -24,12 +24,12 @@ func (vm *VM) runtimeError(format string, args ...any) error {
 	return fmt.Errorf("%s", msg)
 }
 
-// addCallerLocation prepends the calling Lua frame's source:line: prefix
+// AddCallerLocation prepends the calling Lua frame's source:line: prefix
 // to a plain error message from a native function. This mirrors Lua 5.4's
 // luaG_addinfo / luaL_where(L, 1) which adds the caller location to stdlib errors.
 // Only adds the prefix if the immediate caller of the erroring native function
 // is a Lua frame (not another native function like pcall).
-func (vm *VM) addCallerLocation(msg string) string {
+func (vm *VM) AddCallerLocation(msg string) string {
 	// Find the topmost native frame (the erroring function), then check
 	// if the frame directly below it is a Lua frame.
 	n := len(vm.callStack)

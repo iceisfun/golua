@@ -88,7 +88,17 @@ func luaLoad(v *vm.VM) int {
 			results, err := v.ProtectedCall(chunk, nil)
 			if err != nil {
 				v.Set(0, vm.Nil)
-				v.Set(1, vm.NewString(fmt.Sprintf("error calling chunk reader: %v", err)))
+				// Lua 5.4: returns the raw error from the reader, not prefixed.
+				// For non-string errors, format as "(error object is a TYPE value)".
+				if le, ok := err.(*vm.LuaError); ok {
+					if le.Value.IsString() {
+						v.Set(1, vm.NewString(le.Value.AsString()))
+					} else {
+						v.Set(1, vm.NewString(fmt.Sprintf("(error object is a %s value)", le.Value.Type())))
+					}
+				} else {
+					v.Set(1, vm.NewString(err.Error()))
+				}
 				return 2
 			}
 			if len(results) == 0 || results[0].IsNil() {
@@ -99,7 +109,7 @@ func luaLoad(v *vm.VM) int {
 				s = valueToString(results[0])
 			} else {
 				v.Set(0, vm.Nil)
-				v.Set(1, vm.NewString("reader function must return a string"))
+				v.Set(1, vm.NewString(v.AddCallerLocation("reader function must return a string")))
 				return 2
 			}
 			if s == "" {
@@ -179,7 +189,7 @@ func luaLoad(v *vm.VM) int {
 // the parser/compiler for error messages. This mirrors Lua 5.4's luaO_chunkid.
 func chunkNameForDisplay(name string) string {
 	if len(name) == 0 {
-		return name
+		return `[string ""]`
 	}
 	switch name[0] {
 	case '=':

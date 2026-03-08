@@ -193,17 +193,22 @@ func mathFmod(v *vm.VM) int {
 		v.Set(0, vm.NewInt(a%b))
 		return 1
 	}
-	v.Set(0, vm.NewFloat(math.Mod(x, y)))
+	result := math.Mod(x, y)
+	// Go's math.Mod returns positive NaN; C's fmod returns negative NaN.
+	if math.IsNaN(result) {
+		result = math.Copysign(math.NaN(), -1)
+	}
+	v.Set(0, vm.NewFloat(result))
 	return 1
 }
 
 func mathLog(v *vm.VM) int {
 	x := getNumber(v, 1, "math.log")
+	var result float64
 	if v.Get(2).IsNil() {
-		v.Set(0, vm.NewFloat(math.Log(x)))
+		result = math.Log(x)
 	} else {
 		base := getNumber(v, 2, "math.log")
-		var result float64
 		if base == 10.0 {
 			result = math.Log10(x)
 		} else if base == 2.0 {
@@ -211,8 +216,13 @@ func mathLog(v *vm.VM) int {
 		} else {
 			result = math.Log(x) / math.Log(base)
 		}
-		v.Set(0, vm.NewFloat(result))
 	}
+	// Go's math.Log returns positive NaN for negative inputs;
+	// C's log returns negative NaN. Force negative NaN to match Lua 5.4.
+	if math.IsNaN(result) {
+		result = math.Copysign(math.NaN(), -1)
+	}
+	v.Set(0, vm.NewFloat(result))
 	return 1
 }
 

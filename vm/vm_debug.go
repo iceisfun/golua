@@ -331,7 +331,7 @@ func (vm *VM) GetFuncInfo(fn Value) *FrameInfo {
 // matching Lua 5.4's luaO_chunkid behavior.
 func shortSrc(source string) string {
 	if len(source) == 0 {
-		return "[string \"?\"]"
+		return "[string \"\"]"
 	}
 	switch source[0] {
 	case '=':
@@ -740,6 +740,20 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 			continue
 		}
 		switch op {
+		case compiler.OP_LOADK:
+			bx := inst.Bx()
+			if bx < len(proto.Constants) && proto.Constants[bx].Type == compiler.ValString {
+				return proto.Constants[bx].SVal, "constant"
+			}
+			return "", ""
+		case compiler.OP_LOADKX:
+			if i+1 < len(proto.Code) {
+				ax := proto.Code[i+1].Ax()
+				if ax < len(proto.Constants) && proto.Constants[ax].Type == compiler.ValString {
+					return proto.Constants[ax].SVal, "constant"
+				}
+			}
+			return "", ""
 		case compiler.OP_GETFIELD:
 			c := inst.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {

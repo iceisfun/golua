@@ -152,7 +152,7 @@ func stringPack(v *vm.VM) int {
 			var align int
 			align, i = parsePackSize(format, i, 8) // default max alignment = 8
 			if align > 16 {
-				panic("bad argument #1 to 'string.pack' (out of limits)")
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
 			}
 			fs.maxAlign = align
 			continue
@@ -173,7 +173,7 @@ func stringPack(v *vm.VM) int {
 			var size int
 			size, i = parsePackSize(format, i, 4)
 			if size < 1 || size > 16 {
-				panic("bad argument #1 to 'string.pack' (out of limits)")
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
 			packInt(v, &buf, fs, ch, size, ch == 'i', &argIdx)
 		case 'f':
@@ -193,7 +193,7 @@ func stringPack(v *vm.VM) int {
 			var size int
 			size, i = parsePackSize(format, i, 8)
 			if size < 1 || size > 16 {
-				panic("bad argument #1 to 'string.pack' (out of limits)")
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
 			packSizedString(v, &buf, fs, size, &argIdx)
 		case 'x':
@@ -210,7 +210,7 @@ func stringPack(v *vm.VM) int {
 				buf.WriteByte(0)
 			}
 		default:
-			panic(fmt.Sprintf("bad argument #1 to 'string.pack' (invalid format option '%c')", ch))
+			panic(fmt.Sprintf("invalid format option '%c'", ch))
 		}
 	}
 
@@ -236,7 +236,7 @@ func getXAlign(format string, i *int) int {
 		var size int
 		size, *i = parsePackSize(format, *i, 4)
 		if size < 1 || size > 16 {
-			panic(fmt.Sprintf("bad argument #1 to 'string.pack' ((%d) out of limits [1,16])", size))
+			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return size
 	case 'f':
@@ -407,7 +407,7 @@ func packSizedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, prefixSize in
 	if prefixSize < 8 {
 		maxLen := uint64(1)<<(uint(prefixSize)*8) - 1
 		if slen > maxLen {
-			panic(fmt.Sprintf("bad argument #%d to 'string.pack' (does not fit)", *argIdx-1))
+			panic(fmt.Sprintf("bad argument #%d to 'string.pack' (string length does not fit in given size)", *argIdx-1))
 		}
 	}
 
@@ -488,7 +488,7 @@ func stringUnpack(v *vm.VM) int {
 			var align int
 			align, i = parsePackSize(format, i, 8)
 			if align > 16 {
-				panic("bad argument #1 to 'string.unpack' (out of limits)")
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
 			}
 			fs.maxAlign = align
 			continue
@@ -519,7 +519,7 @@ func stringUnpack(v *vm.VM) int {
 			var size int
 			size, i = parsePackSize(format, i, 4)
 			if size < 1 || size > 16 {
-				panic("bad argument #1 to 'string.unpack' (out of limits)")
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
 			val := unpackInt(data, &offset, fs, ch, size, ch == 'i')
 			v.Set(nret, val)
@@ -549,7 +549,7 @@ func stringUnpack(v *vm.VM) int {
 			var size int
 			size, i = parsePackSize(format, i, 8)
 			if size < 1 || size > 16 {
-				panic("bad argument #1 to 'string.unpack' (out of limits)")
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
 			val := unpackSizedString(data, &offset, fs, size)
 			v.Set(nret, val)
@@ -566,7 +566,7 @@ func stringUnpack(v *vm.VM) int {
 			pad := addPadding(offset, align)
 			offset += pad
 		default:
-			panic(fmt.Sprintf("bad argument #1 to 'string.unpack' (invalid format option '%c')", ch))
+			panic(fmt.Sprintf("invalid format option '%c'", ch))
 		}
 	}
 
@@ -593,7 +593,7 @@ func getXAlignUnpack(format string, i *int) int {
 		var size int
 		size, *i = parsePackSize(format, *i, 4)
 		if size < 1 || size > 16 {
-			panic(fmt.Sprintf("bad argument #1 to 'string.unpack' ((%d) out of limits [1,16])", size))
+			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return size
 	case 'f':
@@ -841,7 +841,7 @@ func stringPacksize(v *vm.VM) int {
 			var align int
 			align, i = parsePackSize(format, i, 8)
 			if align > 16 {
-				panic("bad argument #1 to 'string.packsize' (out of limits)")
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
 			}
 			fs.maxAlign = align
 			continue
@@ -861,7 +861,7 @@ func stringPacksize(v *vm.VM) int {
 			var size int
 			size, i = parsePackSize(format, i, 4)
 			if size < 1 || size > 16 {
-				panic("bad argument #1 to 'string.packsize' (out of limits)")
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
 			totalSize += addPadding(totalSize, fs.effectiveAlign(size))
 			totalSize += size
@@ -888,7 +888,7 @@ func stringPacksize(v *vm.VM) int {
 		case 'z', 's':
 			panic("bad argument #1 to 'string.packsize' (variable-length format)")
 		default:
-			panic(fmt.Sprintf("bad argument #1 to 'string.packsize' (invalid format option '%c')", ch))
+			panic(fmt.Sprintf("invalid format option '%c'", ch))
 		}
 
 		if totalSize > maxPackSize {
@@ -918,7 +918,7 @@ func getXAlignPacksize(format string, i *int) int {
 		var size int
 		size, *i = parsePackSize(format, *i, 4)
 		if size < 1 || size > 16 {
-			panic(fmt.Sprintf("bad argument #1 to 'string.packsize' ((%d) out of limits [1,16])", size))
+			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return size
 	case 'f':
