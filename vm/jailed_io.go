@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -205,71 +204,7 @@ func (f *jailedFile) readLine(keepNewline bool) (string, error) {
 }
 
 // readNumber reads and parses a number from the stream, skipping leading whitespace.
-// On failure, the file position is restored if the underlying file supports seeking.
+// Consumed whitespace is not restored on failure (matches Lua 5.4 behavior).
 func (f *jailedFile) readNumber() (string, error) {
-	// Try to save position for restore on failure
-	var startPos int64
-	var canSeek bool
-	if seeker, ok := f.file.(io.Seeker); ok {
-		buffered := f.reader.Buffered()
-		rawPos, err := seeker.Seek(0, io.SeekCurrent)
-		if err == nil {
-			startPos = rawPos - int64(buffered)
-			canSeek = true
-		}
-	}
-
-	result, parseErr := f.tryReadNumber()
-	if parseErr != nil && canSeek {
-		if seeker, ok := f.file.(io.Seeker); ok {
-			seeker.Seek(startPos, io.SeekStart)
-			f.reader.Reset(f.file)
-		}
-	}
-	if parseErr != nil {
-		return "", parseErr
-	}
-	return result, nil
-}
-
-// tryReadNumber attempts to read a number token from the stream.
-func (f *jailedFile) tryReadNumber() (string, error) {
-	// Skip whitespace
-	for {
-		b, err := f.reader.ReadByte()
-		if err != nil {
-			return "", err
-		}
-		if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
-			f.reader.UnreadByte()
-			break
-		}
-	}
-
-	// Read number characters
-	var num strings.Builder
-	for {
-		b, err := f.reader.ReadByte()
-		if err != nil {
-			if err == io.EOF && num.Len() > 0 {
-				break
-			}
-			return "", err
-		}
-		if (b >= '0' && b <= '9') || b == '.' || b == '-' || b == '+' || b == 'e' || b == 'E' || b == 'x' || b == 'X' ||
-			(b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') {
-			num.WriteByte(b)
-		} else {
-			f.reader.UnreadByte()
-			break
-		}
-	}
-
-	s := num.String()
-	if _, err := strconv.ParseFloat(s, 64); err != nil {
-		if _, err := strconv.ParseInt(s, 0, 64); err != nil {
-			return "", fmt.Errorf("not a number: %s", s)
-		}
-	}
-	return s, nil
+	return readNumberFromBuf(f.reader)
 }

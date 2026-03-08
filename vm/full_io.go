@@ -393,7 +393,8 @@ func (f *fullFile) readNumber() (string, error) {
 // readNumberFromBuf reads a number from a bufio.Reader.
 // It skips leading whitespace (which is not restored on failure),
 // reads number-like characters, and finds the longest valid prefix
-// that parses as a number, unreading the rest.
+// that parses as a number. Uses Peek to avoid consuming bytes that
+// aren't part of the number.
 func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 	// Skip leading whitespace
 	for {
@@ -407,47 +408,53 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 		}
 	}
 
-	// Read number-like characters greedily
+	// Read number-like characters greedily using Peek to avoid
+	// consuming bytes we may need to put back.
 	var buf []byte
+	offset := 0
 	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			if err == io.EOF && len(buf) > 0 {
-				break
-			}
-			return "", err
+		peeked, _ := reader.Peek(offset + 1)
+		if len(peeked) <= offset {
+			// EOF or not enough data
+			break
 		}
+		b := peeked[offset]
 		if isNumberChar(b) {
 			buf = append(buf, b)
+			offset++
 		} else {
-			reader.UnreadByte()
 			break
 		}
 	}
 
-	// Try to find the longest prefix that parses as a valid number
+	if len(buf) == 0 {
+		return "", fmt.Errorf("not a number")
+	}
+
+	// Find the longest prefix that parses as a valid number.
+	// Try longest first for efficiency.
+	bestEnd := 0
 	for end := len(buf); end > 0; end-- {
 		s := string(buf[:end])
 		if _, err := strconv.ParseInt(s, 0, 64); err == nil {
-			// Unread the unused suffix
-			for i := len(buf) - 1; i >= end; i-- {
-				reader.UnreadByte()
-			}
-			return s, nil
+			bestEnd = end
+			break
 		}
 		if _, err := strconv.ParseFloat(s, 64); err == nil {
-			for i := len(buf) - 1; i >= end; i-- {
-				reader.UnreadByte()
-			}
-			return s, nil
+			bestEnd = end
+			break
 		}
 	}
 
-	// No valid number found; unread all collected characters
-	for i := len(buf) - 1; i >= 0; i-- {
-		reader.UnreadByte()
+	if bestEnd == 0 {
+		// No valid number found; don't consume any number chars
+		return "", fmt.Errorf("not a number")
 	}
-	return "", fmt.Errorf("not a number")
+
+	// Consume exactly bestEnd bytes from the reader
+	reader.Discard(bestEnd)
+
+	return string(buf[:bestEnd]), nil
 }
 
 // isNumberChar returns true if b can be part of a numeric literal
@@ -502,6 +509,8 @@ func (f *stdFile) Read(format string) (string, error) {
 			return f.readLine(r, false)
 		case 'L':
 			return f.readLine(r, true)
+		case 'n':
+			return readNumberFromBuf(r)
 		}
 	}
 	return "", fmt.Errorf("invalid read format: %s", format)
