@@ -447,6 +447,11 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			argc: len(args),
 		})
 
+		// Advance vm.top past the arguments so that any metamethod
+		// calls from within the native function (e.g. __lt in math.max)
+		// allocate their frames AFTER these args, not overlapping them.
+		vm.top = base + 1 + len(args)
+
 		// Call native function
 		nResults := nf(vm)
 
@@ -522,6 +527,8 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 			base: base,
 			argc: len(args),
 		})
+		// Advance vm.top past args so metamethod frames don't overlap.
+		vm.top = base + 1 + len(args)
 		nf(vm)
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 		vm.top = savedTop

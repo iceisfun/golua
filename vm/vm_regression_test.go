@@ -389,3 +389,106 @@ func TestHookErrorPropagates(t *testing.T) {
 	}
 
 }
+
+// TestProtectedCallArgSurvivesMetamethod verifies that native function
+// arguments in ProtectedCall are not clobbered when the native function
+// invokes a metamethod mid-iteration (e.g., CompareLT in math.max).
+//
+// Bug: ProtectedCall did not advance vm.top past the native function's args,
+// so metamethod frames overlapped the arg slots on the stack.
+func TestProtectedCallArgSurvivesMetamethod(t *testing.T) {
+	// Register a native function that reads 3 args, calls a Lua callback
+	// (which uses stack space), then reads arg 3 again.
+	nativeFunc := NewNativeFunc(func(v *VM) int {
+		arg1 := v.Get(1)
+		arg2 := v.Get(2)
+		arg3 := v.Get(3)
+
+		// Call arg1 as a function (this will use stack space)
+		v.ProtectedCall(arg1, []Value{arg2}) //nolint:errcheck
+
+		// After the callback, arg3 should still be readable
+		arg3After := v.Get(3)
+		if arg3After != arg3 {
+			v.Set(0, False)
+			return 1
+		}
+		v.Set(0, arg3)
+		return 1
+	})
+
+	v := New()
+	v.SetGlobal("native_test", nativeFunc)
+
+	results, err := runWithVM(t, v, `
+		local function callback(x) return x * 2 end
+		return native_test(callback, 42, "preserved")
+	`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].AsString() != "preserved" {
+		t.Errorf("arg3 was clobbered: got %v, want 'preserved'", results[0])
+	}
+}
+
+// TestProtectedCallNativeCompareLT verifies that CompareLT called from
+// a native function within ProtectedCall doesn't clobber other args.
+func TestProtectedCallNativeCompareLT(t *testing.T) {
+	// Create a native "find_max" that takes N values with __lt and returns the max
+	findMax := NewNativeFunc(func(v *VM) int {
+		n := v.ArgCount()
+		if n == 0 {
+			v.Set(0, Nil)
+			return 1
+		}
+		best := v.Get(1)
+		for i := 2; i <= n; i++ {
+			candidate := v.Get(i)
+			if candidate.IsNil() {
+				// arg was clobbered!
+				panic(&LuaError{Value: NewString("arg clobbered at index " + string(rune('0'+i)))})
+			}
+			lt, _ := v.CompareLT(best, candidate)
+		if lt {
+				best = candidate
+			}
+		}
+		v.Set(0, best)
+		return 1
+	})
+
+	// Create objects with __lt
+	mt := NewEmptyTable()
+	mt.MustSet(NewString("__lt"), NewNativeFunc(func(v *VM) int {
+		a := v.Get(1).AsTable().Get(NewString("v")).AsInt()
+		b := v.Get(2).AsTable().Get(NewString("v")).AsInt()
+		v.Set(0, NewBool(a < b))
+		return 1
+	}))
+
+	mkObj := func(val int64) Value {
+		tbl := NewEmptyTable()
+		tbl.MustSet(NewString("v"), NewInt(val))
+		tbl.SetMetatable(mt)
+		return NewTable(tbl)
+	}
+
+	v := New()
+	objs := []Value{mkObj(3), mkObj(7), mkObj(1), mkObj(5)}
+
+	results, err := v.ProtectedCall(findMax, objs)
+	if err != nil {
+		t.Fatalf("ProtectedCall error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	got := results[0].AsTable().Get(NewString("v")).AsInt()
+	if got != 7 {
+		t.Errorf("expected max=7, got %d", got)
+	}
+}
