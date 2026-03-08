@@ -459,23 +459,21 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 			} else if table.IsString() && vm.stringMeta != nil {
-				// String method call - resolve through __index on string metatable
-				val := vm.stringMeta.Get(NewString(key))
-				if val.IsNil() {
-					idx := vm.stringMeta.Get(metaIndex)
-					if idx.IsTable() {
-						val, _ = vm.tableGetString(idx.AsTable(), key)
-					} else if idx.IsFunction() || idx.IsNativeFunc() {
-						var err error
-						val, err = vm.callMetamethod("index", idx, table, NewString(key))
-						if err != nil {
-							return nil, err
-						}
-						frame = &vm.callStack[len(vm.callStack)-1]
-						proto = frame.closure.Proto
-						code = proto.Code
-						consts = frame.closure.ConstValues()
+				// String method call - resolve through __index metamethod only
+				idx := vm.stringMeta.Get(metaIndex)
+				var val Value
+				if idx.IsTable() {
+					val, _ = vm.tableGetString(idx.AsTable(), key)
+				} else if idx.IsFunction() || idx.IsNativeFunc() {
+					var err error
+					val, err = vm.callMetamethod("index", idx, table, NewString(key))
+					if err != nil {
+						return nil, err
 					}
+					frame = &vm.callStack[len(vm.callStack)-1]
+					proto = frame.closure.Proto
+					code = proto.Code
+					consts = frame.closure.ConstValues()
 				}
 				vm.stack[frame.base+a] = val
 			} else if ud := table.AsUserdata(); ud != nil {
