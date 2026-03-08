@@ -57,7 +57,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				if argIdx >= len(vals) {
 					callerArgError(v, argIdx+2, "string.format", "no value")
 				}
-				panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", format[i]))
+				panic(fmt.Sprintf("invalid conversion '%s%c' to 'format'", spec, format[i]))
 			}
 			spec += string(format[i])
 			i++
@@ -179,7 +179,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
 			}
 		case 'F':
-			panic("invalid conversion '%F' to 'format'")
+			panic(fmt.Sprintf("invalid conversion '%sF' to 'format'", spec))
 		case 's':
 			str := tolstring(v, val)
 			if spec != "%" && strings.ContainsRune(str, 0) {
@@ -212,7 +212,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		case 'p':
 			result.WriteString(luaPointerFormat(val))
 		default:
-			panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", specChar))
+			panic(fmt.Sprintf("invalid conversion '%s%c' to 'format'", spec, specChar))
 		}
 	}
 
@@ -726,7 +726,7 @@ func validateConversion(spec string, conv byte) {
 			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	case 'F':
-		panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", conv))
+		panic(fmt.Sprintf("invalid conversion '%s%c' to 'format'", spec, conv))
 	}
 }
 
