@@ -354,7 +354,7 @@ func formatHexFloat(f float64, prec int, hashFlag ...bool) string {
 	biasedExp := int((bits >> 52) & 0x7ff)
 	mantissa := bits & ((1 << 52) - 1)
 	if biasedExp == 0 && mantissa != 0 {
-		return formatSubnormalHexFloat(f, mantissa, prec)
+		return formatSubnormalHexFloat(f, mantissa, prec, forceDecimal)
 	}
 
 	// Get the full-precision representation from Go
@@ -443,7 +443,7 @@ func formatHexFloat(f float64, prec int, hashFlag ...bool) string {
 
 // formatSubnormalHexFloat formats a subnormal float64 in denormalized form
 // with exponent -1022, matching C/Lua 5.4 output.
-func formatSubnormalHexFloat(f float64, mantissa uint64, prec int) string {
+func formatSubnormalHexFloat(f float64, mantissa uint64, prec int, forceDecimal bool) string {
 	neg := math.Signbit(f)
 	// Subnormal: leading digit is 0, mantissa has 13 hex digits (52 bits)
 	var b strings.Builder
@@ -468,14 +468,22 @@ func formatSubnormalHexFloat(f float64, mantissa uint64, prec int) string {
 		if neg {
 			b.WriteByte('-')
 		}
-		b.WriteString("0x0")
+		if forceDecimal {
+			b.WriteString("0x0.")
+		} else {
+			b.WriteString("0x0")
+		}
 		// Check if we need to round up (first hex digit >= 8)
 		if len(hexDigits) > 0 && hexCharToInt(hexDigits[0]) >= 8 {
 			b.Reset()
 			if neg {
 				b.WriteByte('-')
 			}
-			b.WriteString("0x1")
+			if forceDecimal {
+				b.WriteString("0x1.")
+			} else {
+				b.WriteString("0x1")
+			}
 		}
 	} else {
 		// Specific precision: pad or truncate with rounding
