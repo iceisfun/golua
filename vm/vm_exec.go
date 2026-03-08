@@ -534,9 +534,6 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 				}
 				if mm := vm.getArithMetamethod(arg1, arg2, "__add"); !mm.IsNil() {
-					if !mm.IsCallable() {
-						return nil, vm.runtimeError("attempt to call a %s value (metamethod 'add')", mm.Type())
-					}
 					result, err := vm.callMetamethod("add", mm, arg1, arg2)
 					if err != nil {
 						return nil, err
@@ -642,9 +639,6 @@ func (vm *VM) execute() ([]Value, error) {
 					vm.stack[frame.base+a] = NewFloat(-v.AsFloat())
 				}
 			} else if mm := vm.getMetafield(v, "__unm"); !mm.IsNil() {
-				if !mm.IsCallable() {
-					return nil, vm.runtimeError("attempt to call a %s value (metamethod 'unm')", mm.Type())
-				}
 				result, err := vm.callMetamethod("unm", mm, v, v)
 				if err != nil {
 					return nil, err
@@ -667,9 +661,6 @@ func (vm *VM) execute() ([]Value, error) {
 			}
 			if !done {
 				if mm := vm.getMetafield(v, "__bnot"); !mm.IsNil() {
-					if !mm.IsCallable() {
-						return nil, vm.runtimeError("attempt to call a %s value (metamethod 'bnot')", mm.Type())
-					}
 					result, err := vm.callMetamethod("bnot", mm, v, v)
 					if err != nil {
 						return nil, err
@@ -698,9 +689,6 @@ func (vm *VM) execute() ([]Value, error) {
 				op := "__len"
 				mm := vm.getMetafield(v, op)
 				if !mm.IsNil() {
-					if !mm.IsCallable() {
-						return nil, vm.runtimeError("attempt to call a %s value (metamethod 'len')", mm.Type())
-					}
 					res, err := vm.callMetamethod("len", mm, v, v)
 					if err != nil {
 						return nil, err
