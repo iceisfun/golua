@@ -45,6 +45,9 @@ func openOs(v *vm.VM) {
 		}
 	}
 
+	// setlocale is always available (stub, returns "C" only)
+	osTable.SetString("setlocale", vm.NewNativeFunc(osSetlocale))
+
 	// execute routes through the exec provider
 	execProvider := v.ExecProvider()
 	if execProvider != nil && caps.AllowExecute {
@@ -255,6 +258,26 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 		v.Set(0, vm.True)
 		return 1
 	}
+}
+
+// osSetlocale implements os.setlocale([locale [, category]]).
+// This is a stub that only supports the "C" locale (Go has no locale support).
+// Returns "C" for nil/empty/"C" queries, nil for anything else.
+func osSetlocale(v *vm.VM) int {
+	locale := ""
+	if v.ArgCount() >= 1 && !v.Get(1).IsNil() {
+		locale = v.Get(1).AsString()
+	}
+
+	// Query (nil or empty string) or set to "C" — always succeeds
+	if locale == "" || locale == "C" {
+		v.Set(0, vm.NewString("C"))
+		return 1
+	}
+
+	// Any other locale is not supported
+	v.Set(0, vm.Nil)
+	return 1
 }
 
 // makeOsRename creates the os.rename(oldname, newname) function.
