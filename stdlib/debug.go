@@ -392,11 +392,21 @@ func luaDebugGetLocal(v *vm.VM) int {
 	if arg1.IsTable() {
 		tbl := arg1.AsTable()
 		if tbl != nil && tbl.IsThread() {
-			coVM := tbl.VMRef()
-			if coVM == nil {
-				return 0
-			}
 			arg2 := v.Get(2)
+			if arg2.IsCallable() {
+				arg3 := v.Get(3)
+				local, ok := arg3.ToInt()
+				if !ok {
+					callerArgError(v, 3, "debug.getlocal", "number expected")
+				}
+				name, found := v.GetFuncLocal(arg2, int(local))
+				if !found {
+					v.Set(0, vm.Nil)
+					return 1
+				}
+				v.Set(0, vm.NewString(name))
+				return 1
+			}
 			level, ok := arg2.ToInt()
 			if !ok {
 				callerArgError(v, 2, "debug.getlocal", "number expected")
@@ -406,11 +416,20 @@ func luaDebugGetLocal(v *vm.VM) int {
 			if !ok {
 				callerArgError(v, 3, "debug.getlocal", "number expected")
 			}
+			coVM := tbl.VMRef()
+			if coVM == nil || !coVM.IsValidLevel(int(level)) {
+				callerArgError(v, 2, "debug.getlocal", "level out of range")
+			}
+			if level == 0 && coVM != v {
+				v.Set(0, vm.Nil)
+				return 1
+			}
 			// For suspended coroutines, level numbering matches the coroutine's
 			// own call stack: level 0 = yield, level 1 = function that called yield.
 			name, val, found := coVM.GetLocal(int(level), int(local))
 			if !found {
-				return 0
+				v.Set(0, vm.Nil)
+				return 1
 			}
 			v.Set(0, vm.NewString(name))
 			v.Set(1, val)
@@ -474,10 +493,6 @@ func luaDebugSetLocal(v *vm.VM) int {
 	if arg1.IsTable() {
 		tbl := arg1.AsTable()
 		if tbl != nil && tbl.IsThread() {
-			coVM := tbl.VMRef()
-			if coVM == nil {
-				return 0
-			}
 			arg2 := v.Get(2)
 			level, ok := arg2.ToInt()
 			if !ok {
@@ -489,6 +504,10 @@ func luaDebugSetLocal(v *vm.VM) int {
 				callerArgError(v, 3, "debug.setlocal", "number expected")
 			}
 			newVal := v.Get(4)
+			coVM := tbl.VMRef()
+			if coVM == nil || !coVM.IsValidLevel(int(level)) {
+				callerArgError(v, 2, "debug.setlocal", "level out of range")
+			}
 			// For suspended coroutines, level numbering matches the coroutine's
 			// own call stack: level 0 = yield, level 1 = function that called yield.
 			name, found := coVM.SetLocal(int(level), int(local), newVal)
