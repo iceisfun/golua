@@ -48,6 +48,12 @@ func openOs(v *vm.VM) {
 		osTable.SetString("execute", vm.NewNativeFunc(makeOsExecute(execProvider)))
 	}
 
+	// exit routes through the exit handler
+	exitHandler := v.ExitHandler()
+	if exitHandler != nil && caps.AllowExit {
+		osTable.SetString("exit", vm.NewNativeFunc(makeOsExit(v, exitHandler)))
+	}
+
 	v.SetGlobal("os", vm.NewTable(osTable))
 }
 
@@ -245,6 +251,45 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 		}
 		v.Set(0, vm.True)
 		return 1
+	}
+}
+
+// makeOsExit creates the os.exit([code [, close]]) function.
+// code defaults to true (=0). false means exit code 1.
+// If close is true, to-be-closed variables are closed first.
+func makeOsExit(vmRef *vm.VM, handler vm.LuaExitHandler) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		code := 0
+		arg1 := v.Get(1)
+		if !arg1.IsNil() {
+			if arg1.IsBool() {
+				if arg1.AsBool() {
+					code = 0
+				} else {
+					code = 1
+				}
+			} else {
+				i, ok := arg1.ToInt()
+				if !ok {
+					callerArgError(v, 1, "os.exit", fmt.Sprintf("number expected, got %s", arg1.Type()))
+				}
+				code = int(i)
+			}
+		}
+
+		closeFlag := false
+		arg2 := v.Get(2)
+		if !arg2.IsNil() {
+			closeFlag = arg2.ToBool()
+		}
+
+		if closeFlag {
+			// Close all to-be-closed variables
+			v.CloseAllTBC()
+		}
+
+		handler.Exit(code, closeFlag)
+		return 0 // unreachable
 	}
 }
 

@@ -58,6 +58,7 @@ type VM struct {
 	ioProvider   LuaIoProvider   // Provider for IO operations (optional)
 	osProvider   LuaOsProvider   // Provider for OS operations (optional)
 	execProvider LuaExecProvider // Provider for command execution (optional)
+	exitHandler  LuaExitHandler  // Handler for os.exit (optional)
 
 	// Debug provider support
 	debugProvider LuaDebugProvider // Provider for diagnostic debug operations (optional)
@@ -285,6 +286,10 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 
 	defer func() {
 		if r := recover(); r != nil {
+			// LuaExitError must propagate through all ProtectedCall boundaries
+			if _, isExit := r.(*LuaExitError); isExit {
+				panic(r)
+			}
 			// Preserve LuaError so pcall/xpcall can return the original Lua value
 			if le, ok := r.(*LuaError); ok {
 				err = le
@@ -505,6 +510,7 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		ioProvider:    parent.ioProvider,
 		osProvider:    parent.osProvider,
 		execProvider:  parent.execProvider,
+		exitHandler:   parent.exitHandler,
 		debugProvider: parent.debugProvider,
 		chanProvider:  parent.chanProvider,
 		timeProvider:  parent.timeProvider,

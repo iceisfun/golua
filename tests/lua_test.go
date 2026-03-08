@@ -145,6 +145,7 @@ func runLuaTest(t *testing.T, filename string) {
 		AllowDofile:   true,
 	}))
 	v.SetExecProvider(vm.NewDefaultExecProvider())
+	v.SetExitHandler(vm.NewDefaultExitHandler())
 	stdlib.Open(v)
 
 	// Run in goroutine with panic recovery and timeout
@@ -152,6 +153,10 @@ func runLuaTest(t *testing.T, filename string) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				if _, isExit := r.(*vm.LuaExitError); isExit {
+					resultCh <- nil // os.exit is normal termination in tests
+					return
+				}
 				if e, ok := r.(error); ok {
 					resultCh <- e
 				} else {
@@ -202,6 +207,7 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 		AllowDofile:   true,
 	}))
 	v.SetExecProvider(vm.NewDefaultExecProvider())
+	v.SetExitHandler(vm.NewDefaultExitHandler())
 	stdlib.Open(v)
 
 	// Run in goroutine with panic recovery and timeout
@@ -209,6 +215,10 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				if _, isExit := r.(*vm.LuaExitError); isExit {
+					resultCh <- nil // os.exit is normal termination in tests
+					return
+				}
 				if e, ok := r.(error); ok {
 					resultCh <- e
 				} else {

@@ -155,6 +155,16 @@ func (vm *VM) ExecProvider() LuaExecProvider {
 	return vm.execProvider
 }
 
+// SetExitHandler sets the exit handler for this VM.
+func (vm *VM) SetExitHandler(handler LuaExitHandler) {
+	vm.exitHandler = handler
+}
+
+// ExitHandler returns the current exit handler, or nil if none is set.
+func (vm *VM) ExitHandler() LuaExitHandler {
+	return vm.exitHandler
+}
+
 // SetDebugProvider sets the debug provider for this VM.
 func (vm *VM) SetDebugProvider(provider LuaDebugProvider) {
 	vm.debugProvider = provider

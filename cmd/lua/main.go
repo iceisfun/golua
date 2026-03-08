@@ -118,6 +118,7 @@ done:
 		}))
 		v.SetIoProvider(vm.NewFullIoProvider(scriptDir))
 		v.SetExecProvider(vm.NewDefaultExecProvider())
+		v.SetExitHandler(vm.NewDefaultExitHandler())
 	}
 	stdlib.Open(v)
 
