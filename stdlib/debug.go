@@ -96,6 +96,7 @@ func luaDebugTraceback(v *vm.VM) int {
 				v.Set(0, msg) // non-string, non-nil, non-number: return as-is
 				return 1
 			}
+			hasMsg := !msg.IsNil()
 			msgStr := ""
 			if msg.IsString() {
 				msgStr = msg.AsString()
@@ -110,14 +111,18 @@ func luaDebugTraceback(v *vm.VM) int {
 			}
 			if targetVM == nil || targetVM.StackDepth() == 0 {
 				// Dead or never-resumed coroutine — empty traceback
-				if msgStr != "" {
+				if hasMsg {
 					v.Set(0, vm.NewString(msgStr+"\nstack traceback:"))
 				} else {
 					v.Set(0, vm.NewString("stack traceback:"))
 				}
 				return 1
 			}
-			v.Set(0, vm.NewString(targetVM.Traceback(msgStr, level)))
+			tb := targetVM.Traceback("", level)
+			if hasMsg {
+				tb = msgStr + "\n" + tb
+			}
+			v.Set(0, vm.NewString(tb))
 			return 1
 		}
 	}
@@ -128,6 +133,7 @@ func luaDebugTraceback(v *vm.VM) int {
 		return 1
 	}
 
+	hasMsg := !msg.IsNil()
 	msgStr := ""
 	if msg.IsString() {
 		msgStr = msg.AsString()
@@ -142,7 +148,11 @@ func luaDebugTraceback(v *vm.VM) int {
 		}
 	}
 
-	v.Set(0, vm.NewString(v.Traceback(msgStr, level)))
+	tb := v.Traceback("", level)
+	if hasMsg {
+		tb = msgStr + "\n" + tb
+	}
+	v.Set(0, vm.NewString(tb))
 	return 1
 }
 
