@@ -210,6 +210,19 @@ func stringChar(v *vm.VM) int {
 	return 1
 }
 
+// hasPatternSpecials returns true if the pattern contains any Lua pattern
+// special characters. Matches Lua 5.4's SPECIALS = "^$*+?.([%-".
+// Note: ')' and ']' are intentionally NOT in this set.
+func hasPatternSpecials(pattern string) bool {
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '^', '$', '*', '+', '?', '.', '(', '[', '%', '-':
+			return true
+		}
+	}
+	return false
+}
+
 // string.find(s, pattern [, init [, plain]])
 func stringFind(v *vm.VM) int {
 	s := getString(v, 1, "string.find")
@@ -230,6 +243,14 @@ func stringFind(v *vm.VM) int {
 	if start > len(s)+1 {
 		v.Set(0, vm.Nil)
 		return 1
+	}
+
+	// Lua 5.4 optimization: if pattern contains no special characters,
+	// use plain substring search. The specials set matches Lua 5.4's
+	// SPECIALS string "^$*+?.([%-" — note that ')' and ']' are NOT
+	// considered specials, so patterns like "a)b" do a plain search.
+	if !plain && !hasPatternSpecials(pattern) {
+		plain = true
 	}
 
 	if plain {
