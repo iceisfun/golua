@@ -664,7 +664,9 @@ func luaRawset(v *vm.VM) int {
 	key := v.Get(2)
 	val := v.Get(3)
 	if err := tbl.Set(key, val); err != nil {
-		panic(err.Error())
+		// Use LuaError to avoid AddCallerLocation adding a file:line prefix.
+		// These errors originate from native/C-level code, not Lua bytecode.
+		panic(&vm.LuaError{Value: vm.NewString(err.Error())})
 	}
 	v.Set(0, vm.NewTable(tbl))
 	return 1
