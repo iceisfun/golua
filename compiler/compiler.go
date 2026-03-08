@@ -150,6 +150,7 @@ type localVar struct {
 // scopeInfo records the state at scope entry for restoration on scope exit.
 type scopeInfo struct {
 	nLocals    int   // number of locals when scope opened
+	baseReg    int   // register base (freeReg) when scope opened — used for OP_CLOSE
 	breakJumps []int // pending break jump PCs to be patched on scope exit
 	isLoop     bool  // is this a loop scope?
 	firstLabel int   // index into labels slice
@@ -350,6 +351,28 @@ func (c *compiler) closeFuncState() *Proto {
 // Using regTop() instead of nActVar to reset freeReg prevents a class
 // of compiler bugs where condition temporaries push local variables to
 // higher registers than nActVar accounts for.
+//
+// regBaseForLocals returns the first register past the first n active locals.
+// This is the correct register operand for OP_CLOSE when closing down to
+// n active locals, accounting for register gaps caused by temporaries.
+func (fs *funcState) regBaseForLocals(n int) int {
+	if n == 0 {
+		return 0
+	}
+	start := len(fs.locals) - fs.nActVar
+	end := start + n
+	if end > len(fs.locals) {
+		end = len(fs.locals)
+	}
+	top := 0
+	for i := start; i < end; i++ {
+		if r := fs.locals[i].reg + 1; r > top {
+			top = r
+		}
+	}
+	return top
+}
+
 func (fs *funcState) regTop() int {
 	top := 0
 	start := len(fs.locals) - fs.nActVar
@@ -682,6 +705,7 @@ func (c *compiler) resolveUpvalue(fs *funcState, name string) (int, bool) {
 func (fs *funcState) enterScope(isLoop bool) {
 	fs.scopes = append(fs.scopes, scopeInfo{
 		nLocals:    fs.nActVar,
+		baseReg:    fs.regTop(),
 		isLoop:     isLoop,
 		firstLabel: len(fs.labels),
 		firstGoto:  len(fs.pendGotos),
@@ -707,7 +731,7 @@ func (c *compiler) leaveScope(line int) {
 			}
 		}
 		if needClose {
-			fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), line)
+			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
 		}
 	}
 
@@ -749,7 +773,7 @@ func (c *compiler) leaveScope(line int) {
 		pg := &fs.pendGotos[i]
 		if pg.nLocals > scope.nLocals {
 			if pg.closePC >= 0 {
-				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(scope.nLocals)
+				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(scope.baseReg)
 			}
 			pg.nLocals = scope.nLocals
 		}

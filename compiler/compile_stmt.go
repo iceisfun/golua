@@ -709,7 +709,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 		// Close upvalues for body locals before jumping back.
 		scope := fs.scopes[len(fs.scopes)-1]
 		if fs.nActVar > scope.nLocals {
-			fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), line)
+			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
 		}
 
 		// Jump back to loop start (unconditional)
@@ -739,7 +739,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	// This ensures each iteration gets its own closed upvalue copy.
 	scope := fs.scopes[len(fs.scopes)-1]
 	if fs.nActVar > scope.nLocals {
-		fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), line)
+		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
 	}
 
 	// Jump back to condition
@@ -781,7 +781,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	// not clear stack slots, so the condition result in reg remains valid.
 	scope := fs.scopes[len(fs.scopes)-1]
 	if fs.nActVar > scope.nLocals {
-		fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), condLine)
+		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), condLine)
 	}
 
 	// If condition is falsy, jump back (keep looping)
@@ -1043,7 +1043,7 @@ func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 	}
 	// Emit OP_CLOSE if there are close/captured locals being exited
 	if fs.needsClose(scope.nLocals) {
-		fs.emit(ABC(OP_CLOSE, scope.nLocals, 0, 0, 0), s.P.Line)
+		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), s.P.Line)
 	}
 	jpc := fs.emitJump(s.P.Line)
 	scope.breakJumps = append(scope.breakJumps, jpc)
@@ -1060,7 +1060,7 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 		if lbl.name == s.Label {
 			// Emit OP_CLOSE if exiting scope with TBC/captured locals
 			if fs.needsClose(lbl.nLocals) {
-				fs.emit(ABC(OP_CLOSE, lbl.nLocals, 0, 0, 0), line)
+				fs.emit(ABC(OP_CLOSE, fs.regBaseForLocals(lbl.nLocals), 0, 0, 0), line)
 			}
 			jpc := fs.emitJump(line)
 			offset := lbl.pc - (jpc + 1)
@@ -1078,7 +1078,7 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 	closePC := -1
 	if fs.needsClose(0) {
 		// There are TBC/captured locals somewhere; emit placeholder
-		closePC = fs.emit(ABC(OP_CLOSE, fs.nActVar, 0, 0, 0), line)
+		closePC = fs.emit(ABC(OP_CLOSE, fs.regTop(), 0, 0, 0), line)
 	}
 	jpc := fs.emitJump(line)
 	fs.pendGotos = append(fs.pendGotos, pendingGoto{
@@ -1145,7 +1145,7 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool) {
 			}
 			// Patch placeholder OP_CLOSE if one was emitted
 			if pg.closePC >= 0 && labelNLocals < pg.nLocals {
-				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(labelNLocals)
+				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(fs.regBaseForLocals(labelNLocals))
 			}
 			offset := fs.pc() - (pg.pc + 1)
 			if offset > MaxSJ || offset < MinSJ {
