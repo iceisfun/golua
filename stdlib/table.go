@@ -407,11 +407,12 @@ func tablePack(v *vm.VM) int {
 
 // table.move(a1, f, e, t [,a2])
 func tableMove(v *vm.VM) int {
-	a1 := tableGetTable(v, 1, "table.move")
-
+	// Check numeric args before table args (matches Lua 5.4 luaB_move order)
 	f := getInt(v, 2, "table.move")
 	e := getInt(v, 3, "table.move")
 	tt := getInt(v, 4, "table.move")
+
+	a1 := tableGetTable(v, 1, "table.move")
 
 	a2 := a1
 	if !v.Get(5).IsNil() {

@@ -1,7 +1,7 @@
 -- table.move tests
 do
     print(pcall(table.move))
-    --> ~^false\t.*table expected
+    --> ~^false\t.*number expected
 
     print(pcall(table.move, 1, 2, 3, 4))
     --> ~^false\t.*table expected
