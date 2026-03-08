@@ -869,7 +869,12 @@ func (vm *VM) GetSourceLocation(level int) string {
 			if pc < len(proto.Lines) {
 				return fmt.Sprintf("%s:%d", shortSrc(proto.Source), proto.Lines[pc])
 			}
-			return shortSrc(proto.Source)
+			// No line info (e.g., stripped function). Only return source
+			// prefix if source is non-empty, to avoid spurious [string ""].
+			if proto.Source != "" {
+				return shortSrc(proto.Source)
+			}
+			return ""
 		}
 		idx--
 	}
