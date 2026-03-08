@@ -40,7 +40,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				panic(fmt.Sprintf("bad argument #%d to 'string.format' (no value)", argIdx+2))
 			}
 			argIdx++
-			panic("invalid conversion '%\x00' to 'string.format'")
+			panic("invalid conversion '%\x00' to 'format'")
 		}
 
 		i++
@@ -53,7 +53,11 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		spec := "%"
 		for i < len(format) && !strings.ContainsRune("diouxXeEfFgGaAcspq%", rune(format[i])) {
 			if !strings.ContainsRune("#0- +.0123456789", rune(format[i])) {
-				panic(fmt.Sprintf("invalid conversion '%%%c' to 'string.format'", format[i]))
+				// Lua 5.4: check for argument existence before reporting invalid conversion
+				if argIdx >= len(vals) {
+					panic(fmt.Sprintf("bad argument #%d to 'string.format' (no value)", argIdx+2))
+				}
+				panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", format[i]))
 			}
 			spec += string(format[i])
 			i++
@@ -63,7 +67,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				panic(fmt.Sprintf("bad argument #%d to 'string.format' (no value)", argIdx+2))
 			}
 			argIdx++
-			panic(fmt.Sprintf("invalid conversion '%s' to 'string.format'", spec))
+			panic(fmt.Sprintf("invalid conversion '%s' to 'format'", spec))
 		}
 
 		specChar := format[i]
@@ -172,7 +176,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number expected, got %s)", argIdx+1, val.Type()))
 			}
 		case 'F':
-			panic("invalid conversion '%F' to 'string.format'")
+			panic("invalid conversion '%F' to 'format'")
 		case 's':
 			str := tolstring(v, val)
 			if spec != "%" && strings.ContainsRune(str, 0) {
@@ -205,7 +209,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		case 'p':
 			result.WriteString(luaPointerFormat(val))
 		default:
-			panic(fmt.Sprintf("invalid conversion '%%%c' to 'string.format'", specChar))
+			panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", specChar))
 		}
 	}
 
@@ -664,7 +668,7 @@ func validateConversion(spec string, conv byte) {
 		}
 	case 'q':
 		if hasModifiers {
-			panic("cannot have modifiers with '%q'")
+			panic("specifier '%q' cannot have modifiers")
 		}
 	case 's':
 		if strings.ContainsAny(flags, "0#+ ") {
@@ -687,7 +691,7 @@ func validateConversion(spec string, conv byte) {
 			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	case 'F':
-		panic(fmt.Sprintf("invalid conversion '%%%c' to 'string.format'", conv))
+		panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", conv))
 	}
 }
 

@@ -367,7 +367,7 @@ func packFloat64(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, argIdx
 }
 
 func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int, argIdx *int) {
-	s := getString(v, *argIdx, "pack")
+	s := getString(v, *argIdx, "string.pack")
 	*argIdx++
 
 	if len(s) > size {
@@ -381,7 +381,7 @@ func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int, arg
 }
 
 func packZeroTermString(v *vm.VM, buf *bytes.Buffer, argIdx *int) {
-	s := getString(v, *argIdx, "pack")
+	s := getString(v, *argIdx, "string.pack")
 	*argIdx++
 
 	if strings.ContainsRune(s, '\x00') {
@@ -392,7 +392,7 @@ func packZeroTermString(v *vm.VM, buf *bytes.Buffer, argIdx *int) {
 }
 
 func packSizedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, prefixSize int, argIdx *int) {
-	s := getString(v, *argIdx, "pack")
+	s := getString(v, *argIdx, "string.pack")
 	*argIdx++
 
 	// Alignment for the prefix

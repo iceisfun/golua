@@ -11,8 +11,8 @@
 -- Test 1: invalid conversion character should include " to 'format'"
 local ok, err = pcall(string.format, "%w", 42)
 assert(not ok)
-assert(err:find("to 'string.format'", 1, true),
-  "expected \" to 'string.format'\" suffix in error, got: " .. err)
+assert(err:find("to 'format'", 1, true),
+  "expected \" to 'format'\" suffix in error, got: " .. err)
 
 -- Test 2: invalid flag combo should say "invalid conversion specification:"
 ok, err = pcall(string.format, "%#d", 42)

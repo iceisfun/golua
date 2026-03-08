@@ -835,7 +835,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
 			if !v.IsNumber() {
-				return nil, vm.runtimeError("attempt to compare %s with number", v.Type())
+				return nil, vm.runtimeError("attempt to compare %s with number", vm.ObjTypeName(v))
 			}
 			var lt bool
 			if v.IsInt() {
@@ -852,7 +852,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
 			if !v.IsNumber() {
-				return nil, vm.runtimeError("attempt to compare %s with number", v.Type())
+				return nil, vm.runtimeError("attempt to compare %s with number", vm.ObjTypeName(v))
 			}
 			var le bool
 			if v.IsInt() {
@@ -869,7 +869,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
 			if !v.IsNumber() {
-				return nil, vm.runtimeError("attempt to compare %s with number", v.Type())
+				return nil, vm.runtimeError("attempt to compare %s with number", vm.ObjTypeName(v))
 			}
 			var gt bool
 			if v.IsInt() {
@@ -886,7 +886,7 @@ func (vm *VM) execute() ([]Value, error) {
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
 			if !v.IsNumber() {
-				return nil, vm.runtimeError("attempt to compare %s with number", v.Type())
+				return nil, vm.runtimeError("attempt to compare %s with number", vm.ObjTypeName(v))
 			}
 			var ge bool
 			if v.IsInt() {
@@ -1046,7 +1046,7 @@ func (vm *VM) execute() ([]Value, error) {
 					if name != "" {
 						vi = fmt.Sprintf(" (%s '%s')", what, name)
 					}
-					return nil, vm.runtimeError("attempt to call a %s value%s", fn.Type(), vi)
+					return nil, vm.runtimeError("attempt to call a %s value%s", vm.ObjTypeName(fn), vi)
 				}
 			}
 			if fn.IsFunction() {
@@ -1174,7 +1174,11 @@ func (vm *VM) execute() ([]Value, error) {
 			limit := vm.stack[frame.base+a+1]
 			step := vm.stack[frame.base+a+2]
 
-			// Coerce string operands to numbers
+			// Coerce string operands to numbers.
+			// Lua 5.4: if init or step was a string, force float mode
+			// (string limit alone does not force float).
+			initWasString := init.IsString()
+			stepWasString := step.IsString()
 			if init.IsString() {
 				if nv, ok := StringToNumericValue(init.AsString()); ok {
 					init = nv
@@ -1193,7 +1197,9 @@ func (vm *VM) execute() ([]Value, error) {
 
 			// Lua 5.4: if init and step are integer TYPE (not just convertible),
 			// use integer mode. Float values like 1.0 use float mode.
-			if init.IsInt() && step.IsInt() {
+			// However, if init or step was originally a string, force float mode
+			// even if the string converted to an integer.
+			if init.IsInt() && step.IsInt() && !initWasString && !stepWasString {
 				initI := init.AsInt()
 				stepI := step.AsInt()
 				if stepI == 0 {
@@ -1356,13 +1362,13 @@ func (vm *VM) execute() ([]Value, error) {
 							return nil, err
 						}
 					} else {
-						return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", fn.Type())
+						return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))
 					}
 				} else {
-					return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", fn.Type())
+					return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))
 				}
 			} else {
-				return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", fn.Type())
+				return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))
 			}
 			if err != nil {
 				return nil, err
@@ -1626,7 +1632,7 @@ dispatch:
 		// Check for __call metamethod
 		mm := vm.getMetafield(fn, "__call")
 		if mm.IsNil() {
-			return nil, vm.runtimeError("attempt to call a %s value%s", fn.Type(), vm.varInfo(a))
+			return nil, vm.runtimeError("attempt to call a %s value%s", vm.ObjTypeName(fn), vm.varInfo(a))
 		}
 
 		// Build new args: prepend fn (self) so the call becomes mm(fn, args...)

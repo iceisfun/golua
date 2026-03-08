@@ -605,7 +605,11 @@ func luaSelect(v *vm.VM) int {
 		if idx.IsNumber() {
 			panic("bad argument #1 to 'select' (number has no integer representation)")
 		}
-		panic("bad argument #1 to 'select' (number expected, got " + idx.Type() + ")")
+		typeName := idx.Type()
+		if n < 1 {
+			typeName = "no value"
+		}
+		panic("bad argument #1 to 'select' (number expected, got " + typeName + ")")
 	}
 
 	if i < 0 {

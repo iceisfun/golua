@@ -302,12 +302,12 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, 
 		if v1.IsNumber() {
 			return Nil, vm.runtimeErrorForNumber(regB)
 		}
-		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", v1.Type(), vm.varInfo(regB))
+		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v1), vm.varInfo(regB))
 	}
 	if v2.IsNumber() {
 		return Nil, vm.runtimeErrorForNumber(regC)
 	}
-	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", v2.Type(), vm.varInfo(regC))
+	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v2), vm.varInfo(regC))
 }
 
 // bitwiseK performs a register-constant bitwise operation.
@@ -347,12 +347,12 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value, regB int) (Value, error)
 		if v.IsNumber() {
 			return Nil, vm.runtimeErrorForNumber(regB)
 		}
-		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", v.Type(), vm.varInfo(regB))
+		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(regB))
 	}
 	if kv.IsNumber() {
 		return Nil, vm.runtimeError("number has no integer representation")
 	}
-	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", kv.Type())
+	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(kv))
 }
 
 // bitwiseMetamethod returns the metamethod name for a bitwise opcode

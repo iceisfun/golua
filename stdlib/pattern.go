@@ -254,7 +254,7 @@ func (ms *matchState) matchBackRef(si, pp int) int {
 		panic(fmt.Sprintf("invalid capture index %%%d", l+1))
 	}
 	if c.slen == capPosition {
-		panic(fmt.Sprintf("invalid capture index %%%d", l+1))
+		return -1 // position captures produce numbers, not strings; backref can't match
 	}
 	capStr := ms.s[c.init : c.init+c.slen]
 	if si+len(capStr) > len(ms.s) {

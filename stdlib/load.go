@@ -174,7 +174,7 @@ func luaLoad(v *vm.VM) int {
 	displayName := chunkNameForDisplay(rawChunkName)
 
 	// Parse and compile
-	fn, errMsg := compileChunk(v, source, displayName, env, hasEnv, compileChunkOpts{rawSource: rawChunkName})
+	fn, errMsg := compileChunk(v, source, displayName, env, hasEnv, compileChunkOpts{rawSource: rawChunkName, hasRawSource: true})
 	if errMsg != "" {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(errMsg))
@@ -351,8 +351,9 @@ func luaDofile(v *vm.VM) int {
 
 // compileChunkOpts holds optional settings for compileChunk.
 type compileChunkOpts struct {
-	stripShebang bool
-	rawSource    string // if non-empty, override proto.Source for debug info
+	stripShebang  bool
+	rawSource     string // override proto.Source for debug info
+	hasRawSource  bool   // true when rawSource is explicitly set (even if empty)
 }
 
 // compileChunk parses and compiles Lua source, returning a function value.
@@ -378,7 +379,7 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 	// Compile — use raw source name so compiler.shortSrc formats correctly.
 	// The display name has [string "..."] wrapping which shortSrc would double-wrap.
 	compileSource := chunkName
-	if o.rawSource != "" {
+	if o.hasRawSource {
 		compileSource = o.rawSource
 	}
 	proto, compileErr := compiler.Compile(compileSource, block,
@@ -388,7 +389,7 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 	}
 
 	// Override proto.Source with the raw source name for debug info.
-	if o.rawSource != "" {
+	if o.hasRawSource {
 		setProtoSource(proto, o.rawSource)
 	}
 

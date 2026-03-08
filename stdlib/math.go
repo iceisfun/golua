@@ -344,7 +344,11 @@ func xoshiroRange(rng *xoshiro256ss, lower, upper int64) int64 {
 		return lower
 	}
 	if r == math.MaxUint64 {
-		return int64(rng.next())
+		// Full range: Lua 5.4 computes p = project(I2UInt(rv), MaxUint64)
+		// which is identity, then returns (lua_Integer)(p + (lua_Unsigned)low).
+		// All arithmetic is unsigned before the final cast to signed.
+		ran := rng.next()
+		return int64(ran + uint64(lower))
 	}
 	// Lua 5.4's project(): bitmask rejection sampling.
 	// Uses the exact same algorithm as lmathlib.c for identical sequences.

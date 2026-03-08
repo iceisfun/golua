@@ -120,7 +120,7 @@ func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
 // compareError generates the appropriate comparison error message.
 // Lua 5.4: same-type uses "two TYPE values", different-type uses "TYPE with TYPE".
 func (vm *VM) compareError(v1, v2 Value) error {
-	t1, t2 := v1.Type(), v2.Type()
+	t1, t2 := vm.ObjTypeName(v1), vm.ObjTypeName(v2)
 	if t1 == t2 {
 		return vm.runtimeError("attempt to compare two %s values", t1)
 	}
@@ -169,11 +169,11 @@ func (vm *VM) concat(v1, v2 Value, reg1 int) (Value, error) {
 		if reg1 >= 0 {
 			info = vm.varInfo(reg1 + 1)
 		}
-		return Nil, vm.runtimeError("attempt to concatenate a %s value%s", v2.Type(), info)
+		return Nil, vm.runtimeError("attempt to concatenate a %s value%s", vm.ObjTypeName(v2), info)
 	}
 	info := ""
 	if reg1 >= 0 {
 		info = vm.varInfo(reg1)
 	}
-	return Nil, vm.runtimeError("attempt to concatenate a %s value%s", v1.Type(), info)
+	return Nil, vm.runtimeError("attempt to concatenate a %s value%s", vm.ObjTypeName(v1), info)
 }
