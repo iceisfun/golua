@@ -21,9 +21,16 @@ func gotDesc(v *vm.VM, argn int) string {
 // print(...)
 func luaPrint(v *vm.VM) int {
 	n := v.ArgCount()
+	// Snapshot all arguments before processing. tolstring may call
+	// __tostring metamethods via ProtectedCall, which can shift the
+	// native call's stack frame (especially when invoked through pcall).
+	args := make([]vm.Value, n)
+	for i := 0; i < n; i++ {
+		args[i] = v.Get(i + 1)
+	}
 	var parts []string
-	for i := 1; i <= n; i++ {
-		parts = append(parts, tolstring(v, v.Get(i)))
+	for _, arg := range args {
+		parts = append(parts, tolstring(v, arg))
 	}
 	v.Print(strings.Join(parts, "\t"))
 	return 0
