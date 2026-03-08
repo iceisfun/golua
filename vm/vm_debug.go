@@ -259,17 +259,21 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		info.ActiveLines[proto.LastLine] = true
 	}
 
-	// Name inference: look at the caller frame's bytecode
-	callerIdx := idx - 1
-	if callerIdx >= 0 {
-		info.Name, info.NameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
-	}
+	// Name inference: look at the caller frame's bytecode.
+	// For tail calls, the original caller frame is gone, so name resolution
+	// must fail (returning empty name/namewhat), matching Lua 5.4 behavior.
+	if !frame.isTailCall {
+		callerIdx := idx - 1
+		if callerIdx >= 0 {
+			info.Name, info.NameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
+		}
 
-	// If bytecode-based name inference failed, use the frame's override name
-	// (e.g., "close" for __close metamethod calls)
-	if info.NameWhat == "" && frame.callName != "" {
-		info.Name = frame.callName
-		info.NameWhat = frame.callNameWhat
+		// If bytecode-based name inference failed, use the frame's override name
+		// (e.g., "close" for __close metamethod calls)
+		if info.NameWhat == "" && frame.callName != "" {
+			info.Name = frame.callName
+			info.NameWhat = frame.callNameWhat
+		}
 	}
 
 	// When inside a hook and name couldn't be inferred from caller,
