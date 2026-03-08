@@ -605,7 +605,7 @@ func luaSelect(v *vm.VM) int {
 	idx := v.Get(1)
 	n := v.ArgCount()
 
-	if idx.IsString() && idx.AsString() == "#" {
+	if idx.IsString() && len(idx.AsString()) > 0 && idx.AsString()[0] == '#' {
 		v.Set(0, vm.NewInt(int64(n-1)))
 		return 1
 	}
