@@ -228,9 +228,10 @@ func (p *parser) parsePrimaryExpr() ast.Expr {
 		return p.parseName()
 	case token.Type('('):
 		pos := p.pos()
+		openLine := p.tok.Pos.Line
 		p.advance()
 		inner := p.parseExpr()
-		p.expect(token.Type(')'))
+		p.checkMatch(token.Type(')'), "(", openLine)
 		return ast.NewParenExpr(pos, inner)
 	default:
 		p.errorf("unexpected symbol near %s", p.nearToken())
@@ -274,12 +275,13 @@ func (p *parser) continueSuffixedExpr(expr ast.Expr) ast.Expr {
 func (p *parser) parseFuncArgs() []ast.Expr {
 	switch p.tok.Type {
 	case token.Type('('):
+		openLine := p.tok.Pos.Line
 		p.advance()
 		var args []ast.Expr
 		if !p.check(token.Type(')')) {
 			args = p.parseExprList()
 		}
-		p.expect(token.Type(')'))
+		p.checkMatch(token.Type(')'), "(", openLine)
 		return args
 	case token.Type('{'):
 		return []ast.Expr{p.parseTableConstructor()}
