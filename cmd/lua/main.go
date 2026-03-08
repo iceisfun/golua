@@ -19,7 +19,6 @@ import (
 func main() {
 	var timeoutMs int
 	var evalCode string
-	var testMode bool
 	args := os.Args[1:]
 
 	// Parse flags
@@ -45,7 +44,7 @@ func main() {
 			evalCode = args[1]
 			args = args[2:]
 		case "--test":
-			testMode = true
+			// kept for backward compatibility
 			args = args[1:]
 		default:
 			goto done
@@ -130,9 +129,7 @@ done:
 	v.SetExecProvider(vm.NewDefaultExecProvider())
 	v.SetExitHandler(vm.NewDefaultExitHandler())
 
-	if testMode {
-		v.SetDebugProvider(vm.NewDefaultDebugProvider())
-	}
+	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 	stdlib.Open(v)
 
 	// Set timeout context if requested
