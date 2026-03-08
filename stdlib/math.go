@@ -346,17 +346,33 @@ func xoshiroRange(rng *xoshiro256ss, lower, upper int64) int64 {
 	if r == math.MaxUint64 {
 		return int64(rng.next())
 	}
-	// Lua 5.4's project(): unbiased modular reduction
-	// lim = (2^64 - 1) / (r + 1) * (r + 1)
-	lim := (math.MaxUint64 / (r + 1)) * (r + 1)
-	var ran uint64
-	for {
-		ran = rng.next()
-		if ran < lim {
-			break
-		}
+	// Lua 5.4's project(): bitmask rejection sampling.
+	// Uses the exact same algorithm as lmathlib.c for identical sequences.
+	ran := rng.next()
+	return lower + int64(project(ran, r, rng))
+}
+
+// project maps a random value into [0..n] using Lua 5.4's bitmask
+// rejection sampling algorithm from lmathlib.c.
+func project(ran, n uint64, rng *xoshiro256ss) uint64 {
+	if (n & (n + 1)) == 0 {
+		// n+1 is a power of 2: no bias with simple mask
+		return ran & n
 	}
-	return lower + int64(ran%(r+1))
+	// Find the smallest (2^b - 1) >= n
+	lim := n
+	lim |= lim >> 1
+	lim |= lim >> 2
+	lim |= lim >> 4
+	lim |= lim >> 8
+	lim |= lim >> 16
+	lim |= lim >> 32
+	// Project ran into [0..lim], retry if > n
+	ran &= lim
+	for ran > n {
+		ran = rng.next() & lim
+	}
+	return ran
 }
 
 func mathRandomseedClosure(rng *xoshiro256ss) vm.NativeFunc {

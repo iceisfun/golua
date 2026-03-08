@@ -1007,7 +1007,7 @@ func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 	fs := c.fs
 	scope := fs.findLoopScope()
 	if scope == nil {
-		c.error(s, "break outside loop")
+		c.error(s, "break outside loop at line %d", s.Pos().Line)
 		return
 	}
 	// Emit OP_CLOSE if there are close/captured locals being exited
