@@ -499,7 +499,7 @@ func coWrap(v *vm.VM) int {
 
 	// Return a wrapper function that resumes the coroutine on each call.
 	// Unlike coroutine.resume, errors are raised directly (not returned as false, err).
-	wrapper := vm.NewNativeFunc(func(v *vm.VM) int {
+	wrapper := vm.NewNativeFuncWithNups(func(v *vm.VM) int {
 		co.mu.Lock()
 		status := co.status
 		co.mu.Unlock()
@@ -618,7 +618,7 @@ func coWrap(v *vm.VM) int {
 			restoreCallerStatus()
 			panic("execution interrupted: " + v.Context().Err().Error())
 		}
-	})
+	}, 1) // 1 upvalue: the wrapped coroutine thread
 
 	v.Set(0, wrapper)
 	return 1

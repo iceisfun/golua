@@ -50,8 +50,9 @@ import (
 // key (Go function values are not comparable). Each call to NewNativeFunc
 // allocates a distinct box, giving each Value reference identity.
 type nativeFuncBox struct {
-	fn  NativeFunc
-	ptr uintptr // cached reflect pointer for fmt %p output
+	fn   NativeFunc
+	ptr  uintptr // cached reflect pointer for fmt %p output
+	nups int     // number of upvalues (for debug.getinfo "u" flag)
 }
 
 // Value represents a Lua runtime value using a tagged union for efficiency.
@@ -133,6 +134,17 @@ func NewNativeFunc(f NativeFunc) Value {
 	return Value{typ: typeNativeFunc, ptr: &nativeFuncBox{
 		fn:  f,
 		ptr: reflect.ValueOf(f).Pointer(),
+	}}
+}
+
+// NewNativeFuncWithNups creates a native function value that reports the
+// given number of upvalues via debug.getinfo. This is used for functions
+// like coroutine.wrap's iterator which conceptually closes over state.
+func NewNativeFuncWithNups(f NativeFunc, nups int) Value {
+	return Value{typ: typeNativeFunc, ptr: &nativeFuncBox{
+		fn:   f,
+		ptr:  reflect.ValueOf(f).Pointer(),
+		nups: nups,
 	}}
 }
 
@@ -252,6 +264,14 @@ func (v Value) AsNativeFunc() NativeFunc {
 		return v.ptr.(*nativeFuncBox).fn
 	}
 	return nil
+}
+
+// NativeFuncNups returns the number of upvalues for a native function value.
+func (v Value) NativeFuncNups() int {
+	if v.typ == typeNativeFunc {
+		return v.ptr.(*nativeFuncBox).nups
+	}
+	return 0
 }
 
 // rejectInfNan returns true if the trimmed string is an inf/nan token that

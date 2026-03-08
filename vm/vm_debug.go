@@ -300,6 +300,7 @@ func (vm *VM) GetFuncInfo(fn Value) *FrameInfo {
 		info.LastLineDefined = -1
 		info.What = "C"
 		info.IsVarArg = true
+		info.NUps = fn.NativeFuncNups()
 		info.Func = fn
 		return info
 	}
