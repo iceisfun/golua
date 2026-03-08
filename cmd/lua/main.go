@@ -74,6 +74,10 @@ done:
 			os.Exit(1)
 		}
 		source = string(src)
+		// Strip UTF-8 BOM if present (like Lua 5.4)
+		if len(source) >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF {
+			source = source[3:]
+		}
 		name = "@" + filename
 	}
 
