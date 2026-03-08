@@ -763,7 +763,12 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 		return result, nil
 	}
 
-	return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", vm.ObjTypeName(fn), name)
+	// Not a direct function — try __call metamethod chain (callable tables, etc.)
+	result, err := vm.callValue(name, fn, []Value{arg1, arg2})
+	if err != nil {
+		return Nil, err
+	}
+	return result, nil
 }
 
 // callMetamethod3 calls a metamethod with 3 arguments.
@@ -817,7 +822,78 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 		return result, nil
 	}
 
-	return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", vm.ObjTypeName(fn), name)
+	// Not a direct function — try __call metamethod chain (callable tables, etc.)
+	result, err := vm.callValue(name, fn, []Value{arg1, arg2, arg3})
+	if err != nil {
+		return Nil, err
+	}
+	return result, nil
+}
+
+// callValue calls a value that may be a callable table (table with __call metamethod).
+// It resolves the __call chain and invokes the final function. If the value is not
+// callable at all, it returns an error with the metamethod name context.
+// name is the metamethod name without "__" prefix (used for error messages and debug info).
+func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
+	// Resolve __call chain: each level prepends self
+	cur := fn
+	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
+		mm := vm.getMetafield(cur, "__call")
+		if mm.IsNil() {
+			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", vm.ObjTypeName(fn), name)
+		}
+		// Prepend cur as self
+		newArgs := make([]Value, len(args)+1)
+		newArgs[0] = cur
+		copy(newArgs[1:], args)
+		args = newArgs
+
+		if mm.IsFunction() {
+			vm.pendingCallName = name
+			vm.pendingCallNameWhat = "metamethod"
+			results, err := vm.call(mm.AsClosure(), args, 1)
+			if err != nil {
+				return Nil, err
+			}
+			if len(results) > 0 {
+				return results[0], nil
+			}
+			return Nil, nil
+		}
+
+		if mm.IsNativeFunc() {
+			savedTop := vm.top
+			nativeBase := vm.top
+			vm.ensureStack(nativeBase + len(args) + 10)
+			for i, a := range args {
+				vm.stack[nativeBase+1+i] = a
+			}
+			nativeFrame := callFrame{
+				base:         nativeBase,
+				argc:         len(args),
+				callName:     name,
+				callNameWhat: "metamethod",
+			}
+			vm.callStack = append(vm.callStack, nativeFrame)
+			vm.top = nativeBase + 1 + len(args)
+
+			nResults := mm.AsNativeFunc()(vm)
+			var result Value
+			if nResults > 0 {
+				result = vm.stack[nativeBase]
+			} else {
+				result = Nil
+			}
+
+			vm.callStack = vm.callStack[:len(vm.callStack)-1]
+			vm.top = savedTop
+			return result, nil
+		}
+
+		// __call is itself not directly callable — continue resolving
+		cur = mm
+	}
+	return Nil, vm.runtimeError("'__call' chain too long; possible loop")
 }
 
 // GetMetafield retrieves a metafield from a value's metatable (exported for stdlib use).
