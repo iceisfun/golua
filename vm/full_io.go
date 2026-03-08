@@ -381,69 +381,89 @@ func (f *fullFile) readLine(keepNewline bool) (string, error) {
 }
 
 // readNumber reads and parses a number from the stream, skipping leading whitespace.
-// On failure, the file position is restored to its original location.
+// Consumed whitespace is not restored on failure (matches Lua 5.4 behavior).
 func (f *fullFile) readNumber() (string, error) {
-	// Save position so we can restore on failure.
-	// Flush writer first if any, then get the underlying file position
-	// accounting for unread buffered data.
 	if f.writer != nil {
 		f.writer.Flush()
 	}
-	buffered := f.reader.Buffered()
-	rawPos, err := f.file.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return "", err
-	}
-	startPos := rawPos - int64(buffered)
 
-	result, parseErr := f.tryReadNumber()
-	if parseErr != nil {
-		// Restore file position
-		f.file.Seek(startPos, io.SeekStart)
-		f.reader.Reset(f.file)
-		return "", parseErr
-	}
-	return result, nil
+	return readNumberFromBuf(f.reader)
 }
 
-// tryReadNumber attempts to read a number from the stream.
-func (f *fullFile) tryReadNumber() (string, error) {
+// readNumberFromBuf reads a number from a bufio.Reader.
+// It skips leading whitespace (which is not restored on failure),
+// reads number-like characters, and finds the longest valid prefix
+// that parses as a number, unreading the rest.
+func readNumberFromBuf(reader *bufio.Reader) (string, error) {
+	// Skip leading whitespace
 	for {
-		b, err := f.reader.ReadByte()
+		b, err := reader.ReadByte()
 		if err != nil {
 			return "", err
 		}
 		if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
-			f.reader.UnreadByte()
+			reader.UnreadByte()
 			break
 		}
 	}
 
-	var num strings.Builder
+	// Read number-like characters greedily
+	var buf []byte
 	for {
-		b, err := f.reader.ReadByte()
+		b, err := reader.ReadByte()
 		if err != nil {
-			if err == io.EOF && num.Len() > 0 {
+			if err == io.EOF && len(buf) > 0 {
 				break
 			}
 			return "", err
 		}
-		if (b >= '0' && b <= '9') || b == '.' || b == '-' || b == '+' || b == 'e' || b == 'E' || b == 'x' || b == 'X' ||
-			(b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') {
-			num.WriteByte(b)
+		if isNumberChar(b) {
+			buf = append(buf, b)
 		} else {
-			f.reader.UnreadByte()
+			reader.UnreadByte()
 			break
 		}
 	}
 
-	s := num.String()
-	if _, err := strconv.ParseFloat(s, 64); err != nil {
-		if _, err := strconv.ParseInt(s, 0, 64); err != nil {
-			return "", fmt.Errorf("not a number: %s", s)
+	// Try to find the longest prefix that parses as a valid number
+	for end := len(buf); end > 0; end-- {
+		s := string(buf[:end])
+		if _, err := strconv.ParseInt(s, 0, 64); err == nil {
+			// Unread the unused suffix
+			for i := len(buf) - 1; i >= end; i-- {
+				reader.UnreadByte()
+			}
+			return s, nil
+		}
+		if _, err := strconv.ParseFloat(s, 64); err == nil {
+			for i := len(buf) - 1; i >= end; i-- {
+				reader.UnreadByte()
+			}
+			return s, nil
 		}
 	}
-	return s, nil
+
+	// No valid number found; unread all collected characters
+	for i := len(buf) - 1; i >= 0; i-- {
+		reader.UnreadByte()
+	}
+	return "", fmt.Errorf("not a number")
+}
+
+// isNumberChar returns true if b can be part of a numeric literal
+// (decimal or hexadecimal, integer or float).
+func isNumberChar(b byte) bool {
+	if b >= '0' && b <= '9' {
+		return true
+	}
+	if b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F' {
+		return true
+	}
+	switch b {
+	case '.', '-', '+', 'e', 'E', 'x', 'X', 'p', 'P':
+		return true
+	}
+	return false
 }
 
 // stdFile wraps an os.File for standard input/output/error.
