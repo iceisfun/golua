@@ -62,10 +62,15 @@ func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 			callerArgError(v, 1, "require", "string expected, got no value")
 		}
 		nameVal := v.Get(1)
-		if !nameVal.IsString() {
+		if !nameVal.IsString() && !nameVal.IsNumber() {
 			callerArgError(v, 1, "require", fmt.Sprintf("string expected, got %s", nameVal.Type()))
 		}
-		name := nameVal.AsString()
+		var name string
+		if nameVal.IsString() {
+			name = nameVal.AsString()
+		} else {
+			name = vm.ValueToString(nameVal)
+		}
 
 		// Check package.loaded
 		loadedVal := pkg.GetString("loaded")
