@@ -61,7 +61,11 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 	for _, o := range opts {
 		o(&cfg)
 	}
-	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: cfg.endLine}
+	endLine := cfg.endLine
+	if endLine == 0 {
+		endLine = blockMaxLine(block)
+	}
+	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: endLine}
 	p := c.compileChunk(source, block)
 	if c.err != nil {
 		return nil, c.err
@@ -258,6 +262,21 @@ func (c *compiler) errorAtEOF(format string, args ...interface{}) {
 			c.err = fmt.Errorf("%s", msg)
 		}
 	}
+}
+
+// blockMaxLine returns the maximum line number found among the block's
+// statements. This is used as a fallback end-line when WithEndLine is not
+// provided, so that compiler errors include a source:line prefix.
+func blockMaxLine(block *ast.Block) int {
+	maxLine := 0
+	if block != nil {
+		for _, s := range block.Stmts {
+			if l := s.Pos().Line; l > maxLine {
+				maxLine = l
+			}
+		}
+	}
+	return maxLine
 }
 
 // ---------------------------------------------------------------------------
