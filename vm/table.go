@@ -68,6 +68,21 @@ func NewTableWithSize(narray, nhash int) *Table {
 	return t
 }
 
+// EnsureArraySize grows the array part to at least n slots, filling new
+// slots with Nil. This allows subsequent SetInt calls to place values
+// directly into the array part even if some intermediate indices are nil.
+func (t *Table) EnsureArraySize(n int) {
+	if n > len(t.array) {
+		if n > cap(t.array) {
+			newArray := make([]Value, n)
+			copy(newArray, t.array)
+			t.array = newArray
+		} else {
+			t.array = t.array[:n]
+		}
+	}
+}
+
 // ensureStrHash lazily initializes the string hash map.
 func (t *Table) ensureStrHash() map[string]Value {
 	if t.strHash == nil {
@@ -412,6 +427,18 @@ func (t *Table) SetInt(i int, value Value) {
 // SetString sets by string key.
 func (t *Table) SetString(s string, value Value) {
 	t.setStrHash(s, value)
+}
+
+// RawSetArray sets an array slot directly without triggering shrinkArray.
+// The index must be within the current array bounds (1 <= i <= len(array)).
+// This is used by table.pack to fill pre-sized arrays that may contain nils.
+func (t *Table) RawSetArray(i int, value Value) {
+	t.array[i-1] = value
+}
+
+// ShrinkArray removes trailing nils from the array part.
+func (t *Table) ShrinkArray() {
+	t.shrinkArray()
 }
 
 // shrinkArray removes trailing nils from the array part.

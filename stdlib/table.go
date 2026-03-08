@@ -413,10 +413,12 @@ func tableUnpack(v *vm.VM) int {
 func tablePack(v *vm.VM) int {
 	n := v.ArgCount()
 	tbl := vm.NewEmptyTable()
+	tbl.EnsureArraySize(n)
 
 	for i := 1; i <= n; i++ {
-		tbl.SetInt(i, v.Get(i))
+		tbl.RawSetArray(i, v.Get(i))
 	}
+	tbl.ShrinkArray()
 	tbl.SetString("n", vm.NewInt(int64(n)))
 
 	v.Set(0, vm.NewTable(tbl))
