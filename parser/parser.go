@@ -178,10 +178,13 @@ func (p *parser) nearToken() string {
 	default:
 		lit := p.tok.Literal
 		// Escape non-printable/non-ASCII chars using Lua 5.4's <\NNN> format.
-		// Lua 5.4 is byte-oriented: use the first byte value, not the Unicode
-		// codepoint (e.g., BOM 0xEF 0xBB 0xBF shows as <\239>, not <\65279>).
+		// Lua 5.4 is byte-oriented: use the raw byte value (0-255).
+		// The token Type holds the original rune/byte value from the lexer,
+		// which preserves the raw byte for invalid UTF-8 sequences.
+		// Using lit[0] would give the UTF-8 lead byte instead (e.g., 0xC2
+		// for raw byte 0x80).
 		if len(lit) > 0 {
-			b := lit[0]
+			b := byte(p.tok.Type)
 			if b < 0x20 || b >= 0x7f {
 				return fmt.Sprintf("'<\\%d>'", b)
 			}
