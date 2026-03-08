@@ -34,25 +34,43 @@ func (vm *VM) closeUpvalues(level int) {
 	}
 	vm.openUpvalues = remaining
 
-	// Call __close metamethod on TBC variables in reverse order
-	// (most recently declared first).
-	// Remove entries from tbcVars BEFORE calling __close to prevent
-	// double-close if the handler panics (the panic would be caught by
-	// ProtectedCall's recover, which also processes tbcVars).
-	var tbcToClose []int
-	var remainingTBC []int
-	for _, idx := range vm.tbcVars {
+	// Call __close metamethods on TBC variables in reverse order
+	// (most recently declared first). Unlike callCloseHandlers (used in
+	// protected/error-recovery contexts), handlers here are NOT individually
+	// protected: if one errors, the panic propagates immediately and the
+	// chain stops. This matches Lua 5.4 behavior where __close errors in
+	// unprotected scope exit stop the chain. If a ProtectedCall is active,
+	// its recovery will pick up any remaining TBC vars still in vm.tbcVars
+	// and close them with callCloseHandlers (which IS individually protected).
+	//
+	// We remove each entry from vm.tbcVars one at a time before calling
+	// its handler, so that (a) already-called entries aren't re-closed by
+	// ProtectedCall recovery, and (b) not-yet-called entries remain in
+	// vm.tbcVars for ProtectedCall recovery to find.
+
+	// Partition: find which entries are >= level and which are below.
+	// We'll process the >= level ones in reverse but need to track them
+	// by their position in vm.tbcVars.
+	var tbcIndices []int // positions in vm.tbcVars that are >= level
+	for i, idx := range vm.tbcVars {
 		if idx >= level {
-			tbcToClose = append(tbcToClose, idx)
-		} else {
-			remainingTBC = append(remainingTBC, idx)
+			tbcIndices = append(tbcIndices, i)
 		}
 	}
-	vm.tbcVars = remainingTBC
-	// Call in reverse order (most recently declared first).
-	// Each call is protected so that errors in __close don't prevent
-	// other handlers from running. The last error is re-raised.
-	vm.callCloseHandlers(tbcToClose, Nil)
+	// Process in reverse order (most recently declared first).
+	for j := len(tbcIndices) - 1; j >= 0; j-- {
+		pos := tbcIndices[j]
+		stackIdx := vm.tbcVars[pos]
+		// Remove this entry from vm.tbcVars before calling the handler.
+		vm.tbcVars = append(vm.tbcVars[:pos], vm.tbcVars[pos+1:]...)
+		// Update remaining positions in tbcIndices since we shifted elements.
+		for k := 0; k < j; k++ {
+			if tbcIndices[k] > pos {
+				tbcIndices[k]--
+			}
+		}
+		vm.callCloseMetamethod(stackIdx, Nil)
+	}
 }
 
 // callCloseHandlers calls __close metamethods on a list of TBC variable indices
