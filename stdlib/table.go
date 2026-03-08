@@ -71,21 +71,32 @@ func tableSetIdx(v *vm.VM, t vm.LuaTable, key int, value vm.Value) {
 func tableConcat(v *vm.VM) int {
 	tbl := tableGetTable(v, 1, "table.concat")
 
+	// Snapshot all args before any metamethod calls (__len, __index).
+	// Metamethod frames can overlap arg slots on the stack.
 	sep := ""
 	if !v.Get(2).IsNil() {
 		sep = getString(v, 2, "table.concat")
+	}
+	hasI := !v.Get(3).IsNil()
+	hasJ := !v.Get(4).IsNil()
+	var iArg, jArg int64
+	if hasI {
+		iArg = getInt(v, 3, "table.concat")
+	}
+	if hasJ {
+		jArg = getInt(v, 4, "table.concat")
 	}
 
 	length := tableObjLen(v, v.Get(1))
 
 	i := int64(1)
-	if !v.Get(3).IsNil() {
-		i = getInt(v, 3, "table.concat")
+	if hasI {
+		i = iArg
 	}
 
 	j := int64(length)
-	if !v.Get(4).IsNil() {
-		j = getInt(v, 4, "table.concat")
+	if hasJ {
+		j = jArg
 	}
 
 	var parts []string
@@ -390,16 +401,27 @@ func auxSort(v *vm.VM, tbl vm.LuaTable, lo, up int, comp vm.Value, err *any) {
 func tableUnpack(v *vm.VM) int {
 	list := v.Get(1)
 
+	// Snapshot optional args before __len metamethod can clobber slots.
+	hasI := !v.Get(2).IsNil()
+	hasJ := !v.Get(3).IsNil()
+	var iArg, jArg int64
+	if hasI {
+		iArg = getInt(v, 2, "table.unpack")
+	}
+	if hasJ {
+		jArg = getInt(v, 3, "table.unpack")
+	}
+
 	length := tableObjLen(v, list)
 
 	i := int64(1)
-	if !v.Get(2).IsNil() {
-		i = getInt(v, 2, "table.unpack")
+	if hasI {
+		i = iArg
 	}
 
 	j := int64(length)
-	if !v.Get(3).IsNil() {
-		j = getInt(v, 3, "table.unpack")
+	if hasJ {
+		j = jArg
 	}
 
 	if j < i {
@@ -419,9 +441,12 @@ func tableUnpack(v *vm.VM) int {
 		v.EnsureStack(v.Base() + nResults)
 	}
 
-	// Use table-optimized path when possible, generic index otherwise
+	// Snapshot all values into a Go slice first, then write to stack.
+	// Writing results incrementally via v.Set() while calling __index
+	// metamethods between writes would clobber earlier results because
+	// metamethod frames overlap the result slots on the stack.
 	tbl := list.AsTable()
-	k := 0
+	results := make([]vm.Value, 0, nResults)
 	for idx := i; idx <= j; idx++ {
 		var val vm.Value
 		if tbl != nil {
@@ -433,13 +458,15 @@ func tableUnpack(v *vm.VM) int {
 				panic(err)
 			}
 		}
-		v.Set(k, val)
-		k++
+		results = append(results, val)
 		if idx == j {
 			break // avoid int64 overflow on idx++ when j == math.MaxInt64
 		}
 	}
-	return k
+	for k, val := range results {
+		v.Set(k, val)
+	}
+	return len(results)
 }
 
 // table.pack(...)
