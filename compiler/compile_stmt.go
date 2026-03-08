@@ -1301,9 +1301,11 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	fs.enterScope(false)
 
 	// Parameters are local variables
+	// Use ")" as the near-token context, matching Lua 5.4 which reports
+	// the closing delimiter rather than the parameter name.
 	nearToken := ""
 	if len(fe.Params) > 0 {
-		nearToken = fe.Params[len(fe.Params)-1].Name
+		nearToken = ")"
 	}
 	fs.checkVarLimitAt(len(fe.Params), fe.P.Line, nearToken)
 	for _, param := range fe.Params {
