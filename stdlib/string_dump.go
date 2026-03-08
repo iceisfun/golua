@@ -13,7 +13,7 @@ import (
 func stringDump(v *vm.VM) int {
 	val := v.Get(1)
 	if !val.IsFunction() && !val.IsNativeFunc() {
-		panic(fmt.Sprintf("bad argument #1 to 'string.dump' (function expected, got %s)", val.Type()))
+		callerArgError(v, 1, "string.dump", fmt.Sprintf("function expected, got %s", val.Type()))
 	}
 	if val.IsNativeFunc() {
 		panic("unable to dump given function")

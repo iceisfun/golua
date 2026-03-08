@@ -35,7 +35,8 @@ func tableGetTable(v *vm.VM, idx int, fname string) vm.LuaTable {
 	if v.ArgCount() < idx {
 		got = "no value"
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (table expected, got %s)", idx, fname, got))
+	callerArgError(v, idx, fname, fmt.Sprintf("table expected, got %s", got))
+	return nil // unreachable
 }
 
 // tableObjLen returns #val via metamethod-aware ObjLen, panicking on error.
@@ -110,7 +111,8 @@ func tableInsert(v *vm.VM) int {
 
 	n := v.ArgCount()
 	if n < 2 || n > 3 {
-		panic("wrong number of arguments to 'table.insert'")
+		name, _ := callerFuncName(v, "insert")
+		panic(fmt.Sprintf("wrong number of arguments to '%s'", name))
 	}
 	length := tableObjLen(v, v.Get(1))
 
@@ -123,7 +125,7 @@ func tableInsert(v *vm.VM) int {
 		val := v.Get(3)
 
 		if pos < 1 || pos > length+1 {
-			panic(fmt.Sprintf("bad argument #2 to 'table.insert' (position out of bounds)"))
+			callerArgError(v, 2, "table.insert", "position out of bounds")
 		}
 
 		// Shift elements up
@@ -152,7 +154,7 @@ func tableRemove(v *vm.VM) int {
 	// Valid range: 1 <= pos <= length+1
 	if pos != length {
 		if pos < 1 || pos > length+1 {
-			panic("bad argument #2 to 'table.remove' (position out of bounds)")
+			callerArgError(v, 2, "table.remove", "position out of bounds")
 		}
 	}
 
@@ -206,7 +208,7 @@ func tableSort(v *vm.VM) int {
 		auxSort(v, values, 0, length-1, vm.Nil, &sortErr)
 	} else {
 		if !comp.IsFunction() && !comp.IsNativeFunc() {
-			panic(fmt.Sprintf("bad argument #2 to 'table.sort' (function expected, got %s)", comp.Type()))
+			callerArgError(v, 2, "table.sort", fmt.Sprintf("function expected, got %s", comp.Type()))
 		}
 		// Custom comparator
 		auxSort(v, values, 0, length-1, comp, &sortErr)
@@ -423,22 +425,22 @@ func tableMove(v *vm.VM) int {
 		// Check interval too large
 		if f < 0 && e > 0 && e-f < 0 {
 			// overflow in e-f
-			panic("bad argument #3 to 'table.move' (too many elements to move)")
+			callerArgError(v, 3, "table.move", "too many elements to move")
 		}
 		count := e - f + 1
 		if count < 0 {
-			panic("bad argument #3 to 'table.move' (too many elements to move)")
+			callerArgError(v, 3, "table.move", "too many elements to move")
 		}
 
 		// Check destination overflow: tt + (e - f) must not wrap
 		if e-f >= 0 {
 			dest_end := tt + (e - f)
 			if (e-f > 0) && (dest_end < tt) {
-				panic("bad argument #4 to 'table.move' (destination wrap around)")
+				callerArgError(v, 4, "table.move", "destination wrap around")
 			}
 			// Also check against math.MaxInt64
 			if tt > 0 && e-f > math.MaxInt64-tt {
-				panic("bad argument #4 to 'table.move' (destination wrap around)")
+				callerArgError(v, 4, "table.move", "destination wrap around")
 			}
 		}
 

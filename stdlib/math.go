@@ -1,7 +1,6 @@
 package stdlib
 
 import (
-	"fmt"
 	"math"
 	"math/bits"
 	"time"
@@ -185,7 +184,7 @@ func mathFmod(v *vm.VM) int {
 	y := getNumber(v, 2, "math.fmod")
 	if v1.IsInt() && v2.IsInt() {
 		if y == 0 {
-			panic("bad argument #2 to 'math.fmod' (zero)")
+			callerArgError(v, 2, "math.fmod", "zero")
 		}
 		// Integer fmod: preserve integer type
 		a := v1.AsInt()
@@ -229,18 +228,18 @@ func mathLog(v *vm.VM) int {
 func mathMax(v *vm.VM) int {
 	n := v.ArgCount()
 	if n == 0 {
-		panic("bad argument #1 to 'math.max' (value expected)")
+		callerArgError(v, 1, "math.max", "value expected")
 	}
 
 	maxVal := v.Get(1)
 	if !maxVal.IsNumber() {
-		panic("bad argument #1 to 'math.max' (number expected)")
+		callerArgError(v, 1, "math.max", "number expected")
 	}
 
 	for i := 2; i <= n; i++ {
 		cur := v.Get(i)
 		if !cur.IsNumber() {
-			panic("bad argument #1 to 'math.max' (number expected)")
+			callerArgError(v, 1, "math.max", "number expected")
 		}
 		if lt, _ := maxVal.LessThan(cur); lt {
 			maxVal = cur
@@ -254,18 +253,18 @@ func mathMax(v *vm.VM) int {
 func mathMin(v *vm.VM) int {
 	n := v.ArgCount()
 	if n == 0 {
-		panic("bad argument #1 to 'math.min' (value expected)")
+		callerArgError(v, 1, "math.min", "value expected")
 	}
 
 	minVal := v.Get(1)
 	if !minVal.IsNumber() {
-		panic("bad argument #1 to 'math.min' (number expected)")
+		callerArgError(v, 1, "math.min", "number expected")
 	}
 
 	for i := 2; i <= n; i++ {
 		cur := v.Get(i)
 		if !cur.IsNumber() {
-			panic("bad argument #1 to 'math.min' (number expected)")
+			callerArgError(v, 1, "math.min", "number expected")
 		}
 		if lt, _ := cur.LessThan(minVal); lt {
 			minVal = cur
@@ -317,7 +316,7 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 			if upper == 0 {
 				v.Set(0, vm.NewInt(int64(rng.next())))
 			} else if upper < 1 {
-				panic("bad argument #1 to 'math.random' (interval is empty)")
+				callerArgError(v, 1, "math.random", "interval is empty")
 			} else {
 				v.Set(0, vm.NewInt(xoshiroRange(rng, 1, upper)))
 			}
@@ -326,7 +325,7 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 			lower := getInt(v, 1, "math.random")
 			upper := getInt(v, 2, "math.random")
 			if lower > upper {
-				panic("bad argument #1 to 'math.random' (interval is empty)")
+				callerArgError(v, 1, "math.random", "interval is empty")
 			}
 			v.Set(0, vm.NewInt(xoshiroRange(rng, lower, upper)))
 		default:
@@ -428,7 +427,7 @@ func mathTan(v *vm.VM) int {
 
 func mathTointeger(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'math.tointeger' (value expected)")
+		callerArgError(v, 1, "math.tointeger", "value expected")
 	}
 	val := v.Get(1)
 	if !val.IsNumber() && !val.IsString() {
@@ -445,7 +444,7 @@ func mathTointeger(v *vm.VM) int {
 
 func mathType(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'math.type' (value expected)")
+		callerArgError(v, 1, "math.type", "value expected")
 	}
 	val := v.Get(1)
 	if !val.IsNumber() {
@@ -465,14 +464,3 @@ func mathUlt(v *vm.VM) int {
 	return 1
 }
 
-func getNumber(v *vm.VM, idx int, fname string) float64 {
-	val := v.Get(idx)
-	if n, ok := val.ToNumber(); ok {
-		return n
-	}
-	got := v.ObjTypeName(val)
-	if v.ArgCount() < idx {
-		got = "no value"
-	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, got))
-}

@@ -6,6 +6,34 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
+// callerFuncName resolves the native function's name from the calling Lua
+// frame's bytecode. Returns the resolved name and nameWhat. If resolution
+// fails, returns (fallback, "").
+func callerFuncName(v *vm.VM, fallback string) (name, nameWhat string) {
+	name, nameWhat = v.CallerFuncName()
+	if name == "" {
+		return fallback, ""
+	}
+	return name, nameWhat
+}
+
+// callerArgError panics with a "bad argument" error, resolving the function
+// name from the calling Lua frame's bytecode debug info (matching Lua 5.4's
+// luaL_argerror behavior). When the function was called via method syntax
+// (e.g., s:format()), the argument index is decremented by 1 so that the
+// implicit self parameter is not counted.
+// The fallback name is used when bytecode resolution fails.
+func callerArgError(v *vm.VM, idx int, fallback, msg string) {
+	name, nameWhat := v.CallerFuncName()
+	if name == "" {
+		name = fallback
+	}
+	if nameWhat == "method" && idx > 0 {
+		idx--
+	}
+	panic(fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg))
+}
+
 // getString returns the string value at stack index idx, coercing numbers.
 // Panics with a Lua error message on type mismatch. This panic is always
 // caught by ProtectedCall — see package-level panic convention docs.
@@ -21,7 +49,8 @@ func getString(v *vm.VM, idx int, fname string) string {
 	if v.ArgCount() < idx {
 		got = "no value"
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (string expected, got %s)", idx, fname, got))
+	callerArgError(v, idx, fname, fmt.Sprintf("string expected, got %s", got))
+	return "" // unreachable
 }
 
 // getInt returns the integer value at stack index idx.
@@ -33,13 +62,30 @@ func getInt(v *vm.VM, idx int, fname string) int64 {
 		return i
 	}
 	if val.IsNumber() {
-		panic(fmt.Sprintf("bad argument #%d to '%s' (number has no integer representation)", idx, fname))
+		callerArgError(v, idx, fname, "number has no integer representation")
 	}
 	got := val.Type()
 	if v.ArgCount() < idx {
 		got = "no value"
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (number expected, got %s)", idx, fname, got))
+	callerArgError(v, idx, fname, fmt.Sprintf("number expected, got %s", got))
+	return 0 // unreachable
+}
+
+// getNumber returns the float64 value at stack index idx, coercing integers.
+// Panics with a Lua error message on type mismatch. This panic is always
+// caught by ProtectedCall — see package-level panic convention docs.
+func getNumber(v *vm.VM, idx int, fname string) float64 {
+	val := v.Get(idx)
+	if n, ok := val.ToNumber(); ok {
+		return n
+	}
+	got := v.ObjTypeName(val)
+	if v.ArgCount() < idx {
+		got = "no value"
+	}
+	callerArgError(v, idx, fname, fmt.Sprintf("number expected, got %s", got))
+	return 0 // unreachable
 }
 
 func posRelat(pos int64, len int) int {

@@ -52,11 +52,11 @@ func makeFileHandle(f vm.LuaFile) vm.Value {
 func getFileHandle(v *vm.VM, val vm.Value, funcName string) *fileHandle {
 	ud := val.AsUserdata()
 	if ud == nil {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", funcName, v.ObjTypeName(val)))
+		callerArgError(v, 1, funcName, fmt.Sprintf("FILE* expected, got %s", v.ObjTypeName(val)))
 	}
 	fh, ok := ud.Data.(*fileHandle)
 	if !ok {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected)", funcName))
+		callerArgError(v, 1, funcName, "FILE* expected")
 	}
 	return fh
 }
@@ -124,7 +124,7 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
 		if name.IsNil() {
-			panic("bad argument #1 to 'io.open' (string expected, got nil)")
+			callerArgError(v, 1, "io.open", "string expected, got nil")
 		}
 		nameStr := name.AsString()
 		mode := "r"
@@ -454,7 +454,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 		} else if arg.IsNumber() {
 			s = valueToString(arg)
 		} else {
-			panic(fmt.Sprintf("bad argument #%d to 'io.write' (string expected, got %s)", i-firstArg+1, arg.Type()))
+			callerArgError(v, i-firstArg+1, "io.write", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
 		err := f.Write(s)
 		if err != nil {
@@ -533,7 +533,7 @@ func fileSeek(v *vm.VM) int {
 		var ok bool
 		offset, ok = v.Get(3).ToInt()
 		if !ok {
-			panic("bad argument #2 to 'io.seek' (number expected)")
+			callerArgError(v, 2, "io.seek", "number expected")
 		}
 	}
 
@@ -556,7 +556,7 @@ func fileSetVBuf(v *vm.VM) int {
 
 	mode := v.Get(2)
 	if mode.IsNil() {
-		panic("bad argument #1 to 'io.setvbuf' (string expected, got nil)")
+		callerArgError(v, 1, "io.setvbuf", "string expected, got nil")
 	}
 	modeStr := mode.AsString()
 
@@ -564,7 +564,7 @@ func fileSetVBuf(v *vm.VM) int {
 	if !v.Get(3).IsNil() {
 		sz, ok := v.Get(3).ToInt()
 		if !ok {
-			panic("bad argument #2 to 'io.setvbuf' (number expected)")
+			callerArgError(v, 2, "io.setvbuf", "number expected")
 		}
 		size = int(sz)
 	}

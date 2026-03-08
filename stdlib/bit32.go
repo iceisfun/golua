@@ -1,8 +1,6 @@
 package stdlib
 
 import (
-	"fmt"
-
 	"github.com/iceisfun/golua/vm"
 )
 
@@ -125,13 +123,13 @@ func bit32Extract(v *vm.VM) int {
 	}
 
 	if field < 0 || field > 31 {
-		panic(fmt.Sprintf("bad argument #2 to 'bit32.extract' (field cannot be negative or greater than 31)"))
+		callerArgError(v, 2, "bit32.extract", "field cannot be negative or greater than 31")
 	}
 	if width < 1 || width > 32 {
-		panic(fmt.Sprintf("bad argument #3 to 'bit32.extract' (width must be positive and not greater than 32)"))
+		callerArgError(v, 3, "bit32.extract", "width must be positive and not greater than 32")
 	}
 	if field+width > 32 {
-		panic(fmt.Sprintf("bad argument #2 to 'bit32.extract' (trying to access non-existent bits)"))
+		callerArgError(v, 2, "bit32.extract", "trying to access non-existent bits")
 	}
 
 	var mask uint32
@@ -157,13 +155,13 @@ func bit32Replace(v *vm.VM) int {
 	}
 
 	if field < 0 || field > 31 {
-		panic(fmt.Sprintf("bad argument #3 to 'bit32.replace' (field cannot be negative or greater than 31)"))
+		callerArgError(v, 3, "bit32.replace", "field cannot be negative or greater than 31")
 	}
 	if width < 1 || width > 32 {
-		panic(fmt.Sprintf("bad argument #4 to 'bit32.replace' (width must be positive and not greater than 32)"))
+		callerArgError(v, 4, "bit32.replace", "width must be positive and not greater than 32")
 	}
 	if field+width > 32 {
-		panic(fmt.Sprintf("bad argument #3 to 'bit32.replace' (trying to access non-existent bits)"))
+		callerArgError(v, 3, "bit32.replace", "trying to access non-existent bits")
 	}
 
 	var mask uint32

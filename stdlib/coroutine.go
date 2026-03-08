@@ -84,7 +84,7 @@ func openCoroutine(v *vm.VM) {
 func coCreate(v *vm.VM) int {
 	fn := v.Get(1)
 	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.create' (function expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.create", fmt.Sprintf("function expected, got %s", coArgType(v, 1)))
 	}
 
 	coroutinesMu.Lock()
@@ -122,13 +122,13 @@ func coCreate(v *vm.VM) int {
 func coResume(v *vm.VM) int {
 	coVal := v.Get(1)
 	if !coVal.IsTable() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.resume' (thread expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.resume", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.resume' (thread expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.resume", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
 
 	id, _ := idVal.ToInt()
@@ -399,13 +399,13 @@ func coYield(v *vm.VM) int {
 func coStatus(v *vm.VM) int {
 	coVal := v.Get(1)
 	if !coVal.IsTable() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.status' (thread expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.status", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.status' (thread expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.status", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
 
 	id, _ := idVal.ToInt()
@@ -450,7 +450,7 @@ func coRunning(v *vm.VM) int {
 func coWrap(v *vm.VM) int {
 	fn := v.Get(1)
 	if !fn.IsFunction() && !fn.IsNativeFunc() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.wrap' (function expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.wrap", fmt.Sprintf("function expected, got %s", coArgType(v, 1)))
 	}
 
 	// Create the coroutine
@@ -610,16 +610,16 @@ func coWrap(v *vm.VM) int {
 func coClose(v *vm.VM) int {
 	coVal := v.Get(1)
 	if coVal.IsNil() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.close' (thread expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
 	if !coVal.IsTable() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.close' (thread expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
 
 	coTable := coVal.AsTable()
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
-		panic(fmt.Sprintf("bad argument #1 to 'coroutine.close' (thread expected, got %s)", coArgType(v, 1)))
+		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
 
 	id, _ := idVal.ToInt()
@@ -738,7 +738,7 @@ func coIsYieldable(v *vm.VM) int {
 	if v.ArgCount() >= 1 {
 		arg := v.Get(1)
 		if !arg.IsTable() || !arg.AsTable().IsThread() {
-			panic(fmt.Sprintf("bad argument #1 to 'coroutine.isyieldable' (thread expected, got %s)", arg.Type()))
+			callerArgError(v, 1, "coroutine.isyieldable", fmt.Sprintf("thread expected, got %s", arg.Type()))
 		}
 		tbl := arg.AsTable()
 		// Check coroutine VM ref first (set after first resume)

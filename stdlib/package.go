@@ -59,11 +59,11 @@ func openPackage(v *vm.VM) {
 func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		if v.ArgCount() < 1 {
-			panic("bad argument #1 to 'require' (string expected, got no value)")
+			callerArgError(v, 1, "require", "string expected, got no value")
 		}
 		nameVal := v.Get(1)
 		if !nameVal.IsString() {
-			panic(fmt.Sprintf("bad argument #1 to 'require' (string expected, got %s)", nameVal.Type()))
+			callerArgError(v, 1, "require", fmt.Sprintf("string expected, got %s", nameVal.Type()))
 		}
 		name := nameVal.AsString()
 
@@ -274,7 +274,7 @@ func expandTemplates(name, path string) []string {
 // luaSearchPath implements package.searchpath(name, path [, sep [, rep]]).
 func luaSearchPath(v *vm.VM) int {
 	if v.ArgCount() < 2 {
-		panic("bad argument #1 to 'package.searchpath' (string expected, got no value)")
+		callerArgError(v, 1, "package.searchpath", "string expected, got no value")
 	}
 	name := v.Get(1).AsString()
 	path := v.Get(2).AsString()

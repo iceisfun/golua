@@ -202,7 +202,7 @@ func stringChar(v *vm.VM) int {
 	for i := 1; i <= n; i++ {
 		c := getInt(v, i, "string.char")
 		if c < 0 || c > 255 {
-			panic(fmt.Sprintf("bad argument #%d to 'string.char' (value out of range)", i))
+			callerArgError(v, i, "string.char", "value out of range")
 		}
 		buf.WriteByte(byte(c))
 	}
@@ -295,7 +295,7 @@ func stringGsub(v *vm.VM) int {
 	if repl.IsNumber() {
 		repl = vm.NewString(valueToString(repl))
 	} else if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() && !repl.IsTable() {
-		panic(fmt.Sprintf("bad argument #3 to 'string.gsub' (string/function/table expected, got %s)", repl.Type()))
+		callerArgError(v, 3, "string.gsub", fmt.Sprintf("string/function/table expected, got %s", repl.Type()))
 	}
 	maxRepl := -1
 	if v.ArgCount() >= 4 && !v.Get(4).IsNil() {

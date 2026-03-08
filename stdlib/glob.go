@@ -24,7 +24,7 @@ func globMatch(v *vm.VM) int {
 	name := getString(v, 2, "glob.match")
 	matched, err := glob.Match(pattern, name)
 	if err != nil {
-		panic(fmt.Sprintf("bad argument #1 to 'glob.match' (%s)", err))
+		callerArgError(v, 1, "glob.match", fmt.Sprintf("%s", err))
 	}
 	v.Set(0, vm.NewBool(matched))
 	return 1
@@ -36,7 +36,7 @@ func globMatchWords(v *vm.VM) int {
 	name := getString(v, 2, "glob.match_words")
 	matched, err := glob.MatchWords(pattern, name)
 	if err != nil {
-		panic(fmt.Sprintf("bad argument #1 to 'glob.match_words' (%s)", err))
+		callerArgError(v, 1, "glob.match_words", fmt.Sprintf("%s", err))
 	}
 	v.Set(0, vm.NewBool(matched))
 	return 1
@@ -48,7 +48,7 @@ func globMatchNamed(v *vm.VM) int {
 	text := getString(v, 2, "glob.match_named")
 	ok, caps, err := glob.MatchNamed(pattern, text)
 	if err != nil {
-		panic(fmt.Sprintf("bad argument #1 to 'glob.match_named' (%s)", err))
+		callerArgError(v, 1, "glob.match_named", fmt.Sprintf("%s", err))
 	}
 	v.Set(0, vm.NewBool(ok))
 	t := vm.NewEmptyTable()

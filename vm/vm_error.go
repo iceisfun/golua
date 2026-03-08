@@ -63,6 +63,24 @@ func (vm *VM) AddCallerLocation(msg string) string {
 	return msg
 }
 
+// CallerFuncName inspects the calling Lua frame's bytecode to determine the
+// name under which the current native function was called. This mirrors
+// Lua 5.4's luaG_funcnamefromcode behavior. Returns (name, nameWhat) where
+// nameWhat is "global", "field", "method", "local", "upvalue", or "".
+// Returns ("", "") if the name cannot be determined.
+func (vm *VM) CallerFuncName() (name, nameWhat string) {
+	n := len(vm.callStack)
+	if n < 2 {
+		return "", ""
+	}
+	// The top frame is the native function. The frame below is the Lua caller.
+	callerFrame := &vm.callStack[n-2]
+	if callerFrame.closure == nil {
+		return "", ""
+	}
+	return vm.funcNameFromCall(callerFrame)
+}
+
 // ObjTypeName returns the type name for a value, checking __name in
 // the metatable first (matching Lua 5.4's luaT_objtypename).
 func (vm *VM) ObjTypeName(v Value) string {

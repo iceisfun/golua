@@ -37,7 +37,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			// Lua 5.4 checks for an argument first, then errors on the
 			// missing conversion character.
 			if argIdx >= len(vals) {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (no value)", argIdx+2))
+				callerArgError(v, argIdx+2, "string.format", "no value")
 			}
 			argIdx++
 			panic("invalid conversion '%\x00' to 'format'")
@@ -55,7 +55,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			if !strings.ContainsRune("#0- +.0123456789", rune(format[i])) {
 				// Lua 5.4: check for argument existence before reporting invalid conversion
 				if argIdx >= len(vals) {
-					panic(fmt.Sprintf("bad argument #%d to 'string.format' (no value)", argIdx+2))
+					callerArgError(v, argIdx+2, "string.format", "no value")
 				}
 				panic(fmt.Sprintf("invalid conversion '%%%c' to 'format'", format[i]))
 			}
@@ -64,7 +64,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		}
 		if i >= len(format) {
 			if argIdx >= len(vals) {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (no value)", argIdx+2))
+				callerArgError(v, argIdx+2, "string.format", "no value")
 			}
 			argIdx++
 			panic(fmt.Sprintf("invalid conversion '%s' to 'format'", spec))
@@ -79,7 +79,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		validateConversion(spec, specChar)
 
 		if argIdx >= len(vals) {
-			panic(fmt.Sprintf("bad argument #%d to 'string.format' (no value)", argIdx+2))
+			callerArgError(v, argIdx+2, "string.format", "no value")
 		}
 		val := vals[argIdx]
 		argIdx++
@@ -90,26 +90,26 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			if i, ok := val.ToInt(); ok {
 				result.WriteString(fmt.Sprintf(goSpec, i))
 			} else if _, ok := val.ToNumber(); ok {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number has no integer representation)", argIdx+1))
+				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
 			} else {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number expected, got %s)", argIdx+1, val.Type()))
+				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
 			}
 		case 'u':
 			goSpec := spec + "d"
 			if i, ok := val.ToInt(); ok {
 				result.WriteString(fmt.Sprintf(goSpec, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number has no integer representation)", argIdx+1))
+				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
 			} else {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number expected, got %s)", argIdx+1, val.Type()))
+				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
 			}
 		case 'o', 'x', 'X':
 			if i, ok := val.ToInt(); ok {
 				result.WriteString(formatIntHex(spec, specChar, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number has no integer representation)", argIdx+1))
+				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
 			} else {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number expected, got %s)", argIdx+1, val.Type()))
+				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
 			}
 		case 'e', 'E', 'f', 'g', 'G':
 			goSpec := spec
@@ -125,7 +125,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 					result.WriteString(fmt.Sprintf(goSpec, n))
 				}
 			} else {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number expected, got %s)", argIdx+1, val.Type()))
+				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
 			}
 		case 'a', 'A':
 			// Go's fmt package does not support %a/%A for floats.
@@ -173,14 +173,14 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 					result.WriteString(s)
 				}
 			} else {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number expected, got %s)", argIdx+1, val.Type()))
+				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
 			}
 		case 'F':
 			panic("invalid conversion '%F' to 'format'")
 		case 's':
 			str := tolstring(v, val)
 			if spec != "%" && strings.ContainsRune(str, 0) {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (string contains zeros)", argIdx+1))
+				callerArgError(v, argIdx+1, "string.format", "string contains zeros")
 			}
 			if spec == "%" {
 				// No modifiers: embed string directly (preserving null bytes)
@@ -190,7 +190,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				result.WriteString(formatStringByBytes(spec, str))
 			}
 		case 'q':
-			result.WriteString(luaQuote(val, argIdx+1))
+			result.WriteString(luaQuote(v, val, argIdx+1))
 		case 'c':
 			if i, ok := val.ToInt(); ok {
 				// Lua %c writes one byte (C unsigned char semantics).
@@ -202,9 +202,9 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				}
 				result.WriteString(ch)
 			} else if _, ok := val.ToNumber(); ok {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number has no integer representation)", argIdx+1))
+				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
 			} else {
-				panic(fmt.Sprintf("bad argument #%d to 'string.format' (number expected, got %s)", argIdx+1, val.Type()))
+				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
 			}
 		case 'p':
 			result.WriteString(luaPointerFormat(val))
@@ -735,7 +735,7 @@ func formatStringByBytes(spec, str string) string {
 }
 
 // luaQuote implements Lua's %q format for proper Lua-parseable quoting.
-func luaQuote(val vm.Value, argIdx int) string {
+func luaQuote(v *vm.VM, val vm.Value, argIdx int) string {
 	if val.IsNil() {
 		return "nil"
 	}
@@ -767,7 +767,7 @@ func luaQuote(val vm.Value, argIdx int) string {
 		return fmt.Sprintf("%d", i)
 	}
 	if !val.IsString() {
-		panic(fmt.Sprintf("bad argument #%d to 'string.format' (value has no literal form)", argIdx))
+		callerArgError(v, argIdx, "string.format", "value has no literal form")
 	}
 	// String quoting — matches Lua 5.4 addquoted (lstrlib.c)
 	s := valueToString(val)

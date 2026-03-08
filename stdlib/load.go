@@ -61,7 +61,7 @@ func luaLoad(v *vm.VM) int {
 		if m.IsString() || m.IsNumber() {
 			mode = valueToString(m)
 		} else {
-			panic(fmt.Sprintf("bad argument #3 to 'load' (string expected, got %s)", m.Type()))
+			callerArgError(v, 3, "load", fmt.Sprintf("string expected, got %s", m.Type()))
 		}
 	}
 	env := v.Get(4)
@@ -140,7 +140,7 @@ func luaLoad(v *vm.VM) int {
 		if v.ArgCount() < 1 {
 			got = "no value"
 		}
-		panic(fmt.Sprintf("bad argument #1 to 'load' (function expected, got %s)", got))
+		callerArgError(v, 1, "load", fmt.Sprintf("function expected, got %s", got))
 	}
 
 	// Detect binary chunk (starts with \x1bLua)
@@ -257,7 +257,7 @@ func luaLoadfile(v *vm.VM) int {
 		if m.IsString() || m.IsNumber() {
 			mode = valueToString(m)
 		} else {
-			panic(fmt.Sprintf("bad argument #2 to 'loadfile' (string expected, got %s)", m.Type()))
+			callerArgError(v, 2, "loadfile", fmt.Sprintf("string expected, got %s", m.Type()))
 		}
 	}
 	env := v.Get(3)

@@ -49,7 +49,7 @@ func luaOutputLines(v *vm.VM) int {
 // assert(v [, message])
 func luaAssert(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'assert' (value expected)")
+		callerArgError(v, 1, "assert", "value expected")
 	}
 	val := v.Get(1)
 	if !val.ToBool() {
@@ -81,7 +81,7 @@ func luaAssert(v *vm.VM) int {
 // type(v)
 func luaType(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'type' (value expected)")
+		callerArgError(v, 1, "type", "value expected")
 	}
 	val := v.Get(1)
 	v.Set(0, vm.NewString(val.Type()))
@@ -91,7 +91,7 @@ func luaType(v *vm.VM) int {
 // tostring(v)
 func luaToString(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'tostring' (value expected)")
+		callerArgError(v, 1, "tostring", "value expected")
 	}
 	val := v.Get(1)
 	// Check for __tostring metamethod on tables, userdata, and type metatables
@@ -130,7 +130,7 @@ func luaToString(v *vm.VM) int {
 // tonumber(e [, base])
 func luaToNumber(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'tonumber' (value expected)")
+		callerArgError(v, 1, "tonumber", "value expected")
 	}
 	val := v.Get(1)
 	base := v.Get(2)
@@ -138,11 +138,11 @@ func luaToNumber(v *vm.VM) int {
 	if !base.IsNil() {
 		bi := getInt(v, 2, "tonumber")
 		if bi < 2 || bi > 36 {
-			panic("bad argument #2 to 'tonumber' (base out of range)")
+			callerArgError(v, 2, "tonumber", "base out of range")
 		}
 		// Lua semantics: with explicit base, first arg must be a string.
 		if !val.IsString() {
-			panic(fmt.Sprintf("bad argument #1 to 'tonumber' (string expected, got %s)", val.Type()))
+			callerArgError(v, 1, "tonumber", fmt.Sprintf("string expected, got %s", val.Type()))
 		}
 		s := strings.TrimSpace(val.AsString())
 		if i, err := strconv.ParseInt(s, int(bi), 64); err == nil {
@@ -290,7 +290,7 @@ func luaError(v *vm.VM) int {
 func luaPcall(v *vm.VM) int {
 	argc := v.ArgCount()
 	if argc < 1 {
-		panic("bad argument #1 to 'pcall' (value expected)")
+		callerArgError(v, 1, "pcall", "value expected")
 	}
 	fn := v.Get(1)
 
@@ -347,7 +347,7 @@ func luaXpcall(v *vm.VM) int {
 		if v.ArgCount() < 2 {
 			got = "no value"
 		}
-		panic(fmt.Sprintf("bad argument #2 to 'xpcall' (function expected, got %s)", got))
+		callerArgError(v, 2, "xpcall", fmt.Sprintf("function expected, got %s", got))
 	}
 
 	// Collect extra arguments (after fn and msgh)
@@ -416,7 +416,7 @@ func luaCollectgarbage(v *vm.VM) int {
 	arg1 := v.Get(1)
 	if !arg1.IsNil() {
 		if !arg1.IsString() {
-			panic(fmt.Sprintf("bad argument #1 to 'collectgarbage' (invalid option '%s')", arg1.AsString()))
+			callerArgError(v, 1, "collectgarbage", fmt.Sprintf("invalid option '%s'", arg1.AsString()))
 		}
 		opt = arg1.AsString()
 	}
@@ -449,26 +449,27 @@ func luaCollectgarbage(v *vm.VM) int {
 		v.Set(0, vm.True)
 		return 1
 	default:
-		panic(fmt.Sprintf("bad argument #1 to 'collectgarbage' (invalid option '%s')", opt))
+		callerArgError(v, 1, "collectgarbage", fmt.Sprintf("invalid option '%s'", opt))
 	}
+	return 0 // unreachable
 }
 
 // warn(msg1 [, msg2, ...])
 func luaWarn(v *vm.VM) int {
 	argc := v.ArgCount()
 	if argc < 1 {
-		panic("bad argument #1 to 'warn' (string expected, got no value)")
+		callerArgError(v, 1, "warn", "string expected, got no value")
 	}
 	// Lua 5.4: all arguments must be strings or numbers (coerced to string)
 	first := v.Get(1)
 	if !first.IsString() && !first.IsInt() && !first.IsFloat() {
-		panic(fmt.Sprintf("bad argument #1 to 'warn' (string expected, got %s)", first.Type()))
+		callerArgError(v, 1, "warn", fmt.Sprintf("string expected, got %s", first.Type()))
 	}
 	s := first.AsString()
 	for i := 2; i <= argc; i++ {
 		arg := v.Get(i)
 		if !arg.IsString() && !arg.IsInt() && !arg.IsFloat() {
-			panic(fmt.Sprintf("bad argument #%d to 'warn' (string expected, got %s)", i, arg.Type()))
+			callerArgError(v, i, "warn", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
 	}
 	if len(s) > 0 && s[0] == '@' {
@@ -497,7 +498,7 @@ func luaWarn(v *vm.VM) int {
 // But pairs() with no arguments is an error.
 func luaPairs(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'pairs' (value expected)")
+		callerArgError(v, 1, "pairs", "value expected")
 	}
 	arg := v.Get(1)
 
@@ -538,7 +539,7 @@ var nextFunc = vm.NewNativeFunc(luaNext)
 var ipairsIter = vm.NewNativeFunc(func(v *vm.VM) int {
 	t := v.Get(1).AsTable()
 	if t == nil {
-		panic(fmt.Sprintf("bad argument #1 to 'ipairs' (table expected, got %s)", v.Get(1).Type()))
+		callerArgError(v, 1, "ipairs", fmt.Sprintf("table expected, got %s", v.Get(1).Type()))
 	}
 	i := v.Get(2)
 	idx, _ := i.ToInt()
@@ -561,7 +562,7 @@ var ipairsIter = vm.NewNativeFunc(func(v *vm.VM) int {
 // But ipairs() with no arguments is an error.
 func luaIpairs(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'ipairs' (value expected)")
+		callerArgError(v, 1, "ipairs", "value expected")
 	}
 	arg := v.Get(1)
 	v.Set(0, ipairsIter)
@@ -574,7 +575,7 @@ func luaIpairs(v *vm.VM) int {
 func luaNext(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
-		panic("bad argument #1 to 'next' (table expected" + gotDesc(v, 1) + ")")
+		callerArgError(v, 1, "next", "table expected"+gotDesc(v, 1))
 	}
 	key := v.Get(2)
 	nextK, nextV, err := tbl.Next(key)
@@ -603,13 +604,13 @@ func luaSelect(v *vm.VM) int {
 	i, ok := idx.ToInt()
 	if !ok {
 		if idx.IsNumber() {
-			panic("bad argument #1 to 'select' (number has no integer representation)")
+			callerArgError(v, 1, "select", "number has no integer representation")
 		}
 		typeName := idx.Type()
 		if n < 1 {
 			typeName = "no value"
 		}
-		panic("bad argument #1 to 'select' (number expected, got " + typeName + ")")
+		callerArgError(v, 1, "select", "number expected, got "+typeName)
 	}
 
 	if i < 0 {
@@ -617,7 +618,7 @@ func luaSelect(v *vm.VM) int {
 	}
 
 	if i < 1 {
-		panic("bad argument #1 to 'select' (index out of range)")
+		callerArgError(v, 1, "select", "index out of range")
 	}
 
 	// Return values from index i onwards
@@ -636,10 +637,10 @@ func luaSelect(v *vm.VM) int {
 func luaRawget(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
-		panic("bad argument #1 to 'rawget' (table expected" + gotDesc(v, 1) + ")")
+		callerArgError(v, 1, "rawget", "table expected"+gotDesc(v, 1))
 	}
 	if v.ArgCount() < 2 {
-		panic("bad argument #2 to 'rawget' (value expected)")
+		callerArgError(v, 2, "rawget", "value expected")
 	}
 	key := v.Get(2)
 	v.Set(0, tbl.Get(key))
@@ -650,13 +651,13 @@ func luaRawget(v *vm.VM) int {
 func luaRawset(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
-		panic("bad argument #1 to 'rawset' (table expected" + gotDesc(v, 1) + ")")
+		callerArgError(v, 1, "rawset", "table expected"+gotDesc(v, 1))
 	}
 	if v.ArgCount() < 2 {
-		panic("bad argument #2 to 'rawset' (value expected)")
+		callerArgError(v, 2, "rawset", "value expected")
 	}
 	if v.ArgCount() < 3 {
-		panic("bad argument #3 to 'rawset' (value expected)")
+		callerArgError(v, 3, "rawset", "value expected")
 	}
 	key := v.Get(2)
 	val := v.Get(3)
@@ -670,10 +671,10 @@ func luaRawset(v *vm.VM) int {
 // rawequal(v1, v2)
 func luaRawequal(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'rawequal' (value expected)")
+		callerArgError(v, 1, "rawequal", "value expected")
 	}
 	if v.ArgCount() < 2 {
-		panic("bad argument #2 to 'rawequal' (value expected)")
+		callerArgError(v, 2, "rawequal", "value expected")
 	}
 	v1 := v.Get(1)
 	v2 := v.Get(2)
@@ -692,13 +693,14 @@ func luaRawlen(v *vm.VM) int {
 		v.Set(0, vm.NewInt(int64(val.AsTable().Len())))
 		return 1
 	}
-	panic("bad argument #1 to 'rawlen' (table or string expected" + gotDesc(v, 1) + ")")
+	callerArgError(v, 1, "rawlen", "table or string expected"+gotDesc(v, 1))
+	return 0 // unreachable
 }
 
 // getmetatable(object)
 func luaGetmetatable(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		panic("bad argument #1 to 'getmetatable' (value expected)")
+		callerArgError(v, 1, "getmetatable", "value expected")
 	}
 	val := v.Get(1)
 	if val.IsTable() {
@@ -735,10 +737,10 @@ func luaGetmetatable(v *vm.VM) int {
 func luaSetmetatable(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
-		panic("bad argument #1 to 'setmetatable' (table expected" + gotDesc(v, 1) + ")")
+		callerArgError(v, 1, "setmetatable", "table expected"+gotDesc(v, 1))
 	}
 	if v.ArgCount() < 2 {
-		panic("bad argument #2 to 'setmetatable' (nil or table expected, got no value)")
+		callerArgError(v, 2, "setmetatable", "nil or table expected, got no value")
 	}
 	// Check __metatable protection on existing metatable
 	if existingMT := tbl.Metatable(); existingMT != nil {
@@ -752,7 +754,7 @@ func luaSetmetatable(v *vm.VM) int {
 	} else if mt.IsTable() {
 		tbl.SetMetatable(mt.AsTable())
 	} else {
-		panic("bad argument #2 to 'setmetatable' (nil or table expected" + gotDesc(v, 2) + ")")
+		callerArgError(v, 2, "setmetatable", "nil or table expected"+gotDesc(v, 2))
 	}
 	// Register __gc finalizer if applicable
 	if concrete, ok := tbl.(*vm.Table); ok {
