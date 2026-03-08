@@ -757,8 +757,7 @@ func luaQuote(val vm.Value, argIdx int) string {
 			return "(0/0)"
 		}
 		// Use hex float format for exact roundtrip (matches Lua 5.4)
-		s := strconv.FormatFloat(f, 'x', -1, 64)
-		return normalizeHexExponent(s)
+		return formatHexFloat(f, -1)
 	}
 	if val.IsInt() {
 		i := val.AsInt()
