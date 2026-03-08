@@ -94,15 +94,60 @@ func extractExecOpts(v *vm.VM, argc int) (vm.LuaTable, int) {
 	return nil, argc
 }
 
-// applyExecOpts reads Lua option fields from the options table into ProcessOptions.
-func applyExecOpts(optsTable vm.LuaTable, opts *vm.ProcessOptions) {
+// execOpts holds parsed Lua options including fields that don't map
+// directly to ProcessOptions (e.g. timeout).
+type execOpts struct {
+	timeout time.Duration // 0 = no timeout
+}
+
+// applyExecOpts reads Lua option fields from the options table into
+// ProcessOptions and returns additional options (timeout).
+func applyExecOpts(optsTable vm.LuaTable, opts *vm.ProcessOptions) execOpts {
+	var extra execOpts
 	if optsTable == nil {
-		return
+		return extra
 	}
+
+	// merge_stderr
 	mergeStderr := optsTable.Get(vm.NewString("merge_stderr"))
 	if mergeStderr.IsBool() && mergeStderr.AsBool() {
 		opts.MergeStderr = true
 	}
+
+	// cwd
+	cwd := optsTable.Get(vm.NewString("cwd"))
+	if cwd.IsString() {
+		opts.Dir = cwd.AsString()
+	}
+
+	// env
+	envVal := optsTable.Get(vm.NewString("env"))
+	if envVal.IsTable() {
+		envTable := envVal.AsTable()
+		envMap := make(map[string]string)
+		key := vm.Nil
+		for {
+			nextKey, val, err := envTable.Next(key)
+			if err != nil || nextKey.IsNil() {
+				break
+			}
+			if nextKey.IsString() {
+				envMap[nextKey.AsString()] = vm.ValueToString(val)
+			}
+			key = nextKey
+		}
+		opts.Env = envMap
+	}
+
+	// timeout (milliseconds)
+	timeoutVal := optsTable.Get(vm.NewString("timeout"))
+	if !timeoutVal.IsNil() {
+		if ms, ok := timeoutVal.ToInt(); ok && ms > 0 {
+			extra.timeout = time.Duration(ms) * time.Millisecond
+		}
+	}
+
+	return extra
 }
 
 // exec.run(cmd, arg1, arg2, ..., [opts]) -> {success, code, stdout, stderr}
@@ -128,9 +173,14 @@ func makeExecRun(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 			Stdout: true,
 			Stderr: true,
 		}
-		applyExecOpts(optsTable, &opts)
+		extra := applyExecOpts(optsTable, &opts)
 		if opts.MergeStderr {
 			opts.Stderr = false
+		}
+		if extra.timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, extra.timeout)
+			defer cancel()
 		}
 		proc, err := provider.Spawn(ctx, cmd, args, opts)
 		if err != nil {
@@ -180,9 +230,14 @@ func makeExecSpawn(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 			Stdout: true,
 			Stderr: true,
 		}
-		applyExecOpts(optsTable, &opts)
+		extra := applyExecOpts(optsTable, &opts)
 		if opts.MergeStderr {
 			opts.Stderr = false
+		}
+		if extra.timeout > 0 {
+			// For spawn, the timeout context auto-kills the process
+			// when it expires (via exec.CommandContext).
+			ctx, _ = context.WithTimeout(ctx, extra.timeout)
 		}
 		proc, err := provider.Spawn(ctx, cmd, args, opts)
 		if err != nil {
@@ -217,9 +272,14 @@ func makeExecRunShell(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFun
 			Stdout: true,
 			Stderr: true,
 		}
-		applyExecOpts(optsTable, &opts)
+		extra := applyExecOpts(optsTable, &opts)
 		if opts.MergeStderr {
 			opts.Stderr = false
+		}
+		if extra.timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, extra.timeout)
+			defer cancel()
 		}
 		proc, err := provider.Spawn(ctx, "sh", []string{"-c", cmdline}, opts)
 		if err != nil {

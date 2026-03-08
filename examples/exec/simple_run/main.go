@@ -1,6 +1,6 @@
 // Example: Simple process execution with exec.run.
 //
-// Demonstrates running a command and capturing its output.
+// Demonstrates running a command with options: cwd, env, merge_stderr, timeout.
 package main
 
 import (
@@ -18,11 +18,28 @@ func main() {
 	fmt.Println()
 
 	source := `
+		-- Basic run
 		local r = exec.run("ls", "-al")
 		print("Exit code:", r.code)
 		print("Success:", r.success)
 		print("Output:")
 		print(r.stdout)
+
+		-- Run with options
+		print("\n--- With options ---")
+		local r2 = exec.run("ls", {
+			cwd = "/tmp",
+			merge_stderr = true,
+			timeout = 5000
+		})
+		print("Listing /tmp:")
+		print(r2.stdout)
+
+		-- Custom environment
+		local r3 = exec.run("sh", "-c", "echo Hello from $USER_NAME", {
+			env = {USER_NAME = "GoLua"}
+		})
+		print(r3.stdout)
 	`
 
 	block, err := parser.Parse("example", source)

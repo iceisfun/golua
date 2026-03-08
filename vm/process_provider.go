@@ -73,6 +73,20 @@ func (p *DefaultProcessProvider) Spawn(ctx context.Context, cmd string, args []s
 
 	c := exec.CommandContext(ctx, cmd, args...)
 
+	// Use a process group so that context cancellation kills the entire
+	// process tree (e.g., sh -c "sleep 60" kills both sh and sleep).
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error {
+		if c.Process == nil {
+			return nil
+		}
+		// Kill the whole process group (negative PID)
+		return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+	}
+	// If the process group doesn't exit promptly after being killed,
+	// force-close the I/O pipes so drain goroutines unblock.
+	c.WaitDelay = 3 * time.Second
+
 	if opts.Dir != "" {
 		c.Dir = opts.Dir
 	}
@@ -354,7 +368,8 @@ func (p *defaultProcess) Kill() error {
 	if p.cmd.Process == nil {
 		return fmt.Errorf("process not started")
 	}
-	return p.cmd.Process.Kill()
+	// Kill the whole process group
+	return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 }
 
 func (p *defaultProcess) ReadStderr(buf []byte) (int, error) {
