@@ -220,7 +220,7 @@ func coResume(v *vm.VM) int {
 		needed := v.Base() + 1 + len(results)
 		if !v.CheckStack(needed) {
 			v.Set(0, vm.False)
-			v.Set(1, vm.NewString("stack overflow"))
+			v.Set(1, vm.NewString("C stack overflow"))
 			return 2
 		}
 		v.EnsureStack(needed)
@@ -250,7 +250,7 @@ func coResume(v *vm.VM) int {
 		needed := v.Base() + 1 + len(result)
 		if !v.CheckStack(needed) {
 			v.Set(0, vm.False)
-			v.Set(1, vm.NewString("stack overflow"))
+			v.Set(1, vm.NewString("C stack overflow"))
 			return 2
 		}
 		v.EnsureStack(needed)
@@ -552,7 +552,7 @@ func coWrap(v *vm.VM) int {
 			restoreCallerStatus()
 			needed := v.Base() + len(results)
 			if !v.CheckStack(needed) {
-				panic("stack overflow")
+				panic("C stack overflow")
 			}
 			v.EnsureStack(needed)
 			for i, r := range results {
@@ -598,7 +598,7 @@ func coWrap(v *vm.VM) int {
 
 			needed := v.Base() + len(result)
 			if !v.CheckStack(needed) {
-				panic("stack overflow")
+				panic("C stack overflow")
 			}
 			v.EnsureStack(needed)
 			for i, r := range result {
