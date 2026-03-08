@@ -440,12 +440,11 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 		return ast.NewLocalFuncStmt(pos, name, fn)
 	}
 
-	defAttrib := p.parseAttrib()
 	names := []*ast.NameExpr{p.parseName()}
-	attribs := []string{p.parseAttribOr(defAttrib)}
+	attribs := []string{p.parseAttrib()}
 	for p.match(token.Type(',')) {
 		names = append(names, p.parseName())
-		attribs = append(attribs, p.parseAttribOr(defAttrib))
+		attribs = append(attribs, p.parseAttrib())
 	}
 
 	// Lua 5.4: at most one <close> variable per local statement.
