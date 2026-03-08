@@ -84,32 +84,32 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
                                 stdlib      Providers
 ```
 
-| Package    | Purpose                                                                     |
-| ---------- | --------------------------------------------------------------------------- |
-| `lexer`    | Tokenizes Lua source into a stream of tokens                                |
-| `parser`   | Parses tokens into an AST                                                   |
-| `ast`      | Abstract syntax tree node definitions                                       |
-| `compiler` | Compiles AST into Lua 5.4 bytecode (`Proto`)                                |
-| `vm`       | Executes bytecode, manages stack/coroutines, defines `Value` and `LuaTable` |
-| `stdlib`   | Registers standard library functions (`string`, `math`, `table`, etc.)      |
-| `check`    | Static diagnostics for editor integration                                   |
-| `glob`     | Go-style pattern matching (non-standard extension)                          |
-| `stdlib/http` | Optional HTTP client module (non-standard extension)                     |
+| Package       | Purpose                                                                     |
+| ------------- | --------------------------------------------------------------------------- |
+| `lexer`       | Tokenizes Lua source into a stream of tokens                                |
+| `parser`      | Parses tokens into an AST                                                   |
+| `ast`         | Abstract syntax tree node definitions                                       |
+| `compiler`    | Compiles AST into Lua 5.4 bytecode (`Proto`)                                |
+| `vm`          | Executes bytecode, manages stack/coroutines, defines `Value` and `LuaTable` |
+| `stdlib`      | Registers standard library functions (`string`, `math`, `table`, etc.)      |
+| `check`       | Static diagnostics for editor integration                                   |
+| `glob`        | Go-style pattern matching (non-standard extension)                          |
+| `stdlib/http` | Optional HTTP client module (non-standard extension)                        |
 
 **Provider interfaces** (`vm` package) control host-system access:
 
-| Interface          | Controls                                      | Implementation              |
-| ------------------ | --------------------------------------------- | --------------------------- |
-| `LuaCodeProvider`  | `dofile`, `loadfile`, `require` file searcher  | `DirCodeProvider`           |
-| `LuaIoProvider`    | `io.*` file operations                         | `JailedIoProvider`, `FullIoProvider` |
-| `LuaOsProvider`    | `os.*` (clock, time, date, getenv, setlocale)  | `DefaultOsProvider`         |
-| `LuaExecProvider`  | `os.execute` command execution                 | `DefaultExecProvider`       |
-| `LuaExitHandler`   | `os.exit` VM termination                       | `DefaultExitHandler`        |
-| `LuaDebugProvider` | `debug.*` capability gating                    | `DefaultDebugProvider`      |
-| `LuaChanProvider`  | `chan.*` Go↔Lua channels                       | `DefaultChanProvider`       |
-| `LuaTimeProvider`  | `time.*` millisecond timing                    | `DefaultTimeProvider`       |
-| `LuaPrintProvider` | `print()`/`warn()` output routing              | `DefaultPrintProvider`      |
-| `LuaProcessProvider` | `exec.*` process spawning and streaming      | `DefaultProcessProvider`    |
+| Interface            | Controls                                      | Implementation                       |
+| -------------------- | --------------------------------------------- | ------------------------------------ |
+| `LuaCodeProvider`    | `dofile`, `loadfile`, `require` file searcher | `DirCodeProvider`                    |
+| `LuaIoProvider`      | `io.*` file operations                        | `JailedIoProvider`, `FullIoProvider` |
+| `LuaOsProvider`      | `os.*` (clock, time, date, getenv, setlocale) | `DefaultOsProvider`                  |
+| `LuaExecProvider`    | `os.execute` command execution                | `DefaultExecProvider`                |
+| `LuaExitHandler`     | `os.exit` VM termination                      | `DefaultExitHandler`                 |
+| `LuaDebugProvider`   | `debug.*` capability gating                   | `DefaultDebugProvider`               |
+| `LuaChanProvider`    | `chan.*` Go↔Lua channels                      | `DefaultChanProvider`                |
+| `LuaTimeProvider`    | `time.*` millisecond timing                   | `DefaultTimeProvider`                |
+| `LuaPrintProvider`   | `print()`/`warn()` output routing             | `DefaultPrintProvider`               |
+| `LuaProcessProvider` | `exec.*` process spawning and streaming       | `DefaultProcessProvider`             |
 
 ## Examples
 
@@ -389,11 +389,11 @@ if time.tick("heartbeat", 500) then send_heartbeat() end
 if time.once() then load_resources() end
 ```
 
-| Function                | Description                                              |
-| ----------------------- | -------------------------------------------------------- |
-| `time.now()`            | Current time in milliseconds (integer)                   |
-| `time.since(t)`         | Milliseconds elapsed since `t`                           |
-| `time.tick([name,] ms)` | Returns `true` once per `ms` interval, `false` otherwise |
+| Function                | Description                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `time.now()`            | Current time in milliseconds (integer)                                            |
+| `time.since(t)`         | Milliseconds elapsed since `t`                                                    |
+| `time.tick([name,] ms)` | Returns `true` once per `ms` interval, `false` otherwise                          |
 | `time.once([name])`     | Returns `true` on the first call for a given key, `false` on all subsequent calls |
 
 `time.tick` and `time.once` are **GoLua extensions** (not part of standard Lua). When `name` is omitted, both functions auto-key by callsite — the VM inspects the calling function's source file and line number (`source:line`) so each call location gets independent state. Pass an explicit `name` string to share state across call locations. The `time` table is **absent by default** and only appears when the host sets a `LuaTimeProvider`.
@@ -422,23 +422,23 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 
 `stdlib.Open(v)` registers all standard modules. Capability-gated modules only appear when their provider is set.
 
-| Module      | Requires Provider  | Description                                                                        |
-| ----------- | ------------------ | ---------------------------------------------------------------------------------- |
-| `string`    | No                 | Pattern matching, formatting, byte manipulation, `pack`/`unpack`, `dump`           |
-| `math`      | No                 | Math functions with per-VM deterministic random                                    |
-| `table`     | No                 | Table manipulation (sort, concat, insert, remove, move, pack, unpack)              |
-| `coroutine` | No                 | Coroutine creation and control                                                     |
-| `utf8`      | No                 | UTF-8 encoding/decoding (strict mode)                                              |
-| `bit32`     | No                 | Lua 5.2 bitwise compat library                                                     |
-| `glob`      | No                 | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`) |
-| `io`        | `LuaIoProvider`    | File I/O (absent by default)                                                       |
-| `os`        | `LuaOsProvider`    | OS functions: clock, time, date, getenv, execute, exit, rename, setlocale (absent by default) |
-| `package`   | No                 | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers` |
-| `debug`     | `LuaDebugProvider` | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)   |
-| `chan`      | `LuaChanProvider`  | Go↔Lua message passing channels (absent by default)                                |
-| `time`      | `LuaTimeProvider`  | Millisecond timing: now, since, periodic tick (absent by default)                  |
-| `exec`      | `LuaProcessProvider` | Process execution: run, spawn, streaming I/O, stdin, kill ([docs](docs/exec.md)) |
-| `http`      | Separate module    | HTTP client: get, post, put, patch, delete, fetch ([docs](docs/http.md))           |
+| Module      | Requires Provider    | Description                                                                                   |
+| ----------- | -------------------- | --------------------------------------------------------------------------------------------- |
+| `string`    | No                   | Pattern matching, formatting, byte manipulation, `pack`/`unpack`, `dump`                      |
+| `math`      | No                   | Math functions with per-VM deterministic random                                               |
+| `table`     | No                   | Table manipulation (sort, concat, insert, remove, move, pack, unpack)                         |
+| `coroutine` | No                   | Coroutine creation and control                                                                |
+| `utf8`      | No                   | UTF-8 encoding/decoding (strict mode)                                                         |
+| `bit32`     | No                   | Lua 5.2 bitwise compat library                                                                |
+| `glob`      | No                   | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`)            |
+| `io`        | `LuaIoProvider`      | File I/O (absent by default)                                                                  |
+| `os`        | `LuaOsProvider`      | OS functions: clock, time, date, getenv, execute, exit, rename, setlocale (absent by default) |
+| `package`   | No                   | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers`            |
+| `debug`     | `LuaDebugProvider`   | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)              |
+| `chan`      | `LuaChanProvider`    | Go↔Lua message passing channels (absent by default)                                           |
+| `time`      | `LuaTimeProvider`    | Millisecond timing: now, since, periodic tick (absent by default)                             |
+| `exec`      | `LuaProcessProvider` | Process execution: run, spawn, streaming I/O, stdin, kill ([docs](docs/exec.md))              |
+| `http`      | Separate module      | HTTP client: get, post, put, patch, delete, fetch ([docs](docs/http.md))                      |
 
 ## Security Model
 
@@ -452,15 +452,15 @@ GoLua is sandboxed by default. The VM starts with no access to the host system. 
 │  │CodeProvider│ │IoProvider│ │OsProvider│ │DebugProvider│ │ChanProvider│ │  Time    │ │
 │  │ (optional) │ │(optional)│ │(optional)│ │ (optional)  │ │ (optional) │ │(optional)│ │
 │  │            │ │          │ │ExecProv. │ │             │ │            │ │          │ │
-│  │            │ │          │ │ExitHndlr│ │             │ │            │ │          │ │
-│  │            │ │          │ │ProcessP.│ │             │ │            │ │          │ │
+│  │            │ │          │ │ExitHndlr │ │             │ │            │ │          │ │
+│  │            │ │          │ │ProcessP. │ │             │ │            │ │          │ │
 │  └─────┬──────┘ └────┬─────┘ └────┬─────┘ └──────┬──────┘ └─────┬──────┘ └────┬─────┘ │
 │        │             │            │              │              │             │       │
 │  ┌─────▼─────────────▼────────────▼──────────────▼──────────────▼─────────────▼──┐    │
 │  │                              VM  (sandbox)                                    │    │
 │  │                                                                               │    │
 │  │  string, math, table, coroutine, utf8, bit32, glob, package                   │    │
-│  │  io*, os*, debug*, chan*, time*, exec*            (* = provider-gated)         │    │
+│  │  io*, os*, debug*, chan*, time*, exec*           (* = provider-gated)         │    │
 │  │  require → CodeProvider (Lua file searcher)                                   │    │
 │  │  print/warn → PrintProvider (or stdout/stderr fallback)                       │    │
 │  └───────────────────────────────────────────────────────────────────────────────┘    │
