@@ -55,7 +55,7 @@ do
     assert(not ok, "should fail with too many locals")
     -- With no '=', the error should report the token after the declaration, not 'x201'
     assert(not err:find("near 'x%d+"), "Bug4: should not say near variable name, got: " .. err)
-    assert(err:find("near '<eof>'"), "Bug4: expected near '<eof>' but got: " .. err)
+    assert(err:find("near <eof>"), "Bug4: expected near <eof> but got: " .. err)
 end
 
 print("OK")

@@ -3,7 +3,7 @@ package compiler
 // Lua 5.4 compiler limit defaults.
 const (
 	DefaultMaxVars   = 200 // MAXVARS in luaconf.h
-	DefaultMaxRegs   = 249 // MAXREGS — leave headroom below 255 for temps/NoReg
+	DefaultMaxRegs   = 255 // MAXREGS in luaconf.h
 	DefaultMaxUpvals = 255 // MAXUPVAL
 )
 
@@ -11,7 +11,7 @@ const (
 // Zero values mean use the corresponding default.
 type CompilerLimits struct {
 	MaxVars   int // max local variables per function (0 = DefaultMaxVars)
-	MaxRegs   int // max registers per function (0 = DefaultMaxRegs, hard cap 249)
+	MaxRegs   int // max registers per function (0 = DefaultMaxRegs, hard cap 255)
 	MaxUpvals int // max upvalues per function (0 = DefaultMaxUpvals, hard cap 255)
 }
 
@@ -27,8 +27,8 @@ func (cl CompilerLimits) effective() CompilerLimits {
 		out.MaxUpvals = DefaultMaxUpvals
 	}
 	// Hard caps from instruction encoding
-	if out.MaxRegs > 249 {
-		out.MaxRegs = 249
+	if out.MaxRegs > 255 {
+		out.MaxRegs = 255
 	}
 	if out.MaxUpvals > 255 {
 		out.MaxUpvals = 255

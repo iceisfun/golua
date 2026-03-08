@@ -558,7 +558,11 @@ func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
 			msg += fmt.Sprintf(" in function at line %d", fs.proto.LineDef)
 		}
 		if near != "" {
-			msg += fmt.Sprintf(" near '%s'", near)
+			if near == "<eof>" {
+				msg += " near <eof>"
+			} else {
+				msg += fmt.Sprintf(" near '%s'", near)
+			}
 		}
 		fs.c.error(line, msg)
 	}

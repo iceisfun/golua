@@ -90,6 +90,10 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 				}
 			}
 			c.compileLabelStmt(lbl, atEnd, afterLine)
+		} else if ls, ok := stmt.(*ast.LocalStmt); ok {
+			// Pass next-statement info for accurate "too many locals" error messages.
+			nextLine, nextNear := c.nextStmtInfo(stmts, i, blockAfterLine)
+			c.compileLocalStmtWithNext(ls, nextLine, nextNear)
 		} else {
 			c.compileStmt(stmt)
 		}
@@ -99,6 +103,74 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 		// occupy contiguous registers starting from R(0) — condition
 		// temporaries (e.g., while/for loop conditions) can create gaps.
 		c.fs.freeReg = c.fs.regTop()
+	}
+}
+
+// nextStmtInfo returns the line and near-token for the statement following
+// stmts[idx], matching Lua 5.4's lookahead behavior for error messages.
+func (c *compiler) nextStmtInfo(stmts []ast.Stmt, idx int, blockAfterLine int) (int, string) {
+	if idx+1 < len(stmts) {
+		next := stmts[idx+1]
+		return next.Pos().Line, stmtNearToken(next)
+	}
+	line := blockAfterLine
+	if line == 0 {
+		line = c.endLine
+	}
+	near := "<eof>"
+	if blockAfterLine > 0 {
+		near = "end"
+	}
+	return line, near
+}
+
+// stmtNearToken returns the leading keyword/token for a statement.
+func stmtNearToken(s ast.Stmt) string {
+	switch s.(type) {
+	case *ast.LocalStmt, *ast.LocalFuncStmt:
+		return "local"
+	case *ast.IfStmt:
+		return "if"
+	case *ast.WhileStmt:
+		return "while"
+	case *ast.RepeatStmt:
+		return "repeat"
+	case *ast.ForNumStmt, *ast.ForInStmt:
+		return "for"
+	case *ast.DoStmt:
+		return "do"
+	case *ast.ReturnStmt:
+		return "return"
+	case *ast.BreakStmt:
+		return "break"
+	case *ast.GotoStmt:
+		return "goto"
+	case *ast.LabelStmt:
+		return "::"
+	case *ast.FuncStmt:
+		return "function"
+	case *ast.EmptyStmt:
+		return ";"
+	case *ast.GlobalStmt, *ast.GlobalFuncStmt:
+		return "global"
+	case *ast.ExprStmt:
+		return exprLeadToken(s.(*ast.ExprStmt).Expr)
+	case *ast.AssignStmt:
+		return exprLeadToken(s.(*ast.AssignStmt).Targets[0])
+	default:
+		return "<eof>"
+	}
+}
+
+// exprLeadToken returns the leading token text for an expression.
+func exprLeadToken(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.NameExpr:
+		return x.Name
+	case *ast.ParenExpr:
+		return "("
+	default:
+		return "<eof>"
 	}
 }
 
@@ -169,6 +241,13 @@ func (c *compiler) compileStmt(stmt ast.Stmt) {
 // compileLocalStmt compiles "local x, y = a, b" — evaluates RHS into
 // consecutive registers, then declares the local variables.
 func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
+	c.compileLocalStmtWithNext(s, 0, "")
+}
+
+// compileLocalStmtWithNext compiles a local statement with info about the
+// next statement, used for "too many locals" error messages to match
+// Lua 5.4's lookahead-based line/near reporting.
+func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, nextNear string) {
 	fs := c.fs
 	line := s.P.Line
 	nNames := len(s.Names)
@@ -210,11 +289,12 @@ func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
 	}
 
 	// Register all local variables occupying base..base+nNames-1
-	// Choose near token to match Lua 5.4:
-	//   - If any variable has an attribute, near '<' (attribute opener)
-	//   - If there are values (=), near '='
-	//   - Otherwise, near '<eof>' (token after the declaration)
+	// Choose near token and line to match Lua 5.4:
+	//   - If any variable has an attribute, near '<' (attribute opener), current line
+	//   - If there are values (=), near '=', current line
+	//   - Otherwise, use the next statement's line and near token (lookahead)
 	nearToken := ""
+	errLine := line
 	hasAttrib := false
 	for _, a := range s.Attribs {
 		if a != "" {
@@ -227,9 +307,15 @@ func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
 	} else if nValues > 0 {
 		nearToken = "="
 	} else {
-		nearToken = "<eof>"
+		// No values, no attributes — use next token info (Lua 5.4 lookahead)
+		if nextNear != "" {
+			nearToken = nextNear
+			errLine = nextLine
+		} else {
+			nearToken = "<eof>"
+		}
 	}
-	fs.checkVarLimitAt(nNames, line, nearToken)
+	fs.checkVarLimitAt(nNames, errLine, nearToken)
 
 	fs.freeReg = base + nNames
 	if fs.freeReg > fs.maxReg {
@@ -1129,7 +1215,13 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 	scope := fs.scopes[len(fs.scopes)-1]
 	for _, lbl := range fs.labels {
 		if lbl.name == s.Name {
-			c.error(s, "label '%s' already defined on line %d", s.Name, lbl.line)
+			// Use afterLine (end of block/EOF) for the error prefix line,
+			// matching Lua 5.4 which detects duplicates at scope close.
+			errLine := afterLine
+			if errLine == 0 {
+				errLine = c.endLine
+			}
+			c.error(errLine, "label '%s' already defined on line %d", s.Name, lbl.line)
 			return
 		}
 	}
@@ -1367,7 +1459,7 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 		fs.emit(ABC(OP_VARARGPREP, fs.proto.NumParams, 0, 0, 0), line)
 	}
 
-	c.compileBlock(fe.Body)
+	c.compileBlockWith(fe.Body, true, fe.EndLine)
 
 	// Ensure function ends with a return.
 	// Use the 'end' keyword line if available (matches Lua 5.4 for __close errors).
