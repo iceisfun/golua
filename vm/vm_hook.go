@@ -52,8 +52,9 @@ func (vm *VM) fireHook(event string, line int) {
 	exit := vm.EnterNonYieldable()
 	defer exit()
 
-	// Use ProtectedCall to avoid panics escaping
-	_, _ = vm.ProtectedCall(vm.hookFunc, args)
+	// Call the hook function directly (unprotected) so errors propagate
+	// to the enclosing pcall/xpcall, matching Lua 5.4 semantics.
+	vm.callUnprotected(vm.hookFunc, args)
 }
 
 // fireCallHook fires a "call" hook event.

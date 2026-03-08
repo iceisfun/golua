@@ -300,3 +300,92 @@ func TestLocalEnvGlobalName(t *testing.T) {
 		t.Errorf("expected '(global 'abc')' in error, got: %s", errMsg)
 	}
 }
+
+// Bug: Errors thrown inside debug hooks were silently swallowed because
+// fireHook used ProtectedCall. In Lua 5.4, hook errors propagate normally.
+func TestHookErrorPropagates(t *testing.T) {
+	v := New()
+
+	// Provide pcall and error as native functions
+	v.SetGlobal("pcall", NewNativeFunc(func(vm *VM) int {
+		argc := vm.ArgCount()
+		fn := vm.Get(1)
+		args := make([]Value, argc-1)
+		for i := 2; i <= argc; i++ {
+			args[i-2] = vm.Get(i)
+		}
+		results, callErr := vm.ProtectedCall(fn, args)
+		if callErr != nil {
+			vm.Set(0, False)
+			if le, ok := callErr.(*LuaError); ok {
+				vm.Set(1, le.Value)
+			} else {
+				vm.Set(1, NewString(callErr.Error()))
+			}
+			return 2
+		}
+		vm.Set(0, True)
+		for i, r := range results {
+			vm.Set(i+1, r)
+		}
+		return 1 + len(results)
+	}))
+
+	v.SetGlobal("error", NewNativeFunc(func(vm *VM) int {
+		msg := vm.Get(1)
+		panic(&LuaError{Value: msg})
+	}))
+
+	// Provide sethook as a native function so Lua code can install the hook
+	// inside a pcall'd function.
+	v.SetGlobal("sethook", NewNativeFunc(func(vm *VM) int {
+		fn := vm.Get(1)
+		mask := vm.Get(2).AsString()
+		var m byte
+		for _, c := range mask {
+			switch c {
+			case 'c':
+				m |= HookMaskCall
+			case 'r':
+				m |= HookMaskReturn
+			case 'l':
+				m |= HookMaskLine
+			}
+		}
+		vm.SetHook(fn, m, 0)
+		return 0
+	}))
+
+	v.SetGlobal("clearhook", NewNativeFunc(func(vm *VM) int {
+		vm.SetHook(Nil, 0, 0)
+		return 0
+	}))
+
+	results, err := runWithVM(t, v, `
+		local ok, msg = pcall(function()
+			sethook(function()
+				clearhook()
+				error("hook error")
+			end, "l")
+			local x = 1
+			return x
+		end)
+		return ok, msg
+	`)
+	if err != nil {
+		t.Fatalf("unexpected top-level error: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	// ok should be false (error was caught by pcall)
+	if results[0] != False {
+		t.Errorf("expected ok=false, got ok=%v", results[0])
+	}
+	// msg should contain "hook error"
+	msg := results[1].AsString()
+	if !strings.Contains(msg, "hook error") {
+		t.Errorf("expected error message containing 'hook error', got: %s", msg)
+	}
+
+}

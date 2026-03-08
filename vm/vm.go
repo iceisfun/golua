@@ -490,6 +490,56 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	return nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
 }
 
+// callUnprotected calls a function without catching errors, so panics
+// (Lua errors) propagate to the enclosing pcall/xpcall. Used by hook dispatch
+// to match Lua 5.4 semantics where hook errors are not silently swallowed.
+func (vm *VM) callUnprotected(fn Value, args []Value) {
+	if fn.IsNativeFunc() {
+		nf := fn.AsNativeFunc()
+		savedTop := vm.top
+		base := vm.top
+		vm.ensureStack(base + len(args) + 10)
+
+		for i, arg := range args {
+			vm.stack[base+1+i] = arg
+		}
+		clearStart := base + 1 + len(args)
+		clearEnd := clearStart + 4
+		if clearEnd > len(vm.stack) {
+			clearEnd = len(vm.stack)
+		}
+		for i := clearStart; i < clearEnd; i++ {
+			vm.stack[i] = Nil
+		}
+
+		vm.callStack = append(vm.callStack, callFrame{
+			base: base,
+			argc: len(args),
+		})
+		nf(vm)
+		vm.callStack = vm.callStack[:len(vm.callStack)-1]
+		vm.top = savedTop
+		return
+	}
+
+	if fn.IsFunction() {
+		vm.call(fn.AsClosure(), args, 0) //nolint:errcheck
+		return
+	}
+
+	// Check for __call metamethod
+	mm := vm.getMetafield(fn, "__call")
+	if !mm.IsNil() {
+		newArgs := make([]Value, len(args)+1)
+		newArgs[0] = fn
+		copy(newArgs[1:], args)
+		vm.callUnprotected(mm, newArgs)
+		return
+	}
+
+	panic(vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn)))
+}
+
 // NewCoroutineVM creates a new VM for running a coroutine. The child VM shares
 // the parent's globals, string metatable, providers, limits, and output buffer,
 // but has its own stack, call stack, and upvalue tracking. Communication between
