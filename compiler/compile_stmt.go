@@ -327,6 +327,18 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		}
 	}
 
+	// Phase 2.5: Pre-resolve upvalues in left-to-right order so that their
+	// registration indices match Lua 5.4's source order. The actual stores
+	// in Phase 3 run right-to-left, but by then the upvalues are already
+	// registered in the correct order.
+	for i := 0; i < nTargets; i++ {
+		if ne, ok := s.Targets[i].(*ast.NameExpr); ok {
+			if _, isLocal := fs.lookupLocal(ne.Name); !isLocal {
+				c.resolveUpvalue(fs, ne.Name)
+			}
+		}
+	}
+
 	// Phase 3: Assign from temp value registers to targets using precomputed
 	// table/key registers for indexed targets.
 	// Lua 5.4 assigns right-to-left so that in `t[1], t[1] = "a", "b"`,
