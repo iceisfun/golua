@@ -445,13 +445,22 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			// R[A] := UpValue[B][K[C]:string]
 			c := prev.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
-				if prev.B() == 0 {
-					// Upvalue 0 is _ENV — this is a global access
+				if isUpvalIdx_ENV(proto, prev.B()) {
 					return proto.Constants[c].SVal, "global"
 				}
-				return proto.Constants[c].SVal, "upvalue"
+				return proto.Constants[c].SVal, "field"
 			}
 			return "", ""
+		case compiler.OP_GETI:
+			return "integer index", "field"
+		case compiler.OP_GETTABLE:
+			// R[A] = R[B][R[C]] — try to resolve R[C] to a constant name
+			c := prev.C()
+			kn := kName(proto, i, c)
+			if kn != "" {
+				return kn, "field"
+			}
+			return "?", "field"
 		case compiler.OP_GETFIELD:
 			// R[A] := R[B][K[C]:string]
 			c := prev.C()
@@ -828,7 +837,7 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 		case compiler.OP_GETTABUP:
 			c := inst.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
-				if inst.B() == 0 {
+				if isUpvalIdx_ENV(proto, inst.B()) {
 					return proto.Constants[c].SVal, "global"
 				}
 				return proto.Constants[c].SVal, "field"
@@ -871,7 +880,7 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 				}
 				return kn, what
 			}
-			return "", ""
+			return "?", "field"
 		default:
 			ln := localName(proto, reg, i)
 			if ln != "" && ln != "?" && !isInternalName(ln) {
@@ -889,8 +898,14 @@ func isInternalName(name string) bool {
 	return len(name) > 0 && name[0] == '('
 }
 
+// isUpvalIdx_ENV checks whether the given upvalue index refers to _ENV
+// by checking the upvalue's name in the prototype.
+func isUpvalIdx_ENV(proto *compiler.Proto, idx int) bool {
+	return idx < len(proto.Upvalues) && proto.Upvalues[idx].Name == "_ENV"
+}
+
 // isUpvalEnv checks whether the register at the given PC was loaded via
-// GETUPVAL from upvalue 0 (_ENV). Used to distinguish "global" from "field"
+// GETUPVAL from _ENV. Used to distinguish "global" from "field"
 // when GETTABLE is the fallback for GETTABUP with large constant indices.
 func isUpvalEnv(proto *compiler.Proto, pc int, reg int) bool {
 	for i := pc - 1; i >= 0; i-- {
@@ -898,7 +913,7 @@ func isUpvalEnv(proto *compiler.Proto, pc int, reg int) bool {
 		if inst.A() != reg {
 			continue
 		}
-		if inst.OpCode() == compiler.OP_GETUPVAL && inst.B() == 0 {
+		if inst.OpCode() == compiler.OP_GETUPVAL && isUpvalIdx_ENV(proto, inst.B()) {
 			return true
 		}
 		return false
