@@ -472,7 +472,7 @@ func luaWarn(v *vm.VM) int {
 	if !first.IsString() && !first.IsInt() && !first.IsFloat() {
 		callerArgError(v, 1, "warn", fmt.Sprintf("string expected, got %s", first.Type()))
 	}
-	s := first.AsString()
+	s := valueToString(first)
 	for i := 2; i <= argc; i++ {
 		arg := v.Get(i)
 		if !arg.IsString() && !arg.IsInt() && !arg.IsFloat() {
@@ -493,7 +493,7 @@ func luaWarn(v *vm.VM) int {
 		buf.WriteString("Lua warning: ")
 		buf.WriteString(s)
 		for i := 2; i <= argc; i++ {
-			buf.WriteString(v.Get(i).AsString())
+			buf.WriteString(valueToString(v.Get(i)))
 		}
 		v.Warn(buf.String())
 	}

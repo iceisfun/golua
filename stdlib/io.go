@@ -452,7 +452,15 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 		if arg.IsString() {
 			s = arg.AsString()
 		} else if arg.IsNumber() {
+			// io.write uses C's fprintf with %.14g for floats, which does
+			// NOT append ".0" to integer-valued floats (unlike tostring()).
 			s = valueToString(arg)
+			if !arg.IsInt() && strings.HasSuffix(s, ".0") {
+				before := s[:len(s)-2]
+				if !strings.ContainsAny(before, ".eE") {
+					s = before
+				}
+			}
 		} else {
 			callerArgError(v, i-firstArg+1, "io.write", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
