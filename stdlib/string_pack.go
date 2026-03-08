@@ -134,20 +134,30 @@ func isPow2(n int) bool {
 type formatState struct {
 	byteOrder binary.ByteOrder
 	maxAlign  int
+	funcName  string // e.g. "pack" for error messages
 }
 
-func newFormatState() *formatState {
+func newFormatState(funcName string) *formatState {
 	return &formatState{
 		byteOrder: binary.LittleEndian, // native = little on x86/ARM
 		maxAlign:  1,
+		funcName:  funcName,
 	}
 }
 
+// effectiveAlign computes the effective alignment for a directive with the
+// given natural alignment. The effective alignment is min(maxAlign, natAlign).
+// Lua 5.4 defers the power-of-2 check to this point rather than checking
+// maxAlign at parse time, so !5 i4 works (effective=4) but !5 i8 fails (effective=5).
 func (fs *formatState) effectiveAlign(natAlign int) int {
-	if natAlign > fs.maxAlign {
-		return fs.maxAlign
+	align := natAlign
+	if align > fs.maxAlign {
+		align = fs.maxAlign
 	}
-	return natAlign
+	if !isPow2(align) {
+		panic(fmt.Sprintf("bad argument #1 to '%s' (format asks for alignment not power of 2)", fs.funcName))
+	}
+	return align
 }
 
 // stringPack implements string.pack(fmt, v1, v2, ...)
@@ -155,7 +165,7 @@ func stringPack(v *vm.VM) int {
 	format := getString(v, 1, "pack")
 	argIdx := 2
 	var buf bytes.Buffer
-	fs := newFormatState()
+	fs := newFormatState("pack")
 
 	i := 0
 	for i < len(format) {
@@ -179,9 +189,6 @@ func stringPack(v *vm.VM) int {
 			align, i = parsePackSize(format, i, 8) // default max alignment = 8
 			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
-			}
-			if !isPow2(align) {
-				panic("format asks for alignment not power of 2")
 			}
 			fs.maxAlign = align
 			continue
@@ -212,7 +219,7 @@ func stringPack(v *vm.VM) int {
 		case 'c':
 			var size int
 			if i >= len(format) || format[i] < '0' || format[i] > '9' {
-				panic("bad argument #1 to 'pack' (missing size)")
+				panic("missing size for format option 'c'")
 			}
 			size, i = parsePackSize(format, i, 0)
 			packFixedString(v, &buf, fs, size, &argIdx)
@@ -281,6 +288,8 @@ func getXAlign(format string, i *int) int {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return size
+	case 'c', 'z', '<', '>', '=', '!', 'X':
+		panic("bad argument #1 to 'pack' (invalid next option for option 'X')")
 	case ' ':
 		// skip spaces and try next
 		for *i < len(format) && format[*i] == ' ' {
@@ -289,16 +298,13 @@ func getXAlign(format string, i *int) int {
 		// but space is not a valid option after X
 		panic("bad argument #1 to 'pack' (invalid next option for option 'X')")
 	default:
-		panic("bad argument #1 to 'pack' (invalid next option for option 'X')")
+		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}
 }
 
 func packInt(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, size int, signed bool, argIdx *int) {
 	natAlign := getNatAlign(kind, size)
 	align := fs.effectiveAlign(natAlign)
-	if !isPow2(align) {
-		panic("bad argument #1 to 'pack' (not power of 2)")
-	}
 	pad := addPadding(buf.Len(), align)
 	for p := 0; p < pad; p++ {
 		buf.WriteByte(0)
@@ -500,7 +506,7 @@ func stringUnpack(v *vm.VM) int {
 		panic("bad argument #3 to 'unpack' (initial position out of string)")
 	}
 
-	fs := newFormatState()
+	fs := newFormatState("unpack")
 	nret := 0
 
 	i := 0
@@ -525,9 +531,6 @@ func stringUnpack(v *vm.VM) int {
 			align, i = parsePackSize(format, i, 8)
 			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
-			}
-			if !isPow2(align) {
-				panic("format asks for alignment not power of 2")
 			}
 			fs.maxAlign = align
 			continue
@@ -573,7 +576,7 @@ func stringUnpack(v *vm.VM) int {
 			nret++
 		case 'c':
 			if i >= len(format) || format[i] < '0' || format[i] > '9' {
-				panic("bad argument #1 to 'unpack' (missing size)")
+				panic("missing size for format option 'c'")
 			}
 			var size int
 			size, i = parsePackSize(format, i, 0)
@@ -648,13 +651,15 @@ func getXAlignUnpack(format string, i *int) int {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return size
+	case 'c', 'z', '<', '>', '=', '!', 'X':
+		panic("bad argument #1 to 'unpack' (invalid next option for option 'X')")
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
 		}
 		panic("bad argument #1 to 'unpack' (invalid next option for option 'X')")
 	default:
-		panic("bad argument #1 to 'unpack' (invalid next option for option 'X')")
+		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}
 }
 
@@ -667,9 +672,6 @@ func applyAlignPad(offset *int, fs *formatState, natAlign int) {
 func unpackInt(data string, offset *int, fs *formatState, kind byte, size int, signed bool) vm.Value {
 	natAlign := getNatAlign(kind, size)
 	align := fs.effectiveAlign(natAlign)
-	if !isPow2(align) {
-		panic("bad argument #1 to 'unpack' (not power of 2)")
-	}
 	pad := addPadding(*offset, align)
 	*offset += pad
 
@@ -870,7 +872,7 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 // stringPacksize implements string.packsize(fmt)
 func stringPacksize(v *vm.VM) int {
 	format := getString(v, 1, "packsize")
-	fs := newFormatState()
+	fs := newFormatState("packsize")
 	totalSize := 0
 
 	i := 0
@@ -888,9 +890,6 @@ func stringPacksize(v *vm.VM) int {
 			align, i = parsePackSize(format, i, 8)
 			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
-			}
-			if !isPow2(align) {
-				panic("format asks for alignment not power of 2")
 			}
 			fs.maxAlign = align
 			continue
@@ -922,7 +921,7 @@ func stringPacksize(v *vm.VM) int {
 			totalSize += 8
 		case 'c':
 			if i >= len(format) || format[i] < '0' || format[i] > '9' {
-				panic("bad argument #1 to 'packsize' (missing size)")
+				panic("missing size for format option 'c'")
 			}
 			var size int
 			size, i = parsePackSize(format, i, 0)
@@ -983,12 +982,14 @@ func getXAlignPacksize(format string, i *int) int {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return size
+	case 'c', 'z', '<', '>', '=', '!', 'X':
+		panic("bad argument #1 to 'packsize' (invalid next option for option 'X')")
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
 		}
 		panic("bad argument #1 to 'packsize' (invalid next option for option 'X')")
 	default:
-		panic("bad argument #1 to 'packsize' (invalid next option for option 'X')")
+		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}
 }
