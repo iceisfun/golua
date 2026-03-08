@@ -210,7 +210,12 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
 			}
 		case 'p':
-			result.WriteString(luaPointerFormat(val))
+			ps := luaPointerFormat(val)
+			if spec != "%" {
+				goSpec := spec + "s"
+				ps = fmt.Sprintf(goSpec, ps)
+			}
+			result.WriteString(ps)
 		default:
 			panic(fmt.Sprintf("invalid conversion '%s%c' to 'format'", spec, specChar))
 		}
