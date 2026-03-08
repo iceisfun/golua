@@ -193,11 +193,24 @@ func (c *compiler) compileLocalStmt(s *ast.LocalStmt) {
 	}
 
 	// Register all local variables occupying base..base+nNames-1
+	// Choose near token to match Lua 5.4:
+	//   - If any variable has an attribute, near '<' (attribute opener)
+	//   - If there are values (=), near '='
+	//   - Otherwise, near '<eof>' (token after the declaration)
 	nearToken := ""
-	if nValues > 0 {
+	hasAttrib := false
+	for _, a := range s.Attribs {
+		if a != "" {
+			hasAttrib = true
+			break
+		}
+	}
+	if hasAttrib {
+		nearToken = "<"
+	} else if nValues > 0 {
 		nearToken = "="
-	} else if nNames > 0 {
-		nearToken = s.Names[nNames-1].Name
+	} else {
+		nearToken = "<eof>"
 	}
 	fs.checkVarLimitAt(nNames, line, nearToken)
 
@@ -1209,7 +1222,9 @@ func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 	line := s.P.Line
 
 	// Register the local first (allows recursion)
-	fs.checkVarLimitAt(1, line, s.Name.Name)
+	// Use "(" as near token: Lua 5.4 registers the local for f after parsing
+	// the opening parenthesis, so the error reports near '(' not near 'f'.
+	fs.checkVarLimitAt(1, line, "(")
 	localIdx := len(fs.locals)
 	reg := fs.freeReg
 	fs.locals = append(fs.locals, localVar{
@@ -1300,15 +1315,16 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 
 	fs.enterScope(false)
 
-	// Parameters are local variables
-	// Use ")" as the near-token context, matching Lua 5.4 which reports
-	// the closing delimiter rather than the parameter name.
-	nearToken := ""
-	if len(fe.Params) > 0 {
-		nearToken = ")"
-	}
-	fs.checkVarLimitAt(len(fe.Params), fe.P.Line, nearToken)
-	for _, param := range fe.Params {
+	// Parameters are local variables.
+	// Check the limit incrementally at each parameter to match Lua 5.4:
+	// the first parameter that exceeds the limit reports near ',' (the
+	// separator before it), except the first parameter which would use ')'.
+	for i, param := range fe.Params {
+		nearToken := ","
+		if i == 0 {
+			nearToken = ")"
+		}
+		fs.checkVarLimitAt(1, fe.P.Line, nearToken)
 		reg := fs.freeReg
 		fs.locals = append(fs.locals, localVar{
 			name:    param.Name,
