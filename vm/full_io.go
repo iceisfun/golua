@@ -201,6 +201,14 @@ func (f *fullFile) ReadBytes(n int) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to use a closed file")
 	}
+	if n == 0 {
+		// EOF test: peek 1 byte to check if data remains
+		_, err := f.reader.Peek(1)
+		if err != nil {
+			return "", io.EOF
+		}
+		return "", nil
+	}
 	buf := make([]byte, n)
 	nRead, err := io.ReadFull(f.reader, buf)
 	if nRead == 0 && err != nil {
@@ -255,6 +263,16 @@ func (f *fullFile) Seek(whence string, offset int64) (int64, error) {
 		w = io.SeekEnd
 	default:
 		return 0, fmt.Errorf("invalid option '%s'", whence)
+	}
+
+	// When seeking relative to "cur", the OS file descriptor may be ahead
+	// of the logical position due to bufio.Reader read-ahead buffering.
+	// Adjust the offset to compensate for unconsumed buffered bytes.
+	if w == io.SeekCurrent && f.reader != nil {
+		buffered := f.reader.Buffered()
+		if buffered > 0 {
+			offset -= int64(buffered)
+		}
 	}
 
 	pos, err := f.file.Seek(offset, w)
@@ -474,6 +492,14 @@ func (f *stdFile) ReadBytes(n int) (string, error) {
 		return "", fmt.Errorf("%s is not readable", f.name)
 	}
 	r := f.ensureReader()
+	if n == 0 {
+		// EOF test: peek 1 byte to check if data remains
+		_, err := r.Peek(1)
+		if err != nil {
+			return "", io.EOF
+		}
+		return "", nil
+	}
 	buf := make([]byte, n)
 	nRead, err := io.ReadFull(r, buf)
 	if nRead == 0 && err != nil {

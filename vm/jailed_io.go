@@ -130,6 +130,14 @@ func (f *jailedFile) ReadBytes(n int) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to read from a closed file")
 	}
+	if n == 0 {
+		// EOF test: peek 1 byte to check if data remains
+		_, err := f.reader.Peek(1)
+		if err != nil {
+			return "", io.EOF
+		}
+		return "", nil
+	}
 
 	buf := make([]byte, n)
 	nRead, err := io.ReadFull(f.reader, buf)
