@@ -396,15 +396,19 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 	// Create closure
 	closure := vm.NewClosure(proto)
 
-	// Set up _ENV upvalue
-	if len(proto.Upvalues) > 0 {
-		closure.Upvalues[0] = &vm.Upvalue{}
-		if hasEnv {
-			// Use provided environment value exactly as passed.
-			closure.Upvalues[0].SetClosed(env)
+	// Set up upvalues: first is _ENV, rest are initialized as closed nil upvalues
+	for i := range proto.Upvalues {
+		closure.Upvalues[i] = &vm.Upvalue{}
+		if i == 0 {
+			if hasEnv {
+				// Use provided environment value exactly as passed.
+				closure.Upvalues[0].SetClosed(env)
+			} else {
+				// Use global environment
+				closure.Upvalues[0].SetClosed(vm.NewTable(v.Globals()))
+			}
 		} else {
-			// Use global environment
-			closure.Upvalues[0].SetClosed(vm.NewTable(v.Globals()))
+			closure.Upvalues[i].SetClosed(vm.Nil)
 		}
 	}
 
@@ -439,13 +443,17 @@ func loadBinaryChunk(v *vm.VM, data string, chunkName string, env vm.Value, hasE
 	// Create closure
 	closure := vm.NewClosure(proto)
 
-	// Set up _ENV upvalue
-	if len(proto.Upvalues) > 0 {
-		closure.Upvalues[0] = &vm.Upvalue{}
-		if hasEnv {
-			closure.Upvalues[0].SetClosed(env)
+	// Set up upvalues: first is _ENV, rest are initialized as closed nil upvalues
+	for i := range proto.Upvalues {
+		closure.Upvalues[i] = &vm.Upvalue{}
+		if i == 0 {
+			if hasEnv {
+				closure.Upvalues[0].SetClosed(env)
+			} else {
+				closure.Upvalues[0].SetClosed(vm.NewTable(v.Globals()))
+			}
 		} else {
-			closure.Upvalues[0].SetClosed(vm.NewTable(v.Globals()))
+			closure.Upvalues[i].SetClosed(vm.Nil)
 		}
 	}
 
