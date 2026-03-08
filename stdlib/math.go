@@ -232,16 +232,15 @@ func mathMax(v *vm.VM) int {
 	}
 
 	maxVal := v.Get(1)
-	if !maxVal.IsNumber() {
-		callerArgError(v, 1, "math.max", "number expected")
-	}
 
 	for i := 2; i <= n; i++ {
 		cur := v.Get(i)
-		if !cur.IsNumber() {
-			callerArgError(v, 1, "math.max", "number expected")
+		// Use Lua < operator (supports strings, __lt metamethods)
+		lt, err := v.CompareLT(maxVal, cur)
+		if err != nil {
+			panic(err)
 		}
-		if lt, _ := maxVal.LessThan(cur); lt {
+		if lt {
 			maxVal = cur
 		}
 	}
@@ -257,16 +256,15 @@ func mathMin(v *vm.VM) int {
 	}
 
 	minVal := v.Get(1)
-	if !minVal.IsNumber() {
-		callerArgError(v, 1, "math.min", "number expected")
-	}
 
 	for i := 2; i <= n; i++ {
 		cur := v.Get(i)
-		if !cur.IsNumber() {
-			callerArgError(v, 1, "math.min", "number expected")
+		// Use Lua < operator (supports strings, __lt metamethods)
+		lt, err := v.CompareLT(cur, minVal)
+		if err != nil {
+			panic(err)
 		}
-		if lt, _ := cur.LessThan(minVal); lt {
+		if lt {
 			minVal = cur
 		}
 	}
