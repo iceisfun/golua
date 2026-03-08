@@ -1,0 +1,191 @@
+# exec — Process Execution Module
+
+The `exec` module provides modern process execution capabilities for GoLua,
+going beyond `os.execute` with support for streaming I/O, stdin interaction,
+and timed waits.
+
+## Quick Start
+
+```lua
+-- Simple execution
+local result = exec.run("ls", "-al")
+print(result.stdout)
+
+-- Streaming
+local p = exec.spawn("ping", "-c", "5", "example.com")
+for line in p:readlines() do
+    print(line)
+end
+p:wait()
+```
+
+## Module Functions
+
+### exec.run(cmd, args...)
+
+Runs a command synchronously and returns the result.
+
+```lua
+local result = exec.run("echo", "hello")
+-- result.success = true
+-- result.code    = 0
+-- result.stdout  = "hello\n"
+-- result.stderr  = ""
+```
+
+**Returns** a table with:
+| Field     | Type    | Description                    |
+|-----------|---------|--------------------------------|
+| `success` | boolean | true if exit code is 0         |
+| `code`    | number  | exit code                      |
+| `stdout`  | string  | captured standard output       |
+| `stderr`  | string  | captured standard error        |
+
+### exec.spawn(cmd, args...)
+
+Spawns a process and returns a process handle with stdin, stdout, and stderr
+pipes. The process runs asynchronously.
+
+```lua
+local p = exec.spawn("sort")
+p:write("b\na\n")
+p:close_stdin()
+print(p:readline())  -- "a"
+p:wait()
+```
+
+### exec.run_shell(cmdline)
+
+Runs a command through the system shell (`sh -c`), enabling pipes, redirects,
+and variable expansion.
+
+```lua
+local result = exec.run_shell("echo hello | tr a-z A-Z")
+print(result.stdout)  -- "HELLO\n"
+```
+
+## Process Object Methods
+
+Process objects are returned by `exec.spawn`.
+
+### p:read()
+
+Reads available data from stdout. Returns a string, or nil at EOF.
+
+### p:readline()
+
+Reads a single line from stdout (strips trailing newline). Returns nil at EOF.
+
+### p:readlines()
+
+Returns an iterator for streaming stdout line by line.
+
+```lua
+for line in p:readlines() do
+    print(line)
+end
+```
+
+### p:write(data)
+
+Writes data to the process's stdin. Returns the process for method chaining.
+
+### p:close_stdin()
+
+Closes the stdin pipe. Required for processes that read until EOF (e.g., `sort`).
+
+### p:wait([ms])
+
+Without arguments, blocks until the process completes and returns a result table.
+
+With a timeout in milliseconds, returns `result, done` where `done` is false
+if the timeout expired.
+
+```lua
+-- Blocking
+local result = p:wait()
+
+-- With timeout
+local result, done = p:wait(5000)
+if not done then
+    p:kill()
+end
+```
+
+### p:is_complete()
+
+Returns true if the process has finished.
+
+### p:kill()
+
+Sends SIGKILL to the process.
+
+### p:exit_code()
+
+Returns the exit code, or nil if the process hasn't completed.
+
+### p:stderr()
+
+Reads a line from stderr. Returns nil at EOF.
+
+## Provider Architecture
+
+The exec module requires a `LuaProcessProvider` to be set on the VM.
+
+### Go Setup
+
+```go
+v := vm.New()
+v.SetProcessProvider(vm.NewDefaultProcessProvider())
+stdlib.Open(v)
+```
+
+### Custom Provider
+
+Implement `LuaProcessProvider` to control process execution:
+
+```go
+type LuaProcessProvider interface {
+    Spawn(ctx context.Context, cmd string, args []string, opts ProcessOptions) (LuaProcess, error)
+}
+```
+
+This allows hosts to:
+- Restrict which commands can be executed
+- Sandbox working directories
+- Filter environment variables
+- Log process usage
+- Disable execution entirely (don't set the provider)
+
+### ProcessOptions
+
+```go
+type ProcessOptions struct {
+    Env    map[string]string  // nil = inherit parent
+    Dir    string             // empty = inherit parent
+    Stdin  bool               // create stdin pipe
+    Stdout bool               // capture stdout
+    Stderr bool               // capture stderr
+}
+```
+
+## Security
+
+- The exec module is **disabled by default**. It is only available when a
+  `ProcessProvider` is registered on the VM.
+- `DefaultProcessProvider` uses `os/exec` with context cancellation support.
+- Hosts can implement custom providers to restrict, sandbox, or audit process
+  execution.
+
+## Comparison with os.execute
+
+| Feature           | os.execute              | exec module              |
+|-------------------|------------------------|--------------------------|
+| Output capture    | No                     | Yes (stdout + stderr)    |
+| Stdin interaction | No                     | Yes                      |
+| Streaming         | No                     | Yes (readlines iterator) |
+| Timed wait        | No                     | Yes (wait with timeout)  |
+| Process control   | No                     | Yes (kill, is_complete)  |
+| Shell mode        | Always                 | Optional (run_shell)     |
+| Return value      | ok, exittype, code     | Result table             |
+| Provider          | LuaExecProvider        | LuaProcessProvider       |

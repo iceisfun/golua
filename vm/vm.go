@@ -70,6 +70,9 @@ type VM struct {
 	// Time provider support
 	timeProvider LuaTimeProvider // Provider for time operations (optional)
 
+	// Process provider support
+	processProvider LuaProcessProvider // Provider for process spawning (optional)
+
 	// Print/warn provider support
 	printProvider LuaPrintProvider // Provider for print/warn output routing (optional)
 	warnEnabled   bool             // Per-VM warn flag (controlled by warn("@on")/"@off")
@@ -514,7 +517,8 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		debugProvider: parent.debugProvider,
 		chanProvider:  parent.chanProvider,
 		timeProvider:  parent.timeProvider,
-		printProvider: parent.printProvider,
+		processProvider: parent.processProvider,
+		printProvider:   parent.printProvider,
 		warnEnabled:   parent.warnEnabled,
 		ctx:           parent.ctx,
 		limits:        parent.limits,

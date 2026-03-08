@@ -195,6 +195,19 @@ func (vm *VM) TimeProvider() LuaTimeProvider {
 	return vm.timeProvider
 }
 
+// Process provider
+
+// SetProcessProvider sets the process provider for this VM.
+// When set, the exec module becomes available via stdlib.Open.
+func (vm *VM) SetProcessProvider(provider LuaProcessProvider) {
+	vm.processProvider = provider
+}
+
+// ProcessProvider returns the current process provider, or nil if none is set.
+func (vm *VM) ProcessProvider() LuaProcessProvider {
+	return vm.processProvider
+}
+
 // Print/warn provider
 
 // SetPrintProvider sets the print/warn output provider for this VM.

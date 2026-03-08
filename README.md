@@ -29,6 +29,7 @@ A Lua 5.4 interpreter written in Go, with experimental 5.5 features. Pure Go, ze
 - Capability-gated channels for Go↔Lua message passing via `LuaChanProvider`
 - Millisecond-precision timing via `LuaTimeProvider` (`time.now`, `time.since`, `time.tick`)
 - Optional HTTP client module (`http.get`, `http.post`, `http.fetch`) with automatic JSON coercion
+- Modern process execution via `LuaProcessProvider` (`exec.run`, `exec.spawn` with streaming I/O, stdin, kill, timed waits)
 - Output interception via `LuaPrintProvider` (redirect `print()`/`warn()` to logging, per-VM warn isolation)
 - Context cancellation and execution limits (call depth, stack, instructions)
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
@@ -108,6 +109,7 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | `LuaChanProvider`  | `chan.*` Go↔Lua channels                       | `DefaultChanProvider`       |
 | `LuaTimeProvider`  | `time.*` millisecond timing                    | `DefaultTimeProvider`       |
 | `LuaPrintProvider` | `print()`/`warn()` output routing              | `DefaultPrintProvider`      |
+| `LuaProcessProvider` | `exec.*` process spawning and streaming      | `DefaultProcessProvider`    |
 
 ## Examples
 
@@ -125,6 +127,7 @@ See the `examples/` directory for complete examples:
 - **[table](examples/table/)** - LuaTable interface and deterministic iteration
 - **[chan](examples/chan/)** - Go↔Lua channels with chan.select ([go_to_lua](examples/chan/go_to_lua/), [lua_to_go](examples/chan/lua_to_go/), [multi_go_to_lua](examples/chan/multi_go_to_lua/))
 - **[glob](examples/glob/)** - Go-style case-insensitive pattern matching from Go and Lua
+- **[exec](examples/exec/)** - Process execution: run, spawn, streaming, stdin interaction, timeouts ([simple_run](examples/exec/simple_run/), [streaming](examples/exec/streaming/), [interactive](examples/exec/interactive/), [timeout](examples/exec/timeout/))
 - **[time](examples/time/)** - Millisecond timing: now, since, tick, and once
 - **[http](examples/http/)** - HTTP requests: GET, POST, custom headers, timeouts
 - **[check](examples/check/)** - Parse Lua source and emit diagnostics as JSON (for editor integration)
@@ -210,6 +213,34 @@ v.SetOsProvider(vm.NewFilteredOsProvider(func(name string) bool {
 
 stdlib.Open(v)
 ```
+
+### Process Execution
+
+The `exec` module provides modern process control beyond `os.execute`:
+
+```go
+v := vm.New()
+v.SetProcessProvider(vm.NewDefaultProcessProvider())
+stdlib.Open(v)
+```
+
+```lua
+-- Simple run with captured output
+local result = exec.run("ls", "-al")
+print(result.stdout)
+
+-- Spawn for streaming and interaction
+local p = exec.spawn("sort")
+p:write("banana\napple\n")
+p:close_stdin()
+for line in p:readlines() do print(line) end
+p:wait()
+
+-- Shell mode with pipes
+local r = exec.run_shell("cat /etc/hosts | grep localhost")
+```
+
+See [docs/exec.md](docs/exec.md) for the full API reference.
 
 ### Debug Library
 
@@ -406,6 +437,7 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 | `debug`     | `LuaDebugProvider` | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)   |
 | `chan`      | `LuaChanProvider`  | Go↔Lua message passing channels (absent by default)                                |
 | `time`      | `LuaTimeProvider`  | Millisecond timing: now, since, periodic tick (absent by default)                  |
+| `exec`      | `LuaProcessProvider` | Process execution: run, spawn, streaming I/O, stdin, kill ([docs](docs/exec.md)) |
 | `http`      | Separate module    | HTTP client: get, post, put, patch, delete, fetch ([docs](docs/http.md))           |
 
 ## Security Model
@@ -421,13 +453,14 @@ GoLua is sandboxed by default. The VM starts with no access to the host system. 
 │  │ (optional) │ │(optional)│ │(optional)│ │ (optional)  │ │ (optional) │ │(optional)│ │
 │  │            │ │          │ │ExecProv. │ │             │ │            │ │          │ │
 │  │            │ │          │ │ExitHndlr│ │             │ │            │ │          │ │
+│  │            │ │          │ │ProcessP.│ │             │ │            │ │          │ │
 │  └─────┬──────┘ └────┬─────┘ └────┬─────┘ └──────┬──────┘ └─────┬──────┘ └────┬─────┘ │
 │        │             │            │              │              │             │       │
 │  ┌─────▼─────────────▼────────────▼──────────────▼──────────────▼─────────────▼──┐    │
 │  │                              VM  (sandbox)                                    │    │
 │  │                                                                               │    │
 │  │  string, math, table, coroutine, utf8, bit32, glob, package                   │    │
-│  │  io*, os*, debug*, chan*, time*                  (* = provider-gated)         │    │
+│  │  io*, os*, debug*, chan*, time*, exec*            (* = provider-gated)         │    │
 │  │  require → CodeProvider (Lua file searcher)                                   │    │
 │  │  print/warn → PrintProvider (or stdout/stderr fallback)                       │    │
 │  └───────────────────────────────────────────────────────────────────────────────┘    │

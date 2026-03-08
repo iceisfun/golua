@@ -150,6 +150,7 @@ func runLuaTest(t *testing.T, filename string) {
 	}))
 	v.SetExecProvider(vm.NewDefaultExecProvider())
 	v.SetExitHandler(vm.NewDefaultExitHandler())
+	v.SetProcessProvider(vm.NewDefaultProcessProvider())
 	stdlib.Open(v)
 
 	// Run in goroutine with panic recovery and timeout
@@ -212,6 +213,7 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 	}))
 	v.SetExecProvider(vm.NewDefaultExecProvider())
 	v.SetExitHandler(vm.NewDefaultExitHandler())
+	v.SetProcessProvider(vm.NewDefaultProcessProvider())
 	stdlib.Open(v)
 
 	// Run in goroutine with panic recovery and timeout

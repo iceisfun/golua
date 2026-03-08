@@ -111,6 +111,9 @@ func Open(v *vm.VM) {
 	// Time library (only if TimeProvider is set)
 	openTime(v)
 
+	// Exec library (only if ProcessProvider is set)
+	openExec(v)
+
 	// Package/require (must be last — reads other module globals for package.loaded)
 	openPackage(v)
 }
