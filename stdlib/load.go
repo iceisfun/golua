@@ -53,7 +53,12 @@ func luaLoad(v *vm.VM) int {
 	hasChunkName := !v.Get(2).IsNil()
 	rawChunkName := "" // set below; stored verbatim in proto.Source
 	if hasChunkName {
-		rawChunkName = v.Get(2).AsString()
+		arg2 := v.Get(2)
+		if arg2.IsString() || arg2.IsNumber() {
+			rawChunkName = valueToString(arg2)
+		} else {
+			callerArgError(v, 2, "load", fmt.Sprintf("string expected, got %s", arg2.Type()))
+		}
 	}
 	mode := "bt"
 	if !v.Get(3).IsNil() {
@@ -125,12 +130,47 @@ func luaLoad(v *vm.VM) int {
 					v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a binary chunk (mode is '%s')", mode)))
 					return 2
 				}
-				// For binary chunks from readers, try to undump with the
-				// data we have so far. If the undumper needs more data,
-				// it will panic with "truncated chunk" which we catch.
-				// This avoids accumulating unbounded data from infinite
-				// readers (reference Lua reads from the reader lazily).
-				source = s
+				// Accumulate all chunks for binary data, then undump.
+				// Lua 5.4 reads lazily from the reader, but we need the
+				// full buffer for the Go undumper.
+				binBuf := []byte(s)
+				for {
+					results2, err2 := v.ProtectedCall(chunk, nil)
+					if err2 != nil {
+						v.Set(0, vm.Nil)
+						if le, ok := err2.(*vm.LuaError); ok {
+							if le.Value.IsString() {
+								v.Set(1, vm.NewString(le.Value.AsString()))
+							} else {
+								v.Set(1, vm.NewString(fmt.Sprintf("(error object is a %s value)", le.Value.Type())))
+							}
+						} else {
+							v.Set(1, vm.NewString(err2.Error()))
+						}
+						return 2
+					}
+					if len(results2) == 0 || results2[0].IsNil() {
+						break
+					}
+					var s2 string
+					if results2[0].IsString() || results2[0].IsNumber() {
+						s2 = valueToString(results2[0])
+					} else {
+						v.Set(0, vm.Nil)
+						v.Set(1, vm.NewString(v.AddCallerLocation("reader function must return a string")))
+						return 2
+					}
+					if s2 == "" {
+						break
+					}
+					if len(binBuf)+len(s2) > maxLoadSize {
+						v.Set(0, vm.Nil)
+						v.Set(1, vm.NewString("not enough memory"))
+						return 2
+					}
+					binBuf = append(binBuf, s2...)
+				}
+				source = string(binBuf)
 				fn, errMsg := loadBinaryChunk(v, source, rawChunkName, env, hasEnv)
 				if errMsg != "" {
 					v.Set(0, vm.Nil)
