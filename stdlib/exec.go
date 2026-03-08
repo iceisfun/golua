@@ -80,16 +80,42 @@ func openExec(v *vm.VM) {
 	v.SetGlobal("exec", vm.NewTable(execTable))
 }
 
-// exec.run(cmd, arg1, arg2, ...) -> {success, code, stdout, stderr}
+// extractExecOpts checks if the last argument is an options table.
+// Returns the options table (or nil) and the adjusted argument count
+// (excluding the options table from the string args).
+func extractExecOpts(v *vm.VM, argc int) (vm.LuaTable, int) {
+	if argc < 1 {
+		return nil, argc
+	}
+	last := v.Get(argc)
+	if last.IsTable() {
+		return last.AsTable(), argc - 1
+	}
+	return nil, argc
+}
+
+// applyExecOpts reads Lua option fields from the options table into ProcessOptions.
+func applyExecOpts(optsTable vm.LuaTable, opts *vm.ProcessOptions) {
+	if optsTable == nil {
+		return
+	}
+	mergeStderr := optsTable.Get(vm.NewString("merge_stderr"))
+	if mergeStderr.IsBool() && mergeStderr.AsBool() {
+		opts.MergeStderr = true
+	}
+}
+
+// exec.run(cmd, arg1, arg2, ..., [opts]) -> {success, code, stdout, stderr}
 func makeExecRun(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		argc := v.ArgCount()
 		if argc < 1 {
 			panic("bad argument #1 to 'exec.run' (string expected, got no value)")
 		}
+		optsTable, argEnd := extractExecOpts(v, argc)
 		cmd := checkString(v, 1, "exec.run")
-		args := make([]string, 0, argc-1)
-		for i := 2; i <= argc; i++ {
+		args := make([]string, 0, argEnd-1)
+		for i := 2; i <= argEnd; i++ {
 			args = append(args, checkString(v, i, "exec.run"))
 		}
 
@@ -102,14 +128,18 @@ func makeExecRun(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 			Stdout: true,
 			Stderr: true,
 		}
+		applyExecOpts(optsTable, &opts)
+		if opts.MergeStderr {
+			opts.Stderr = false
+		}
 		proc, err := provider.Spawn(ctx, cmd, args, opts)
 		if err != nil {
 			panic(fmt.Sprintf("exec.run: %s", err.Error()))
 		}
 
-		// Read all stdout
+		// Read all stdout (includes stderr when merged)
 		stdout := readAll(proc)
-		// Read all stderr
+		// Read all stderr (empty when merged)
 		stderr := readAllStderr(proc)
 
 		result := proc.Wait()
@@ -126,16 +156,17 @@ func makeExecRun(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 	}
 }
 
-// exec.spawn(cmd, arg1, arg2, ...) -> process
+// exec.spawn(cmd, arg1, arg2, ..., [opts]) -> process
 func makeExecSpawn(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		argc := v.ArgCount()
 		if argc < 1 {
 			panic("bad argument #1 to 'exec.spawn' (string expected, got no value)")
 		}
+		optsTable, argEnd := extractExecOpts(v, argc)
 		cmd := checkString(v, 1, "exec.spawn")
-		args := make([]string, 0, argc-1)
-		for i := 2; i <= argc; i++ {
+		args := make([]string, 0, argEnd-1)
+		for i := 2; i <= argEnd; i++ {
 			args = append(args, checkString(v, i, "exec.spawn"))
 		}
 
@@ -149,6 +180,10 @@ func makeExecSpawn(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 			Stdout: true,
 			Stderr: true,
 		}
+		applyExecOpts(optsTable, &opts)
+		if opts.MergeStderr {
+			opts.Stderr = false
+		}
 		proc, err := provider.Spawn(ctx, cmd, args, opts)
 		if err != nil {
 			panic(fmt.Sprintf("exec.spawn: %s", err.Error()))
@@ -159,13 +194,19 @@ func makeExecSpawn(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 	}
 }
 
-// exec.run_shell(cmdline) -> {success, code, stdout, stderr}
+// exec.run_shell(cmdline, [opts]) -> {success, code, stdout, stderr}
 func makeExecRunShell(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		if v.ArgCount() < 1 {
 			panic("bad argument #1 to 'exec.run_shell' (string expected, got no value)")
 		}
 		cmdline := checkString(v, 1, "exec.run_shell")
+
+		// Check for options table as second argument
+		var optsTable vm.LuaTable
+		if v.ArgCount() >= 2 && v.Get(2).IsTable() {
+			optsTable = v.Get(2).AsTable()
+		}
 
 		ctx := v.Context()
 		if ctx == nil {
@@ -175,6 +216,10 @@ func makeExecRunShell(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFun
 		opts := vm.ProcessOptions{
 			Stdout: true,
 			Stderr: true,
+		}
+		applyExecOpts(optsTable, &opts)
+		if opts.MergeStderr {
+			opts.Stderr = false
 		}
 		proc, err := provider.Spawn(ctx, "sh", []string{"-c", cmdline}, opts)
 		if err != nil {

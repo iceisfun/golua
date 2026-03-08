@@ -21,9 +21,10 @@ p:wait()
 
 ## Module Functions
 
-### exec.run(cmd, args...)
+### exec.run(cmd, args..., [opts])
 
-Runs a command synchronously and returns the result.
+Runs a command synchronously and returns the result. An optional options table
+can be passed as the last argument.
 
 ```lua
 local result = exec.run("echo", "hello")
@@ -31,6 +32,11 @@ local result = exec.run("echo", "hello")
 -- result.code    = 0
 -- result.stdout  = "hello\n"
 -- result.stderr  = ""
+
+-- Merge stderr into stdout
+local r = exec.run("sh", "-c", "echo out; echo err >&2", {merge_stderr = true})
+-- r.stdout contains both "out\n" and "err\n"
+-- r.stderr is ""
 ```
 
 **Returns** a table with:
@@ -41,10 +47,11 @@ local result = exec.run("echo", "hello")
 | `stdout`  | string  | captured standard output       |
 | `stderr`  | string  | captured standard error        |
 
-### exec.spawn(cmd, args...)
+### exec.spawn(cmd, args..., [opts])
 
 Spawns a process and returns a process handle with stdin, stdout, and stderr
-pipes. The process runs asynchronously.
+pipes. The process runs asynchronously. An optional options table can be
+passed as the last argument.
 
 ```lua
 local p = exec.spawn("sort")
@@ -52,16 +59,27 @@ p:write("b\na\n")
 p:close_stdin()
 print(p:readline())  -- "a"
 p:wait()
+
+-- Merge stderr into stdout for unified streaming
+local p2 = exec.spawn("sh", "-c", "echo out; echo err >&2", {merge_stderr = true})
+for line in p2:readlines() do
+    print(line)  -- prints both "out" and "err"
+end
+p2:wait()
 ```
 
-### exec.run_shell(cmdline)
+### exec.run_shell(cmdline, [opts])
 
 Runs a command through the system shell (`sh -c`), enabling pipes, redirects,
-and variable expansion.
+and variable expansion. An optional options table can be passed as the second
+argument.
 
 ```lua
 local result = exec.run_shell("echo hello | tr a-z A-Z")
 print(result.stdout)  -- "HELLO\n"
+
+-- Merge stderr into stdout
+local r = exec.run_shell("make 2>&1", {merge_stderr = true})
 ```
 
 ## Process Object Methods
@@ -128,6 +146,25 @@ Returns the exit code, or nil if the process hasn't completed.
 
 Reads a line from stderr. Returns nil at EOF.
 
+## Options Table
+
+All module functions accept an optional options table as the last argument:
+
+| Field          | Type    | Default | Description                          |
+|----------------|---------|---------|--------------------------------------|
+| `merge_stderr` | boolean | false   | Merge stderr into stdout (like 2>&1) |
+
+When `merge_stderr` is true, all stderr output is interleaved into stdout.
+The `stderr` field in result tables will be empty, and `p:stderr()` on
+spawned processes will return nil.
+
+```lua
+-- Capture everything in one stream
+local r = exec.run("make", "all", {merge_stderr = true})
+print(r.stdout)  -- contains both stdout and stderr
+print(r.stderr)  -- ""
+```
+
 ## Provider Architecture
 
 The exec module requires a `LuaProcessProvider` to be set on the VM.
@@ -161,11 +198,12 @@ This allows hosts to:
 
 ```go
 type ProcessOptions struct {
-    Env    map[string]string  // nil = inherit parent
-    Dir    string             // empty = inherit parent
-    Stdin  bool               // create stdin pipe
-    Stdout bool               // capture stdout
-    Stderr bool               // capture stderr
+    Env         map[string]string  // nil = inherit parent
+    Dir         string             // empty = inherit parent
+    Stdin       bool               // create stdin pipe
+    Stdout      bool               // capture stdout
+    Stderr      bool               // capture stderr
+    MergeStderr bool               // merge stderr into stdout
 }
 ```
 
@@ -186,6 +224,7 @@ type ProcessOptions struct {
 | Streaming         | No                     | Yes (readlines iterator) |
 | Timed wait        | No                     | Yes (wait with timeout)  |
 | Process control   | No                     | Yes (kill, is_complete)  |
+| Merge stderr      | No                     | Yes (merge_stderr opt)   |
 | Shell mode        | Always                 | Optional (run_shell)     |
 | Return value      | ok, exittype, code     | Result table             |
 | Provider          | LuaExecProvider        | LuaProcessProvider       |

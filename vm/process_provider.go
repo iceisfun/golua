@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -24,11 +25,12 @@ type LuaProcessProvider interface {
 
 // ProcessOptions configures how a process is spawned.
 type ProcessOptions struct {
-	Env    map[string]string // Environment variables (nil = inherit)
-	Dir    string            // Working directory (empty = inherit)
-	Stdin  bool              // Whether to create a stdin pipe
-	Stdout bool              // Whether to capture stdout
-	Stderr bool              // Whether to capture stderr
+	Env         map[string]string // Environment variables (nil = inherit)
+	Dir         string            // Working directory (empty = inherit)
+	Stdin       bool              // Whether to create a stdin pipe
+	Stdout      bool              // Whether to capture stdout
+	Stderr      bool              // Whether to capture stderr
+	MergeStderr bool              // Merge stderr into stdout (like 2>&1)
 }
 
 // LuaProcess represents a running or completed external process.
@@ -100,34 +102,61 @@ func (p *DefaultProcessProvider) Spawn(ctx context.Context, cmd string, args []s
 	// the pipes are fully drained before cmd.Wait() is called.
 	var pipeWg sync.WaitGroup
 
-	if opts.Stdout {
-		stdout, err := c.StdoutPipe()
+	if opts.MergeStderr && opts.Stdout {
+		// Merge stderr into stdout: create a single pipe for both.
+		// We use os.Pipe so we can assign both c.Stdout and c.Stderr
+		// to the same write end.
+		pr, pw, err := os.Pipe()
 		if err != nil {
-			return nil, fmt.Errorf("stdout pipe: %w", err)
+			return nil, fmt.Errorf("merged pipe: %w", err)
 		}
-		proc.stdoutPipe = newPipeBuffer(stdout)
+		c.Stdout = pw
+		c.Stderr = pw
+		proc.mergedPipeWriter = pw
+		proc.stdoutPipe = newPipeBuffer(pr)
 		pipeWg.Add(1)
 		go func() {
 			defer pipeWg.Done()
 			proc.stdoutPipe.drain()
 		}()
-	}
-
-	if opts.Stderr {
-		stderr, err := c.StderrPipe()
-		if err != nil {
-			return nil, fmt.Errorf("stderr pipe: %w", err)
+	} else {
+		if opts.Stdout {
+			stdout, err := c.StdoutPipe()
+			if err != nil {
+				return nil, fmt.Errorf("stdout pipe: %w", err)
+			}
+			proc.stdoutPipe = newPipeBuffer(stdout)
+			pipeWg.Add(1)
+			go func() {
+				defer pipeWg.Done()
+				proc.stdoutPipe.drain()
+			}()
 		}
-		proc.stderrPipe = newPipeBuffer(stderr)
-		pipeWg.Add(1)
-		go func() {
-			defer pipeWg.Done()
-			proc.stderrPipe.drain()
-		}()
+
+		if opts.Stderr {
+			stderr, err := c.StderrPipe()
+			if err != nil {
+				return nil, fmt.Errorf("stderr pipe: %w", err)
+			}
+			proc.stderrPipe = newPipeBuffer(stderr)
+			pipeWg.Add(1)
+			go func() {
+				defer pipeWg.Done()
+				proc.stderrPipe.drain()
+			}()
+		}
 	}
 
 	if err := c.Start(); err != nil {
 		return nil, err
+	}
+
+	// Close the write end of the merged pipe in the parent process.
+	// The child process inherited it; our copy must be closed so the
+	// read end gets EOF when the child exits.
+	if proc.mergedPipeWriter != nil {
+		proc.mergedPipeWriter.Close()
+		proc.mergedPipeWriter = nil
 	}
 
 	proc.cmd = c
@@ -257,15 +286,16 @@ func extractResult(err error) ProcessResult {
 
 // defaultProcess implements LuaProcess backed by os/exec.
 type defaultProcess struct {
-	cmd        *exec.Cmd
-	ctx        context.Context
-	stdin      io.WriteCloser
-	stdoutPipe *pipeBuffer
-	stderrPipe *pipeBuffer
-	doneCh     chan struct{}
-	mu         sync.Mutex
-	done       bool
-	result     ProcessResult
+	cmd             *exec.Cmd
+	ctx             context.Context
+	stdin           io.WriteCloser
+	stdoutPipe      *pipeBuffer
+	stderrPipe      *pipeBuffer
+	mergedPipeWriter *os.File // write end of merged pipe, closed after Start()
+	doneCh          chan struct{}
+	mu              sync.Mutex
+	done            bool
+	result          ProcessResult
 }
 
 func (p *defaultProcess) Read(buf []byte) (int, error) {
