@@ -274,6 +274,13 @@ func getXAlign(format string, i *int) int {
 		return 8
 	case 'x':
 		return 1
+	case 's':
+		var size int
+		size, *i = parsePackSize(format, *i, 8)
+		if size < 1 || size > 16 {
+			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
+		}
+		return size
 	case ' ':
 		// skip spaces and try next
 		for *i < len(format) && format[*i] == ' ' {
@@ -634,6 +641,13 @@ func getXAlignUnpack(format string, i *int) int {
 		return 8
 	case 'x':
 		return 1
+	case 's':
+		var size int
+		size, *i = parsePackSize(format, *i, 8)
+		if size < 1 || size > 16 {
+			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
+		}
+		return size
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
@@ -962,6 +976,13 @@ func getXAlignPacksize(format string, i *int) int {
 		return 8
 	case 'x':
 		return 1
+	case 's':
+		var size int
+		size, *i = parsePackSize(format, *i, 8)
+		if size < 1 || size > 16 {
+			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
+		}
+		return size
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
