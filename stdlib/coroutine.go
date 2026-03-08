@@ -694,15 +694,11 @@ func coClose(v *vm.VM) int {
 	}
 	defer v.ExitCloseChain()
 
-	// Mark as dead and clean up
+	// Mark as running during __close metamethod execution.
+	// Lua 5.4: coroutine.status reports "running" while __close handlers run.
 	co.mu.Lock()
-	co.status = statusDead
+	co.status = statusRunning
 	co.mu.Unlock()
-
-	// Remove from global map
-	coroutinesMu.Lock()
-	delete(coroutines, int(id))
-	coroutinesMu.Unlock()
 
 	// If the coroutine goroutine is blocked on resumeCh, unblock it
 	// by closing the channel. coYield detects the closed channel and
@@ -713,6 +709,15 @@ func coClose(v *vm.VM) int {
 		close(co.resumeCh)
 		<-co.doneCh
 	}
+
+	// Now mark as dead and remove from global map
+	co.mu.Lock()
+	co.status = statusDead
+	co.mu.Unlock()
+
+	coroutinesMu.Lock()
+	delete(coroutines, int(id))
+	coroutinesMu.Unlock()
 
 	// Check if __close handlers produced an error (e.g. from a nested
 	// coroutine.close chain exceeding the depth limit).
