@@ -1062,8 +1062,14 @@ func (vm *VM) execute() ([]Value, error) {
 					// functions (e.g. error()'s GetSourceLocation) can correctly
 					// skip this frame, matching Lua 5.4's C-function tail call
 					// behavior where the C frame exists on the call stack.
+					//
+					// Place the native frame at vm.top (NOT frame.base) to avoid
+					// overwriting the caller's local variables. This matches Lua
+					// 5.4 which doesn't reuse the Lua frame for C tail calls,
+					// so debug.getlocal on the caller still sees correct values.
 					nf := fn.AsNativeFunc()
-					nativeBase := frame.base
+					nativeBase := vm.top
+					vm.ensureStack(nativeBase + 1 + len(args) + 4)
 					vm.stack[nativeBase] = fn
 					for i, arg := range args {
 						vm.stack[nativeBase+1+i] = arg
@@ -1077,6 +1083,11 @@ func (vm *VM) execute() ([]Value, error) {
 					for i := clearStart; i < clearEnd; i++ {
 						vm.stack[i] = Nil
 					}
+					// Advance vm.top past the native frame's arguments so nested
+					// calls (e.g. ProtectedCall inside pcall) allocate frames
+					// that don't overlap with the native frame's stack region.
+					savedTop := vm.top
+					vm.top = nativeBase + 1 + len(args)
 					// Push native call frame
 					nativeFrame := callFrame{
 						base: nativeBase,
@@ -1085,6 +1096,7 @@ func (vm *VM) execute() ([]Value, error) {
 					vm.callStack = append(vm.callStack, nativeFrame)
 					nResults := nf(vm)
 					vm.callStack = vm.callStack[:len(vm.callStack)-1]
+					vm.top = savedTop
 					results := make([]Value, nResults)
 					copy(results, vm.stack[nativeBase:nativeBase+nResults])
 					return results, nil
