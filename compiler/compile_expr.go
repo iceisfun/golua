@@ -330,7 +330,10 @@ func foldArith(e *ast.BinopExpr) ast.Expr {
 		if rFloat == 0 {
 			return nil
 		}
-		r := lFloat - math.Floor(lFloat/rFloat)*rFloat
+		r := math.Mod(lFloat, rFloat)
+		if r != 0 && (r < 0) != (rFloat < 0) {
+			r += rFloat
+		}
 		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
 	case "^":
 		r := math.Pow(lFloat, rFloat)
