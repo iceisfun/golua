@@ -225,3 +225,78 @@ func TestFloatForLoopNaNStep(t *testing.T) {
 		t.Error("for i = 1.0, 10.0, NaN should NOT enter loop (C semantics: NaN step, init<limit → skip)")
 	}
 }
+
+// Bug: __newindex chain of 2000 should error (Lua 5.4 allows 1999 redirects max)
+func TestNewIndexChain2000(t *testing.T) {
+	v := New() // default MaxMetaDepth = 2000
+
+	// Chain of 2000 tables with __newindex pointing to next
+	tables := make([]*Table, 2001)
+	for i := range tables {
+		tables[i] = NewEmptyTable()
+	}
+	for i := 0; i < 2000; i++ {
+		mt := NewEmptyTable()
+		mt.MustSet(metaNewIndex, NewTable(tables[i+1]))
+		tables[i].SetMetatable(mt)
+	}
+
+	// This should fail — 2000 redirects exceeds the limit
+	err := v.tableSetString(tables[0], "x", NewInt(42))
+	if err == nil {
+		t.Error("expected __newindex chain error with 2000 redirects, but got nil")
+	}
+}
+
+// Bug: __newindex chain of 1999 should succeed
+func TestNewIndexChain1999(t *testing.T) {
+	v := New() // default MaxMetaDepth = 2000
+
+	// Chain of 1999 tables with __newindex pointing to next
+	tables := make([]*Table, 2000)
+	for i := range tables {
+		tables[i] = NewEmptyTable()
+	}
+	for i := 0; i < 1999; i++ {
+		mt := NewEmptyTable()
+		mt.MustSet(metaNewIndex, NewTable(tables[i+1]))
+		tables[i].SetMetatable(mt)
+	}
+
+	// This should succeed — 1999 redirects is within the limit
+	err := v.tableSetString(tables[0], "x", NewInt(42))
+	if err != nil {
+		t.Errorf("__newindex chain of 1999 should succeed, got error: %v", err)
+	}
+	// Value should end up in the last table
+	val := tables[1999].GetString("x")
+	if val.AsInt() != 42 {
+		t.Errorf("expected 42 in last table, got %v", val)
+	}
+}
+
+// Bug: local _ENV = _G should report "global" not "field" in error messages
+func TestLocalEnvGlobalName(t *testing.T) {
+	v := New()
+	// Set up a global environment with a known table so _ENV works
+	env := NewEmptyTable()
+	v.SetGlobal("_G", NewTable(env))
+	// Use a function scope so _ENV becomes a local
+	_, err := runWithVM(t, v, `
+		local function test()
+			local _ENV = _G
+			abc()
+		end
+		test()
+	`)
+	if err == nil {
+		t.Fatal("expected error calling nil global")
+	}
+	errMsg := err.Error()
+	if strings.Contains(errMsg, "field 'abc'") {
+		t.Errorf("should say 'global' not 'field' for _ENV local access, got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "global 'abc'") {
+		t.Errorf("expected '(global 'abc')' in error, got: %s", errMsg)
+	}
+}

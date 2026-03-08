@@ -451,7 +451,11 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			// R[A] := R[B][K[C]:string]
 			c := prev.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
-				return proto.Constants[c].SVal, "field"
+				what := "field"
+				if localName(proto, prev.B(), i) == "_ENV" || isUpvalEnv(proto, i, prev.B()) {
+					what = "global"
+				}
+				return proto.Constants[c].SVal, what
 			}
 			return "", ""
 		case compiler.OP_SELF:
@@ -793,7 +797,11 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 		case compiler.OP_GETFIELD:
 			c := inst.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
-				return proto.Constants[c].SVal, "field"
+				what := "field"
+				if localName(proto, inst.B(), i) == "_ENV" || isUpvalEnv(proto, i, inst.B()) {
+					what = "global"
+				}
+				return proto.Constants[c].SVal, what
 			}
 			return "", ""
 		case compiler.OP_GETTABUP:

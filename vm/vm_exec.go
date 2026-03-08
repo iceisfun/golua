@@ -792,6 +792,11 @@ func (vm *VM) execute() ([]Value, error) {
 					if mt == nil || mt.Get(metaClose).IsNil() {
 						needErr = true
 					}
+				} else if ud := val.AsUserdata(); ud != nil {
+					mt := ud.Metatable()
+					if mt == nil || mt.Get(metaClose).IsNil() {
+						needErr = true
+					}
 				} else {
 					needErr = true
 				}

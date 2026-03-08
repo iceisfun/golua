@@ -173,19 +173,26 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 	if val.IsNil() || (val.IsBool() && !val.AsBool()) {
 		return
 	}
+	// Look for __close in table or userdata metatable
+	var closeFunc Value
 	if val.IsTable() {
 		t := val.AsTable()
 		mt := t.Metatable()
 		if mt != nil {
-			closeFunc := mt.Get(metaClose)
-			if !closeFunc.IsNil() {
-				_, err := vm.callMetamethod("close", closeFunc, val, errVal)
-				if err != nil {
-					panic(err.Error())
-				}
-				return
-			}
+			closeFunc = mt.Get(metaClose)
 		}
+	} else if ud := val.AsUserdata(); ud != nil {
+		mt := ud.Metatable()
+		if mt != nil {
+			closeFunc = mt.Get(metaClose)
+		}
+	}
+	if !closeFunc.IsNil() {
+		_, err := vm.callMetamethod("close", closeFunc, val, errVal)
+		if err != nil {
+			panic(err.Error())
+		}
+		return
 	}
 	// Value was registered as TBC but __close is now missing (removed at
 	// runtime or metatable changed). This matches Lua 5.4 behavior.

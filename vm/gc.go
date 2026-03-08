@@ -89,7 +89,11 @@ func (vm *VM) ProcessGcFinalizers() {
 	gcPendingMu.Unlock()
 
 	for _, entry := range entries {
+		// Lua 5.4: __gc finalizers run inside a C-call boundary that
+		// prevents yielding. Mark the context as non-yieldable.
+		exit := vm.EnterNonYieldable()
 		// Lua 5.4: errors in __gc are not propagated
 		vm.ProtectedCall(entry.gcFunc, []Value{NewTable(entry.table)})
+		exit()
 	}
 }
