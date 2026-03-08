@@ -22,6 +22,12 @@ const maxLoadSize = 1 << 28 // 256 MB
 // before the maxLoadSize byte limit fires on all-newline input.
 const maxLoadLines = 1 << 26 // ~67 million lines
 
+// maxLoadReaderCalls is the maximum number of calls to a reader function
+// during load(). This prevents excessive CPU usage when a reader returns
+// tiny fragments indefinitely (e.g., "1+" per call), where the byte limit
+// alone would require tens of millions of calls to trigger.
+const maxLoadReaderCalls = 1 << 22 // ~4 million calls
+
 // openLoad registers load, loadfile, and dofile functions.
 // These are only registered if a code provider is available and has the right capabilities.
 func openLoad(v *vm.VM) {
@@ -87,10 +93,17 @@ func luaLoad(v *vm.VM) int {
 		// Call the function repeatedly to get the source
 		var builder []byte
 		lineCount := 0
+		readerCalls := 0
 		firstRead := true
 		exitNonYieldable := v.EnterNonYieldable()
 		defer exitNonYieldable()
 		for {
+			readerCalls++
+			if readerCalls > maxLoadReaderCalls {
+				v.Set(0, vm.Nil)
+				v.Set(1, vm.NewString("not enough memory"))
+				return 2
+			}
 			results, err := v.ProtectedCall(chunk, nil)
 			if err != nil {
 				v.Set(0, vm.Nil)
@@ -135,6 +148,12 @@ func luaLoad(v *vm.VM) int {
 				// full buffer for the Go undumper.
 				binBuf := []byte(s)
 				for {
+					readerCalls++
+					if readerCalls > maxLoadReaderCalls {
+						v.Set(0, vm.Nil)
+						v.Set(1, vm.NewString("not enough memory"))
+						return 2
+					}
 					results2, err2 := v.ProtectedCall(chunk, nil)
 					if err2 != nil {
 						v.Set(0, vm.Nil)
