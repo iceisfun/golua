@@ -119,7 +119,7 @@ func (d *dumper) writeString(s string) {
 func (d *dumper) dumpFunction(p *compiler.Proto) {
 	// Source name
 	if d.strip {
-		d.writeString("")
+		d.writeString("=?")
 	} else {
 		d.writeString(p.Source)
 	}

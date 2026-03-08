@@ -195,7 +195,11 @@ func luaDebugGetInfo(v *vm.VM) int {
 		// debug.getinfo(level [, what])
 		level, ok := arg1.ToInt()
 		if !ok {
-			callerArgError(v, 1, "debug.getinfo", "value expected")
+			got := arg1.Type()
+			if v.ArgCount() < 1 {
+				got = "no value"
+			}
+			callerArgError(v, 1, "debug.getinfo", fmt.Sprintf("number expected, got %s", got))
 		}
 		if level < 0 {
 			v.Set(0, vm.Nil)
@@ -218,7 +222,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 	// Validate the what string ('>' is C API only, not valid at Lua level)
 	for _, ch := range what {
 		if !strings.ContainsRune("flnStuLr", ch) {
-			callerArgError(v, 2, "debug.getinfo", fmt.Sprintf("invalid option '%c'", ch))
+			callerArgError(v, 2, "debug.getinfo", "invalid option")
 		}
 	}
 
@@ -252,7 +256,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 			result.SetString("ftransfer", vm.NewInt(int64(info.FTransfer)))
 			result.SetString("ntransfer", vm.NewInt(int64(info.NTransfer)))
 		case 'L':
-			if info.ActiveLines != nil && len(info.ActiveLines) > 0 {
+			if info.ActiveLines != nil {
 				lines := vm.NewEmptyTable()
 				for line := range info.ActiveLines {
 					lines.Set(vm.NewInt(int64(line)), vm.NewBool(true))
@@ -274,7 +278,11 @@ func luaDebugGetInfo(v *vm.VM) int {
 func luaDebugGetUpvalue(v *vm.VM) int {
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		callerArgError(v, 1, "debug.getupvalue", "function expected")
+		got := arg1.Type()
+		if v.ArgCount() < 1 {
+			got = "no value"
+		}
+		callerArgError(v, 1, "debug.getupvalue", fmt.Sprintf("function expected, got %s", got))
 	}
 
 	arg2 := v.Get(2)
@@ -313,7 +321,11 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 func luaDebugSetUpvalue(v *vm.VM) int {
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		callerArgError(v, 1, "debug.setupvalue", "function expected")
+		got := arg1.Type()
+		if v.ArgCount() < 1 {
+			got = "no value"
+		}
+		callerArgError(v, 1, "debug.setupvalue", fmt.Sprintf("function expected, got %s", got))
 	}
 
 	arg2 := v.Get(2)
@@ -351,7 +363,11 @@ func luaDebugSetUpvalue(v *vm.VM) int {
 func luaDebugUpvalueID(v *vm.VM) int {
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		callerArgError(v, 1, "debug.upvalueid", "function expected")
+		got := arg1.Type()
+		if v.ArgCount() < 1 {
+			got = "no value"
+		}
+		callerArgError(v, 1, "debug.upvalueid", fmt.Sprintf("function expected, got %s", got))
 	}
 
 	arg2 := v.Get(2)
@@ -360,17 +376,21 @@ func luaDebugUpvalueID(v *vm.VM) int {
 		callerArgError(v, 2, "debug.upvalueid", "number expected")
 	}
 
+	// Native functions have 0 upvalues — return nil for any index
 	if arg1.IsNativeFunc() {
-		return 0
+		v.Set(0, vm.Nil)
+		return 1
 	}
 
 	closure := arg1.AsClosure()
 	if closure == nil {
-		return 0
+		v.Set(0, vm.Nil)
+		return 1
 	}
 
 	if idx < 1 || int(idx) > len(closure.Upvalues) {
-		return 0
+		v.Set(0, vm.Nil)
+		return 1
 	}
 
 	i := int(idx) - 1
@@ -456,7 +476,11 @@ func luaDebugGetLocal(v *vm.VM) int {
 
 	level, ok := arg1.ToInt()
 	if !ok {
-		callerArgError(v, 1, "debug.getlocal", "number expected")
+		got := arg1.Type()
+		if v.ArgCount() < 1 {
+			got = "no value"
+		}
+		callerArgError(v, 1, "debug.getlocal", fmt.Sprintf("number expected, got %s", got))
 	}
 
 	arg2 := v.Get(2)
@@ -522,7 +546,11 @@ func luaDebugSetLocal(v *vm.VM) int {
 
 	level, ok := arg1.ToInt()
 	if !ok {
-		callerArgError(v, 1, "debug.setlocal", "number expected")
+		got := arg1.Type()
+		if v.ArgCount() < 1 {
+			got = "no value"
+		}
+		callerArgError(v, 1, "debug.setlocal", fmt.Sprintf("number expected, got %s", got))
 	}
 
 	arg2 := v.Get(2)
@@ -616,7 +644,7 @@ func luaDebugSetHook(v *vm.VM) int {
 	}
 
 	if !arg1.IsCallable() {
-		callerArgError(v, 1, "debug.sethook", "function expected")
+		callerArgError(v, 1, "debug.sethook", fmt.Sprintf("function expected, got %s", arg1.Type()))
 	}
 
 	arg2 := v.Get(2)
@@ -657,32 +685,37 @@ func luaDebugSetHook(v *vm.VM) int {
 // Makes the n1-th upvalue of f1 refer to the same storage as the n2-th upvalue of f2.
 func luaDebugUpvalueJoin(v *vm.VM) int {
 	f1 := v.Get(1)
-	if !f1.IsFunction() {
-		callerArgError(v, 1, "debug.upvaluejoin", "function expected")
+	if !f1.IsCallable() {
+		got := f1.Type()
+		if v.ArgCount() < 1 {
+			got = "no value"
+		}
+		callerArgError(v, 1, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
 	}
 	n1, ok := v.Get(2).ToInt()
 	if !ok {
 		callerArgError(v, 2, "debug.upvaluejoin", "number expected")
 	}
 	f2 := v.Get(3)
-	if !f2.IsFunction() {
-		callerArgError(v, 3, "debug.upvaluejoin", "function expected")
+	if !f2.IsCallable() {
+		got := f2.Type()
+		if v.ArgCount() < 3 {
+			got = "no value"
+		}
+		callerArgError(v, 3, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
 	}
 	n2, ok := v.Get(4).ToInt()
 	if !ok {
 		callerArgError(v, 4, "debug.upvaluejoin", "number expected")
 	}
 
+	// Native functions have 0 upvalues — any index is invalid
 	c1 := f1.AsClosure()
-	c2 := f2.AsClosure()
-	if c1 == nil || c2 == nil {
-		return 0
-	}
-
-	if n1 < 1 || int(n1) > len(c1.Upvalues) {
+	if c1 == nil || n1 < 1 || int(n1) > len(c1.Upvalues) {
 		callerArgError(v, 2, "debug.upvaluejoin", "invalid upvalue index")
 	}
-	if n2 < 1 || int(n2) > len(c2.Upvalues) {
+	c2 := f2.AsClosure()
+	if c2 == nil || n2 < 1 || int(n2) > len(c2.Upvalues) {
 		callerArgError(v, 4, "debug.upvaluejoin", "invalid upvalue index")
 	}
 

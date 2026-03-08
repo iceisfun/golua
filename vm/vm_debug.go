@@ -26,7 +26,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 
 	start := len(vm.callStack) - 1 - level
 	if start < 0 {
-		start = 0
+		return b.String()
 	}
 
 	// Count total frames
@@ -253,6 +253,11 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 			info.ActiveLines[line] = true
 		}
 	}
+	// Include the 'end' line (LastLine) which may not have an instruction,
+	// but only when the function has line info (non-stripped).
+	if proto.LastLine > 0 && len(proto.Lines) > 0 {
+		info.ActiveLines[proto.LastLine] = true
+	}
 
 	// Name inference: look at the caller frame's bytecode
 	callerIdx := idx - 1
@@ -319,6 +324,11 @@ func (vm *VM) GetFuncInfo(fn Value) *FrameInfo {
 			if line > 0 {
 				info.ActiveLines[line] = true
 			}
+		}
+		// Include the 'end' line (LastLine) which may not have an instruction,
+		// but only when the function has line info (non-stripped).
+		if proto.LastLine > 0 && len(proto.Lines) > 0 {
+			info.ActiveLines[proto.LastLine] = true
 		}
 
 		return info
@@ -672,6 +682,12 @@ func (vm *VM) GetFuncLocal(fn Value, index int) (string, bool) {
 	reg := index - 1
 	name := localName(proto, reg, 0)
 	if name == "?" {
+		// For stripped functions (no debug info), registers within the
+		// function's stack frame are reported as "(temporary)" — matching
+		// Lua 5.4 behavior for locals without names.
+		if len(proto.Locals) == 0 && index >= 1 && index <= proto.NumParams {
+			return "(temporary)", true
+		}
 		return "", false
 	}
 	return name, true

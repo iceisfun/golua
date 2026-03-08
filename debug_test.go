@@ -914,3 +914,178 @@ func TestDebug_UpvalueJoin_SelfJoin(t *testing.T) {
 	`
 	runLuaWithDebug(t, src, "test_upvaluejoin_self", provider)
 }
+
+// ===== Bug fix tests =====
+
+// Bug 1: debug.getinfo("L") activelines missing 'end' line numbers
+func TestDebug_ActiveLines_EndLine(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function foo()
+			local x = 1
+			return x
+		end
+		local info = debug.getinfo(foo, "SL")
+		-- The 'end' line should be in activelines
+		local endLine = info.lastlinedefined
+		assert(info.activelines[endLine] == true,
+			"end line " .. endLine .. " should be in activelines")
+	`
+	runLuaWithDebug(t, src, "test_activelines_end_line", provider)
+}
+
+// Bug 2: Type error messages missing "got TYPE" suffix
+func TestDebug_TypeError_GotSuffix(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		-- debug.getlocal with non-number/non-function first arg
+		local ok, err = pcall(debug.getlocal, true, 1)
+		assert(not ok)
+		assert(string.find(err, "got boolean"), "getlocal: expected 'got boolean', got: " .. tostring(err))
+
+		-- debug.setlocal with non-number first arg
+		ok, err = pcall(debug.setlocal, true, 1, nil)
+		assert(not ok)
+		assert(string.find(err, "got boolean"), "setlocal: expected 'got boolean', got: " .. tostring(err))
+
+		-- debug.getupvalue with non-function first arg
+		ok, err = pcall(debug.getupvalue, 42, 1)
+		assert(not ok)
+		assert(string.find(err, "got number"), "getupvalue: expected 'got number', got: " .. tostring(err))
+
+		-- debug.setupvalue with non-function first arg
+		ok, err = pcall(debug.setupvalue, 42, 1, nil)
+		assert(not ok)
+		assert(string.find(err, "got number"), "setupvalue: expected 'got number', got: " .. tostring(err))
+
+		-- debug.upvalueid with non-function first arg
+		ok, err = pcall(debug.upvalueid, 42, 1)
+		assert(not ok)
+		assert(string.find(err, "got number"), "upvalueid: expected 'got number', got: " .. tostring(err))
+
+		-- debug.sethook with non-function first arg
+		ok, err = pcall(debug.sethook, 42, "c")
+		assert(not ok)
+		assert(string.find(err, "got number"), "sethook: expected 'got number', got: " .. tostring(err))
+
+		-- debug.upvaluejoin with non-function first arg
+		ok, err = pcall(debug.upvaluejoin, 42, 1, print, 1)
+		assert(not ok)
+		assert(string.find(err, "got number"), "upvaluejoin: expected 'got number', got: " .. tostring(err))
+	`
+	runLuaWithDebug(t, src, "test_debug_type_error_got_suffix", provider)
+}
+
+// Bug 3: debug.getinfo() with no args error message
+func TestDebug_GetInfo_NoArgs(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local ok, err = pcall(debug.getinfo)
+		assert(not ok)
+		assert(string.find(err, "number expected, got no value"),
+			"expected 'number expected, got no value', got: " .. tostring(err))
+	`
+	runLuaWithDebug(t, src, "test_debug_getinfo_no_args", provider)
+}
+
+// Bug 4: string.dump stripped function source name
+func TestDebug_StrippedDump_SourceName(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function f() return 1 end
+		local dumped = string.dump(f, true)
+		local f2 = load(dumped)
+		local info = debug.getinfo(f2, "S")
+		assert(info.source == "=?", "stripped source should be '=?', got: " .. tostring(info.source))
+		assert(info.short_src == "?", "stripped short_src should be '?', got: " .. tostring(info.short_src))
+	`
+	runLuaWithDebug(t, src, "test_stripped_dump_source", provider)
+}
+
+// Bug 5: string.dump stripped function activelines should be empty table not nil
+func TestDebug_StrippedDump_ActiveLines(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local function f() return 1 end
+		local dumped = string.dump(f, true)
+		local f2 = load(dumped)
+		local info = debug.getinfo(f2, "L")
+		assert(type(info.activelines) == "table",
+			"stripped activelines should be empty table, got: " .. type(info.activelines))
+		-- should be empty
+		assert(next(info.activelines) == nil, "stripped activelines should be empty")
+	`
+	runLuaWithDebug(t, src, "test_stripped_dump_activelines", provider)
+}
+
+// Bug 6: string.dump stripped function debug.getlocal returns nil instead of "(temporary)"
+func TestDebug_StrippedDump_GetLocal(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		-- Create a stripped function with locals in its registers
+		local function f(a) local b = a + 1; return b end
+		local dumped = string.dump(f, true)
+		local f2 = load(dumped)
+		-- getlocal on a function object (not stack frame) should return "(temporary)"
+		-- for stripped functions where debug info is missing
+		local name = debug.getlocal(f2, 1)
+		assert(name ~= nil, "stripped getlocal should return name, got nil")
+	`
+	runLuaWithDebug(t, src, "test_stripped_dump_getlocal", provider)
+}
+
+// Bug 7: debug.traceback with level > stack depth includes extra frame
+func TestDebug_Traceback_BeyondStack(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local tb = debug.traceback("msg", 100)
+		-- Should just be "msg\nstack traceback:" with no frames
+		assert(tb == "msg\nstack traceback:",
+			"traceback beyond stack should have no frames, got: " .. tostring(tb))
+	`
+	runLuaWithDebug(t, src, "test_traceback_beyond_stack", provider)
+}
+
+// Bug 8: debug.upvaluejoin with native functions should error with "invalid upvalue index"
+func TestDebug_UpvalueJoin_NativeFunc(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		-- upvaluejoin should accept native functions but error on invalid upvalue index
+		local ok, err = pcall(debug.upvaluejoin, print, 1, print, 1)
+		assert(not ok, "should error for native function")
+		assert(string.find(err, "invalid upvalue index"),
+			"should say 'invalid upvalue index', got: " .. tostring(err))
+	`
+	runLuaWithDebug(t, src, "test_upvaluejoin_native", provider)
+}
+
+// Bug 9: debug.upvalueid on native function returns nil (not no value)
+func TestDebug_UpvalueID_NativeNil(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		-- native function with no upvalues: should return nil
+		local ok, val = pcall(debug.upvalueid, print, 1)
+		assert(ok, "should not error for native function")
+		assert(val == nil, "upvalueid on native should return nil, got: " .. tostring(val))
+
+		-- Lua function with out-of-range index: should also return nil
+		local function f() local x = 1; return function() return x end end
+		local g = f()
+		local r = debug.upvalueid(g, 99)
+		assert(r == nil, "upvalueid out-of-range should return nil, got: " .. tostring(r))
+	`
+	runLuaWithDebug(t, src, "test_upvalueid_native_nil", provider)
+}
+
+// Bug 11: debug.getinfo invalid option error message
+func TestDebug_GetInfo_InvalidOption(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	src := `
+		local ok, err = pcall(debug.getinfo, 1, "X")
+		assert(not ok, "invalid option should error")
+		-- Should NOT include the character in the error message
+		assert(string.find(err, "invalid option$") or string.find(err, "invalid option%)"),
+			"should say 'invalid option' without character, got: " .. tostring(err))
+	`
+	runLuaWithDebug(t, src, "test_getinfo_invalid_option", provider)
+}
