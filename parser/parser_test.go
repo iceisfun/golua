@@ -404,8 +404,8 @@ func TestErrorMissingEnd(t *testing.T) {
 func TestErrorBadExprStmt(t *testing.T) {
 	// A bare number hits "unexpected symbol" in primaryExpr
 	expectError(t, "42", "unexpected symbol")
-	// A bare name that isn't a call hits "unexpected expression statement"
-	expectError(t, "x", "unexpected expression statement")
+	// A bare name that isn't a call hits "syntax error near <eof>"
+	expectError(t, "x", "syntax error near")
 }
 
 // ---------------------------------------------------------------------------

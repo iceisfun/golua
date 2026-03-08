@@ -80,6 +80,16 @@ type parser struct {
 	depth  int // recursion depth counter
 }
 
+// isLvalue returns true if the expression is a valid assignment target
+// (name, field access, or index expression). Matches Lua 5.4's check_lhs.
+func isLvalue(e ast.Expr) bool {
+	switch e.(type) {
+	case *ast.NameExpr, *ast.FieldExpr, *ast.IndexExpr:
+		return true
+	}
+	return false
+}
+
 func (p *parser) advance() error {
 	tok, err := p.lex.Next()
 	if err != nil {
@@ -521,6 +531,14 @@ func (p *parser) parseExprStat() ast.Stmt {
 				break
 			}
 		}
+		// Validate all targets are lvalues (name, field, or index).
+		// Lua 5.4 rejects non-lvalue assignment targets with "syntax error near '='".
+		for _, t := range targets {
+			if !isLvalue(t) {
+				p.errorf("syntax error near %s", p.nearToken())
+				return nil
+			}
+		}
 		p.depth -= len(targets) - 1 // unwind depth for all targets added
 		p.expect(token.Type('='))
 		values := p.parseExprList()
@@ -531,7 +549,7 @@ func (p *parser) parseExprStat() ast.Stmt {
 	case *ast.FuncCallExpr, *ast.MethodCallExpr:
 		return ast.NewExprStmt(pos, expr)
 	default:
-		p.errorf("syntax error: unexpected expression statement")
+		p.errorf("syntax error near %s", p.nearToken())
 		return nil
 	}
 }
