@@ -43,7 +43,9 @@ func tableGetTable(v *vm.VM, idx int, fname string) vm.LuaTable {
 func tableObjLen(v *vm.VM, val vm.Value) int {
 	length, err := v.ObjLen(val)
 	if err != nil {
-		panic(err)
+		// Use LuaError to avoid AddCallerLocation adding a file:line prefix.
+		// These errors originate from native/C-level code, not Lua bytecode.
+		panic(&vm.LuaError{Value: vm.NewString(err.Error())})
 	}
 	return length
 }
@@ -217,6 +219,9 @@ func tableSort(v *vm.VM) int {
 		if val, errIsValue := sortErr.(vm.Value); errIsValue {
 			panic(&vm.LuaError{Value: val})
 		}
+		if le, isLuaErr := sortErr.(*vm.LuaError); isLuaErr {
+			panic(le)
+		}
 		if err, isErr := sortErr.(error); isErr {
 			panic(err.Error())
 		}
@@ -239,7 +244,10 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 	if comp == vm.Nil || comp.IsNil() {
 		lt, e := v.CompareLT(a, b)
 		if e != nil {
-			*err = e
+			// Wrap as LuaError to avoid AddCallerLocation adding a file:line
+			// prefix. Comparison errors originate from native/C-level code
+			// (luaG_runerror equivalent), not from Lua bytecode.
+			*err = &vm.LuaError{Value: vm.NewString(e.Error())}
 			return false
 		}
 		return lt
