@@ -151,8 +151,11 @@ func stringPack(v *vm.VM) int {
 		case '!':
 			var align int
 			align, i = parsePackSize(format, i, 8) // default max alignment = 8
-			if align > 16 {
+			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
+			}
+			if !isPow2(align) {
+				panic("format asks for alignment not power of 2")
 			}
 			fs.maxAlign = align
 			continue
@@ -487,8 +490,11 @@ func stringUnpack(v *vm.VM) int {
 		case '!':
 			var align int
 			align, i = parsePackSize(format, i, 8)
-			if align > 16 {
+			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
+			}
+			if !isPow2(align) {
+				panic("format asks for alignment not power of 2")
 			}
 			fs.maxAlign = align
 			continue
@@ -840,8 +846,11 @@ func stringPacksize(v *vm.VM) int {
 		case '!':
 			var align int
 			align, i = parsePackSize(format, i, 8)
-			if align > 16 {
+			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
+			}
+			if !isPow2(align) {
+				panic("format asks for alignment not power of 2")
 			}
 			fs.maxAlign = align
 			continue
