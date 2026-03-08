@@ -1025,7 +1025,7 @@ func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 	fs := c.fs
 	scope := fs.findLoopScope()
 	if scope == nil {
-		c.error(s, "break outside loop at line %d", s.Pos().Line)
+		c.errorAtEOF("break outside loop at line %d", s.Pos().Line)
 		return
 	}
 	// Emit OP_CLOSE if there are close/captured locals being exited
@@ -1126,7 +1126,7 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool) {
 				if baseIdx >= 0 && baseIdx < len(fs.locals) {
 					varName = fs.locals[baseIdx].name
 				}
-				c.error(s, "<goto %s> at line %d jumps into the scope of local '%s'", pg.name, pg.line, varName)
+				c.errorAtEOF("<goto %s> at line %d jumps into the scope of local '%s'", pg.name, pg.line, varName)
 				remaining = append(remaining, pg)
 				continue
 			}
