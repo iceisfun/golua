@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/iceisfun/golua/compiler"
@@ -82,16 +84,19 @@ done:
 	} else if len(displayName) > 0 && displayName[0] == '=' {
 		displayName = displayName[1:]
 	}
+	// Determine program name for error messages (like Lua 5.4 uses argv[0])
+	progName := filepath.Base(os.Args[0])
+
 	block, err := parser.Parse(displayName, source)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
 		os.Exit(1)
 	}
 
 	// Compile — use the raw name so proto.Source stores it with the '@' prefix
 	proto, err := compiler.Compile(name, block)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Compile error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
 		os.Exit(1)
 	}
 
@@ -137,10 +142,59 @@ done:
 	}
 	v.SetGlobal("arg", vm.NewTable(luaArgs))
 
-	// Run
-	_, err = v.Run(proto)
+	// Run — recover LuaExitError for os.exit support
+	var exitCode int
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if exitErr, ok := r.(*vm.LuaExitError); ok {
+					exitCode = exitErr.Code
+					return
+				}
+				// Re-panic for unexpected panics
+				panic(r)
+			}
+		}()
+		_, err = v.Run(proto)
+	}()
+
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Runtime error: %v\n", err)
+		// Format the error like Lua 5.4
+		if le, ok := err.(*vm.LuaError); ok {
+			msg := formatLuaError(le.Value)
+			fmt.Fprintf(os.Stderr, "%s\n", msg)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+		}
+		// Print stack traceback
+		fmt.Fprintln(os.Stderr, "stack traceback:")
+		fmt.Fprintln(os.Stderr, "\t[C]: in ?")
 		os.Exit(1)
 	}
+
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
+}
+
+// formatLuaError formats a Lua error value for display, matching Lua 5.4.
+// Strings are printed as-is, numbers with .0 suffix for floats,
+// other types are wrapped in "(error object is a TYPE value)".
+func formatLuaError(val vm.Value) string {
+	if val.IsString() {
+		return val.AsString()
+	}
+	if val.IsInt() {
+		return fmt.Sprintf("%d", val.AsInt())
+	}
+	if val.IsFloat() {
+		f := val.AsFloat()
+		s := fmt.Sprintf("%g", f)
+		// Ensure float has .0 suffix
+		if !math.IsInf(f, 0) && !math.IsNaN(f) && !strings.Contains(s, ".") && !strings.Contains(s, "e") {
+			s += ".0"
+		}
+		return s
+	}
+	return fmt.Sprintf("(error object is a %s value)", val.Type())
 }
