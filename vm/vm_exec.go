@@ -1658,7 +1658,7 @@ dispatch:
 		nativeFrame := callFrame{
 			base:      nativeBase,
 			argc:      len(args),
-			ftransfer: 2,         // args start at getlocal index 2 (index 1 = function value)
+			ftransfer: 1,         // args start at getlocal index 1 (base+1 = first arg)
 			ntransfer: len(args), // number of arguments
 		}
 		vm.callStack = append(vm.callStack, nativeFrame)
@@ -1674,19 +1674,45 @@ dispatch:
 			vm.stack[i] = Nil
 		}
 
-		// Fire call hook for native function (after frame is pushed)
+		// Constrain vm.top for the native frame so getlocal only sees
+		// actual arguments (matching Lua 5.4's L->top management).
+		savedTop := vm.top
+		vm.top = nativeBase + 1 + len(args)
+
+		// Fire call hook for native function (after frame is pushed).
+		// The call hook may mutate arguments via debug.setlocal.
 		vm.fireCallHook()
+
+		// Save arguments after call hook (which may have mutated them)
+		// but before the native function runs — Set(0..N) will overwrite
+		// stack slots starting at nativeBase, clobbering args.
+		savedArgs := make([]Value, len(args))
+		copy(savedArgs, vm.stack[nativeBase+1:nativeBase+1+len(args)])
 
 		nResults := fn.AsNativeFunc()(vm)
 		results = make([]Value, nResults)
 		copy(results, vm.stack[nativeBase:nativeBase+nResults])
 
-		// Set return transfer info: results start at getlocal index 1 (base+0)
-		vm.callStack[len(vm.callStack)-1].ftransfer = 1
-		vm.callStack[len(vm.callStack)-1].ntransfer = nResults
+		// Restore arguments and place return values after them so the
+		// return hook sees [args..., results...] via getlocal, matching
+		// Lua 5.4 semantics.
+		nf := &vm.callStack[len(vm.callStack)-1]
+		copy(vm.stack[nativeBase+1:nativeBase+1+nf.argc], savedArgs)
+		retStart := nativeBase + 1 + nf.argc
+		retEnd := retStart + nResults
+		if retEnd > len(vm.stack) {
+			retEnd = len(vm.stack)
+		}
+		for i := 0; i < retEnd-retStart; i++ {
+			vm.stack[retStart+i] = results[i]
+		}
+		vm.top = retEnd
+		nf.ftransfer = 1 + nf.argc
+		nf.ntransfer = nResults
 
 		// Fire return hook for native function before popping its frame
 		vm.fireReturnHook()
+		vm.top = savedTop
 
 		// Pop the native frame
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]

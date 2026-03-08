@@ -596,12 +596,11 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 	if frame.closure == nil {
 		// Native (C) function frame: access stack slots directly.
 		// Stack layout: base+0 = function value, base+1 = first arg, ...
-		// getlocal(n) accesses base + (n - 1), matching Lua frames.
+		// getlocal index 1 = base+1 (first arg), matching Lua 5.4.
 		if index <= 0 {
 			return "", Nil, false
 		}
-		stackIdx := frame.base + (index - 1)
-		// Bounds check: must be within the stack
+		stackIdx := frame.base + index
 		if stackIdx < 0 || stackIdx >= len(vm.stack) {
 			return "", Nil, false
 		}
@@ -691,7 +690,7 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 		if index <= 0 {
 			return "", false
 		}
-		stackIdx := frame.base + (index - 1)
+		stackIdx := frame.base + index
 		if stackIdx < 0 || stackIdx >= len(vm.stack) {
 			return "", false
 		}

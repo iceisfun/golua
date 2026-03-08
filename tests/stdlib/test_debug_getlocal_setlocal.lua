@@ -15,7 +15,14 @@ end
 do
   local t = coroutine.running()
   assert(select('#', debug.getlocal(t, 0, 1)) == 2)
-  assert(debug.getlocal(t, 0, 1) == '(C temporary)')
+  local n1, v1 = debug.getlocal(t, 0, 1)
+  assert(n1 == '(C temporary)' and v1 == t)
+  local n2, v2 = debug.getlocal(t, 0, 2)
+  assert(n2 == '(C temporary)' and v2 == 0)
+  local n3, v3 = debug.getlocal(t, 0, 3)
+  assert(n3 == '(C temporary)' and v3 == 3)
+  assert(select('#', debug.getlocal(t, 0, 4)) == 1)
+  assert(debug.getlocal(t, 0, 4) == nil)
   assert(debug.setlocal(t, 0, 1, 123) == '(C temporary)')
   assert(debug.setlocal(0, 1, 456) == '(C temporary)')
 end
@@ -90,8 +97,14 @@ end
 do
   local co = coroutine.create(function()
     local t = coroutine.running()
-    local name = debug.getlocal(t, 0, 1)
-    assert(name == '(C temporary)')
+    local n1, v1 = debug.getlocal(t, 0, 1)
+    assert(n1 == '(C temporary)' and v1 == t)
+    local n2, v2 = debug.getlocal(t, 0, 2)
+    assert(n2 == '(C temporary)' and v2 == 0)
+    local n3, v3 = debug.getlocal(t, 0, 3)
+    assert(n3 == '(C temporary)' and v3 == 3)
+    assert(select('#', debug.getlocal(t, 0, 4)) == 1)
+    assert(debug.getlocal(t, 0, 4) == nil)
   end)
   assert(coroutine.resume(co))
 end
