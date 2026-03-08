@@ -2,11 +2,14 @@ package vm
 
 // LuaOsCaps declares which OS operations are allowed.
 type LuaOsCaps struct {
-	AllowTime   bool
-	AllowDate   bool
-	AllowGetenv bool
+	AllowTime    bool
+	AllowDate    bool
+	AllowGetenv  bool
 	AllowTmpName bool
 	AllowRemove  bool
+	AllowExecute bool
+	AllowExit    bool
+	AllowRename  bool
 }
 
 // LuaOsProvider is a capability interface for sandboxed OS operations.

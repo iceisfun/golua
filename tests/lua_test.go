@@ -144,6 +144,7 @@ func runLuaTest(t *testing.T, filename string) {
 		AllowLoadfile: true,
 		AllowDofile:   true,
 	}))
+	v.SetExecProvider(vm.NewDefaultExecProvider())
 	stdlib.Open(v)
 
 	// Run in goroutine with panic recovery and timeout
@@ -200,6 +201,7 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 		AllowLoadfile: true,
 		AllowDofile:   true,
 	}))
+	v.SetExecProvider(vm.NewDefaultExecProvider())
 	stdlib.Open(v)
 
 	// Run in goroutine with panic recovery and timeout

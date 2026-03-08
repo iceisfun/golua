@@ -122,6 +122,9 @@ func (p *DefaultOsProvider) Capabilities() LuaOsCaps {
 		AllowGetenv:  true,
 		AllowTmpName: true,
 		AllowRemove:  true,
+		AllowExecute: true,
+		AllowExit:    true,
+		AllowRename:  true,
 	}
 }
 

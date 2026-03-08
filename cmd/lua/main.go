@@ -117,6 +117,7 @@ done:
 			AllowDofile:   true,
 		}))
 		v.SetIoProvider(vm.NewFullIoProvider(scriptDir))
+		v.SetExecProvider(vm.NewDefaultExecProvider())
 	}
 	stdlib.Open(v)
 

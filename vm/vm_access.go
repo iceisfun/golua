@@ -145,6 +145,16 @@ func (vm *VM) OsProvider() LuaOsProvider {
 	return vm.osProvider
 }
 
+// SetExecProvider sets the exec provider for this VM.
+func (vm *VM) SetExecProvider(provider LuaExecProvider) {
+	vm.execProvider = provider
+}
+
+// ExecProvider returns the current exec provider, or nil if none is set.
+func (vm *VM) ExecProvider() LuaExecProvider {
+	return vm.execProvider
+}
+
 // SetDebugProvider sets the debug provider for this VM.
 func (vm *VM) SetDebugProvider(provider LuaDebugProvider) {
 	vm.debugProvider = provider

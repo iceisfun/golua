@@ -42,7 +42,37 @@ func openOs(v *vm.VM) {
 		}
 	}
 
+	// execute routes through the exec provider
+	execProvider := v.ExecProvider()
+	if execProvider != nil && caps.AllowExecute {
+		osTable.SetString("execute", vm.NewNativeFunc(makeOsExecute(execProvider)))
+	}
+
 	v.SetGlobal("os", vm.NewTable(osTable))
+}
+
+// makeOsExecute creates the os.execute([command]) function.
+func makeOsExecute(provider vm.LuaExecProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		if v.ArgCount() < 1 || v.Get(1).IsNil() {
+			// No argument or nil: check if shell is available
+			v.Set(0, vm.True)
+			return 1
+		}
+		cmd := v.Get(1)
+		if !cmd.IsString() {
+			callerArgError(v, 1, "os.execute", fmt.Sprintf("string expected, got %s", cmd.Type()))
+		}
+		ok, exitType, exitCode := provider.Execute(cmd.AsString())
+		if ok {
+			v.Set(0, vm.True)
+		} else {
+			v.Set(0, vm.Nil)
+		}
+		v.Set(1, vm.NewString(exitType))
+		v.Set(2, vm.NewInt(int64(exitCode)))
+		return 3
+	}
 }
 
 // makeOsClock creates the os.clock() function.

@@ -55,8 +55,9 @@ type VM struct {
 	chunkName    string          // Name of the currently executing chunk
 
 	// IO and OS provider support
-	ioProvider LuaIoProvider // Provider for IO operations (optional)
-	osProvider LuaOsProvider // Provider for OS operations (optional)
+	ioProvider   LuaIoProvider   // Provider for IO operations (optional)
+	osProvider   LuaOsProvider   // Provider for OS operations (optional)
+	execProvider LuaExecProvider // Provider for command execution (optional)
 
 	// Debug provider support
 	debugProvider LuaDebugProvider // Provider for diagnostic debug operations (optional)
@@ -503,6 +504,7 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		chunkName:     parent.chunkName,
 		ioProvider:    parent.ioProvider,
 		osProvider:    parent.osProvider,
+		execProvider:  parent.execProvider,
 		debugProvider: parent.debugProvider,
 		chanProvider:  parent.chanProvider,
 		timeProvider:  parent.timeProvider,
