@@ -579,7 +579,10 @@ func luaNext(v *vm.VM) int {
 	key := v.Get(2)
 	nextK, nextV, err := tbl.Next(key)
 	if err != nil {
-		panic(err.Error())
+		// Use LuaError to avoid AddCallerLocation adding a file:line prefix.
+		// In Lua 5.4, luaG_runerror from C code doesn't add the prefix
+		// because the current frame is a C function, not a Lua frame.
+		panic(&vm.LuaError{Value: vm.NewString(err.Error())})
 	}
 	if nextK.IsNil() {
 		v.Set(0, vm.Nil)
