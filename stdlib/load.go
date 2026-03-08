@@ -82,6 +82,7 @@ func luaLoad(v *vm.VM) int {
 		// Call the function repeatedly to get the source
 		var builder []byte
 		lineCount := 0
+		firstRead := true
 		exitNonYieldable := v.EnterNonYieldable()
 		defer exitNonYieldable()
 		for {
@@ -115,6 +116,31 @@ func luaLoad(v *vm.VM) int {
 			if s == "" {
 				break
 			}
+			// Early binary detection on first read: if the first byte is \x1b,
+			// check mode and handle binary immediately (matching Lua 5.4).
+			if firstRead && len(s) > 0 && s[0] == '\x1b' {
+				firstRead = false
+				if !strings.Contains(mode, "b") {
+					v.Set(0, vm.Nil)
+					v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a binary chunk (mode is '%s')", mode)))
+					return 2
+				}
+				// For binary chunks from readers, try to undump with the
+				// data we have so far. If the undumper needs more data,
+				// it will panic with "truncated chunk" which we catch.
+				// This avoids accumulating unbounded data from infinite
+				// readers (reference Lua reads from the reader lazily).
+				source = s
+				fn, errMsg := loadBinaryChunk(v, source, rawChunkName, env, hasEnv)
+				if errMsg != "" {
+					v.Set(0, vm.Nil)
+					v.Set(1, vm.NewString(errMsg))
+					return 2
+				}
+				v.Set(0, fn)
+				return 1
+			}
+			firstRead = false
 			lineCount += strings.Count(s, "\n")
 			if lineCount >= maxLoadLines {
 				v.Set(0, vm.Nil)
