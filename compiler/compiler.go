@@ -216,12 +216,17 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 		if c.fs != nil {
 			source = c.fs.proto.Source
 		}
-		if node, ok := pos.(ast.Node); ok && node != nil {
-			p := node.Pos()
-			line = p.Line
-			if source == "" && p.Source != "" {
-				source = p.Source
+		switch p := pos.(type) {
+		case ast.Node:
+			if p != nil {
+				pp := p.Pos()
+				line = pp.Line
+				if source == "" && pp.Source != "" {
+					source = pp.Source
+				}
 			}
+		case int:
+			line = p
 		}
 		if source != "" && line > 0 {
 			c.err = fmt.Errorf("%s:%d: %s", shortSrc(source), line, msg)
@@ -260,7 +265,7 @@ func (c *compiler) closeFuncState() *Proto {
 
 	// Check for unresolved gotos (label not visible)
 	for _, pg := range fs.pendGotos {
-		c.error(nil, "no visible label '%s' for <goto> at line %d", pg.name, pg.line)
+		c.error(pg.line, "no visible label '%s' for <goto> at line %d", pg.name, pg.line)
 	}
 
 	// Close all remaining locals
