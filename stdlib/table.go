@@ -184,6 +184,7 @@ func tableRemove(v *vm.VM) int {
 }
 
 // table.sort(list [, comp])
+// Sorts in-place through metamethods, matching Lua 5.4's auxsort behavior.
 func tableSort(v *vm.VM) int {
 	tbl := tableGetTable(v, 1, "table.sort")
 
@@ -198,24 +199,16 @@ func tableSort(v *vm.VM) int {
 		panic("bad argument #1 to 'table.sort' (array too big)")
 	}
 
-	// Extract values into slice via __index
-	values := make([]vm.Value, length)
-	for i := 1; i <= length; i++ {
-		values[i-1] = tableGetIdx(v, tbl, i)
-	}
-
 	comp := v.Get(2)
 	var sortErr any
 
 	if comp.IsNil() {
-		// Default comparison: a < b (via metamethod-aware CompareLT)
-		auxSort(v, values, 0, length-1, vm.Nil, &sortErr)
+		auxSort(v, tbl, 1, length, vm.Nil, &sortErr)
 	} else {
 		if !comp.IsFunction() && !comp.IsNativeFunc() {
 			callerArgError(v, 2, "table.sort", fmt.Sprintf("function expected, got %s", comp.Type()))
 		}
-		// Custom comparator
-		auxSort(v, values, 0, length-1, comp, &sortErr)
+		auxSort(v, tbl, 1, length, comp, &sortErr)
 	}
 	if sortErr != nil {
 		if val, errIsValue := sortErr.(vm.Value); errIsValue {
@@ -230,12 +223,34 @@ func tableSort(v *vm.VM) int {
 		panic(sortErr)
 	}
 
-	// Put values back via __newindex
-	for i := 1; i <= length; i++ {
-		tableSetIdx(v, tbl, i, values[i-1])
-	}
-
 	return 0
+}
+
+// sortGet reads table element at 1-based index through metamethods.
+func sortGet(v *vm.VM, tbl vm.LuaTable, idx int, err *any) vm.Value {
+	if *err != nil {
+		return vm.Nil
+	}
+	return tableGetIdx(v, tbl, idx)
+}
+
+// sortSet writes table element at 1-based index through metamethods.
+func sortSet(v *vm.VM, tbl vm.LuaTable, idx int, val vm.Value, err *any) {
+	if *err != nil {
+		return
+	}
+	tableSetIdx(v, tbl, idx, val)
+}
+
+// sortSwap swaps two elements in the table through metamethods.
+func sortSwap(v *vm.VM, tbl vm.LuaTable, i, j int, err *any) {
+	if *err != nil {
+		return
+	}
+	a := tableGetIdx(v, tbl, i)
+	b := tableGetIdx(v, tbl, j)
+	tableSetIdx(v, tbl, i, b)
+	tableSetIdx(v, tbl, j, a)
 }
 
 // sortComp evaluates a < b using the optional user comparator or CompareLT.
@@ -272,12 +287,16 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 }
 
 // auxSort implements Lua 5.4's sorting algorithm (QuickSort with median-of-3 pivot).
-// The invalid order detection matches Lua 5.4's partition checks exactly.
-func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
+// Sorts in-place on the table through metamethods (__index/__newindex).
+// lo and up are 1-based indices into the table.
+func auxSort(v *vm.VM, tbl vm.LuaTable, lo, up int, comp vm.Value, err *any) {
 	for lo < up {
-		// Sort a[lo] and a[up]; handles 2-element case
-		if sortComp(v, a[up], a[lo], comp, err) {
-			a[up], a[lo] = a[lo], a[up]
+		// Read and compare tbl[lo] and tbl[up]; handles 2-element case
+		loVal := sortGet(v, tbl, lo, err)
+		upVal := sortGet(v, tbl, up, err)
+		if sortComp(v, upVal, loVal, comp, err) {
+			sortSet(v, tbl, lo, upVal, err)
+			sortSet(v, tbl, up, loVal, err)
 		}
 		if *err != nil {
 			return
@@ -288,12 +307,17 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 
 		p := (lo + up) / 2
 
-		// Median-of-3: sort a[lo], a[p], a[up] to pick pivot
-		if sortComp(v, a[p], a[lo], comp, err) {
-			a[p], a[lo] = a[lo], a[p]
+		// Median-of-3: sort tbl[lo], tbl[p], tbl[up] to pick pivot
+		pVal := sortGet(v, tbl, p, err)
+		loVal = sortGet(v, tbl, lo, err)
+		if sortComp(v, pVal, loVal, comp, err) {
+			sortSet(v, tbl, p, loVal, err)
+			sortSet(v, tbl, lo, pVal, err)
 		} else {
-			if sortComp(v, a[up], a[p], comp, err) {
-				a[up], a[p] = a[p], a[up]
+			upVal = sortGet(v, tbl, up, err)
+			if sortComp(v, upVal, pVal, comp, err) {
+				sortSet(v, tbl, up, pVal, err)
+				sortSet(v, tbl, p, upVal, err)
 			}
 		}
 		if *err != nil {
@@ -303,18 +327,21 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 			return
 		}
 
-		// Pivot is a[p]; move it to a[up-1]
-		pivot := a[p]
-		a[p], a[up-1] = a[up-1], a[p]
+		// Pivot is tbl[p]; move it to tbl[up-1]
+		pivot := sortGet(v, tbl, p, err)
+		upM1Val := sortGet(v, tbl, up-1, err)
+		sortSet(v, tbl, p, upM1Val, err)
+		sortSet(v, tbl, up-1, pivot, err)
 
 		// Partition: match Lua 5.4's partition() exactly
 		i := lo
 		j := up - 1
 		for {
-			// Scan right: find first a[i] >= pivot
+			// Scan right: find first tbl[i] >= pivot
 			for {
 				i++
-				if !sortComp(v, a[i], pivot, comp, err) {
+				iVal := sortGet(v, tbl, i, err)
+				if !sortComp(v, iVal, pivot, comp, err) {
 					break
 				}
 				if i == up-1 {
@@ -322,10 +349,11 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 					return
 				}
 			}
-			// Scan left: find first a[j] <= pivot
+			// Scan left: find first tbl[j] <= pivot
 			for {
 				j--
-				if !sortComp(v, pivot, a[j], comp, err) {
+				jVal := sortGet(v, tbl, j, err)
+				if !sortComp(v, pivot, jVal, comp, err) {
 					break
 				}
 				if j < i {
@@ -338,18 +366,21 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 			}
 			if j < i {
 				// Swap pivot back into position
-				a[up-1], a[i] = a[i], a[up-1]
+				iVal := sortGet(v, tbl, i, err)
+				sortSet(v, tbl, up-1, iVal, err)
+				sortSet(v, tbl, i, pivot, err)
 				break
 			}
-			a[i], a[j] = a[j], a[i]
+			// Swap tbl[i] and tbl[j]
+			sortSwap(v, tbl, i, j, err)
 		}
 
 		// Recurse on smaller partition, tail-call on larger
 		if i-lo < up-i {
-			auxSort(v, a, lo, i-1, comp, err)
+			auxSort(v, tbl, lo, i-1, comp, err)
 			lo = i + 1
 		} else {
-			auxSort(v, a, i+1, up, comp, err)
+			auxSort(v, tbl, i+1, up, comp, err)
 			up = i - 1
 		}
 	}

@@ -264,6 +264,69 @@ f:setvbuf("invalid")
 f:close()`, "invalid option 'invalid'")
 }
 
+// --- Bug 18: io.close() no-arg should return nil, "cannot close standard file" ---
+func TestIoCloseNoArg(t *testing.T) {
+	runLuaExpectOK(t, `
+local ok, msg = io.close()
+assert(ok == nil, "expected nil, got " .. tostring(ok))
+assert(msg == "cannot close standard file", "expected 'cannot close standard file', got " .. tostring(msg))
+`)
+}
+
+// --- Bug 19: file:seek invalid whence arg number ---
+func TestFileSeekInvalidWhenceArgNum(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test.txt", "hello")
+	runLuaWithDirExpectError(t, dir, `local f = io.open("test.txt", "r")
+f:seek("invalid")
+f:close()`, "bad argument #2")
+}
+
+// --- Bug 20: file:setvbuf invalid mode arg number ---
+func TestFileSetvbufInvalidModeArgNum(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test.txt", "hello")
+	runLuaWithDirExpectError(t, dir, `local f = io.open("test.txt", "r")
+f:setvbuf("invalid")
+f:close()`, "bad argument #2")
+}
+
+// --- Bug 21: io.lines(filename) should return 4 values ---
+func TestIoLinesFileReturns4Values(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test.txt", "hello\nworld\n")
+	runLuaWithDir(t, dir, `
+local a, b, c, d = io.lines("test.txt")
+assert(type(a) == "function", "1st return should be function, got " .. type(a))
+assert(b == nil, "2nd return should be nil")
+assert(c == nil, "3rd return should be nil")
+assert(io.type(d) == "file", "4th return should be file handle, got " .. tostring(io.type(d)))
+`)
+}
+
+// --- Bug 22: io.lines auto-close via generic for ---
+func TestIoLinesAutoClose(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test.txt", "hello\nworld\n")
+	runLuaWithDir(t, dir, `
+local lines = {}
+for line in io.lines("test.txt") do
+    lines[#lines+1] = line
+end
+assert(#lines == 2, "expected 2 lines, got " .. #lines)
+assert(lines[1] == "hello", "expected 'hello', got " .. lines[1])
+assert(lines[2] == "world", "expected 'world', got " .. lines[2])
+`)
+}
+
+// --- Bug 23: io.input error format should use "cannot open file 'path' (error)" ---
+func TestIoInputErrorFormat(t *testing.T) {
+	dir := t.TempDir()
+	runLuaWithDirExpectError(t, dir,
+		`io.input("nonexistent_xyz_12345")`,
+		"cannot open file 'nonexistent_xyz_12345'")
+}
+
 // --- Provider interface tests ---
 
 func TestFullIoProvider_TmpFile(t *testing.T) {

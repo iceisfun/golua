@@ -28,8 +28,15 @@ func callerArgError(v *vm.VM, idx int, fallback, msg string) {
 	if name == "" {
 		name = fallback
 	}
-	if nameWhat == "method" && idx > 0 {
-		idx--
+	if nameWhat == "method" {
+		if idx == 1 {
+			// Lua 5.4's luaL_typeerror: when arg #1 was passed as self
+			// via method syntax (OP_SELF), produce the special message.
+			panic(fmt.Sprintf("calling '%s' on bad self (%s)", name, msg))
+		}
+		if idx > 0 {
+			idx--
+		}
 	}
 	panic(fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg))
 }

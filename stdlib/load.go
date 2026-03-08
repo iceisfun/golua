@@ -107,17 +107,20 @@ func luaLoad(v *vm.VM) int {
 			results, err := v.ProtectedCall(chunk, nil)
 			if err != nil {
 				v.Set(0, vm.Nil)
-				// Lua 5.4: returns the raw error from the reader, not prefixed.
-				// For non-string errors, format as "(error object is a TYPE value)".
+				// Lua 5.4: returns the error from the reader with a stack
+				// traceback appended (the error propagates through lua_load's
+				// protected context which invokes the message handler).
+				var errMsg string
 				if le, ok := err.(*vm.LuaError); ok {
 					if le.Value.IsString() {
-						v.Set(1, vm.NewString(le.Value.AsString()))
+						errMsg = le.Value.AsString()
 					} else {
-						v.Set(1, vm.NewString(fmt.Sprintf("(error object is a %s value)", le.Value.Type())))
+						errMsg = fmt.Sprintf("(error object is a %s value)", le.Value.Type())
 					}
 				} else {
-					v.Set(1, vm.NewString(err.Error()))
+					errMsg = err.Error()
 				}
+				v.Set(1, vm.NewString(v.Traceback(errMsg, 0)))
 				return 2
 			}
 			if len(results) == 0 || results[0].IsNil() {
@@ -128,7 +131,7 @@ func luaLoad(v *vm.VM) int {
 				s = valueToString(results[0])
 			} else {
 				v.Set(0, vm.Nil)
-				v.Set(1, vm.NewString(v.AddCallerLocation("reader function must return a string")))
+				v.Set(1, vm.NewString(v.Traceback(v.AddCallerLocation("reader function must return a string"), 0)))
 				return 2
 			}
 			if s == "" {
@@ -157,15 +160,17 @@ func luaLoad(v *vm.VM) int {
 					results2, err2 := v.ProtectedCall(chunk, nil)
 					if err2 != nil {
 						v.Set(0, vm.Nil)
+						var errMsg2 string
 						if le, ok := err2.(*vm.LuaError); ok {
 							if le.Value.IsString() {
-								v.Set(1, vm.NewString(le.Value.AsString()))
+								errMsg2 = le.Value.AsString()
 							} else {
-								v.Set(1, vm.NewString(fmt.Sprintf("(error object is a %s value)", le.Value.Type())))
+								errMsg2 = fmt.Sprintf("(error object is a %s value)", le.Value.Type())
 							}
 						} else {
-							v.Set(1, vm.NewString(err2.Error()))
+							errMsg2 = err2.Error()
 						}
+						v.Set(1, vm.NewString(v.Traceback(errMsg2, 0)))
 						return 2
 					}
 					if len(results2) == 0 || results2[0].IsNil() {
@@ -176,7 +181,7 @@ func luaLoad(v *vm.VM) int {
 						s2 = valueToString(results2[0])
 					} else {
 						v.Set(0, vm.Nil)
-						v.Set(1, vm.NewString(v.AddCallerLocation("reader function must return a string")))
+						v.Set(1, vm.NewString(v.Traceback(v.AddCallerLocation("reader function must return a string"), 0)))
 						return 2
 					}
 					if s2 == "" {

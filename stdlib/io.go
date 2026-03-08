@@ -34,6 +34,11 @@ func init() {
 	fileHandleMeta.SetString("__name", vm.NewString("FILE*"))
 	fileHandleMeta.SetString("__index", vm.NewTable(fileMethodsTable))
 	fileHandleMeta.SetString("__tostring", vm.NewNativeFunc(fileToString))
+	// __close and __gc silently close the file if not already closed.
+	// This is needed for to-be-closed variables (generic for with io.lines).
+	closeGC := vm.NewNativeFunc(fileCloseGC)
+	fileHandleMeta.SetString("__close", closeGC)
+	fileHandleMeta.SetString("__gc", closeGC)
 }
 
 // fileHandle is the Go data stored inside a file userdata value.
@@ -46,6 +51,18 @@ type fileHandle struct {
 func makeFileHandle(f vm.LuaFile) vm.Value {
 	fh := &fileHandle{file: f}
 	return vm.NewUserdataValue(fh, fileHandleMeta)
+}
+
+// fileMethodArgError raises a "bad argument" error for file methods.
+// Unlike callerArgError, this does not adjust the arg index for method calls
+// and uses '?' as the function name, matching Lua 5.4 behavior for file methods
+// dispatched via __index.
+func fileMethodArgError(v *vm.VM, idx int, fallback, msg string) {
+	name, _ := v.CallerFuncName()
+	if name == "" {
+		name = fallback
+	}
+	panic(fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg))
 }
 
 // getFileHandle extracts the fileHandle from a userdata value, or panics.
@@ -204,8 +221,10 @@ func makeIoClose(provider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		val := v.Get(1)
 		if val.IsNil() {
-			// Close default output - not supported yet
-			panic("cannot close default output file")
+			// Close default output - standard files cannot be closed
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString("cannot close standard file"))
+			return 2
 		}
 
 		fh := getFileHandle(v, val, "io.close")
@@ -326,6 +345,14 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			}
 			return results
 		}))
+		if toClose {
+			// Return iterator, nil, nil, filehandle (4 values)
+			// The 4th value is a to-be-closed variable for generic for
+			v.Set(1, vm.Nil)
+			v.Set(2, vm.Nil)
+			v.Set(3, makeFileHandle(f))
+			return 4
+		}
 		return 1
 	}
 }
@@ -344,7 +371,8 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 			// Open file as default input
 			f, err := provider.Open(arg.AsString(), "r")
 			if err != nil {
-				panic(fmt.Sprintf("cannot open '%s': %s", arg.AsString(), err.Error()))
+				_, errDesc := extractLuaFileError(err)
+				panic(fmt.Sprintf("cannot open file '%s' (%s)", arg.AsString(), errDesc))
 			}
 			handle := makeFileHandle(f)
 			ioTable.SetString("__input", handle)
@@ -374,7 +402,8 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 			// Open file as default output
 			f, err := provider.Open(arg.AsString(), "w")
 			if err != nil {
-				panic(fmt.Sprintf("cannot open '%s': %s", arg.AsString(), err.Error()))
+				_, errDesc := extractLuaFileError(err)
+				panic(fmt.Sprintf("cannot open file '%s' (%s)", arg.AsString(), errDesc))
 			}
 			handle := makeFileHandle(f)
 			ioTable.SetString("__output", handle)
@@ -652,7 +681,7 @@ func fileSeek(v *vm.VM) int {
 	case "set", "cur", "end":
 		// valid
 	default:
-		callerArgError(v, 1, "seek", fmt.Sprintf("invalid option '%s'", whence))
+		fileMethodArgError(v, 2, "seek", fmt.Sprintf("invalid option '%s'", whence))
 	}
 
 	var offset int64
@@ -660,7 +689,7 @@ func fileSeek(v *vm.VM) int {
 		var ok bool
 		offset, ok = v.Get(3).ToInt()
 		if !ok {
-			callerArgError(v, 2, "seek", "number expected")
+			fileMethodArgError(v, 3, "seek", "number expected")
 		}
 	}
 
@@ -683,7 +712,7 @@ func fileSetVBuf(v *vm.VM) int {
 
 	mode := v.Get(2)
 	if mode.IsNil() {
-		callerArgError(v, 1, "io.setvbuf", "string expected, got nil")
+		fileMethodArgError(v, 1, "setvbuf", "string expected, got nil")
 	}
 	modeStr := mode.AsString()
 
@@ -691,7 +720,7 @@ func fileSetVBuf(v *vm.VM) int {
 	if !v.Get(3).IsNil() {
 		sz, ok := v.Get(3).ToInt()
 		if !ok {
-			callerArgError(v, 2, "io.setvbuf", "number expected")
+			fileMethodArgError(v, 3, "setvbuf", "number expected")
 		}
 		size = int(sz)
 	}
@@ -701,7 +730,7 @@ func fileSetVBuf(v *vm.VM) int {
 	case "no", "full", "line":
 		// valid
 	default:
-		callerArgError(v, 1, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
+		fileMethodArgError(v, 2, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
 	}
 
 	err := fh.file.SetVBuf(modeStr, size)
@@ -752,4 +781,24 @@ func fileToString(v *vm.VM) int {
 		v.Set(0, vm.NewString(fmt.Sprintf("file (%p)", ud)))
 	}
 	return 1
+}
+
+// fileCloseGC implements __close and __gc for file handles.
+// Unlike fileClose, this silently handles already-closed and standard files.
+func fileCloseGC(v *vm.VM) int {
+	val := v.Get(1)
+	ud := val.AsUserdata()
+	if ud == nil {
+		return 0
+	}
+	fh, ok := ud.Data.(*fileHandle)
+	if !ok {
+		return 0
+	}
+	if fh.closed || fh.file.IsClosed() || fh.file.IsStd() {
+		return 0
+	}
+	fh.file.Close()
+	fh.closed = true
+	return 0
 }
