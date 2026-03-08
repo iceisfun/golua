@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/iceisfun/golua/ast"
 )
@@ -274,6 +275,181 @@ func smallIntConst(e ast.Expr) (int, bool) {
 	return 0, false
 }
 
+// foldArith attempts compile-time constant folding for a binary expression.
+// If both operands are numeric constants (integer or float literals, or
+// recursively foldable sub-expressions), the result is computed at compile
+// time and returned as an AST expression node. Returns nil if folding is
+// not possible (e.g., non-constant operand, division by zero, etc.).
+//
+// This matches Lua 5.4's compile-time constant folding, which allows
+// long chains like 1+1+1+...+1 to compile into a single constant without
+// consuming registers.
+func foldArith(e *ast.BinopExpr) ast.Expr {
+	// Extract numeric values from both sides, recursing into sub-expressions.
+	lIsInt, lInt, lFloat, lOk := numericValue(e.Left)
+	if !lOk {
+		return nil
+	}
+	rIsInt, rInt, rFloat, rOk := numericValue(e.Right)
+	if !rOk {
+		return nil
+	}
+
+	// Both integers: try integer arithmetic.
+	if lIsInt && rIsInt {
+		if result, ok := foldIntOp(e.Op, lInt, rInt); ok {
+			return &ast.NumberExpr{P: e.P, Value: result, Raw: fmt.Sprintf("%d", result)}
+		}
+		// For / and ^, fall through to float path.
+	}
+
+	// Float path (at least one float, or int-only ops that produce float).
+	switch e.Op {
+	case "+":
+		r := lFloat + rFloat
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	case "-":
+		r := lFloat - rFloat
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	case "*":
+		r := lFloat * rFloat
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	case "/":
+		if rFloat == 0 {
+			return nil // leave division by zero to runtime for correct NaN sign
+		}
+		r := lFloat / rFloat
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	case "//":
+		if rFloat == 0 {
+			return nil
+		}
+		r := math.Floor(lFloat / rFloat)
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	case "%":
+		if rFloat == 0 {
+			return nil
+		}
+		r := lFloat - math.Floor(lFloat/rFloat)*rFloat
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	case "^":
+		r := math.Pow(lFloat, rFloat)
+		if math.IsNaN(r) || math.IsInf(r, 0) {
+			return nil // leave edge cases to runtime for correct NaN/Inf sign
+		}
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	case "&", "|", "~", "<<", ">>":
+		// Bitwise ops require integers; if either is float, no fold.
+		return nil
+	}
+	return nil
+}
+
+// foldIntOp performs integer arithmetic for constant folding.
+// Returns the result and true if the operation can be folded as an integer.
+func foldIntOp(op string, a, b int64) (int64, bool) {
+	switch op {
+	case "+":
+		return a + b, true // wraps on overflow, matching Lua 5.4
+	case "-":
+		return a - b, true
+	case "*":
+		return a * b, true
+	case "//":
+		if b == 0 {
+			return 0, false
+		}
+		q := a / b
+		if (a^b) < 0 && q*b != a {
+			q--
+		}
+		return q, true
+	case "%":
+		if b == 0 {
+			return 0, false
+		}
+		r := a % b
+		if r != 0 && (r^b) < 0 {
+			r += b
+		}
+		return r, true
+	case "&":
+		return a & b, true
+	case "|":
+		return a | b, true
+	case "~":
+		return a ^ b, true
+	case "<<":
+		if b >= 64 || b <= -64 {
+			return 0, true
+		}
+		if b < 0 {
+			return int64(uint64(a) >> uint64(-b)), true
+		}
+		return int64(uint64(a) << uint64(b)), true
+	case ">>":
+		if b >= 64 || b <= -64 {
+			return 0, true
+		}
+		if b < 0 {
+			return int64(uint64(a) << uint64(-b)), true
+		}
+		return int64(uint64(a) >> uint64(b)), true
+	}
+	// / and ^ always produce floats in Lua
+	return 0, false
+}
+
+// numericValue extracts a numeric value from an expression, recursively
+// folding sub-expressions. Returns (isInteger, intVal, floatVal, ok).
+// When isInteger is true, both intVal and floatVal are set (floatVal =
+// float64(intVal)) for use in mixed-type arithmetic.
+func numericValue(e ast.Expr) (bool, int64, float64, bool) {
+	switch n := e.(type) {
+	case *ast.NumberExpr:
+		return true, n.Value, float64(n.Value), true
+	case *ast.FloatExpr:
+		return false, 0, n.Value, true
+	case *ast.BinopExpr:
+		folded := foldArith(n)
+		if folded == nil {
+			return false, 0, 0, false
+		}
+		return numericValue(folded)
+	case *ast.UnopExpr:
+		folded := foldUnaryArith(n)
+		if folded == nil {
+			return false, 0, 0, false
+		}
+		return numericValue(folded)
+	}
+	return false, 0, 0, false
+}
+
+// foldUnaryArith attempts constant folding for unary minus and bitwise not.
+func foldUnaryArith(e *ast.UnopExpr) ast.Expr {
+	isInt, iv, fv, ok := numericValue(e.Operand)
+	if !ok {
+		return nil
+	}
+	switch e.Op {
+	case "-":
+		if isInt {
+			r := -iv
+			return &ast.NumberExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%d", r)}
+		}
+		r := -fv
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	case "~":
+		if !isInt {
+			return nil
+		}
+		r := ^iv
+		return &ast.NumberExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%d", r)}
+	}
+	return nil
+}
+
 // compileBinop compiles a binary operation. Short-circuit operators (and, or),
 // concatenation (..), and comparisons are handled by specialized methods.
 // Arithmetic and bitwise ops compile both operands into registers and emit
@@ -304,6 +480,14 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	switch e.Op {
 	case "==", "~=", "<", "<=", ">", ">=":
 		c.compileComparison(e, reg)
+		return
+	}
+
+	// Constant folding: if both operands are compile-time constants,
+	// evaluate the result now and emit a single load instruction.
+	// This prevents long chains like 1+1+1+...+1 from exhausting registers.
+	if folded := foldArith(e); folded != nil {
+		c.compileExprToReg(folded, reg)
 		return
 	}
 
