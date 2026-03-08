@@ -354,6 +354,12 @@ func formatHexFloat(f float64, prec int, hashFlag ...bool) string {
 	full = normalizeHexExponent(full)
 
 	if prec < 0 {
+		// With # flag, force a decimal point even when there are no fractional digits
+		if forceDecimal && !strings.Contains(full, ".") {
+			if pIdx := strings.IndexByte(full, 'p'); pIdx >= 0 {
+				full = full[:pIdx] + "." + full[pIdx:]
+			}
+		}
 		return full
 	}
 
