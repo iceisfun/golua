@@ -370,7 +370,7 @@ func luaDebugUpvalueID(v *vm.VM) int {
 	}
 
 	if idx < 1 || int(idx) > len(closure.Upvalues) {
-		panic(fmt.Sprintf("bad argument #2 to 'debug.upvalueid' (invalid upvalue index %d)", idx))
+		return 0
 	}
 
 	i := int(idx) - 1
@@ -661,10 +661,10 @@ func luaDebugUpvalueJoin(v *vm.VM) int {
 	}
 
 	if n1 < 1 || int(n1) > len(c1.Upvalues) {
-		panic(fmt.Sprintf("bad argument #2 to 'debug.upvaluejoin' (invalid upvalue index %d)", n1))
+		panic("bad argument #2 to 'debug.upvaluejoin' (invalid upvalue index)")
 	}
 	if n2 < 1 || int(n2) > len(c2.Upvalues) {
-		panic(fmt.Sprintf("bad argument #4 to 'debug.upvaluejoin' (invalid upvalue index %d)", n2))
+		panic("bad argument #4 to 'debug.upvaluejoin' (invalid upvalue index)")
 	}
 
 	c1.Upvalues[int(n1)-1] = c2.Upvalues[int(n2)-1]
