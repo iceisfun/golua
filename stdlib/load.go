@@ -107,9 +107,11 @@ func luaLoad(v *vm.VM) int {
 			results, err := v.ProtectedCall(chunk, nil)
 			if err != nil {
 				v.Set(0, vm.Nil)
-				// Lua 5.4: returns the error from the reader with a stack
-				// traceback appended (the error propagates through lua_load's
-				// protected context which invokes the message handler).
+				// Return the reader error without traceback. In Lua 5.4,
+				// load() internally uses luaD_pcall which adds a traceback
+				// when called directly, but when load() is called via pcall
+				// the traceback is absent. We omit the traceback to match
+				// the pcall(load, reader) behavior which is the common case.
 				var errMsg string
 				if le, ok := err.(*vm.LuaError); ok {
 					if le.Value.IsString() {
@@ -120,7 +122,7 @@ func luaLoad(v *vm.VM) int {
 				} else {
 					errMsg = err.Error()
 				}
-				v.Set(1, vm.NewString(v.Traceback(errMsg, 0)))
+				v.Set(1, vm.NewString(errMsg))
 				return 2
 			}
 			if len(results) == 0 || results[0].IsNil() {
@@ -131,7 +133,7 @@ func luaLoad(v *vm.VM) int {
 				s = valueToString(results[0])
 			} else {
 				v.Set(0, vm.Nil)
-				v.Set(1, vm.NewString(v.Traceback(v.AddCallerLocation("reader function must return a string"), 0)))
+				v.Set(1, vm.NewString(v.AddCallerLocation("reader function must return a string")))
 				return 2
 			}
 			if s == "" {
@@ -170,7 +172,7 @@ func luaLoad(v *vm.VM) int {
 						} else {
 							errMsg2 = err2.Error()
 						}
-						v.Set(1, vm.NewString(v.Traceback(errMsg2, 0)))
+						v.Set(1, vm.NewString(errMsg2))
 						return 2
 					}
 					if len(results2) == 0 || results2[0].IsNil() {
@@ -181,7 +183,7 @@ func luaLoad(v *vm.VM) int {
 						s2 = valueToString(results2[0])
 					} else {
 						v.Set(0, vm.Nil)
-						v.Set(1, vm.NewString(v.Traceback(v.AddCallerLocation("reader function must return a string"), 0)))
+						v.Set(1, vm.NewString(v.AddCallerLocation("reader function must return a string")))
 						return 2
 					}
 					if s2 == "" {
