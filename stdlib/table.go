@@ -261,65 +261,64 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 	return res[0].ToBool()
 }
 
-// auxSort implements Lua 5.4's sorting algorithm (QuickSort with InsertionSort fallback).
+// auxSort implements Lua 5.4's sorting algorithm (QuickSort with median-of-3 pivot).
+// The invalid order detection matches Lua 5.4's partition checks exactly.
 func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 	for lo < up {
-		p := (lo + up) / 2
-		// Sort elements a[lo], a[p], a[up]
-		if sortComp(v, a[up], a[p], comp, err) {
-			a[up], a[p] = a[p], a[up]
-		}
-		if sortComp(v, a[p], a[lo], comp, err) {
-			a[p], a[lo] = a[lo], a[p]
-		}
-		if sortComp(v, a[up], a[p], comp, err) {
-			a[up], a[p] = a[p], a[up]
+		// Sort a[lo] and a[up]; handles 2-element case
+		if sortComp(v, a[up], a[lo], comp, err) {
+			a[up], a[lo] = a[lo], a[up]
 		}
 		if *err != nil {
 			return
 		}
-
 		if up-lo == 1 {
 			return
 		}
-		if up-lo == 2 {
+
+		p := (lo + up) / 2
+
+		// Median-of-3: sort a[lo], a[p], a[up] to pick pivot
+		if sortComp(v, a[p], a[lo], comp, err) {
+			a[p], a[lo] = a[lo], a[p]
+		} else {
 			if sortComp(v, a[up], a[p], comp, err) {
 				a[up], a[p] = a[p], a[up]
 			}
-			return
-		}
-
-		// Pivot is a[p]; validate invariant: !(pivot < a[lo])
-		pivot := a[p]
-		if sortComp(v, pivot, a[lo], comp, err) {
-			*err = fmt.Errorf("invalid order function for sorting")
-			return
 		}
 		if *err != nil {
 			return
 		}
+		if up-lo == 2 {
+			return
+		}
+
+		// Pivot is a[p]; move it to a[up-1]
+		pivot := a[p]
 		a[p], a[up-1] = a[up-1], a[p]
 
+		// Partition: match Lua 5.4's partition() exactly
 		i := lo
 		j := up - 1
-
 		for {
+			// Scan right: find first a[i] >= pivot
 			for {
 				i++
 				if !sortComp(v, a[i], pivot, comp, err) {
 					break
 				}
-				if i >= up-1 {
+				if i == up-1 {
 					*err = fmt.Errorf("invalid order function for sorting")
 					return
 				}
 			}
+			// Scan left: find first a[j] <= pivot
 			for {
 				j--
 				if !sortComp(v, pivot, a[j], comp, err) {
 					break
 				}
-				if j <= lo {
+				if j < i {
 					*err = fmt.Errorf("invalid order function for sorting")
 					return
 				}
@@ -327,21 +326,15 @@ func auxSort(v *vm.VM, a []vm.Value, lo, up int, comp vm.Value, err *any) {
 			if *err != nil {
 				return
 			}
-			if i >= j {
+			if j < i {
+				// Swap pivot back into position
+				a[up-1], a[i] = a[i], a[up-1]
 				break
 			}
 			a[i], a[j] = a[j], a[i]
 		}
-		// Validate invariant: !(a[up] < pivot)
-		if sortComp(v, a[up], pivot, comp, err) {
-			*err = fmt.Errorf("invalid order function for sorting")
-			return
-		}
-		if *err != nil {
-			return
-		}
-		a[up-1], a[i] = a[i], a[up-1]
 
+		// Recurse on smaller partition, tail-call on larger
 		if i-lo < up-i {
 			auxSort(v, a, lo, i-1, comp, err)
 			lo = i + 1
