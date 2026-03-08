@@ -130,7 +130,9 @@ func stringRep(v *vm.VM) int {
 	}
 
 	// Check for overflow: total = len(s)*n + len(sep)*(n-1)
-	const maxSize = 1 << 30 // ~1GB, reasonable limit
+	// Use a limit well below Go's allocation ceiling to prevent unrecoverable
+	// runtime OOM panics that bypass pcall/recover.
+	const maxSize int64 = 1<<30 - 1 // ~1GB, must reject before Go allocator fails
 	sLen := int64(len(s))
 	sepLen := int64(len(sep))
 	totalSize := sLen*n + sepLen*(n-1)
