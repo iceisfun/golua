@@ -331,6 +331,23 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if err := vm.tableSet(table.ptr.(LuaTable), key, value); err != nil {
 					return nil, err
 				}
+			} else if mm := vm.getMetafield(table, "__newindex"); !mm.IsNil() {
+				if mm.IsFunction() || mm.IsNativeFunc() {
+					_, err := vm.callMetamethod3("newindex", mm, table, key, value)
+					if err != nil {
+						return nil, err
+					}
+					frame = &vm.callStack[len(vm.callStack)-1]
+					proto = frame.closure.Proto
+					code = proto.Code
+					consts = frame.closure.ConstValues()
+				} else if mm.IsTable() {
+					if err := vm.tableSet(mm.AsTable(), key, value); err != nil {
+						return nil, err
+					}
+				} else {
+					return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
+				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
 			}
@@ -346,6 +363,23 @@ func (vm *VM) execute() ([]Value, error) {
 					if err := vm.tableSetInt(table.ptr.(LuaTable), b, value); err != nil {
 						return nil, err
 					}
+				}
+			} else if mm := vm.getMetafield(table, "__newindex"); !mm.IsNil() {
+				if mm.IsFunction() || mm.IsNativeFunc() {
+					_, err := vm.callMetamethod3("newindex", mm, table, NewInt(int64(b)), value)
+					if err != nil {
+						return nil, err
+					}
+					frame = &vm.callStack[len(vm.callStack)-1]
+					proto = frame.closure.Proto
+					code = proto.Code
+					consts = frame.closure.ConstValues()
+				} else if mm.IsTable() {
+					if err := vm.tableSet(mm.AsTable(), NewInt(int64(b)), value); err != nil {
+						return nil, err
+					}
+				} else {
+					return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
@@ -364,6 +398,23 @@ func (vm *VM) execute() ([]Value, error) {
 					if err := vm.tableSetString(table.ptr.(LuaTable), key, value); err != nil {
 						return nil, err
 					}
+				}
+			} else if mm := vm.getMetafield(table, "__newindex"); !mm.IsNil() {
+				if mm.IsFunction() || mm.IsNativeFunc() {
+					_, err := vm.callMetamethod3("newindex", mm, table, NewString(key), value)
+					if err != nil {
+						return nil, err
+					}
+					frame = &vm.callStack[len(vm.callStack)-1]
+					proto = frame.closure.Proto
+					code = proto.Code
+					consts = frame.closure.ConstValues()
+				} else if mm.IsTable() {
+					if err := vm.tableSet(mm.AsTable(), NewString(key), value); err != nil {
+						return nil, err
+					}
+				} else {
+					return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
@@ -446,6 +497,13 @@ func (vm *VM) execute() ([]Value, error) {
 				} else {
 					return nil, vm.runtimeError("attempt to index a userdata value")
 				}
+			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+				val, err := vm.resolveIndex(mm, table, NewString(key))
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = val
+				frame = &vm.callStack[len(vm.callStack)-1]
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 			}
