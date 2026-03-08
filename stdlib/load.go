@@ -143,8 +143,9 @@ func luaLoad(v *vm.VM) int {
 		callerArgError(v, 1, "load", fmt.Sprintf("function expected, got %s", got))
 	}
 
-	// Detect binary chunk (starts with \x1bLua)
-	isBinary := len(source) >= 4 && source[0] == '\x1b' && source[1:4] == "Lua"
+	// Detect binary chunk (starts with \x1b, matching Lua 5.4 which treats
+	// any data starting with byte 0x1B as binary)
+	isBinary := len(source) > 0 && source[0] == '\x1b'
 
 	if isBinary {
 		if !strings.Contains(mode, "b") {
