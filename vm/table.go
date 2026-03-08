@@ -565,6 +565,19 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 			t.iterBound = 0
 			return Nil, Nil, nil
 		}
+		// The key may have been a valid array index before the array
+		// shrank (trailing nils removed).  The Go slice retains its
+		// capacity, so cap(t.array) reflects the former size.  If the
+		// key falls within that range it was a legitimate array key
+		// that was deleted; treat it as "past end of array" and
+		// continue iteration into the hash part (or return nil).
+		if i := key.AsInt(); i >= 1 && int(i) <= cap(t.array) {
+			if kv, vv, ok := t.firstLiveHashEntry(); ok {
+				return kv, vv, nil
+			}
+			t.iterBound = 0
+			return Nil, Nil, nil
+		}
 	}
 
 	// Reject float keys that represent integer values.  Table storage

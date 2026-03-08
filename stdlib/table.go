@@ -126,14 +126,16 @@ func tableInsert(v *vm.VM) int {
 		pos := int(getInt(v, 2, "table.insert"))
 		val := v.Get(3)
 
-		if pos < 1 || pos > length+1 {
+		if pos < 1 || pos-1 > length {
 			callerArgError(v, 2, "table.insert", "position out of bounds")
 		}
 
-		// Shift elements up
-		for i := length; i >= pos; i-- {
-			elem := tableGetIdx(v, tbl, i)
-			tableSetIdx(v, tbl, i+1, elem)
+		// Shift elements up: use length+1 as the loop start (like C Lua)
+		// so that signed overflow naturally skips the loop when
+		// length == math.MaxInt64.
+		for i := length + 1; i > pos; i-- {
+			elem := tableGetIdx(v, tbl, i-1)
+			tableSetIdx(v, tbl, i, elem)
 		}
 		tableSetIdx(v, tbl, pos, val)
 	}
@@ -155,7 +157,7 @@ func tableRemove(v *vm.VM) int {
 	// Lua 5.4: validate only when pos != length (the default)
 	// Valid range: 1 <= pos <= length+1
 	if pos != length {
-		if pos < 1 || pos > length+1 {
+		if pos < 1 || pos-1 > length {
 			callerArgError(v, 2, "table.remove", "position out of bounds")
 		}
 	}
