@@ -181,7 +181,19 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		format := "%c"
 		if !v.Get(1).IsNil() {
-			format = v.Get(1).AsString()
+			arg1 := v.Get(1)
+			if arg1.IsString() {
+				format = arg1.AsString()
+			} else if arg1.IsNumber() {
+				// Lua coerces numbers to strings for string arguments
+				if arg1.IsInt() {
+					format = fmt.Sprintf("%d", arg1.AsInt())
+				} else {
+					format = fmt.Sprintf("%g", arg1.AsFloat())
+				}
+			} else {
+				callerArgError(v, 1, "os.date", fmt.Sprintf("string expected, got %s", arg1.Type()))
+			}
 		}
 
 		var timestamp int64
