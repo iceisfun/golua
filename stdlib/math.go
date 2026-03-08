@@ -107,13 +107,21 @@ func mathAbs(v *vm.VM) int {
 
 func mathAcos(v *vm.VM) int {
 	n := getNumber(v, 1, "math.acos")
-	v.Set(0, vm.NewFloat(math.Acos(n)))
+	result := math.Acos(n)
+	if math.IsNaN(result) {
+		result = math.Copysign(result, -1)
+	}
+	v.Set(0, vm.NewFloat(result))
 	return 1
 }
 
 func mathAsin(v *vm.VM) int {
 	n := getNumber(v, 1, "math.asin")
-	v.Set(0, vm.NewFloat(math.Asin(n)))
+	result := math.Asin(n)
+	if math.IsNaN(result) {
+		result = math.Copysign(result, -1)
+	}
+	v.Set(0, vm.NewFloat(result))
 	return 1
 }
 
@@ -123,7 +131,11 @@ func mathAtan(v *vm.VM) int {
 	if !v.Get(2).IsNil() {
 		x = getNumber(v, 2, "math.atan")
 	}
-	v.Set(0, vm.NewFloat(math.Atan2(y, x)))
+	result := math.Atan2(y, x)
+	if math.IsNaN(result) {
+		result = math.Copysign(result, -1)
+	}
+	v.Set(0, vm.NewFloat(result))
 	return 1
 }
 
@@ -145,7 +157,11 @@ func mathCeil(v *vm.VM) int {
 
 func mathCos(v *vm.VM) int {
 	n := getNumber(v, 1, "math.cos")
-	v.Set(0, vm.NewFloat(math.Cos(n)))
+	result := math.Cos(n)
+	if math.IsNaN(result) {
+		result = math.Copysign(result, -1)
+	}
+	v.Set(0, vm.NewFloat(result))
 	return 1
 }
 
@@ -407,7 +423,11 @@ func mathRandomseedClosure(rng *xoshiro256ss) vm.NativeFunc {
 
 func mathSin(v *vm.VM) int {
 	n := getNumber(v, 1, "math.sin")
-	v.Set(0, vm.NewFloat(math.Sin(n)))
+	result := math.Sin(n)
+	if math.IsNaN(result) {
+		result = math.Copysign(result, -1)
+	}
+	v.Set(0, vm.NewFloat(result))
 	return 1
 }
 
@@ -419,7 +439,11 @@ func mathSqrt(v *vm.VM) int {
 
 func mathTan(v *vm.VM) int {
 	n := getNumber(v, 1, "math.tan")
-	v.Set(0, vm.NewFloat(math.Tan(n)))
+	result := math.Tan(n)
+	if math.IsNaN(result) {
+		result = math.Copysign(result, -1)
+	}
+	v.Set(0, vm.NewFloat(result))
 	return 1
 }
 
