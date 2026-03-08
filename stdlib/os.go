@@ -238,7 +238,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 
 		result, err := provider.Date(format, timestamp)
 		if err != nil {
-			panic(err.Error())
+			panic(fmt.Sprintf("bad argument #1 to 'os.date' (%s)", err.Error()))
 		}
 		v.Set(0, vm.NewString(result))
 		return 1

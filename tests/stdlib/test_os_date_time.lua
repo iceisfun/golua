@@ -18,6 +18,9 @@ do
 
   checkerr("invalid conversion specifier", os.date, "%")
   checkerr("invalid conversion specifier", os.date, "%9")
+  -- error should be wrapped in standard "bad argument" format
+  checkerr("bad argument #1 to 'os.date'", os.date, "%Q")
+  checkerr("bad argument #1 to 'os.date'", os.date, "!%Q")
   checkerr("not an integer", os.time, {year=1000, month=1, day=1, hour='x'})
   checkerr("missing", os.time, {hour = 12})
 
