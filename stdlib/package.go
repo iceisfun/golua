@@ -78,7 +78,7 @@ func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 		if !loadedVal.IsNil() {
 			loaded := loadedVal.AsTable()
 			cached := loaded.Get(nameKey)
-			if !cached.IsNil() {
+			if cached.ToBool() {
 				v.Set(0, cached)
 				return 1
 			}
