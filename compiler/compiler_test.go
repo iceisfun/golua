@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -779,5 +780,98 @@ func TestCompileLuaTestFiles(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			compile(t, tt.src)
 		})
+	}
+}
+
+// TestConstantFoldNegativeZero verifies that constant folding preserves
+// the sign of negative zero (-0.0).
+func TestConstantFoldNegativeZero(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{"mul_0_neg1", "return 0.0 * -1"},
+		{"add_neg0_neg0", "return -0.0 + -0.0"},
+		{"sub_0_0", "return 0.0 - 0.0"},     // positive zero, control case
+		{"mul_neg0_1", "return -0.0 * 1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := compile(t, tt.src)
+			// The folded constant should appear in the constant table or as
+			// a LOADF instruction. Find the float constant in the proto.
+			found := false
+			for _, k := range p.Constants {
+				if k.Type == ValFloat && math.Signbit(k.FVal) {
+					found = true
+				}
+			}
+			// Also check for LOADF with sBx=0 which would be positive zero
+			for _, inst := range p.Code {
+				if inst.OpCode() == OP_LOADF {
+					sbx := inst.SBx()
+					if sbx == 0 && tt.name != "sub_0_0" {
+						t.Errorf("LOADF with sBx=0 used for %s; negative zero sign lost", tt.name)
+					}
+				}
+			}
+			// For expressions that should produce -0.0, verify a constant exists
+			if tt.name != "sub_0_0" && !found {
+				// Check if it was loaded via LOADF (which can't represent -0)
+				hasLoadF := false
+				for _, inst := range p.Code {
+					if inst.OpCode() == OP_LOADF {
+						hasLoadF = true
+					}
+				}
+				if hasLoadF {
+					t.Errorf("negative zero constant folding lost sign; used LOADF instead of LOADK")
+				}
+			}
+		})
+	}
+}
+
+// TestGotoIntoScopeErrorLine_Repeat verifies that goto-into-scope errors
+// in repeat...until blocks report the line of the until keyword, not the
+// repeat keyword.
+func TestGotoIntoScopeErrorLine_Repeat(t *testing.T) {
+	src := "repeat\ngoto L\nlocal x = 1\n::L::\nuntil x"
+	block, err := parser.Parse("<test>", src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	// Do NOT pass WithEndLine — this tests that the compiler computes the
+	// correct line from the AST alone (blockMaxLine fallback).
+	_, err = Compile("<test>", block)
+	if err == nil {
+		t.Fatal("expected compile error for goto jumping into local scope")
+	}
+	errMsg := err.Error()
+	// Should report line 5 (until keyword), not line 1 (repeat keyword)
+	if !strings.Contains(errMsg, "]:5:") {
+		t.Errorf("expected error at line 5 (until), got: %s", errMsg)
+	}
+}
+
+// TestGotoIntoScopeErrorLine_While verifies that goto-into-scope errors
+// in while/do blocks report the line of the first statement after the
+// label, not the line of the end keyword.
+func TestGotoIntoScopeErrorLine_While(t *testing.T) {
+	src := "while true do\ngoto L\nlocal x\n::L::\nprint(1)\nbreak\nend"
+	block, err := parser.Parse("<test>", src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	// Do NOT pass WithEndLine — this tests that the compiler computes the
+	// correct line from the AST alone.
+	_, err = Compile("<test>", block)
+	if err == nil {
+		t.Fatal("expected compile error for goto jumping into local scope")
+	}
+	errMsg := err.Error()
+	// Should report line 5 (print(1), the statement after ::L::), not line 7 (end)
+	if !strings.Contains(errMsg, "]:5:") {
+		t.Errorf("expected error at line 5 (first stmt after label), got: %s", errMsg)
 	}
 }

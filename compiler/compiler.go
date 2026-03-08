@@ -254,13 +254,18 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 // file:line prefix, matching Lua 5.4's behavior for errors detected after
 // parsing (e.g., goto scope violations, unresolved labels).
 func (c *compiler) errorAtEOF(format string, args ...interface{}) {
+	c.errorAtLine(c.endLine, format, args...)
+}
+
+// errorAtLine records a compilation error using the given line number for
+// the file:line prefix.
+func (c *compiler) errorAtLine(line int, format string, args ...interface{}) {
 	if c.err == nil {
 		msg := fmt.Sprintf(format, args...)
 		source := ""
 		if c.fs != nil {
 			source = c.fs.proto.Source
 		}
-		line := c.endLine
 		if source != "" && line > 0 {
 			c.err = fmt.Errorf("%s:%d: %s", shortSrc(source), line, msg)
 		} else if source != "" {

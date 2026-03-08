@@ -359,6 +359,12 @@ func (p *parser) parseForStmt() ast.Stmt {
 	if p.check(token.Type('=')) {
 		return p.parseForNumStmt(pos, openLine, name)
 	}
+	// If not '=' and not ',' or 'in', the for statement is malformed.
+	// Report both options like Lua 5.4 does.
+	if !p.check(token.Type(',')) && !p.check(token.IN) {
+		p.errorf("'=' or 'in' expected%s", p.nearClause())
+		return &ast.DoStmt{P: pos}
+	}
 	return p.parseForInStmt(pos, openLine, name)
 }
 

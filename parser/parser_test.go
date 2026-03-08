@@ -472,3 +472,16 @@ func TestParsePartialBlockNeverNil(t *testing.T) {
 		t.Fatal("block must never be nil")
 	}
 }
+
+// TestForStmtErrorMessage verifies that "for i" (incomplete for statement)
+// produces an error mentioning both '=' and 'in'.
+func TestForStmtErrorMessage(t *testing.T) {
+	_, err := Parse("test", "for i")
+	if err == nil {
+		t.Fatal("expected error for incomplete for statement")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "'=' or 'in' expected") {
+		t.Errorf("expected error mentioning '=' or 'in', got: %s", errMsg)
+	}
+}

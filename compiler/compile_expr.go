@@ -93,7 +93,7 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 
 	case *ast.FloatExpr: // e.g. local x = 3.14 — LOADF for whole floats, LOADK/LOADKX otherwise
 		iv := int(e.Value)
-		if float64(iv) == e.Value && iv >= -OffsetSBx && iv <= OffsetSBx {
+		if float64(iv) == e.Value && iv >= -OffsetSBx && iv <= OffsetSBx && !math.Signbit(e.Value) {
 			fs.emit(AsBx(OP_LOADF, reg, iv), e.P.Line)
 		} else {
 			k := fs.addConstant(FloatValue(e.Value))

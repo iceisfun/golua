@@ -53,14 +53,18 @@ func (c *compiler) compileChunk(source string, block *ast.Block) *Proto {
 
 // compileBlock compiles all statements in a block, releasing temporaries after each.
 func (c *compiler) compileBlock(block *ast.Block) {
-	c.compileBlockOpts(block, true)
+	c.compileBlockWith(block, true, 0)
 }
 
-// compileBlockOpts compiles a block. When labelEndOpt is true, labels at
+// compileBlockWith compiles a block. When labelEndOpt is true, labels at
 // the end of the block are treated as if preceding locals are out of scope
 // (Lua 5.4 §3.3.4). This must be false for repeat-until bodies, where the
 // until condition can still reference body locals.
-func (c *compiler) compileBlockOpts(block *ast.Block, labelEndOpt bool) {
+//
+// blockAfterLine is the line of whatever follows this block (e.g., the
+// until keyword for repeat blocks, or the end keyword's line). When > 0,
+// it is used as the fallback error line for labels at the end of the block.
+func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAfterLine int) {
 	if block == nil {
 		return
 	}
@@ -72,7 +76,20 @@ func (c *compiler) compileBlockOpts(block *ast.Block, labelEndOpt bool) {
 		// out of scope, allowing goto to jump over those locals.
 		if lbl, ok := stmt.(*ast.LabelStmt); ok {
 			atEnd := labelEndOpt && labelAtBlockEnd(stmts, i)
-			c.compileLabelStmt(lbl, atEnd)
+			// Compute the line of the next non-label statement after this
+			// label, matching Lua 5.4's lexer line for error messages.
+			// Falls back to blockAfterLine (or c.endLine) if nothing follows.
+			afterLine := blockAfterLine
+			if afterLine == 0 {
+				afterLine = c.endLine
+			}
+			for j := i + 1; j < len(stmts); j++ {
+				if _, isLabel := stmts[j].(*ast.LabelStmt); !isLabel {
+					afterLine = stmts[j].Pos().Line
+					break
+				}
+			}
+			c.compileLabelStmt(lbl, atEnd, afterLine)
 		} else {
 			c.compileStmt(stmt)
 		}
@@ -129,7 +146,7 @@ func (c *compiler) compileStmt(stmt ast.Stmt) {
 	case *ast.GotoStmt:
 		c.compileGotoStmt(s)
 	case *ast.LabelStmt:
-		c.compileLabelStmt(s, false)
+		c.compileLabelStmt(s, false, c.endLine)
 	case *ast.FuncStmt:
 		c.compileFuncStmt(s)
 	case *ast.LocalFuncStmt:
@@ -768,9 +785,9 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	fs.enterScope(true)
 
 	// Use labelEndOpt=false because the until condition can reference
-	// body locals — labels at the end of a repeat block must NOT treat
+	// body locals -- labels at the end of a repeat block must NOT treat
 	// preceding locals as out of scope.
-	c.compileBlockOpts(s.Body, false)
+	c.compileBlockWith(s.Body, false, s.Cond.Pos().Line)
 
 	// Evaluate condition (may reference body locals)
 	condLine := s.Cond.Pos().Line
@@ -1097,7 +1114,7 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 // its block (Lua 5.4 §3.3.4). In that case, locals declared before the
 // label are treated as already out of scope, allowing goto to jump past
 // them.
-func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool) {
+func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine int) {
 	fs := c.fs
 
 	// Check for duplicate label in all visible scopes. Labels are
@@ -1139,7 +1156,7 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool) {
 				if baseIdx >= 0 && baseIdx < len(fs.locals) {
 					varName = fs.locals[baseIdx].name
 				}
-				c.errorAtEOF("<goto %s> at line %d jumps into the scope of local '%s'", pg.name, pg.line, varName)
+				c.errorAtLine(afterLine, "<goto %s> at line %d jumps into the scope of local '%s'", pg.name, pg.line, varName)
 				remaining = append(remaining, pg)
 				continue
 			}
