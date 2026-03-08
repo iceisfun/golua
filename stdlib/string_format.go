@@ -72,6 +72,9 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 
 		specChar := format[i]
 
+		// Validate spec structure: %[flags][width][.precision]
+		validateFormatStructure(spec, specChar)
+
 		// Validate width and precision (Lua 5.4: must be < 100)
 		validateFormatWidthPrec(spec, specChar)
 
@@ -601,6 +604,32 @@ func parseFormatFlags(spec string) (zeroPad, width int, left bool, hash bool) {
 		}
 	}
 	return zeroPad, width, left, hash
+}
+
+// validateFormatStructure checks that the format specifier follows the valid
+// structure: %[flags][width][.precision]. Flags after width, negative precision,
+// double dots, or double precision are all invalid. Matches Lua 5.4 behavior.
+func validateFormatStructure(spec string, conv byte) {
+	i := 1 // skip '%'
+	// Phase 1: flags (only - + # 0 space)
+	for i < len(spec) && strings.ContainsRune("-+ #0", rune(spec[i])) {
+		i++
+	}
+	// Phase 2: width (digits only)
+	for i < len(spec) && spec[i] >= '0' && spec[i] <= '9' {
+		i++
+	}
+	// Phase 3: optional precision (one '.' followed by digits)
+	if i < len(spec) && spec[i] == '.' {
+		i++
+		for i < len(spec) && spec[i] >= '0' && spec[i] <= '9' {
+			i++
+		}
+	}
+	// If we haven't consumed the entire spec, the structure is invalid.
+	if i < len(spec) {
+		panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
+	}
 }
 
 // validateFormatWidthPrec panics if width or precision >= 100 (Lua 5.4 limit).
