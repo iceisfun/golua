@@ -348,7 +348,9 @@ func coYield(v *vm.VM) int {
 	// Signal yield
 	yieldCh, resumeCh := v.GetCoroutineChannels()
 	if yieldCh == nil || resumeCh == nil {
-		panic("attempt to yield from outside a coroutine")
+		// Use LuaError to avoid addCallerLocation prefix — Lua 5.4 raises
+		// this from C code so no file:line is prepended.
+		panic(&vm.LuaError{Value: vm.NewString("attempt to yield from outside a coroutine")})
 	}
 	if !v.IsYieldableContext() {
 		// Use LuaError to avoid addCallerLocation prefix — Lua 5.4 raises
