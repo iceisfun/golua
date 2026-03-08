@@ -132,6 +132,15 @@ func coResume(v *vm.VM) int {
 	}
 
 	id, _ := idVal.ToInt()
+
+	// The main thread (id=0) is never in the coroutines map.
+	// It is always "running" or "normal", never "suspended", so resume fails.
+	if int(id) == 0 {
+		v.Set(0, vm.False)
+		v.Set(1, vm.NewString("cannot resume non-suspended coroutine"))
+		return 2
+	}
+
 	coroutinesMu.Lock()
 	co := coroutines[int(id)]
 	coroutinesMu.Unlock()
