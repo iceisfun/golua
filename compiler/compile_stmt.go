@@ -1328,9 +1328,12 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 
 	c.compileBlock(fe.Body)
 
-	// Ensure function ends with a return
+	// Ensure function ends with a return.
+	// Use the 'end' keyword line if available (matches Lua 5.4 for __close errors).
 	lastLine := line
-	if fe.Body != nil && len(fe.Body.Stmts) > 0 {
+	if fe.EndLine > 0 {
+		lastLine = fe.EndLine
+	} else if fe.Body != nil && len(fe.Body.Stmts) > 0 {
 		lastLine = fe.Body.Stmts[len(fe.Body.Stmts)-1].Pos().Line
 	}
 	fs.proto.LastLine = lastLine
