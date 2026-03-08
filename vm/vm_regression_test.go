@@ -118,51 +118,79 @@ func TestCallDepth500PureLua(t *testing.T) {
 	}
 }
 
-// Bug 3: __newindex table chain off-by-one
+// Bug 3: __newindex/__index table chain depth matches Lua 5.4's MAXTAGLOOP.
+// With MaxMetaDepth=N, exactly N table-to-table redirects are allowed.
 func TestNewIndexChainOffByOne(t *testing.T) {
-	// With MaxMetaDepth=5 and `< MaxMetaDepth`: loop runs depth 0,1,2,3,4 = 5 iterations
-	// A chain of 5 redirects needs 6 iterations (5 to follow + 1 to process final) → should fail
-	// With the bug (`<= MaxMetaDepth`): 6 iterations → succeeds incorrectly
 	v := New(WithMaxMetaDepth(5))
 
-	// Build chain: t0 -> t1 -> t2 -> t3 -> t4 -> t5 (final, no __newindex)
-	tables := make([]*Table, 6)
-	for i := range tables {
-		tables[i] = NewEmptyTable()
+	// 5 redirects should succeed with MaxMetaDepth=5
+	tables5 := make([]*Table, 6)
+	for i := range tables5 {
+		tables5[i] = NewEmptyTable()
 	}
 	for i := 0; i < 5; i++ {
 		mt := NewEmptyTable()
-		mt.MustSet(metaNewIndex, NewTable(tables[i+1]))
-		tables[i].SetMetatable(mt)
+		mt.MustSet(metaNewIndex, NewTable(tables5[i+1]))
+		tables5[i].SetMetatable(mt)
+	}
+	err := v.TableSetInt(tables5[0], 1, NewInt(42))
+	if err != nil {
+		t.Errorf("expected 5 __newindex redirects to succeed with MaxMetaDepth=5, got: %v", err)
 	}
 
-	// Setting a key on tables[0] should chain through 5 redirects.
-	// With the fix (< MaxMetaDepth), this should fail when MaxMetaDepth=5.
-	err := v.TableSetInt(tables[0], 1, NewInt(42))
+	// 6 redirects should fail with MaxMetaDepth=5
+	tables6 := make([]*Table, 7)
+	for i := range tables6 {
+		tables6[i] = NewEmptyTable()
+	}
+	for i := 0; i < 6; i++ {
+		mt := NewEmptyTable()
+		mt.MustSet(metaNewIndex, NewTable(tables6[i+1]))
+		tables6[i].SetMetatable(mt)
+	}
+	err = v.TableSetInt(tables6[0], 1, NewInt(42))
 	if err == nil {
-		t.Error("expected __newindex chain error with 5 redirects and MaxMetaDepth=5, but got nil")
+		t.Error("expected __newindex chain error with 6 redirects and MaxMetaDepth=5, but got nil")
 	}
 }
 
-// Bug 3 continued: verify __index also has the same fix
+// Bug 3 continued: verify __index also matches MAXTAGLOOP semantics
 func TestIndexChainOffByOne(t *testing.T) {
 	v := New(WithMaxMetaDepth(5))
 
-	// Build chain of 6 tables where __index points to the next
-	tables := make([]*Table, 6)
-	for i := range tables {
-		tables[i] = NewEmptyTable()
+	// 5 redirects should succeed with MaxMetaDepth=5
+	tables5 := make([]*Table, 6)
+	for i := range tables5 {
+		tables5[i] = NewEmptyTable()
 	}
+	tables5[5].MustSet(NewString("x"), NewInt(99))
 	for i := 0; i < 5; i++ {
 		mt := NewEmptyTable()
-		mt.MustSet(metaIndex, NewTable(tables[i+1]))
-		tables[i].SetMetatable(mt)
+		mt.MustSet(metaIndex, NewTable(tables5[i+1]))
+		tables5[i].SetMetatable(mt)
+	}
+	val, err := v.TableGet(tables5[0], NewString("x"))
+	if err != nil {
+		t.Errorf("expected 5 __index redirects to succeed with MaxMetaDepth=5, got: %v", err)
+	}
+	if val.AsInt() != 99 {
+		t.Errorf("expected 99, got %v", val)
 	}
 
-	// Looking up a non-existent key on tables[0] chains through 5 __index redirects
-	_, err := v.TableGet(tables[0], NewString("x"))
+	// 6 redirects should fail with MaxMetaDepth=5
+	tables6 := make([]*Table, 7)
+	for i := range tables6 {
+		tables6[i] = NewEmptyTable()
+	}
+	tables6[6].MustSet(NewString("x"), NewInt(99))
+	for i := 0; i < 6; i++ {
+		mt := NewEmptyTable()
+		mt.MustSet(metaIndex, NewTable(tables6[i+1]))
+		tables6[i].SetMetatable(mt)
+	}
+	_, err = v.TableGet(tables6[0], NewString("x"))
 	if err == nil {
-		t.Error("expected __index chain error with 5 redirects and MaxMetaDepth=5, but got nil")
+		t.Error("expected __index chain error with 6 redirects and MaxMetaDepth=5, but got nil")
 	}
 }
 
@@ -226,7 +254,29 @@ func TestFloatForLoopNaNStep(t *testing.T) {
 	}
 }
 
-// Bug: __newindex chain of 2000 should error (Lua 5.4 allows 1999 redirects max)
+// __newindex chain of 2001 should error (Lua 5.4 MAXTAGLOOP=2000)
+func TestNewIndexChain2001(t *testing.T) {
+	v := New() // default MaxMetaDepth = 2000
+
+	// Chain of 2001 tables with __newindex pointing to next
+	tables := make([]*Table, 2002)
+	for i := range tables {
+		tables[i] = NewEmptyTable()
+	}
+	for i := 0; i < 2001; i++ {
+		mt := NewEmptyTable()
+		mt.MustSet(metaNewIndex, NewTable(tables[i+1]))
+		tables[i].SetMetatable(mt)
+	}
+
+	// This should fail — 2001 redirects exceeds the limit
+	err := v.tableSetString(tables[0], "x", NewInt(42))
+	if err == nil {
+		t.Error("expected __newindex chain error with 2001 redirects, but got nil")
+	}
+}
+
+// __newindex chain of 2000 should succeed (matching Lua 5.4 MAXTAGLOOP=2000)
 func TestNewIndexChain2000(t *testing.T) {
 	v := New() // default MaxMetaDepth = 2000
 
@@ -241,35 +291,13 @@ func TestNewIndexChain2000(t *testing.T) {
 		tables[i].SetMetatable(mt)
 	}
 
-	// This should fail — 2000 redirects exceeds the limit
-	err := v.tableSetString(tables[0], "x", NewInt(42))
-	if err == nil {
-		t.Error("expected __newindex chain error with 2000 redirects, but got nil")
-	}
-}
-
-// Bug: __newindex chain of 1999 should succeed
-func TestNewIndexChain1999(t *testing.T) {
-	v := New() // default MaxMetaDepth = 2000
-
-	// Chain of 1999 tables with __newindex pointing to next
-	tables := make([]*Table, 2000)
-	for i := range tables {
-		tables[i] = NewEmptyTable()
-	}
-	for i := 0; i < 1999; i++ {
-		mt := NewEmptyTable()
-		mt.MustSet(metaNewIndex, NewTable(tables[i+1]))
-		tables[i].SetMetatable(mt)
-	}
-
-	// This should succeed — 1999 redirects is within the limit
+	// This should succeed — 2000 redirects is within the limit
 	err := v.tableSetString(tables[0], "x", NewInt(42))
 	if err != nil {
-		t.Errorf("__newindex chain of 1999 should succeed, got error: %v", err)
+		t.Errorf("__newindex chain of 2000 should succeed, got error: %v", err)
 	}
 	// Value should end up in the last table
-	val := tables[1999].GetString("x")
+	val := tables[2000].GetString("x")
 	if val.AsInt() != 42 {
 		t.Errorf("expected 42 in last table, got %v", val)
 	}

@@ -103,8 +103,9 @@ type VM struct {
 	ctx           context.Context // nil = no cancellation checking
 	limits        Limits          // zero values = no limit
 	instrCount    int64           // only tracked when MaxInstructions > 0
-	callDepthBase int             // inherited call depth from parent VM (for coroutines)
-	closeDepth    *int32          // shared counter tracking nested coroutine.close depth (atomic)
+	callDepthBase  int             // inherited call depth from parent VM (for coroutines)
+	closeDepth     *int32          // shared counter tracking nested coroutine.close depth (atomic)
+	metaCallDepth  int             // >0 when inside a metamethod call chain (for "C stack overflow" message)
 
 	// GC rate limiting
 	lastLuaGC   time.Time // Last time ProcessGcFinalizers invoked runtime.GC()
@@ -766,12 +767,38 @@ func (vm *VM) maxCallDepth() int {
 
 // checkCallDepth panics with "stack overflow" if the effective call depth
 // (callDepthBase + current callStack length) exceeds the limit. The panic
-// is a *LuaError so pcall/xpcall can catch it.
+// is a *LuaError so pcall/xpcall can catch it. When the overflow occurs
+// inside a metamethod or native function call chain, the message is
+// "C stack overflow" to match Lua 5.4's behavior.
 func (vm *VM) checkCallDepth() {
 	max := vm.maxCallDepth()
 	if max > 0 && vm.callDepthBase+len(vm.callStack) > max {
-		panic(&LuaError{Value: NewString(vm.runtimeError("stack overflow").Error())})
+		msg := "stack overflow"
+		if vm.hasCFrame() {
+			msg = "C stack overflow"
+		}
+		panic(&LuaError{Value: NewString(vm.runtimeError(msg).Error())})
 	}
+}
+
+// hasCFrame reports whether the current overflow involves native (C) function
+// frames in the recent call chain, used to decide between "stack overflow"
+// and "C stack overflow".
+func (vm *VM) hasCFrame() bool {
+	if vm.metaCallDepth > 0 {
+		return true
+	}
+	n := len(vm.callStack)
+	limit := 10
+	if limit > n {
+		limit = n
+	}
+	for i := n - 1; i >= n-limit; i-- {
+		if vm.callStack[i].closure == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // EnterCloseChain atomically increments the shared close-depth counter and
@@ -792,6 +819,9 @@ func (vm *VM) ExitCloseChain() {
 // callMetamethod calls a metamethod with 2 arguments and returns the first result.
 // name is the metamethod name without "__" prefix (e.g. "index", "add").
 func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
+	vm.metaCallDepth++
+	defer func() { vm.metaCallDepth-- }()
+
 	if fn.IsFunction() {
 		vm.pendingCallName = name
 		vm.pendingCallNameWhat = "metamethod"
@@ -852,6 +882,9 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 // callMetamethod3 calls a metamethod with 3 arguments.
 // name is the metamethod name without "__" prefix (e.g. "newindex").
 func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, error) {
+	vm.metaCallDepth++
+	defer func() { vm.metaCallDepth-- }()
+
 	if fn.IsFunction() {
 		vm.pendingCallName = name
 		vm.pendingCallNameWhat = "metamethod"
@@ -915,7 +948,7 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 	// Resolve __call chain: each level prepends self
 	cur := fn
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
 		mm := vm.getMetafield(cur, "__call")
 		if mm.IsNil() {
 			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", vm.ObjTypeName(fn), name)
