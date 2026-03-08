@@ -115,6 +115,13 @@ func coCreate(v *vm.VM) int {
 	threadVal := vm.NewTable(coTable)
 	co.thread = threadVal
 
+	// Create the coroutine VM eagerly so that debug.sethook/gethook can
+	// operate on it before the first resume (matching Lua 5.4 behavior).
+	coVM := vm.NewCoroutineVM(v, co.yieldCh, co.resumeCh, id)
+	coVM.SetThreadObj(threadVal)
+	co.coVM = coVM
+	coTable.SetVMRef(coVM)
+
 	v.Set(0, threadVal)
 	return 1
 }
@@ -305,19 +312,10 @@ func runCoroutine(co *Coroutine) {
 	var results []vm.Value
 	var err error
 
-	// Create a fresh VM for this coroutine that shares globals but has its own stack
-	coVM := vm.NewCoroutineVM(co.vm, co.yieldCh, co.resumeCh, co.id)
-	coVM.SetThreadObj(co.thread)
+	// Use the coroutine VM created eagerly in coCreate
 	co.mu.Lock()
-	co.coVM = coVM
+	coVM := co.coVM
 	co.mu.Unlock()
-
-	// Store VM reference on thread table for debug.getlocal/setlocal coroutine support
-	if co.thread.IsTable() {
-		if tbl, ok := co.thread.AsTable().(*vm.Table); ok {
-			tbl.SetVMRef(coVM)
-		}
-	}
 
 	if co.fn.IsFunction() {
 		results, err = coVM.CallCoroutine(co.fn.AsClosure(), args)
@@ -474,16 +472,24 @@ func coWrap(v *vm.VM) int {
 	coTable.SetString("__coroutine_id", vm.NewInt(int64(id)))
 	coTable.SetThread(true)
 
+	threadVal := vm.NewTable(coTable)
+
 	co := &Coroutine{
 		id:       id,
 		fn:       fn,
 		status:   statusSuspended,
 		vm:       v,
-		thread:   vm.NewTable(coTable),
+		thread:   threadVal,
 		resumeCh: make(chan []vm.Value, 1),
 		yieldCh:  make(chan []vm.Value, 1),
 		doneCh:   make(chan struct{}),
 	}
+
+	// Create the coroutine VM eagerly (matching coCreate)
+	coVM := vm.NewCoroutineVM(v, co.yieldCh, co.resumeCh, id)
+	coVM.SetThreadObj(threadVal)
+	co.coVM = coVM
+	coTable.SetVMRef(coVM)
 
 	coroutinesMu.Lock()
 	coroutines[id] = co

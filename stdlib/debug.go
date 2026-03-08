@@ -180,44 +180,83 @@ func luaDebugGetInfo(v *vm.VM) int {
 	var info *vm.FrameInfo
 	var what string
 
-	if arg1.IsCallable() {
-		// debug.getinfo(func [, what])
-		info = v.GetFuncInfo(arg1)
+	// Check if first arg is a thread (coroutine)
+	targetVM := v
+	fArg := arg1
+	whatIdx := 2
+	if arg1.IsTable() {
+		tbl := arg1.AsTable()
+		if tbl != nil && tbl.IsThread() {
+			coVM := tbl.VMRef()
+			if coVM != nil {
+				targetVM = coVM
+			} else {
+				// Dead/never-resumed coroutine: no stack to inspect
+				// Function form still works, level form returns nil
+				fArg = v.Get(2)
+				if fArg.IsCallable() {
+					info = v.GetFuncInfo(fArg)
+					if info == nil {
+						v.Set(0, vm.Nil)
+						return 1
+					}
+					what = "flnStu"
+					if !v.Get(3).IsNil() {
+						what = v.Get(3).AsString()
+					}
+					goto buildResult
+				}
+				v.Set(0, vm.Nil)
+				return 1
+			}
+			fArg = v.Get(2)
+			whatIdx = 3
+		}
+	}
+
+	if fArg.IsCallable() {
+		// debug.getinfo([thread,] func [, what])
+		info = v.GetFuncInfo(fArg)
 		if info == nil {
 			v.Set(0, vm.Nil)
 			return 1
 		}
 		what = "flnStu" // default
-		if !v.Get(2).IsNil() {
-			what = v.Get(2).AsString()
+		if !v.Get(whatIdx).IsNil() {
+			what = v.Get(whatIdx).AsString()
 		}
 	} else {
-		// debug.getinfo(level [, what])
-		level, ok := arg1.ToInt()
+		// debug.getinfo([thread,] level [, what])
+		level, ok := fArg.ToInt()
 		if !ok {
-			got := arg1.Type()
-			if v.ArgCount() < 1 {
+			got := fArg.Type()
+			if v.ArgCount() < whatIdx-1 {
 				got = "no value"
 			}
-			callerArgError(v, 1, "debug.getinfo", fmt.Sprintf("number expected, got %s", got))
+			callerArgError(v, whatIdx-1, "debug.getinfo", fmt.Sprintf("number expected, got %s", got))
 		}
 		if level < 0 {
 			v.Set(0, vm.Nil)
 			return 1
 		}
-		// Level 0 = getinfo itself (native frame at top of stack).
-		// The VM's GetFrameInfo uses: idx = len(callStack) - 1 - level.
-		// Since getinfo's native frame is at the top, level 0 maps directly.
-		info = v.GetFrameInfo(int(level))
+		if targetVM == v {
+			// Level 0 = getinfo itself (native frame at top of stack).
+			info = targetVM.GetFrameInfo(int(level))
+		} else {
+			// For coroutines, level 0 = top of coroutine stack (no native frame offset)
+			info = targetVM.GetFrameInfo(int(level))
+		}
 		if info == nil {
 			v.Set(0, vm.Nil)
 			return 1
 		}
 		what = "flnStu" // default
-		if !v.Get(2).IsNil() {
-			what = v.Get(2).AsString()
+		if !v.Get(whatIdx).IsNil() {
+			what = v.Get(whatIdx).AsString()
 		}
 	}
+
+buildResult:
 
 	// Validate the what string ('>' is C API only, not valid at Lua level)
 	for _, ch := range what {
@@ -637,21 +676,36 @@ func luaDebugSetMetatable(v *vm.VM) int {
 func luaDebugSetHook(v *vm.VM) int {
 	arg1 := v.Get(1)
 
-	// No arguments or nil first arg: remove hook
-	if arg1.IsNil() || v.ArgCount() == 0 {
-		v.SetHook(vm.Nil, 0, 0)
+	// Check if first arg is a thread (coroutine)
+	targetVM := v
+	hookIdx := 1
+	if arg1.IsTable() {
+		tbl := arg1.AsTable()
+		if tbl != nil && tbl.IsThread() {
+			coVM := tbl.VMRef()
+			if coVM != nil {
+				targetVM = coVM
+			}
+			hookIdx = 2
+			arg1 = v.Get(hookIdx)
+		}
+	}
+
+	// No arguments or nil hook arg: remove hook
+	if arg1.IsNil() || v.ArgCount() < hookIdx {
+		targetVM.SetHook(vm.Nil, 0, 0)
 		return 0
 	}
 
 	if !arg1.IsCallable() {
-		callerArgError(v, 1, "debug.sethook", fmt.Sprintf("function expected, got %s", arg1.Type()))
+		callerArgError(v, hookIdx, "debug.sethook", fmt.Sprintf("function expected, got %s", arg1.Type()))
 	}
 
-	arg2 := v.Get(2)
-	if !arg2.IsString() {
-		callerArgError(v, 2, "debug.sethook", "string expected")
+	maskArg := v.Get(hookIdx + 1)
+	if !maskArg.IsString() {
+		callerArgError(v, hookIdx+1, "debug.sethook", "string expected")
 	}
-	maskStr := arg2.AsString()
+	maskStr := maskArg.AsString()
 
 	var mask byte
 	for _, ch := range maskStr {
@@ -668,8 +722,9 @@ func luaDebugSetHook(v *vm.VM) int {
 	}
 
 	count := 0
-	if !v.Get(3).IsNil() {
-		if c, ok := v.Get(3).ToInt(); ok {
+	countArg := v.Get(hookIdx + 2)
+	if !countArg.IsNil() {
+		if c, ok := countArg.ToInt(); ok {
 			count = int(c)
 			if count > 0 {
 				mask |= vm.HookMaskCount
@@ -677,7 +732,7 @@ func luaDebugSetHook(v *vm.VM) int {
 		}
 	}
 
-	v.SetHook(arg1, mask, count)
+	targetVM.SetHook(arg1, mask, count)
 	return 0
 }
 
@@ -726,7 +781,26 @@ func luaDebugUpvalueJoin(v *vm.VM) int {
 // debug.gethook([thread])
 // Returns the current hook function, mask string, and count.
 func luaDebugGetHook(v *vm.VM) int {
-	hookFunc, mask, count := v.GetHook()
+	// Check if first arg is a thread (coroutine)
+	targetVM := v
+	arg1 := v.Get(1)
+	if arg1.IsTable() {
+		tbl := arg1.AsTable()
+		if tbl != nil && tbl.IsThread() {
+			coVM := tbl.VMRef()
+			if coVM != nil {
+				targetVM = coVM
+			} else {
+				// Dead/never-resumed coroutine: no hook
+				v.Set(0, vm.Nil)
+				v.Set(1, vm.Nil)
+				v.Set(2, vm.Nil)
+				return 3
+			}
+		}
+	}
+
+	hookFunc, mask, count := targetVM.GetHook()
 
 	v.Set(0, hookFunc)
 
