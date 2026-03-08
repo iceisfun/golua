@@ -694,6 +694,12 @@ func (c *compiler) compileCondJump(cond ast.Expr, jumpOnFalse bool, line int) {
 		k = 0 // skip if falsy (jump on true means we fall through on true)
 	}
 	fs.emit(ABC(OP_TEST, reg, 0, 0, k), line)
+	// Free the condition register — it's a temporary that is only needed for
+	// the TEST instruction above. Without this, the register "leaks" and
+	// subsequent locals in the then/body block get allocated to higher
+	// registers, causing debug.getlocal to return wrong values (the local
+	// name maps to the condition's register instead of the local's actual one).
+	fs.freeReg = reg
 }
 
 // ---------------------------------------------------------------------------
