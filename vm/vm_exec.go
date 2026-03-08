@@ -1280,13 +1280,23 @@ func (vm *VM) execute() ([]Value, error) {
 						limitI = math.MinInt64
 						limitIsInt = true
 					} else if math.IsNaN(limitF) {
-						// NaN limit: force float mode and skip loop body.
-						// No comparison with NaN is true, so the loop runs 0 iterations.
-						vm.stack[frame.base+a] = NewFloat(float64(initI))
-						vm.stack[frame.base+a+1] = NewFloat(limitF)
-						vm.stack[frame.base+a+2] = NewFloat(float64(stepI))
-						frame.pc += bx + 1
-						break
+						// NaN limit with integer init/step: Lua 5.4's
+						// luaV_forlimit treats NaN as "smaller than min int"
+						// (since 0 < NaN is false). So limit = MinInt64.
+						// For positive step: stopnow = true → skip loop.
+						// For negative step: stopnow = false → enter loop
+						// with limit = MinInt64 (always >= comparison true).
+						if stepI >= 0 {
+							// Positive step: skip loop
+							vm.stack[frame.base+a] = NewInt(initI)
+							vm.stack[frame.base+a+1] = NewInt(math.MinInt64)
+							vm.stack[frame.base+a+2] = NewInt(stepI)
+							frame.pc += bx + 1
+							break
+						}
+						// Negative step: enter loop with limit = MinInt64
+						limitI = math.MinInt64
+						limitIsInt = true
 					} else if stepI > 0 {
 						fl := math.Floor(limitF)
 						if fl < float64(math.MinInt64) {
@@ -1353,10 +1363,10 @@ func (vm *VM) execute() ([]Value, error) {
 				vm.stack[frame.base+a] = NewFloat(initF)
 				vm.stack[frame.base+a+1] = NewFloat(limitF)
 				vm.stack[frame.base+a+2] = NewFloat(stepF)
-				if math.IsNaN(limitF) || math.IsNaN(initF) || math.IsNaN(stepF) {
-					// NaN in any operand: skip loop body (no comparison with NaN is true)
-					frame.pc += bx + 1
-				} else if stepF >= 0 {
+				// Use C-style float comparison semantics: NaN comparisons
+				// return false, so "should we skip?" checks fail and the
+				// loop enters. This matches Lua 5.4's luai_numlt behavior.
+				if stepF >= 0 {
 					if initF > limitF {
 						frame.pc += bx + 1
 					} else {

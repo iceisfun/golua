@@ -696,7 +696,7 @@ func (vm *VM) maxCallDepth() int {
 func (vm *VM) checkCallDepth() {
 	max := vm.maxCallDepth()
 	if max > 0 && vm.callDepthBase+len(vm.callStack) > max {
-		panic(&LuaError{Value: NewString(vm.runtimeError("C stack overflow").Error())})
+		panic(&LuaError{Value: NewString(vm.runtimeError("stack overflow").Error())})
 	}
 }
 
@@ -841,7 +841,7 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 	// Resolve __call chain: each level prepends self
 	cur := fn
-	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		mm := vm.getMetafield(cur, "__call")
 		if mm.IsNil() {
 			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", vm.ObjTypeName(fn), name)
@@ -949,11 +949,7 @@ func (vm *VM) GetSourceLocation(level int) string {
 			if pc < len(proto.Lines) {
 				return fmt.Sprintf("%s:%d", shortSrc(proto.Source), proto.Lines[pc])
 			}
-			// No line info (e.g., stripped function). Only return source
-			// prefix if source is non-empty, to avoid spurious [string ""].
-			if proto.Source != "" {
-				return shortSrc(proto.Source)
-			}
+			// No line info (e.g., stripped function) — don't add source prefix.
 			return ""
 		}
 		idx--
