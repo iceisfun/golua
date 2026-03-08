@@ -70,6 +70,11 @@ func (p *JailedIoProvider) Remove(name string) error {
 	return fmt.Errorf("os.remove not available in jailed IO provider")
 }
 
+// Rename is not supported in jailed provider.
+func (p *JailedIoProvider) Rename(oldname, newname string) error {
+	return fmt.Errorf("os.rename not available in jailed IO provider")
+}
+
 // jailedFile wraps an fs.File with buffered reading.
 type jailedFile struct {
 	file   fs.File

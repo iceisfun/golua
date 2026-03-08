@@ -127,6 +127,19 @@ func (p *FullIoProvider) Remove(name string) error {
 	return os.Remove(path)
 }
 
+// Rename renames (moves) a file within the provider's root directory.
+func (p *FullIoProvider) Rename(oldname, newname string) error {
+	oldpath, err := p.resolvePath(oldname)
+	if err != nil {
+		return err
+	}
+	newpath, err := p.resolvePath(newname)
+	if err != nil {
+		return err
+	}
+	return os.Rename(oldpath, newpath)
+}
+
 // fullFile wraps an os.File with buffered reading and writing.
 type fullFile struct {
 	file     *os.File

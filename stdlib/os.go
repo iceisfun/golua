@@ -40,6 +40,9 @@ func openOs(v *vm.VM) {
 		if caps.AllowRemove {
 			osTable.SetString("remove", vm.NewNativeFunc(makeOsRemove(ioProvider)))
 		}
+		if caps.AllowRename {
+			osTable.SetString("rename", vm.NewNativeFunc(makeOsRename(ioProvider)))
+		}
 	}
 
 	// execute routes through the exec provider
@@ -244,6 +247,28 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 			panic("bad argument #1 to 'os.remove' (string expected, got nil)")
 		}
 		err := ioProvider.Remove(name.AsString())
+		if err != nil {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(err.Error()))
+			return 2
+		}
+		v.Set(0, vm.True)
+		return 1
+	}
+}
+
+// makeOsRename creates the os.rename(oldname, newname) function.
+func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		if v.ArgCount() < 1 || v.Get(1).IsNil() {
+			callerArgError(v, 1, "os.rename", "string expected, got nil")
+		}
+		if v.ArgCount() < 2 || v.Get(2).IsNil() {
+			callerArgError(v, 2, "os.rename", "string expected, got nil")
+		}
+		oldname := v.Get(1).AsString()
+		newname := v.Get(2).AsString()
+		err := ioProvider.Rename(oldname, newname)
 		if err != nil {
 			v.Set(0, vm.Nil)
 			v.Set(1, vm.NewString(err.Error()))

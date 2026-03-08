@@ -38,6 +38,10 @@ type LuaIoProvider interface {
 	// Remove removes a file or empty directory.
 	// Returns error if not supported or if the operation fails.
 	Remove(name string) error
+
+	// Rename renames (moves) a file.
+	// Returns error if not supported or if the operation fails.
+	Rename(oldname, newname string) error
 }
 
 // LuaFile represents an open file handle.
