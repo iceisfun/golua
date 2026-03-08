@@ -34,7 +34,7 @@ func ParsePartial(source, input string) (*ast.Block, error) {
 		return block, p.err
 	}
 	if p.tok.Type != token.EOS {
-		return block, p.errorf("<eof> expected near %s", p.nearToken())
+		return block, p.errorf("<eof> expected%s", p.nearClause())
 	}
 	return block, nil
 }
@@ -58,7 +58,7 @@ func Parse(source, input string, stripShebang ...bool) (*ast.Block, error) {
 		return nil, p.err
 	}
 	if p.tok.Type != token.EOS {
-		return nil, p.errorf("<eof> expected near %s", p.nearToken())
+		return nil, p.errorf("<eof> expected%s", p.nearClause())
 	}
 	return block, nil
 }
@@ -102,7 +102,7 @@ func (p *parser) advance() error {
 
 func (p *parser) expect(typ token.Type) (token.Token, error) {
 	if p.tok.Type != typ {
-		return token.Token{}, p.errorf("%s expected near %s", tokenForError(typ), p.nearToken())
+		return token.Token{}, p.errorf("%s expected%s", tokenForError(typ), p.nearClause())
 	}
 	tok := p.tok
 	if err := p.advance(); err != nil {
@@ -155,10 +155,10 @@ func (p *parser) checkMatch(close token.Type, openLiteral string, openLine int) 
 		return p.advance()
 	}
 	if openLine == p.tok.Pos.Line {
-		return p.errorf("%s expected near %s", tokenForError(close), p.nearToken())
+		return p.errorf("%s expected%s", tokenForError(close), p.nearClause())
 	}
-	return p.errorf("%s expected (to close '%s' at line %d) near %s",
-		tokenForError(close), openLiteral, openLine, p.nearToken())
+	return p.errorf("%s expected (to close '%s' at line %d)%s",
+		tokenForError(close), openLiteral, openLine, p.nearClause())
 }
 
 // tokenForError formats a token type for error messages.
@@ -173,6 +173,8 @@ func tokenForError(typ token.Type) string {
 
 // nearToken returns the current token formatted for error messages:
 // quoted for names/strings/numbers, unquoted for <eof> and keywords.
+// Returns "" for null byte tokens (Lua 5.4 omits the near clause for \0
+// because the null byte terminates the C string buffer).
 func (p *parser) nearToken() string {
 	switch p.tok.Type {
 	case token.NAME, token.INT, token.FLOAT:
@@ -201,12 +203,28 @@ func (p *parser) nearToken() string {
 			} else {
 				b = lit[0]
 			}
+			// Null byte: return empty to omit the "near" clause,
+			// matching Lua 5.4 where \0 terminates the token buffer.
+			if b == 0 {
+				return ""
+			}
 			if b < 0x20 || b >= 0x7f {
 				return fmt.Sprintf("'<\\%d>'", b)
 			}
 		}
 		return "'" + lit + "'"
 	}
+}
+
+// nearClause returns " near TOKEN" for error messages, or "" if the
+// near token is empty (e.g. for null byte tokens). This mirrors Lua 5.4's
+// luaX_syntaxerror which omits the near clause when txtToken returns "".
+func (p *parser) nearClause() string {
+	tok := p.nearToken()
+	if tok == "" {
+		return ""
+	}
+	return " near " + tok
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +556,7 @@ func (p *parser) parseExprStat() ast.Stmt {
 		// Lua 5.4 rejects non-lvalue assignment targets with "syntax error near '='".
 		for _, t := range targets {
 			if !isLvalue(t) {
-				p.errorf("syntax error near %s", p.nearToken())
+				p.errorf("syntax error%s", p.nearClause())
 				return nil
 			}
 		}
@@ -552,7 +570,7 @@ func (p *parser) parseExprStat() ast.Stmt {
 	case *ast.FuncCallExpr, *ast.MethodCallExpr:
 		return ast.NewExprStmt(pos, expr)
 	default:
-		p.errorf("syntax error near %s", p.nearToken())
+		p.errorf("syntax error%s", p.nearClause())
 		return nil
 	}
 }

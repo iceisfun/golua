@@ -352,6 +352,12 @@ func shortSrc(source string) string {
 		// String source — show first line, add "..." if truncated
 		s := source
 		truncated := false
+		// Null byte truncates the name, matching Lua 5.4's C string behavior
+		// where the null byte naturally terminates the C string. This is not
+		// treated as "truncation" for the purposes of adding "..." suffix.
+		if idx := strings.IndexByte(s, '\x00'); idx >= 0 {
+			s = s[:idx]
+		}
 		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
 			s = s[:idx]
 			truncated = true

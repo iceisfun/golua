@@ -234,7 +234,7 @@ func (p *parser) parsePrimaryExpr() ast.Expr {
 		p.checkMatch(token.Type(')'), "(", openLine)
 		return ast.NewParenExpr(pos, inner)
 	default:
-		p.errorf("unexpected symbol near %s", p.nearToken())
+		p.errorf("unexpected symbol%s", p.nearClause())
 		return ast.NewNilExpr(p.pos())
 	}
 }
@@ -291,7 +291,7 @@ func (p *parser) parseFuncArgs() []ast.Expr {
 		p.advance()
 		return []ast.Expr{ast.NewStringExpr(pos, v.Literal)}
 	default:
-		p.errorf("function arguments expected near %s", p.nearToken())
+		p.errorf("function arguments expected%s", p.nearClause())
 		return nil
 	}
 }
@@ -325,7 +325,7 @@ func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
 				break
 			}
 			if !p.check(token.NAME) {
-				p.errorf("<name> or '...' expected near %s", p.nearToken())
+				p.errorf("<name> or '...' expected%s", p.nearClause())
 				break
 			}
 			params = append(params, p.parseName())
