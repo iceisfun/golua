@@ -128,7 +128,8 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			dateTable[key] = int(i)
 		}
 
-		// Optional fields
+		// Optional fields with Lua 5.4 defaults: hour=12, min=0, sec=0
+		defaults := map[string]int{"hour": 12, "min": 0, "sec": 0}
 		for _, key := range []string{"hour", "min", "sec"} {
 			val := t.Get(vm.NewString(key))
 			if !val.IsNil() {
@@ -137,6 +138,8 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 					panic(fmt.Sprintf("field '%s' is not an integer", key))
 				}
 				dateTable[key] = int(i)
+			} else {
+				dateTable[key] = defaults[key]
 			}
 		}
 

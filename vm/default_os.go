@@ -50,12 +50,6 @@ func (p *DefaultOsProvider) Time(dateTable map[string]int) (int64, error) {
 	if year == 0 {
 		return 0, fmt.Errorf("field 'year' missing in date table")
 	}
-	if month == 0 {
-		month = 1
-	}
-	if day == 0 {
-		day = 1
-	}
 
 	t := time.Date(year, time.Month(month), day, hour, min, sec, 0, time.Local)
 	return t.Unix(), nil
