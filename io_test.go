@@ -229,6 +229,113 @@ func TestIo_PathTraversalRejected(t *testing.T) {
 	runLuaWithIo(t, source, "test_io_path_traversal", provider)
 }
 
+func TestIo_LinesWithFormats(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("hello\nworld\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		local lines = {}
+		for line in io.lines("data.txt", "L") do
+			lines[#lines + 1] = line
+		end
+		assert(#lines == 2, "expected 2 lines, got " .. tostring(#lines))
+		assert(lines[1] == "hello\n", "expected 'hello\\n', got '" .. tostring(lines[1]) .. "'")
+		assert(lines[2] == "world\n", "expected 'world\\n', got '" .. tostring(lines[2]) .. "'")
+	`
+	runLuaWithIo(t, source, "test_io_lines_L_format", provider)
+}
+
+func TestIo_LinesWithByteFormat(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("ABCDEFGH"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		local chunks = {}
+		for chunk in io.lines("data.txt", 3) do
+			chunks[#chunks + 1] = chunk
+		end
+		assert(#chunks == 3, "expected 3 chunks, got " .. tostring(#chunks))
+		assert(chunks[1] == "ABC", "expected 'ABC', got '" .. tostring(chunks[1]) .. "'")
+		assert(chunks[2] == "DEF", "expected 'DEF', got '" .. tostring(chunks[2]) .. "'")
+		assert(chunks[3] == "GH", "expected 'GH', got '" .. tostring(chunks[3]) .. "'")
+	`
+	runLuaWithIo(t, source, "test_io_lines_byte_format", provider)
+}
+
+func TestIo_LinesWithMultipleFormats(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("hello\nworld\nfoo\nbar\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		local pairs = {}
+		for a, b in io.lines("data.txt", "l", "l") do
+			pairs[#pairs + 1] = a .. "+" .. b
+		end
+		assert(#pairs == 2, "expected 2 pairs, got " .. tostring(#pairs))
+		assert(pairs[1] == "hello+world", "expected 'hello+world', got '" .. tostring(pairs[1]) .. "'")
+		assert(pairs[2] == "foo+bar", "expected 'foo+bar', got '" .. tostring(pairs[2]) .. "'")
+	`
+	runLuaWithIo(t, source, "test_io_lines_multi_format", provider)
+}
+
+func TestIo_LinesWithNumberFormat(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("42\n3.14\n100\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		local nums = {}
+		for n in io.lines("data.txt", "n") do
+			nums[#nums + 1] = n
+		end
+		assert(#nums == 3, "expected 3 numbers, got " .. tostring(#nums))
+		assert(nums[1] == 42, "expected 42, got " .. tostring(nums[1]))
+		assert(nums[2] == 3.14, "expected 3.14, got " .. tostring(nums[2]))
+		assert(nums[3] == 100, "expected 100, got " .. tostring(nums[3]))
+	`
+	runLuaWithIo(t, source, "test_io_lines_number_format", provider)
+}
+
+func TestIo_LinesAutoClose(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("one\ntwo\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		-- io.lines should auto-close the file after iteration finishes
+		local iter = io.lines("data.txt", "l")
+		local a = iter()
+		assert(a == "one", "expected 'one', got '" .. tostring(a) .. "'")
+		local b = iter()
+		assert(b == "two", "expected 'two', got '" .. tostring(b) .. "'")
+		-- This call hits EOF, should auto-close
+		local c = iter()
+		assert(c == nil, "expected nil at EOF, got '" .. tostring(c) .. "'")
+		-- Calling again after close should error
+		local ok, err = pcall(iter)
+		assert(not ok, "expected error calling iterator after auto-close")
+	`
+	runLuaWithIo(t, source, "test_io_lines_auto_close", provider)
+}
+
 func TestIo_FileLines(t *testing.T) {
 	tmpDir := t.TempDir()
 	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("alpha\nbeta\ngamma\n"), 0644)
@@ -250,4 +357,90 @@ func TestIo_FileLines(t *testing.T) {
 		assert(lines[3] == "gamma")
 	`
 	runLuaWithIo(t, source, "test_io_file_lines", provider)
+}
+
+func TestIo_FileLinesWithFormat(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("alpha\nbeta\ngamma\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		local f = io.open("data.txt", "r")
+		local lines = {}
+		for line in f:lines("L") do
+			lines[#lines + 1] = line
+		end
+		f:close()
+		assert(#lines == 3, "expected 3 lines, got " .. tostring(#lines))
+		assert(lines[1] == "alpha\n", "expected 'alpha\\n'")
+		assert(lines[2] == "beta\n", "expected 'beta\\n'")
+		assert(lines[3] == "gamma\n", "expected 'gamma\\n'")
+	`
+	runLuaWithIo(t, source, "test_io_file_lines_format", provider)
+}
+
+func TestIo_FileLinesWithByteFormat(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("ABCDEF"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		local f = io.open("data.txt", "r")
+		local chunks = {}
+		for chunk in f:lines(2) do
+			chunks[#chunks + 1] = chunk
+		end
+		f:close()
+		assert(#chunks == 3, "expected 3 chunks, got " .. tostring(#chunks))
+		assert(chunks[1] == "AB", "expected 'AB', got '" .. tostring(chunks[1]) .. "'")
+		assert(chunks[2] == "CD", "expected 'CD', got '" .. tostring(chunks[2]) .. "'")
+		assert(chunks[3] == "EF", "expected 'EF', got '" .. tostring(chunks[3]) .. "'")
+	`
+	runLuaWithIo(t, source, "test_io_file_lines_byte", provider)
+}
+
+func TestIo_FileLinesMultipleFormats(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("hello\nworld\nfoo\nbar\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		local f = io.open("data.txt", "r")
+		local pairs = {}
+		for a, b in f:lines("l", "l") do
+			pairs[#pairs + 1] = a .. "+" .. b
+		end
+		f:close()
+		assert(#pairs == 2, "expected 2 pairs, got " .. tostring(#pairs))
+		assert(pairs[1] == "hello+world", "expected 'hello+world', got '" .. tostring(pairs[1]) .. "'")
+		assert(pairs[2] == "foo+bar", "expected 'foo+bar', got '" .. tostring(pairs[2]) .. "'")
+	`
+	runLuaWithIo(t, source, "test_io_file_lines_multi", provider)
+}
+
+func TestIo_FileLinesDoesNotAutoClose(t *testing.T) {
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("one\n"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	provider := vm.NewJailedIoProvider(tmpDir)
+	source := `
+		local f = io.open("data.txt", "r")
+		for line in f:lines() do end
+		-- f:lines() should NOT auto-close the file; caller manages lifetime
+		assert(io.type(f) == "file", "expected file still open after f:lines() exhausted, got " .. tostring(io.type(f)))
+		f:close()
+	`
+	runLuaWithIo(t, source, "test_io_file_lines_no_auto_close", provider)
 }

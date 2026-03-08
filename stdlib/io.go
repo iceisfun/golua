@@ -227,36 +227,72 @@ func ioType(v *vm.VM) int {
 	return 1
 }
 
-// makeIoLines creates the io.lines(filename) function.
+// makeIoLines creates the io.lines(filename, ...) function.
 func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		name := v.Get(1).AsString()
+		var f vm.LuaFile
+		var toClose bool
+		var formats []vm.Value
 
-		f, err := provider.Open(name, "r")
-		if err != nil {
-			panic(fmt.Sprintf("cannot open '%s': %s", name, err.Error()))
+		if v.ArgCount() == 0 || v.Get(1).IsNil() {
+			// Read from default input
+			ioVal := v.GetGlobal("io")
+			if ioVal.IsNil() {
+				panic("io library not available")
+			}
+			ioTable := ioVal.AsTable()
+			inputVal := ioTable.Get(vm.NewString("__input"))
+			fh := getFileHandle(v, inputVal, "io.lines")
+			fh.checkOpen("lines")
+			f = fh.file
+			toClose = false
+		} else {
+			name := v.Get(1).AsString()
+			var err error
+			f, err = provider.Open(name, "r")
+			if err != nil {
+				panic(fmt.Sprintf("cannot open '%s': %s", name, err.Error()))
+			}
+			toClose = true
+		}
+		for i := 2; i <= v.ArgCount(); i++ {
+			formats = append(formats, v.Get(i))
 		}
 
 		closed := false
-		// Return an iterator that reads lines and closes the file at the end
+		// Return an iterator that reads lines
 		v.Set(0, vm.NewNativeFunc(func(v *vm.VM) int {
 			if closed {
 				panic("file is already closed")
 			}
-			line, err := f.Read("l")
-			if err != nil {
-				if err == io.EOF {
+			
+			if len(formats) == 0 {
+				line, err := f.Read("l")
+				if err != nil {
+					if err == io.EOF {
+						if toClose {
+							f.Close()
+							closed = true
+						}
+						// Return no results on EOF
+						return 0
+					}
+					panic(err.Error())
+				}
+				v.Set(0, vm.NewString(line))
+				return 1
+			}
+
+			results := doFileReadFormats(v, f, formats)
+			if results > 0 && v.Get(0).IsNil() {
+				if toClose {
 					f.Close()
 					closed = true
-					v.Set(0, vm.Nil)
-					return 1
 				}
-				f.Close()
-				closed = true
-				panic(err.Error())
+				// Return no results on EOF
+				return 0
 			}
-			v.Set(0, vm.NewString(line))
-			return 1
+			return results
 		}))
 		return 1
 	}
@@ -364,11 +400,23 @@ func fileRead(v *vm.VM) int {
 	return doFileRead(v, fh.file, 2)
 }
 
-// doFileRead performs the actual read operation. firstArg is the index
-// of the first format argument (2 for method calls, 1 for io.read).
+// doFileRead performs the actual read operation using arguments from the stack.
+// firstArg is the index of the first format argument (2 for method calls, 1 for io.read).
 func doFileRead(v *vm.VM, f vm.LuaFile, firstArg int) int {
 	n := v.ArgCount() - (firstArg - 1) // number of format args
-	if n <= 0 {
+	var formats []vm.Value
+	if n > 0 {
+		formats = make([]vm.Value, n)
+		for i := 0; i < n; i++ {
+			formats[i] = v.Get(firstArg + i)
+		}
+	}
+	return doFileReadFormats(v, f, formats)
+}
+
+// doFileReadFormats performs the actual read operation using a slice of formats.
+func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
+	if len(formats) == 0 {
 		// Default: read a line
 		line, err := f.Read("l")
 		if err != nil {
@@ -385,10 +433,10 @@ func doFileRead(v *vm.VM, f vm.LuaFile, firstArg int) int {
 	}
 
 	// Process each format argument
+	n := len(formats)
 	v.EnsureStack(v.Base() + n)
 	results := 0
-	for i := firstArg; i < firstArg+n; i++ {
-		arg := v.Get(i)
+	for _, arg := range formats {
 		if arg.IsNumber() {
 			// Read N bytes
 			count, _ := arg.ToInt()
@@ -427,6 +475,9 @@ func doFileRead(v *vm.VM, f vm.LuaFile, firstArg int) int {
 					v.Set(results, vm.NewString(data))
 				}
 			}
+		} else {
+			// Invalid format type
+			v.Set(results, vm.Nil)
 		}
 		results++
 	}
@@ -505,23 +556,37 @@ func fileClose(v *vm.VM) int {
 	return 1
 }
 
-// fileLines implements f:lines() method.
+// fileLines implements f:lines(...) method.
 func fileLines(v *vm.VM) int {
 	fh := getFileHandle(v, v.Get(1), "lines")
 	fh.checkOpen("lines")
 	f := fh.file
 
+	var formats []vm.Value
+	for i := 2; i <= v.ArgCount(); i++ {
+		formats = append(formats, v.Get(i))
+	}
+
 	v.Set(0, vm.NewNativeFunc(func(v *vm.VM) int {
-		line, err := f.Read("l")
-		if err != nil {
-			if err == io.EOF {
-				v.Set(0, vm.Nil)
-				return 1
+		fh.checkOpen("lines iterator")
+		
+		if len(formats) == 0 {
+			line, err := f.Read("l")
+			if err != nil {
+				if err == io.EOF {
+					return 0
+				}
+				panic(err.Error())
 			}
-			panic(err.Error())
+			v.Set(0, vm.NewString(line))
+			return 1
 		}
-		v.Set(0, vm.NewString(line))
-		return 1
+
+		results := doFileReadFormats(v, f, formats)
+		if results > 0 && v.Get(0).IsNil() {
+			return 0
+		}
+		return results
 	}))
 	return 1
 }
