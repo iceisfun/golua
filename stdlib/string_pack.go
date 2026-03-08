@@ -10,6 +10,32 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
+// getPackInt returns an integer argument for string.pack, coercing strings to
+// numbers first (matching Lua 5.4 behavior). Reports "got nil" for missing args
+// (not "got no value") and "number has no integer representation" for float strings.
+func getPackInt(v *vm.VM, idx int) int64 {
+	val := v.Get(idx)
+	if i, ok := val.ToInt(); ok {
+		return i
+	}
+	if val.IsNumber() {
+		callerArgError(v, idx, "string.pack", "number has no integer representation")
+	}
+	// Coerce strings to numbers (Lua 5.4 does this for pack)
+	if val.IsString() {
+		if n, ok := val.ToNumber(); ok {
+			// Got a number from string, try integer conversion
+			i := int64(n)
+			if float64(i) == n {
+				return i
+			}
+			callerArgError(v, idx, "string.pack", "number has no integer representation")
+		}
+	}
+	callerArgError(v, idx, "string.pack", fmt.Sprintf("number expected, got %s", val.Type()))
+	return 0 // unreachable
+}
+
 // packDirective describes a single parsed format directive.
 type packDirective struct {
 	kind     byte // 'i','I','f','d','n','c','z','s','x','X','<','>','=','!',' '
@@ -271,7 +297,7 @@ func packInt(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, size int, 
 		buf.WriteByte(0)
 	}
 
-	val := getInt(v, *argIdx, "string.pack")
+	val := getPackInt(v, *argIdx)
 	*argIdx++
 
 	// Range check for sizes < 8
