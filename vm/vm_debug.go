@@ -688,7 +688,22 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 
 	frame := &vm.callStack[idx]
 	if frame.closure == nil {
-		return "", false
+		if index <= 0 {
+			return "", false
+		}
+		stackIdx := frame.base + (index - 1)
+		if stackIdx < 0 || stackIdx >= len(vm.stack) {
+			return "", false
+		}
+		limit := vm.top
+		if idx+1 < len(vm.callStack) {
+			limit = vm.callStack[idx+1].base
+		}
+		if stackIdx >= limit {
+			return "", false
+		}
+		vm.stack[stackIdx] = val
+		return "(C temporary)", true
 	}
 
 	proto := frame.closure.Proto

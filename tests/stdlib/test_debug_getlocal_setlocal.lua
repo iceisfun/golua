@@ -13,6 +13,14 @@ do
 end
 
 do
+  local t = coroutine.running()
+  assert(select('#', debug.getlocal(t, 0, 1)) == 2)
+  assert(debug.getlocal(t, 0, 1) == '(C temporary)')
+  assert(debug.setlocal(t, 0, 1, 123) == '(C temporary)')
+  assert(debug.setlocal(0, 1, 456) == '(C temporary)')
+end
+
+do
   local co = coroutine.create(function()
     local x = 1
     coroutine.yield()

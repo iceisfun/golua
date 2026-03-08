@@ -38,12 +38,12 @@ const (
 // Coroutine represents a Lua coroutine
 type Coroutine struct {
 	id       int
-	fn       vm.Value      // The function to run
+	fn       vm.Value        // The function to run
 	status   coroutineStatus // lifecycle state
-	started  bool          // Whether the goroutine has been started
-	vm       *vm.VM        // Reference to the VM
-	coVM     *vm.VM        // The coroutine's own VM (set after first resume)
-	thread   vm.Value      // Thread object (table) for coroutine.running
+	started  bool            // Whether the goroutine has been started
+	vm       *vm.VM          // Reference to the VM
+	coVM     *vm.VM          // The coroutine's own VM (set after first resume)
+	thread   vm.Value        // Thread object (table) for coroutine.running
 	resumeCh chan []vm.Value // Channel to send resume args
 	yieldCh  chan []vm.Value // Channel to receive yield values
 	doneCh   chan struct{}   // Channel to signal completion
@@ -53,9 +53,9 @@ type Coroutine struct {
 }
 
 var (
-	coroutineID   int
-	coroutinesMu  sync.Mutex
-	coroutines    = make(map[int]*Coroutine)
+	coroutineID  int
+	coroutinesMu sync.Mutex
+	coroutines   = make(map[int]*Coroutine)
 )
 
 func openCoroutine(v *vm.VM) {
@@ -77,6 +77,7 @@ func openCoroutine(v *vm.VM) {
 	mainThread := vm.NewEmptyTable()
 	mainThread.SetString("__coroutine_id", vm.NewInt(0))
 	mainThread.SetThread(true)
+	mainThread.SetVMRef(v)
 	v.SetThreadObj(vm.NewTable(mainThread))
 }
 
