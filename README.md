@@ -101,7 +101,9 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | ------------------ | --------------------------------------------- | --------------------------- |
 | `LuaCodeProvider`  | `dofile`, `loadfile`, `require` file searcher  | `DirCodeProvider`           |
 | `LuaIoProvider`    | `io.*` file operations                         | `JailedIoProvider`, `FullIoProvider` |
-| `LuaOsProvider`    | `os.*` (clock, time, date, getenv)             | `DefaultOsProvider`         |
+| `LuaOsProvider`    | `os.*` (clock, time, date, getenv, setlocale)  | `DefaultOsProvider`         |
+| `LuaExecProvider`  | `os.execute` command execution                 | `DefaultExecProvider`       |
+| `LuaExitHandler`   | `os.exit` VM termination                       | `DefaultExitHandler`        |
 | `LuaDebugProvider` | `debug.*` capability gating                    | `DefaultDebugProvider`      |
 | `LuaChanProvider`  | `chan.*` Go↔Lua channels                       | `DefaultChanProvider`       |
 | `LuaTimeProvider`  | `time.*` millisecond timing                    | `DefaultTimeProvider`       |
@@ -192,8 +194,14 @@ v := vm.New()
 // Read-only file access, confined to a directory
 v.SetIoProvider(vm.NewJailedIoProvider("/path/to/allowed/dir"))
 
-// OS functions (clock, time, date, getenv)
+// OS functions (clock, time, date, getenv, setlocale)
 v.SetOsProvider(vm.NewDefaultOsProvider())
+
+// Command execution (os.execute)
+v.SetExecProvider(vm.NewDefaultExecProvider())
+
+// VM termination (os.exit)
+v.SetExitHandler(vm.NewDefaultExitHandler())
 
 // Or restrict which env vars are visible
 v.SetOsProvider(vm.NewFilteredOsProvider(func(name string) bool {
@@ -393,7 +401,7 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 | `bit32`     | No                 | Lua 5.2 bitwise compat library                                                     |
 | `glob`      | No                 | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`) |
 | `io`        | `LuaIoProvider`    | File I/O (absent by default)                                                       |
-| `os`        | `LuaOsProvider`    | OS functions: clock, time, date, getenv (absent by default)                        |
+| `os`        | `LuaOsProvider`    | OS functions: clock, time, date, getenv, execute, exit, rename, setlocale (absent by default) |
 | `package`   | No                 | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers` |
 | `debug`     | `LuaDebugProvider` | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)   |
 | `chan`      | `LuaChanProvider`  | Go↔Lua message passing channels (absent by default)                                |
@@ -411,6 +419,8 @@ GoLua is sandboxed by default. The VM starts with no access to the host system. 
 │  ┌────────────┐ ┌──────────┐ ┌──────────┐ ┌─────────────┐ ┌────────────┐ ┌──────────┐ │
 │  │CodeProvider│ │IoProvider│ │OsProvider│ │DebugProvider│ │ChanProvider│ │  Time    │ │
 │  │ (optional) │ │(optional)│ │(optional)│ │ (optional)  │ │ (optional) │ │(optional)│ │
+│  │            │ │          │ │ExecProv. │ │             │ │            │ │          │ │
+│  │            │ │          │ │ExitHndlr│ │             │ │            │ │          │ │
 │  └─────┬──────┘ └────┬─────┘ └────┬─────┘ └──────┬──────┘ └─────┬──────┘ └────┬─────┘ │
 │        │             │            │              │              │             │       │
 │  ┌─────▼─────────────▼────────────▼──────────────▼──────────────▼─────────────▼──┐    │
@@ -492,6 +502,7 @@ go run ./cmd/luac script.lua
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design; use `FullIoProvider` for read-write access)
 - Binary chunk format is compatible with Lua 5.4.8 — `load(string.dump(f))` round-tripping works, and chunks dumped by GoLua can be loaded by reference Lua 5.4.8 and vice versa. However, bytecode details may differ between compilers.
+- `os.setlocale` only supports the `"C"` locale — Go has no native locale support. Queries return `"C"` and setting any other locale returns `nil`.
 - GC behavior differs from C Lua — GoLua delegates garbage collection entirely to Go's runtime GC. `collectgarbage("collect")` triggers `runtime.GC()` but Go's GC timing is non-deterministic, so tests that depend on exact finalization order or count may not pass.
 
 ## Contributing
