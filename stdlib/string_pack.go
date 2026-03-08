@@ -490,7 +490,7 @@ func stringUnpack(v *vm.VM) int {
 
 	offset := int(pos) - 1 // 0-based byte offset
 	if offset > len(data) {
-		panic("bad argument #3 to 'string.unpack' (out of string)")
+		panic("bad argument #3 to 'string.unpack' (initial position out of string)")
 	}
 
 	fs := newFormatState()
@@ -795,7 +795,7 @@ func unpackFixedString(data string, offset *int, size int) vm.Value {
 func unpackZeroTermString(data string, offset *int) vm.Value {
 	idx := strings.IndexByte(data[*offset:], 0)
 	if idx < 0 {
-		panic("unfinished string for format 'z'")
+		panic("bad argument #2 to 'string.unpack' (unfinished string for format 'z')")
 	}
 	s := data[*offset : *offset+idx]
 	*offset += idx + 1 // skip the null terminator
