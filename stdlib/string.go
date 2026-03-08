@@ -295,7 +295,11 @@ func stringGsub(v *vm.VM) int {
 	if repl.IsNumber() {
 		repl = vm.NewString(valueToString(repl))
 	} else if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() && !repl.IsTable() {
-		callerArgError(v, 3, "string.gsub", fmt.Sprintf("string/function/table expected, got %s", repl.Type()))
+		got := repl.Type()
+		if v.ArgCount() < 3 {
+			got = "no value"
+		}
+		callerArgError(v, 3, "string.gsub", fmt.Sprintf("string/function/table expected, got %s", got))
 	}
 	maxRepl := -1
 	if v.ArgCount() >= 4 && !v.Get(4).IsNil() {
