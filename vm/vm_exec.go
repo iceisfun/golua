@@ -211,6 +211,13 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 				vm.stack[frame.base+a] = val
+			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+				val, err := vm.resolveIndex(mm, table, key)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = val
+				frame = &vm.callStack[len(vm.callStack)-1]
 			} else {
 				uvName := ""
 				if b < len(proto.Upvalues) {
@@ -1574,7 +1581,7 @@ func (vm *VM) ensureStack(n int) {
 		limit = DefaultMaxStackSlots
 	}
 	if limit > 0 && n >= limit {
-		panic(fmt.Sprintf("stack overflow: %d slots exceeds limit %d",
+		panic(fmt.Sprintf("C stack overflow: %d slots exceeds limit %d",
 			n, limit))
 	}
 	for len(vm.stack) <= n {
