@@ -165,19 +165,25 @@ func tokenForError(typ token.Type) string {
 // quoted for names/strings/numbers, unquoted for <eof> and keywords.
 func (p *parser) nearToken() string {
 	switch p.tok.Type {
-	case token.NAME, token.STRING, token.INT, token.FLOAT:
+	case token.NAME, token.INT, token.FLOAT:
+		return "'" + p.tok.Literal + "'"
+	case token.STRING:
+		// Use raw source text (with delimiters) if available, matching Lua 5.4.
+		if p.tok.Raw != "" {
+			return "'" + p.tok.Raw + "'"
+		}
 		return "'" + p.tok.Literal + "'"
 	case token.EOS:
 		return "<eof>"
 	default:
 		lit := p.tok.Literal
 		// Escape non-printable/non-ASCII chars using Lua 5.4's <\NNN> format.
-		// The lexer may produce multi-byte UTF-8 for raw bytes (e.g., U+0080
-		// is encoded as 0xc2 0x80 in Go strings). We check the first rune.
+		// Lua 5.4 is byte-oriented: use the first byte value, not the Unicode
+		// codepoint (e.g., BOM 0xEF 0xBB 0xBF shows as <\239>, not <\65279>).
 		if len(lit) > 0 {
-			r := []rune(lit)
-			if len(r) == 1 && (r[0] < 0x20 || r[0] >= 0x7f) {
-				return fmt.Sprintf("'<\\%d>'", r[0])
+			b := lit[0]
+			if b < 0x20 || b >= 0x7f {
+				return fmt.Sprintf("'<\\%d>'", b)
 			}
 		}
 		return "'" + lit + "'"
@@ -264,6 +270,7 @@ func (p *parser) parseStatement() ast.Stmt {
 
 func (p *parser) parseIfStmt() ast.Stmt {
 	pos := p.pos()
+	openLine := p.tok.Pos.Line
 	p.advance() // skip 'if'
 	cond := p.parseExpr()
 	p.expect(token.THEN)
@@ -283,39 +290,42 @@ func (p *parser) parseIfStmt() ast.Stmt {
 	if p.match(token.ELSE) {
 		elseb = p.parseBlock()
 	}
-	p.expect(token.END)
+	p.checkMatch(token.END, "if", openLine)
 	return ast.NewIfStmt(pos, cond, then, elseifs, elseb)
 }
 
 func (p *parser) parseWhileStmt() ast.Stmt {
 	pos := p.pos()
+	openLine := p.tok.Pos.Line
 	p.advance()
 	cond := p.parseExpr()
 	p.expect(token.DO)
 	body := p.parseBlock()
-	p.expect(token.END)
+	p.checkMatch(token.END, "while", openLine)
 	return ast.NewWhileStmt(pos, cond, body)
 }
 
 func (p *parser) parseDoStmt() ast.Stmt {
 	pos := p.pos()
+	openLine := p.tok.Pos.Line
 	p.advance()
 	body := p.parseBlock()
-	p.expect(token.END)
+	p.checkMatch(token.END, "do", openLine)
 	return ast.NewDoStmt(pos, body)
 }
 
 func (p *parser) parseForStmt() ast.Stmt {
 	pos := p.pos()
+	openLine := p.tok.Pos.Line
 	p.advance() // skip 'for'
 	name := p.parseName()
 	if p.check(token.Type('=')) {
-		return p.parseForNumStmt(pos, name)
+		return p.parseForNumStmt(pos, openLine, name)
 	}
-	return p.parseForInStmt(pos, name)
+	return p.parseForInStmt(pos, openLine, name)
 }
 
-func (p *parser) parseForNumStmt(pos token.Pos, name *ast.NameExpr) ast.Stmt {
+func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr) ast.Stmt {
 	p.expect(token.Type('='))
 	start := p.parseExpr()
 	p.expect(token.Type(','))
@@ -326,11 +336,11 @@ func (p *parser) parseForNumStmt(pos token.Pos, name *ast.NameExpr) ast.Stmt {
 	}
 	p.expect(token.DO)
 	body := p.parseBlock()
-	p.expect(token.END)
+	p.checkMatch(token.END, "for", openLine)
 	return ast.NewForNumStmt(pos, name, start, stop, step, body)
 }
 
-func (p *parser) parseForInStmt(pos token.Pos, firstName *ast.NameExpr) ast.Stmt {
+func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.NameExpr) ast.Stmt {
 	names := []*ast.NameExpr{firstName}
 	for p.match(token.Type(',')) {
 		names = append(names, p.parseName())
@@ -339,15 +349,16 @@ func (p *parser) parseForInStmt(pos token.Pos, firstName *ast.NameExpr) ast.Stmt
 	iters := p.parseExprList()
 	p.expect(token.DO)
 	body := p.parseBlock()
-	p.expect(token.END)
+	p.checkMatch(token.END, "for", openLine)
 	return ast.NewForInStmt(pos, names, iters, body)
 }
 
 func (p *parser) parseRepeatStmt() ast.Stmt {
 	pos := p.pos()
+	openLine := p.tok.Pos.Line
 	p.advance()
 	body := p.parseBlock()
-	p.expect(token.UNTIL)
+	p.checkMatch(token.UNTIL, "repeat", openLine)
 	cond := p.parseExpr()
 	return ast.NewRepeatStmt(pos, body, cond)
 }
@@ -356,6 +367,7 @@ func (p *parser) parseRepeatStmt() ast.Stmt {
 // funcname: NAME {'.' NAME} [':' NAME]
 func (p *parser) parseFuncStmt() ast.Stmt {
 	pos := p.pos()
+	funcLine := p.tok.Pos.Line
 	p.advance() // skip 'function'
 	name := p.parseName()
 	var nameExpr ast.Expr = name
@@ -369,7 +381,7 @@ func (p *parser) parseFuncStmt() ast.Stmt {
 		nameExpr = ast.NewFieldExpr(nameExpr.Pos(), nameExpr, method.Name)
 		isMethod = true
 	}
-	fn := p.parseFuncBody(isMethod)
+	fn := p.parseFuncBodyAt(isMethod, funcLine)
 	return ast.NewFuncStmt(pos, nameExpr, isMethod, fn)
 }
 
@@ -377,9 +389,11 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 	pos := p.pos()
 	p.advance() // skip 'local'
 
-	if p.match(token.FUNCTION) {
+	if p.check(token.FUNCTION) {
+		funcLine := p.tok.Pos.Line
+		p.advance()
 		name := p.parseName()
-		fn := p.parseFuncBody(false)
+		fn := p.parseFuncBodyAt(false, funcLine)
 		return ast.NewLocalFuncStmt(pos, name, fn)
 	}
 
@@ -414,9 +428,11 @@ func (p *parser) parseGlobalStmt() ast.Stmt {
 	pos := p.pos()
 	p.advance() // skip 'global'
 
-	if p.match(token.FUNCTION) {
+	if p.check(token.FUNCTION) {
+		funcLine := p.tok.Pos.Line
+		p.advance()
 		name := p.parseName()
-		fn := p.parseFuncBody(false)
+		fn := p.parseFuncBodyAt(false, funcLine)
 		return ast.NewGlobalFuncStmt(pos, name, fn)
 	}
 

@@ -24,7 +24,7 @@ func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 		case eof:
 			return token.Token{}, l.errorf("unfinished string near <eof>")
 		case '\n', '\r':
-			return token.Token{}, l.errorf("unfinished string near <eof>")
+			return token.Token{}, l.errorf("unfinished string near %s", l.stringNearExcludeCurrent())
 		case '\\':
 			ch, isUnicode, err := l.scanEscape()
 			if err != nil {
@@ -49,11 +49,20 @@ func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 			l.readChar()
 		}
 	}
-	l.readChar() // skip closing delimiter
+	// Capture raw source text with delimiters for "near" context in error messages.
+	// l.pos is past the closing delimiter (readChar already consumed it into l.current).
+	rawEnd := l.pos
+	if rawEnd > len(l.input) {
+		rawEnd = len(l.input)
+	}
+	raw := l.input[l.stringRawStart:rawEnd]
+
+	l.readChar() // advance past closing delimiter to next char
 
 	return token.Token{
 		Type:    token.STRING,
 		Literal: buf.String(),
+		Raw:     raw,
 		Pos:     pos,
 	}, nil
 }

@@ -168,7 +168,8 @@ func (e *PosError) Error() string {
 // Token is a single lexical token with its type, value, and position.
 type Token struct {
 	Type    Type
-	Literal string  // raw text of the token
+	Literal string  // raw text of the token (for strings: decoded content)
+	Raw     string  // original source text with delimiters (for STRING tokens in error "near" context)
 	IntVal  int64   // value if Type == INT
 	FltVal  float64 // value if Type == FLOAT
 	Pos     Pos

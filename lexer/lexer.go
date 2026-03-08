@@ -135,6 +135,27 @@ func (l *Lexer) stringNear() string {
 	return "'" + l.input[l.stringRawStart:end] + "'"
 }
 
+// stringNearExcludeCurrent returns the "near" context excluding the current
+// character. Used for unfinished string errors where the terminating newline
+// should not appear in the error message.
+func (l *Lexer) stringNearExcludeCurrent() string {
+	end := l.pos
+	if l.current != eof {
+		if l.rawByte {
+			end--
+		} else {
+			end -= utf8.RuneLen(l.current)
+		}
+	}
+	if end > len(l.input) {
+		end = len(l.input)
+	}
+	if end < l.stringRawStart {
+		end = l.stringRawStart
+	}
+	return "'" + l.input[l.stringRawStart:end] + "'"
+}
+
 // stringErrorf creates a lexer error with "near" context from the string
 // being scanned. Used for escape sequence errors where the raw source text
 // helps identify the problem location.
@@ -364,15 +385,33 @@ func (l *Lexer) scanLongString(buf *strings.Builder, sep int) error {
 
 // scanBracketOrLongString handles '[', '[[', '[=[' etc.
 func (l *Lexer) scanBracketOrLongString(pos token.Pos) (token.Token, error) {
+	rawStart := l.pos - 1 // byte position of opening '['
 	sep := l.scanSep()
 	if sep >= 2 {
 		var buf strings.Builder
 		if err := l.scanLongString(&buf, sep); err != nil {
 			return token.Token{}, err
 		}
+		// Capture raw source text with delimiters for "near" context.
+		// After scanLongString, l.pos is past the final ']' that was consumed.
+		// But scanLongString's last readChar advanced past ']', so the raw
+		// text from rawStart to the position before l.current covers everything.
+		rawEnd := l.pos
+		if l.current != eof {
+			if l.rawByte {
+				rawEnd--
+			} else {
+				rawEnd -= utf8.RuneLen(l.current)
+			}
+		}
+		if rawEnd > len(l.input) {
+			rawEnd = len(l.input)
+		}
+		raw := l.input[rawStart:rawEnd]
 		return token.Token{
 			Type:    token.STRING,
 			Literal: buf.String(),
+			Raw:     raw,
 			Pos:     pos,
 		}, nil
 	}
