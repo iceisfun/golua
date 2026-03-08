@@ -33,12 +33,13 @@ type VM struct {
 	tbcVars        []int
 	skipTBCCleanup bool // when true, ProtectedCall error recovery skips TBC cleanup
 
-	// Type metatables (for string, number, bool, nil, function)
+	// Type metatables (for string, number, bool, nil, function, thread)
 	stringMeta   LuaTable
 	numberMeta   LuaTable
 	boolMeta     LuaTable
 	nilMeta      LuaTable
 	functionMeta LuaTable
+	threadMeta   LuaTable
 
 	// Coroutine support
 	yieldCh     chan []Value // Channel to send yield values (nil if not in coroutine)
@@ -567,6 +568,7 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		boolMeta:      parent.boolMeta,
 		nilMeta:       parent.nilMeta,
 		functionMeta:  parent.functionMeta,
+		threadMeta:    parent.threadMeta,
 		yieldCh:       yieldCh,
 		resumeCh:      resumeCh,
 		coroutineID:   coID,
@@ -660,12 +662,21 @@ func (vm *VM) GetTypeMeta(v Value) LuaTable {
 	if v.IsFunction() || v.IsNativeFunc() {
 		return vm.functionMeta
 	}
+	if v.IsTable() {
+		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
+			return vm.threadMeta
+		}
+	}
 	return nil
 }
 
 // SetTypeMeta sets the type metatable for the given value's type.
 func (vm *VM) SetTypeMeta(v Value, mt LuaTable) {
 	if v.IsTable() {
+		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
+			vm.threadMeta = mt
+			return
+		}
 		v.AsTable().SetMetatable(mt)
 		return
 	}
@@ -972,7 +983,11 @@ func (vm *VM) GetMetafield(v Value, key string) Value {
 func (vm *VM) getMetafield(v Value, key string) Value {
 	var mt LuaTable
 	if v.IsTable() {
-		mt = v.AsTable().Metatable()
+		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
+			mt = vm.threadMeta
+		} else {
+			mt = v.AsTable().Metatable()
+		}
 	} else if ud := v.AsUserdata(); ud != nil {
 		mt = ud.Metatable()
 	} else {

@@ -714,7 +714,8 @@ func luaGetmetatable(v *vm.VM) int {
 		callerArgError(v, 1, "getmetatable", "value expected")
 	}
 	val := v.Get(1)
-	if val.IsTable() {
+	// Threads use type-level metatable, not per-instance
+	if val.IsTable() && !val.AsTable().IsThread() {
 		mt := val.AsTable().Metatable()
 		if mt != nil {
 			// Check for __metatable field - if present, return that instead
@@ -729,7 +730,7 @@ func luaGetmetatable(v *vm.VM) int {
 		}
 		return 1
 	}
-	// Check type metatables for non-table types
+	// Check type metatables for non-table types (and threads)
 	if mt := v.GetTypeMeta(val); mt != nil {
 		// Check for __metatable field
 		protected := mt.Get(vm.NewString("__metatable"))

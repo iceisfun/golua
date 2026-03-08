@@ -636,6 +636,15 @@ func luaDebugGetRegistry(v *vm.VM) int {
 // Works for any type (including non-tables via type metatables).
 func luaDebugGetMetatable(v *vm.VM) int {
 	val := v.Get(1)
+	// For threads, use type-level metatable (not per-instance)
+	if val.IsTable() && val.AsTable().IsThread() {
+		if mt := v.GetTypeMeta(val); mt != nil {
+			v.Set(0, vm.NewTable(mt))
+		} else {
+			v.Set(0, vm.Nil)
+		}
+		return 1
+	}
 	if val.IsTable() {
 		mt := val.AsTable().Metatable()
 		if mt != nil {
@@ -669,7 +678,7 @@ func luaDebugSetMetatable(v *vm.VM) int {
 		callerArgError(v, 2, "debug.setmetatable", "nil or table expected")
 	}
 
-	if val.IsTable() {
+	if val.IsTable() && !val.AsTable().IsThread() {
 		val.AsTable().SetMetatable(mtTable)
 	} else {
 		v.SetTypeMeta(val, mtTable)
