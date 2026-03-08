@@ -963,8 +963,11 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 		fs.emit(Ax(OP_EXTRAARG, nArr), line)
 	}
 
-	// Find the last array-style field to check if it's multi-return
+	// Find the last array-style field to check if it's multi-return.
+	// Multi-return expansion only happens if the call/vararg is the very
+	// last field in the constructor (including hash fields).
 	lastArrayIdx := -1
+	lastFieldIdx := len(e.Fields) - 1
 	for i, f := range e.Fields {
 		if f.Key == nil {
 			lastArrayIdx = i
@@ -987,8 +990,10 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 				}
 			}
 
-			// Check if this is the last array element and it's a multi-return expression
-			if i == lastArrayIdx && isMultiRet(f.Value) {
+			// Check if this is the last array element, the last field overall,
+			// and it's a multi-return expression. Multi-return only expands
+			// when the call/vararg is the very last field in the constructor.
+			if i == lastArrayIdx && i == lastFieldIdx && isMultiRet(f.Value) {
 				// Set freeReg to arrReg so compileExprMultiRet uses the correct base
 				fs.freeReg = arrReg
 				// Compile with all results
