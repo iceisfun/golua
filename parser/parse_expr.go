@@ -295,6 +295,10 @@ func (p *parser) parseFuncArgs() []ast.Expr {
 }
 
 func (p *parser) parseFuncBody(isMethod bool) *ast.FuncExpr {
+	return p.parseFuncBodyAt(isMethod, p.tok.Pos.Line)
+}
+
+func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
 	pos := p.pos()
 	p.expect(token.Type('('))
 
@@ -318,6 +322,10 @@ func (p *parser) parseFuncBody(isMethod bool) *ast.FuncExpr {
 				}
 				break
 			}
+			if !p.check(token.NAME) {
+				p.errorf("<name> or '...' expected near %s", p.nearToken())
+				break
+			}
 			params = append(params, p.parseName())
 			if !p.match(token.Type(',')) {
 				break
@@ -326,8 +334,11 @@ func (p *parser) parseFuncBody(isMethod bool) *ast.FuncExpr {
 	}
 	p.expect(token.Type(')'))
 	body := p.parseBlock()
-	p.expect(token.END)
-	return ast.NewFuncExpr(pos, params, vararg, varargName, body)
+	endLine := p.tok.Pos.Line
+	p.checkMatch(token.END, "function", funcLine)
+	fe := ast.NewFuncExpr(pos, params, vararg, varargName, body)
+	fe.EndLine = endLine
+	return fe
 }
 
 func (p *parser) parseTableConstructor() *ast.TableConstructor {

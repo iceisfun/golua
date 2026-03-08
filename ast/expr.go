@@ -185,6 +185,7 @@ type FuncExpr struct {
 	VarArg     bool
 	VarArgName string // Lua 5.5: `... name` captures varargs
 	Body       *Block
+	EndLine    int // line of the closing 'end' keyword (0 if unknown)
 }
 
 func (e *FuncExpr) Pos() token.Pos { return e.P }
