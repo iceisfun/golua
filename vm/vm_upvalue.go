@@ -186,6 +186,12 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 		if mt != nil {
 			closeFunc = mt.Get(metaClose)
 		}
+	} else {
+		// Check type-level metatable (e.g. debug.setmetatable(0, {__close=...}))
+		typeMT := vm.GetTypeMeta(val)
+		if typeMT != nil {
+			closeFunc = typeMT.Get(metaClose)
+		}
 	}
 	if !closeFunc.IsNil() {
 		_, err := vm.callMetamethod("close", closeFunc, val, errVal)

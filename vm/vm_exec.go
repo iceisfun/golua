@@ -796,7 +796,11 @@ func (vm *VM) execute() ([]Value, error) {
 						needErr = true
 					}
 				} else {
-					needErr = true
+					// Check type-level metatable (e.g. debug.setmetatable(0, {__close=...}))
+					typeMT := vm.GetTypeMeta(val)
+					if typeMT == nil || typeMT.Get(metaClose).IsNil() {
+						needErr = true
+					}
 				}
 				if needErr {
 					varName := localName(frame.closure.Proto, a, frame.pc)
