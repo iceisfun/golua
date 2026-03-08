@@ -51,7 +51,11 @@ func TestLuaFiles(t *testing.T) {
 			if strings.HasPrefix(file, "test_heavy_") && !*full {
 				t.Skip("heavy test requires -full flag")
 			}
-			runLuaTest(t, file)
+			if needsFullIo(file) {
+				runLuaTestFullIo(t, file)
+			} else {
+				runLuaTest(t, file)
+			}
 		})
 	}
 }
@@ -251,7 +255,8 @@ func needsFullIo(filename string) bool {
 	// Tests that reference io.stdin/stdout/stderr as values
 	switch base {
 	case "test_next_all_key_types.lua",
-		"test_error_named_objects.lua":
+		"test_error_named_objects.lua",
+		"test_dofile_loadfile.lua":
 		return true
 	}
 	return false
