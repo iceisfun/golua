@@ -348,7 +348,7 @@ func (p *parser) parseTableConstructor() *ast.TableConstructor {
 	openLine := p.tok.Pos.Line
 	p.expect(token.Type('{'))
 	var fields []*ast.TableField
-	for !p.check(token.Type('}')) && !p.check(token.EOS) {
+	for !p.check(token.Type('}')) {
 		if p.err != nil {
 			break
 		}
