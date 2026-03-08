@@ -107,27 +107,31 @@ done:
 	// Create VM and register standard library
 	v := vm.New()
 	v.SetOsProvider(vm.NewDefaultOsProvider())
+
+	// Determine script directory for IO provider
+	scriptDir := "."
+	if name != "=(command line)" {
+		// Strip '@' prefix for filesystem operations
+		fsName := name
+		if len(fsName) > 0 && fsName[0] == '@' {
+			fsName = fsName[1:]
+		}
+		if d := filepath.Dir(fsName); d != "" {
+			scriptDir = d
+		}
+	}
+
+	// Always set core providers for CLI usage
+	v.SetCodeProvider(vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{
+		AllowLoadfile: true,
+		AllowDofile:   true,
+	}))
+	v.SetIoProvider(vm.NewFullIoProvider(scriptDir))
+	v.SetExecProvider(vm.NewDefaultExecProvider())
+	v.SetExitHandler(vm.NewDefaultExitHandler())
+
 	if testMode {
 		v.SetDebugProvider(vm.NewDefaultDebugProvider())
-		// Determine script directory for jailed IO provider
-		scriptDir := "."
-		if name != "=(command line)" {
-			// Strip '@' prefix for filesystem operations
-			fsName := name
-			if len(fsName) > 0 && fsName[0] == '@' {
-				fsName = fsName[1:]
-			}
-			if d := filepath.Dir(fsName); d != "" {
-				scriptDir = d
-			}
-		}
-		v.SetCodeProvider(vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{
-			AllowLoadfile: true,
-			AllowDofile:   true,
-		}))
-		v.SetIoProvider(vm.NewFullIoProvider(scriptDir))
-		v.SetExecProvider(vm.NewDefaultExecProvider())
-		v.SetExitHandler(vm.NewDefaultExitHandler())
 	}
 	stdlib.Open(v)
 
