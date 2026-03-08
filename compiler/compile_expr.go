@@ -1,8 +1,47 @@
 package compiler
 
 import (
+	"fmt"
+
 	"github.com/iceisfun/golua/ast"
 )
+
+// exprNear returns a short "near" token string from an AST expression,
+// for use in error messages. Returns "" if no meaningful token can be
+// extracted. Matches Lua 5.4's behavior of showing the current token.
+func exprNear(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.NameExpr:
+		return e.Name
+	case *ast.NumberExpr:
+		return e.Raw
+	case *ast.FloatExpr:
+		return e.Raw
+	case *ast.StringExpr:
+		return e.Value
+	case *ast.VarArgExpr:
+		return "..."
+	case *ast.NilExpr:
+		return "nil"
+	case *ast.TrueExpr:
+		return "true"
+	case *ast.FalseExpr:
+		return "false"
+	case *ast.FuncCallExpr:
+		return exprNear(e.Func)
+	case *ast.MethodCallExpr:
+		return e.Method
+	case *ast.FieldExpr:
+		return e.Field
+	case *ast.IndexExpr:
+		return exprNear(e.Key)
+	case *ast.BinopExpr:
+		return exprNear(e.Right)
+	case *ast.UnopExpr:
+		return fmt.Sprintf("%s", e.Op)
+	}
+	return ""
+}
 
 // ---------------------------------------------------------------------------
 // Expression compilation — main dispatch
@@ -24,7 +63,12 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 			fs.maxReg = fs.freeReg
 		}
 		if fs.freeReg > fs.c.limits.MaxRegs {
-			fs.c.error(expr, "function or expression needs too many registers")
+			near := exprNear(expr)
+			if near != "" {
+				fs.c.error(expr, "function or expression needs too many registers near '%s'", near)
+			} else {
+				fs.c.error(expr, "function or expression needs too many registers")
+			}
 		}
 	}
 
