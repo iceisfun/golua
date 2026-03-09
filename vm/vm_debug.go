@@ -816,12 +816,18 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 		}
 		switch op {
 		case compiler.OP_LOADK:
+			if hasForwardBypass(proto, i, pc) {
+				continue
+			}
 			bx := inst.Bx()
 			if bx < len(proto.Constants) && proto.Constants[bx].Type == compiler.ValString {
 				return proto.Constants[bx].SVal, "constant"
 			}
 			return "", ""
 		case compiler.OP_LOADKX:
+			if hasForwardBypass(proto, i, pc) {
+				continue
+			}
 			if i+1 < len(proto.Code) {
 				ax := proto.Code[i+1].Ax()
 				if ax < len(proto.Constants) && proto.Constants[ax].Type == compiler.ValString {
@@ -897,6 +903,26 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 	return "", ""
 }
 
+// hasForwardBypass reports whether a forward jump before defPC can skip the
+// assignment at defPC and still reach usePC. In that case, the assignment is
+// path-dependent and should not be treated as the definite source for naming.
+func hasForwardBypass(proto *compiler.Proto, defPC, usePC int) bool {
+	if defPC <= 0 || usePC <= defPC {
+		return false
+	}
+	for j := defPC - 1; j >= 0; j-- {
+		inst := proto.Code[j]
+		if inst.OpCode() != compiler.OP_JMP {
+			continue
+		}
+		target := j + 1 + inst.SJ()
+		if target > defPC && target <= usePC {
+			return true
+		}
+	}
+	return false
+}
+
 // isInternalName returns true if the name is a compiler-generated internal
 // name (starts with '(' such as "(for state)" or "(for control)").
 func isInternalName(name string) bool {
@@ -939,12 +965,18 @@ func kName(proto *compiler.Proto, pc int, reg int) string {
 		}
 		switch op {
 		case compiler.OP_LOADK:
+			if hasForwardBypass(proto, i, pc) {
+				continue
+			}
 			bx := inst.Bx()
 			if bx < len(proto.Constants) && proto.Constants[bx].Type == compiler.ValString {
 				return proto.Constants[bx].SVal
 			}
 			return ""
 		case compiler.OP_LOADKX:
+			if hasForwardBypass(proto, i, pc) {
+				continue
+			}
 			if i+1 < len(proto.Code) {
 				ax := proto.Code[i+1].Ax()
 				if ax < len(proto.Constants) && proto.Constants[ax].Type == compiler.ValString {
