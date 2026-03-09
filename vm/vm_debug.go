@@ -66,6 +66,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 				name = frame.callName
 				nameWhat = frame.callNameWhat
 			}
+			name = vm.tracebackNativeName(frame, name, nameWhat)
 			switch {
 			case nameWhat == "metamethod":
 				fmt.Fprintf(&b, "[C]: in metamethod '%s'", name)
@@ -138,6 +139,24 @@ func (vm *VM) Traceback(msg string, level int) string {
 	b.WriteString("\n\t[C]: in ?")
 
 	return b.String()
+}
+
+func (vm *VM) tracebackNativeName(frame *callFrame, name, nameWhat string) string {
+	if nameWhat != "field" || name != "traceback" {
+		return name
+	}
+	debugVal := vm.globals.Get(NewString("debug"))
+	if !debugVal.IsTable() {
+		return name
+	}
+	debugTbl := debugVal.AsTable()
+	if debugTbl == nil {
+		return name
+	}
+	if frame.funcValue.RawEqual(debugTbl.Get(NewString("traceback"))) {
+		return "debug.traceback"
+	}
+	return name
 }
 
 // TracebackFromLastError formats traceback using the most recently captured
@@ -736,6 +755,9 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 		return "", Nil, false
 	}
 	if name == "?" {
+		if !active || !vm.inHook {
+			return "", Nil, false
+		}
 		name = "(temporary)"
 	}
 	val := Nil
@@ -919,6 +941,9 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 		return "", false
 	}
 	if name == "?" {
+		if !active || !vm.inHook {
+			return "", false
+		}
 		name = "(temporary)"
 	}
 	if stackIdx >= 0 && stackIdx < len(vm.stack) {

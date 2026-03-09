@@ -159,3 +159,24 @@ assert(val2 == 99, tostring(val2))
 `
 	runLuaWithDebug(t, source, "test_debug_dead_coroutine_error_snapshot", provider)
 }
+
+func TestDebugGetLocalRegression_SuspendedCoroutineHidesLuaTemporaries(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `local co = coroutine.create(function(a)
+  local x = a + 1
+  coroutine.yield("pause")
+  return x
+end)
+
+local ok, why = coroutine.resume(co, 4)
+assert(ok and why == "pause")
+
+local name, val = debug.getlocal(co, 1, 1)
+assert(name == "a", tostring(name))
+assert(val == 4, tostring(val))
+
+assert(select('#', debug.getlocal(co, 1, 3)) == 1)
+assert(debug.getlocal(co, 1, 3) == nil)
+`
+	runLuaWithDebug(t, source, "test_debug_getlocal_suspended_coroutine_temporaries", provider)
+}

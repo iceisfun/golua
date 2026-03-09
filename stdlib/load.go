@@ -62,6 +62,15 @@ func setLoadReaderError(v *vm.VM, err error) {
 	v.Set(1, vm.NewString(err.Error()))
 }
 
+func setLoadReaderTypeError(v *vm.VM, msg string) {
+	preserveRaw := v.InDirectProtectedLoad() || (v.InUserProtected() && v.MsgHandler.IsNil())
+	if preserveRaw {
+		v.Set(1, vm.NewString(msg))
+		return
+	}
+	v.Set(1, vm.NewString(v.Traceback(v.AddCallerLocation(msg), 0)))
+}
+
 func protectedCallPreserveMsgState(v *vm.VM, fn vm.Value, args []vm.Value) ([]vm.Value, error) {
 	savedMsgHandler := v.MsgHandler
 	savedMsgHandlerUsed := v.MsgHandlerUsed
@@ -165,7 +174,7 @@ func luaLoad(v *vm.VM) int {
 				s = valueToString(results[0])
 			} else {
 				v.Set(0, vm.Nil)
-				v.Set(1, vm.NewString(v.AddCallerLocation("reader function must return a string")))
+				setLoadReaderTypeError(v, "reader function must return a string")
 				return 2
 			}
 			if s == "" {
@@ -205,7 +214,7 @@ func luaLoad(v *vm.VM) int {
 						s2 = valueToString(results2[0])
 					} else {
 						v.Set(0, vm.Nil)
-						v.Set(1, vm.NewString(v.AddCallerLocation("reader function must return a string")))
+						setLoadReaderTypeError(v, "reader function must return a string")
 						return 2
 					}
 					if s2 == "" {

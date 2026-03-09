@@ -79,6 +79,23 @@ local tb = debug.traceback(co)
 assert(tb:find("stack traceback:", 1, true), tb)
 assert(tb:find("boom", 1, true), tb)
 assert(tb:find("function 'error'", 1, true), tb)
-`
+	`
 	runLuaWithDebug(t, source, "test_debug_traceback_errored_coroutine", provider)
+}
+
+func TestDebugTracebackRegression_QualifiedDebugTracebackCName(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `local function run()
+  return xpcall(function()
+    error("body")
+  end, function(e)
+    return debug.traceback(e, 0)
+  end)
+end
+
+local ok, msg = run()
+assert(ok == false, tostring(ok))
+assert(msg:find("[C]: in function 'debug.traceback'", 1, true), msg)
+`
+	runLuaWithDebug(t, source, "test_debug_traceback_qualified_c_name", provider)
 }

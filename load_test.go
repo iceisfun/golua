@@ -94,6 +94,25 @@ func TestLoad_String(t *testing.T) {
 	runLuaSource(t, source, "test_load_string")
 }
 
+func TestLoad_ReaderNonStringTopLevelTraceback(t *testing.T) {
+	source := `
+		local n = 0
+		local f, err = load(function()
+			n = n + 1
+			if n == 1 then
+				return {}
+			end
+			return nil
+		end)
+		assert(f == nil, "expected load to fail")
+		assert(type(err) == "string", type(err))
+		assert(err:find("reader function must return a string", 1, true), err)
+		assert(err:find("stack traceback:", 1, true), err)
+		assert(err:find("[C]: in function 'load'", 1, true), err)
+	`
+	runLuaSource(t, source, "test_load_reader_nonstring_top_level_traceback")
+}
+
 // Test load() with a custom chunk name
 func TestLoad_ChunkName(t *testing.T) {
 	source := `
