@@ -101,6 +101,11 @@ func (vm *VM) Traceback(msg string, level int) string {
 			}
 			if nameWhat == "metamethod" {
 				fmt.Fprintf(&b, "%s:%d: in metamethod '%s'", source, line, name)
+			} else if len(name) > 0 && name[0] == '<' {
+				// Anonymous function: "in function <file:line>" (no quotes)
+				fmt.Fprintf(&b, "%s:%d: in function %s", source, line, name)
+			} else if nameWhat == "local" || nameWhat == "field" || nameWhat == "upvalue" || nameWhat == "method" {
+				fmt.Fprintf(&b, "%s:%d: in %s '%s'", source, line, nameWhat, name)
 			} else {
 				fmt.Fprintf(&b, "%s:%d: in function '%s'", source, line, name)
 			}
