@@ -23,6 +23,8 @@ proposed_tests/
 # Testing
 a.lua
 test.lua
-lua
+/lua
+cmd/lua/lua
+cmd/lua/golua
 ref/
 EXTENDED_TESTING_PLAN.md

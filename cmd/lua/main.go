@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -17,29 +18,33 @@ import (
 )
 
 func main() {
+	os.Exit(runCLI(os.Args, os.Stderr))
+}
+
+func runCLI(argv []string, stderr io.Writer) int {
 	var timeoutMs int
 	var evalCode string
-	args := os.Args[1:]
+	args := argv[1:]
 
 	// Parse flags
 	for len(args) > 0 {
 		switch args[0] {
 		case "--timeout":
 			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "--timeout requires a value in milliseconds")
-				os.Exit(1)
+				fmt.Fprintln(stderr, "--timeout requires a value in milliseconds")
+				return 1
 			}
 			var err error
 			timeoutMs, err = strconv.Atoi(args[1])
 			if err != nil || timeoutMs <= 0 {
-				fmt.Fprintln(os.Stderr, "--timeout value must be a positive integer (milliseconds)")
-				os.Exit(1)
+				fmt.Fprintln(stderr, "--timeout value must be a positive integer (milliseconds)")
+				return 1
 			}
 			args = args[2:]
 		case "-e", "--e":
 			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "-e requires a string argument")
-				os.Exit(1)
+				fmt.Fprintln(stderr, "-e requires a string argument")
+				return 1
 			}
 			evalCode = args[1]
 			args = args[2:]
@@ -62,15 +67,15 @@ done:
 		scriptArgs = args
 	} else {
 		if len(args) < 1 {
-			fmt.Fprintln(os.Stderr, "Usage: lua [--timeout <ms>] [-e <code>] [--test] [<script.lua> [args...]]")
-			os.Exit(1)
+			fmt.Fprintln(stderr, "Usage: lua [--timeout <ms>] [-e <code>] [--test] [<script.lua> [args...]]")
+			return 1
 		}
 		filename := args[0]
 		scriptArgs = args[1:]
 		src, err := os.ReadFile(filename)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Error reading file: %v\n", err)
+			return 1
 		}
 		source = string(src)
 		// Strip UTF-8 BOM if present (like Lua 5.4)
@@ -88,19 +93,19 @@ done:
 		displayName = displayName[1:]
 	}
 	// Determine program name for error messages (like Lua 5.4 uses argv[0])
-	progName := filepath.Base(os.Args[0])
+	progName := filepath.Base(argv[0])
 
 	block, err := parser.Parse(displayName, source)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		return 1
 	}
 
 	// Compile — use the raw name so proto.Source stores it with the '@' prefix
 	proto, err := compiler.Compile(name, block)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", progName, err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		return 1
 	}
 
 	// Create VM and register standard library
@@ -165,21 +170,21 @@ done:
 
 	if err != nil {
 		// Format the error like Lua 5.4
+		var msg string
 		if le, ok := err.(*vm.LuaError); ok {
-			msg := formatLuaError(le.Value)
-			fmt.Fprintf(os.Stderr, "%s\n", msg)
+			msg = formatLuaError(le.Value)
 		} else {
-			fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+			msg = err.Error()
 		}
-		// Print stack traceback
-		fmt.Fprintln(os.Stderr, "stack traceback:")
-		fmt.Fprintln(os.Stderr, "\t[C]: in ?")
-		os.Exit(1)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintln(stderr, v.TracebackFromLastError("", 0))
+		return 1
 	}
 
 	if exitCode != 0 {
-		os.Exit(exitCode)
+		return exitCode
 	}
+	return 0
 }
 
 // formatLuaError formats a Lua error value for display, matching Lua 5.4.
