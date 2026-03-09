@@ -42,7 +42,7 @@ func setLoadReaderError(v *vm.VM, err error) {
 			} else {
 				msg = fmt.Sprintf("(error object is a %s value)", le.Value.Type())
 			}
-			if tb := v.Traceback("", 0); tb != "" {
+			if tb := v.TracebackFromLastError("", 0); tb != "" {
 				msg += "\n" + tb
 			}
 			v.Set(1, vm.NewString(msg))
@@ -53,7 +53,7 @@ func setLoadReaderError(v *vm.VM, err error) {
 			return
 		}
 		msg := le.Value.AsString()
-		if tb := v.Traceback("", 0); tb != "" {
+		if tb := v.TracebackFromLastError("", 0); tb != "" {
 			msg += "\n" + tb
 		}
 		v.Set(1, vm.NewString(msg))

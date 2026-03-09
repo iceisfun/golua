@@ -119,6 +119,20 @@ func (vm *VM) Traceback(msg string, level int) string {
 	return b.String()
 }
 
+// TracebackFromLastError formats traceback using the most recently captured
+// error stack (if available), then consumes that snapshot.
+func (vm *VM) TracebackFromLastError(msg string, level int) string {
+	if len(vm.lastErrorCallStack) == 0 {
+		return vm.Traceback(msg, level)
+	}
+	saved := vm.callStack
+	vm.callStack = vm.lastErrorCallStack
+	out := vm.Traceback(msg, level)
+	vm.callStack = saved
+	vm.lastErrorCallStack = nil
+	return out
+}
+
 // frameFuncName attempts to determine a display name for a call frame's function.
 func (vm *VM) frameFuncName(frame *callFrame) string {
 	if frame.closure == nil {

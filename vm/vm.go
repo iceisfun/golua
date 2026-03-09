@@ -287,6 +287,12 @@ func (vm *VM) callMsgHandler(msgh Value, errVal Value, errorCallStack []callFram
 // Returns the function's results on success, or an error on failure.
 // This is the Go equivalent of Lua's pcall().
 func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error) {
+	if !vm.MsgHandler.IsNil() {
+		// Avoid stale stacks from previous non-xpcall failures interfering with
+		// current xpcall message-handler dispatch.
+		vm.lastErrorCallStack = nil
+	}
+
 	// Save VM state for recovery
 	savedTop := vm.top
 	savedCallStackLen := len(vm.callStack)
@@ -318,6 +324,10 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			// Save the full call stack snapshot before truncation so the
 			// xpcall message handler can see the stack at the error point.
 			var errorCallStack []callFrame
+			if vm.MsgHandler.IsNil() {
+				vm.lastErrorCallStack = make([]callFrame, len(vm.callStack))
+				copy(vm.lastErrorCallStack, vm.callStack)
+			}
 			if !vm.MsgHandler.IsNil() && vm.lastErrorCallStack == nil {
 				errorCallStack = make([]callFrame, len(vm.callStack))
 				copy(errorCallStack, vm.callStack)
