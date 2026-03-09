@@ -26,7 +26,8 @@ func openPackage(v *vm.VM) {
 	pkg.SetString("loaded", vm.NewTable(loaded))
 
 	// package.preload — empty
-	pkg.SetString("preload", vm.NewTable(vm.NewEmptyTable()))
+	preload := vm.NewEmptyTable()
+	pkg.SetString("preload", vm.NewTable(preload))
 
 	// package.path / package.cpath
 	pkg.SetString("path", vm.NewString("?.lua;?/init.lua"))
@@ -45,7 +46,7 @@ func openPackage(v *vm.VM) {
 
 	// package.searchers
 	searchers := vm.NewEmptyTable()
-	searchers.SetInt(1, vm.NewNativeFunc(makePreloadSearcher(pkg)))
+	searchers.SetInt(1, vm.NewNativeFunc(makePreloadSearcher(preload)))
 	searchers.SetInt(2, vm.NewNativeFunc(makeLuaFileSearcher(v, pkg)))
 	searchers.SetInt(3, vm.NewNativeFunc(makeCFileSearcher(pkg)))
 	pkg.SetString("searchers", vm.NewTable(searchers))
@@ -196,15 +197,9 @@ func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 }
 
 // makePreloadSearcher returns a searcher that checks package.preload.
-func makePreloadSearcher(pkg *vm.Table) vm.NativeFunc {
+func makePreloadSearcher(preload *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1).AsString()
-		preloadVal := pkg.GetString("preload")
-		if preloadVal.IsNil() {
-			v.Set(0, vm.NewString("no field package.preload['"+name+"']"))
-			return 1
-		}
-		preload := preloadVal.AsTable()
 		loader := preload.Get(vm.NewString(name))
 		if loader.IsNil() {
 			v.Set(0, vm.NewString("no field package.preload['"+name+"']"))
