@@ -31,7 +31,7 @@ const maxLoadReaderCalls = 1 << 22 // ~4 million calls
 func setLoadReaderError(v *vm.VM, err error) {
 	if le, ok := err.(*vm.LuaError); ok {
 		if !le.Value.IsString() {
-			if v.InUserProtected() {
+			if v.InDirectProtectedLoad() {
 				v.Set(1, le.Value)
 				return
 			}
@@ -42,10 +42,31 @@ func setLoadReaderError(v *vm.VM, err error) {
 			v.Set(1, vm.NewString(msg))
 			return
 		}
-		v.Set(1, le.Value)
+		if v.InDirectProtectedLoad() {
+			v.Set(1, le.Value)
+			return
+		}
+		msg := le.Value.AsString()
+		if tb := v.Traceback("", 0); tb != "" {
+			msg += "\n" + tb
+		}
+		v.Set(1, vm.NewString(msg))
 		return
 	}
 	v.Set(1, vm.NewString(err.Error()))
+}
+
+func protectedCallPreserveMsgState(v *vm.VM, fn vm.Value, args []vm.Value) ([]vm.Value, error) {
+	savedMsgHandler := v.MsgHandler
+	savedMsgHandlerUsed := v.MsgHandlerUsed
+	savedMsgHandlerResult := v.MsgHandlerResult
+
+	results, err := v.ProtectedCall(fn, args)
+
+	v.MsgHandler = savedMsgHandler
+	v.MsgHandlerUsed = savedMsgHandlerUsed
+	v.MsgHandlerResult = savedMsgHandlerResult
+	return results, err
 }
 
 // openLoad registers load, loadfile, and dofile functions.
@@ -124,7 +145,7 @@ func luaLoad(v *vm.VM) int {
 				v.Set(1, vm.NewString("not enough memory"))
 				return 2
 			}
-			results, err := v.ProtectedCall(chunk, nil)
+			results, err := protectedCallPreserveMsgState(v, chunk, nil)
 			if err != nil {
 				v.Set(0, vm.Nil)
 				setLoadReaderError(v, err)
@@ -164,7 +185,7 @@ func luaLoad(v *vm.VM) int {
 						v.Set(1, vm.NewString("not enough memory"))
 						return 2
 					}
-					results2, err2 := v.ProtectedCall(chunk, nil)
+					results2, err2 := protectedCallPreserveMsgState(v, chunk, nil)
 					if err2 != nil {
 						v.Set(0, vm.Nil)
 						setLoadReaderError(v, err2)

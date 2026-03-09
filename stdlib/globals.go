@@ -317,6 +317,10 @@ func luaPcall(v *vm.VM) int {
 	v.MsgHandlerResult = vm.Nil
 	exitUserProtected := v.EnterUserProtected()
 	defer exitUserProtected()
+	if fn.RawEqual(v.GetGlobal("load")) {
+		exitDirectLoad := v.EnterDirectProtectedLoad()
+		defer exitDirectLoad()
+	}
 
 	// Call the function with error protection
 	// ProtectedCall handles __call metamethods for tables
@@ -373,6 +377,10 @@ func luaXpcall(v *vm.VM) int {
 	v.MsgHandlerResult = vm.Nil
 	exitUserProtected := v.EnterUserProtected()
 	defer exitUserProtected()
+	if fn.RawEqual(v.GetGlobal("load")) {
+		exitDirectLoad := v.EnterDirectProtectedLoad()
+		defer exitDirectLoad()
+	}
 
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {
