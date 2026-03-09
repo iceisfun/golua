@@ -1,0 +1,5 @@
+-- Bug: main chunk should have lastlinedefined = 0 (like Lua 5.4)
+local info = debug.getinfo(1)
+assert(info.linedefined == 0, "linedefined should be 0 for main chunk, got " .. tostring(info.linedefined))
+assert(info.lastlinedefined == 0, "lastlinedefined should be 0 for main chunk, got " .. tostring(info.lastlinedefined))
+print("OK")

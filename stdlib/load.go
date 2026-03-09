@@ -377,9 +377,11 @@ func luaLoadfile(v *vm.VM) int {
 		return 2
 	}
 
-	// Parse and compile (loadfile should strip shebangs)
-	// chunkName from the provider is already formatted (e.g. "@filename")
-	fn, errMsg := compileChunk(v, string(source), chunkName, env, hasEnv, compileChunkOpts{stripShebang: true, rawSource: chunkName})
+	// Parse and compile (loadfile should strip shebangs).
+	// Use displayName for parser/compiler error messages (strips @);
+	// keep raw chunkName in rawSource for proto.Source debug info.
+	displayName := chunkNameForDisplay(chunkName)
+	fn, errMsg := compileChunk(v, string(source), displayName, env, hasEnv, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
 	if errMsg != "" {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(errMsg))
@@ -420,8 +422,11 @@ func luaDofile(v *vm.VM) int {
 		panic(err.Error())
 	}
 
-	// Reuse compileChunk with shebang stripping (like loadfile)
-	fn, errMsg := compileChunk(v, string(source), chunkName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName})
+	// Reuse compileChunk with shebang stripping (like loadfile).
+	// Use displayName for parser/compiler error messages (strips @);
+	// keep raw chunkName in rawSource for proto.Source debug info.
+	displayName := chunkNameForDisplay(chunkName)
+	fn, errMsg := compileChunk(v, string(source), displayName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
 	if errMsg != "" {
 		panic(errMsg)
 	}

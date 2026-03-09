@@ -259,6 +259,7 @@ func needsFullIo(filename string) bool {
 	case "test_next_all_key_types.lua",
 		"test_error_named_objects.lua",
 		"test_dofile_loadfile.lua",
+		"test_dofile_syntax_error.lua",
 		"test_bom_load.lua",
 		"test_read0_eof.lua",
 		"test_read_n_hex_float.lua",
