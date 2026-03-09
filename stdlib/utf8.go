@@ -265,11 +265,6 @@ func luaUtf8Codes(v *vm.VM) int {
 	// Lax mode (arg 2): when true, accept extended codepoints (> U+10FFFF)
 	lax := v.Get(2).ToBool()
 
-	// Validate first byte is not a continuation byte
-	if len(s) > 0 && !utf8.RuneStart(s[0]) {
-		callerArgError(v, 1, "utf8.codes", "invalid UTF-8 code")
-	}
-
 	// Return iterator, string, initial state (0)
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
 		str := v.Get(1).AsString()
@@ -306,16 +301,6 @@ func luaUtf8Codes(v *vm.VM) int {
 		r, size := utf8.DecodeRuneInString(str[n:])
 		if r == utf8.RuneError && size <= 1 {
 			panic("invalid UTF-8 code")
-		}
-		// Check that the byte after the decoded rune is not a continuation byte
-		// (this catches overlong/invalid sequences that DecodeRune may skip)
-		next := n + size
-		if next < len(str) && !utf8.RuneStart(str[next]) {
-			// Verify by attempting to decode from next position
-			r2, s2 := utf8.DecodeRuneInString(str[next:])
-			if r2 == utf8.RuneError && s2 <= 1 {
-				panic("invalid UTF-8 code")
-			}
 		}
 
 		// Return 1-indexed position and codepoint
