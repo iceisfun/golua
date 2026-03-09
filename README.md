@@ -110,6 +110,7 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | `LuaTimeProvider`    | `time.*` millisecond timing                   | `DefaultTimeProvider`                |
 | `LuaPrintProvider`   | `print()`/`warn()` output routing             | `DefaultPrintProvider`               |
 | `LuaProcessProvider` | `exec.*` process spawning and streaming       | `DefaultProcessProvider`             |
+| `LuaLoadLibProvider` | `package.loadlib` native module hook          | custom host implementation           |
 
 ## Examples
 
@@ -186,6 +187,39 @@ func (p *MyProvider) Capabilities() vm.LuaLoaderCaps {
 // Use it
 v := vm.New()
 v.SetCodeProvider(&MyProvider{})
+stdlib.Open(v)
+```
+
+### package.loadlib Hook
+
+`package.loadlib` is nil by default. Standard C Lua modules (.so/.dll) are compiled
+against the PUC-Rio C API (`lua_State*`, `lua_push*`, etc.) and cannot be loaded
+directly into GoLua. This provider lets the host implement its own native module
+strategy — for example, mapping module names to Go-implemented bindings or using
+cgo to bridge platform-specific libraries.
+
+```go
+type MyLoadLibProvider struct{}
+
+func (p *MyLoadLibProvider) LoadLib(path, init string, caller *vm.LuaCallerContext) (vm.NativeFunc, error) {
+    // The host decides how to interpret path and init — they need not
+    // refer to actual .so/.dll files. Return an error to deny loading.
+    if path == "mylib" && init == "luaopen_mylib" {
+        return func(v *vm.VM) int {
+            lib := vm.NewEmptyTable()
+            lib.SetString("greet", vm.NewNativeFunc(func(v *vm.VM) int {
+                v.Set(0, vm.NewString("hello from Go"))
+                return 1
+            }))
+            v.Set(0, vm.NewTable(lib))
+            return 1
+        }, nil
+    }
+    return nil, fmt.Errorf("%s: module not available", path)
+}
+
+v := vm.New()
+v.SetLoadLibProvider(&MyLoadLibProvider{})
 stdlib.Open(v)
 ```
 
@@ -433,12 +467,14 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 | `glob`      | No                   | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`)            |
 | `io`        | `LuaIoProvider`      | File I/O (absent by default)                                                                  |
 | `os`        | `LuaOsProvider`      | OS functions: clock, time, date, getenv, execute, exit, rename, setlocale (absent by default) |
-| `package`   | No                   | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers`            |
+| `package`   | No*                  | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers`, `searchpath` |
 | `debug`     | `LuaDebugProvider`   | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)              |
 | `chan`      | `LuaChanProvider`    | Go↔Lua message passing channels (absent by default)                                           |
 | `time`      | `LuaTimeProvider`    | Millisecond timing: now, since, periodic tick (absent by default)                             |
 | `exec`      | `LuaProcessProvider` | Process execution: run, spawn, streaming I/O, stdin, kill ([docs](docs/exec.md))              |
 | `http`      | Separate module      | HTTP client: get, post, put, patch, delete, fetch ([docs](docs/http.md))                      |
+
+\* `package.loadlib` is nil by default; set `LuaLoadLibProvider` to provide host-defined native module loading.
 
 ## Security Model
 
@@ -469,7 +505,7 @@ GoLua is sandboxed by default. The VM starts with no access to the host system. 
 
 - No filesystem access unless explicitly provided
 - No OS access unless explicitly provided
-- No native code loading
+- No native code loading (C Lua modules are incompatible; host can provide Go-native bindings via `LuaLoadLibProvider`)
 - No ambient authority
 
 The default IO provider (`JailedIoProvider`) enforces:
@@ -531,7 +567,7 @@ go run ./cmd/luac script.lua
 
 ## Limitations
 
-- No loading of C shared objects (`.so`/`.dll`) — by design. `require` works for Lua modules via `LuaCodeProvider`, but C modules are not supported.
+- No C module loading — standard C Lua modules (.so/.dll) are compiled against the PUC-Rio C API and are not compatible with GoLua's VM. `package.loadlib` is nil by default; setting a `LuaLoadLibProvider` lets the host provide Go-native bindings or cgo-bridged libraries under the same API surface. `require` loads Lua modules via `LuaCodeProvider`.
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design; use `FullIoProvider` for read-write access)
 - Binary chunk format is compatible with Lua 5.4.8 — `load(string.dump(f))` round-tripping works, and chunks dumped by GoLua can be loaded by reference Lua 5.4.8 and vice versa. However, bytecode details may differ between compilers.
