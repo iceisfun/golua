@@ -393,6 +393,25 @@ func luaLoadfile(v *vm.VM) int {
 		return 2
 	}
 
+	// Detect binary chunk (starts with \x1b)
+	isBinary := len(source) > 0 && source[0] == '\x1b'
+
+	if isBinary {
+		if !strings.Contains(mode, "b") {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a binary chunk (mode is '%s')", mode)))
+			return 2
+		}
+		fn, errMsg := loadBinaryChunk(v, string(source), chunkName, env, hasEnv)
+		if errMsg != "" {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(errMsg))
+			return 2
+		}
+		v.Set(0, fn)
+		return 1
+	}
+
 	if !strings.Contains(mode, "t") {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a text chunk (mode is '%s')", mode)))
@@ -446,13 +465,26 @@ func luaDofile(v *vm.VM) int {
 		panic(err.Error())
 	}
 
-	// Reuse compileChunk with shebang stripping (like loadfile).
-	// Use displayName for parser/compiler error messages (strips @);
-	// keep raw chunkName in rawSource for proto.Source debug info.
-	displayName := chunkNameForDisplay(chunkName)
-	fn, errMsg := compileChunk(v, string(source), displayName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
-	if errMsg != "" {
-		panic(errMsg)
+	// Detect binary chunk (starts with \x1b)
+	var fn vm.Value
+	isBinary := len(source) > 0 && source[0] == '\x1b'
+
+	if isBinary {
+		var errMsg string
+		fn, errMsg = loadBinaryChunk(v, string(source), chunkName, vm.Nil, false)
+		if errMsg != "" {
+			panic(errMsg)
+		}
+	} else {
+		// Reuse compileChunk with shebang stripping (like loadfile).
+		// Use displayName for parser/compiler error messages (strips @);
+		// keep raw chunkName in rawSource for proto.Source debug info.
+		displayName := chunkNameForDisplay(chunkName)
+		var errMsg string
+		fn, errMsg = compileChunk(v, string(source), displayName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
+		if errMsg != "" {
+			panic(errMsg)
+		}
 	}
 
 	// Save and set chunk name

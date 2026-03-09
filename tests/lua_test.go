@@ -264,7 +264,8 @@ func needsFullIo(filename string) bool {
 		"test_read0_eof.lua",
 		"test_read_n_hex_float.lua",
 		"test_file_metatable.lua",
-		"test_bug_userdata_eq_metamethod_dispatch.lua":
+		"test_bug_userdata_eq_metamethod_dispatch.lua",
+		"test_loadfile_binary.lua":
 		return true
 	}
 	return false
