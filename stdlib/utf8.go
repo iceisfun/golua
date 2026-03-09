@@ -359,6 +359,10 @@ func luaUtf8Offset(v *vm.VM) int {
 	p := i - 1
 
 	if n == 0 {
+		if p == slen {
+			v.Set(0, vm.NewInt(int64(slen+1)))
+			return 1
+		}
 		// Find beginning of current character by walking backwards
 		for p > 0 && !utf8.RuneStart(s[p]) {
 			p--
