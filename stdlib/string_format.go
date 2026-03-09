@@ -72,24 +72,32 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 
 		specChar := format[i]
 
-		// Validate spec structure: %[flags][width][.precision]
-		validateFormatStructure(spec, specChar)
-
-		// Validate width and precision (Lua 5.4: must be < 100)
-		validateFormatWidthPrec(spec, specChar)
-
-		// Validate flag/conversion combinations (Lua 5.4 restrictions).
-		// For unsigned integer conversions (u/o/x/X), Lua checks argument
-		// availability/type before rejecting invalid flag combos.
-		if specChar != 'd' && specChar != 'i' && specChar != 'u' && specChar != 'o' && specChar != 'x' && specChar != 'X' {
-			validateConversion(spec, specChar)
-		}
-
 		if argIdx >= len(vals) {
 			callerArgError(v, argIdx+2, "string.format", "no value")
 		}
 		val := vals[argIdx]
 		argIdx++
+
+		// Lua 5.4 checks argument type for numeric conversions before rejecting
+		// malformed/invalid conversion specifications in several cases.
+		precheckFormatArgType(v, val, specChar, argIdx+1)
+
+		if specChar == 'q' {
+			// Lua 5.4 reports q-modifier errors before generic structure errors.
+			validateConversion(spec, specChar)
+		} else {
+			// Validate spec structure: %[flags][width][.precision]
+			validateFormatStructure(spec, specChar)
+
+			// Validate width and precision (Lua 5.4: must be < 100)
+			validateFormatWidthPrec(spec, specChar)
+
+			// Validate flag/conversion combinations (Lua 5.4 restrictions).
+			// For integer conversions, Lua checks argument availability/type first.
+			if specChar != 'd' && specChar != 'i' && specChar != 'u' && specChar != 'o' && specChar != 'x' && specChar != 'X' {
+				validateConversion(spec, specChar)
+			}
+		}
 
 		switch specChar {
 		case 'd', 'i':
@@ -167,6 +175,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				} else {
 					prec := -1 // default: shortest
 					if dotIdx := strings.IndexByte(spec, '.'); dotIdx >= 0 {
+						prec = 0
 						if p, err := strconv.Atoi(spec[dotIdx+1:]); err == nil {
 							prec = p
 						}
@@ -253,6 +262,24 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 	return result.String()
 }
 
+func precheckFormatArgType(v *vm.VM, val vm.Value, conv byte, argPos int) {
+	switch conv {
+	case 'd', 'i', 'u', 'o', 'x', 'X':
+		if _, ok := val.ToInt(); ok {
+			return
+		}
+		if _, ok := val.ToNumber(); ok {
+			callerArgError(v, argPos, "string.format", "number has no integer representation")
+		}
+		callerArgError(v, argPos, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
+	case 'e', 'E', 'f', 'g', 'G':
+		if _, ok := val.ToNumber(); ok {
+			return
+		}
+		callerArgError(v, argPos, "string.format", fmt.Sprintf("number expected, got %s", val.Type()))
+	}
+}
+
 // hexFloatZeroPad inserts zero padding after the sign + "0x"/"0X" prefix
 // in a hex float string, matching C printf behavior for %0Na.
 func hexFloatZeroPad(s string, width int) string {
@@ -261,7 +288,7 @@ func hexFloatZeroPad(s string, width int) string {
 	}
 	// Find the position after sign + "0x"/"0X"
 	pos := 0
-	if pos < len(s) && (s[pos] == '-' || s[pos] == '+') {
+	if pos < len(s) && (s[pos] == '-' || s[pos] == '+' || s[pos] == ' ') {
 		pos++
 	}
 	if pos+1 < len(s) && s[pos] == '0' && (s[pos+1] == 'x' || s[pos+1] == 'X') {

@@ -55,6 +55,8 @@ type nativeFuncBox struct {
 	nups int     // number of upvalues (for debug.getinfo "u" flag)
 }
 
+var emptyStringSentinel byte
+
 // Value represents a Lua runtime value using a tagged union for efficiency.
 // The zero value is nil. Values are compared by value for primitive types
 // (nil, bool, int, float, string) and by identity for reference types
@@ -529,6 +531,9 @@ func (v Value) PointerString() string {
 		return fmt.Sprintf("%p", v.ptr)
 	case typeString:
 		s := v.ptr.(string)
+		if len(s) == 0 {
+			return fmt.Sprintf("%p", &emptyStringSentinel)
+		}
 		ptr := unsafe.StringData(s)
 		if ptr == nil {
 			return "(null)"
