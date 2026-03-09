@@ -107,8 +107,8 @@ func luaDebugTraceback(v *vm.VM) int {
 			if !v.Get(3).IsNil() {
 				level = int(getInt(v, 3, "debug.traceback"))
 			}
-			if targetVM == nil || targetVM.StackDepth() == 0 {
-				// Dead or never-resumed coroutine — empty traceback
+			if targetVM == nil {
+				// Never-resumed coroutine — empty traceback
 				if hasMsg {
 					v.Set(0, vm.NewString(msgStr+"\nstack traceback:"))
 				} else {
@@ -116,7 +116,21 @@ func luaDebugTraceback(v *vm.VM) int {
 				}
 				return 1
 			}
-			tb := targetVM.Traceback("", level)
+			var tb string
+			if targetVM.StackDepth() == 0 && targetVM.HasLastErrorTraceback() {
+				// Dead coroutine with saved error call stack
+				tb = targetVM.TracebackFromLastError("", level)
+			} else if targetVM.StackDepth() == 0 {
+				// Dead or never-resumed coroutine — empty traceback
+				if hasMsg {
+					v.Set(0, vm.NewString(msgStr+"\nstack traceback:"))
+				} else {
+					v.Set(0, vm.NewString("stack traceback:"))
+				}
+				return 1
+			} else {
+				tb = targetVM.Traceback("", level)
+			}
 			if hasMsg {
 				tb = msgStr + "\n" + tb
 			}

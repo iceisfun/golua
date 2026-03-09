@@ -123,7 +123,8 @@ func (vm *VM) Traceback(msg string, level int) string {
 }
 
 // TracebackFromLastError formats traceback using the most recently captured
-// error stack (if available), then consumes that snapshot.
+// error stack (if available), then consumes that snapshot (unless the VM's
+// call stack is empty, indicating a dead coroutine where repeat calls are expected).
 func (vm *VM) TracebackFromLastError(msg string, level int) string {
 	if len(vm.lastErrorCallStack) == 0 {
 		return vm.Traceback(msg, level)
@@ -132,8 +133,18 @@ func (vm *VM) TracebackFromLastError(msg string, level int) string {
 	vm.callStack = vm.lastErrorCallStack
 	out := vm.Traceback(msg, level)
 	vm.callStack = saved
-	vm.lastErrorCallStack = nil
+	// Only consume the snapshot if the VM still has an active call stack.
+	// Dead coroutines (empty callStack) preserve the snapshot for repeated
+	// debug.traceback calls.
+	if len(saved) > 0 {
+		vm.lastErrorCallStack = nil
+	}
 	return out
+}
+
+// HasLastErrorTraceback reports whether an error stack snapshot is available.
+func (vm *VM) HasLastErrorTraceback() bool {
+	return len(vm.lastErrorCallStack) > 0
 }
 
 // frameFuncName attempts to determine a display name for a call frame's function.
