@@ -324,6 +324,8 @@ buildResult:
 // Returns nil if the index is out of range.
 // For native (Go) functions, always returns nil.
 func luaDebugGetUpvalue(v *vm.VM) int {
+	idx := getInt(v, 2, "debug.getupvalue")
+
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
 		got := arg1.Type()
@@ -331,12 +333,6 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 			got = "no value"
 		}
 		callerArgError(v, 1, "debug.getupvalue", fmt.Sprintf("function expected, got %s", got))
-	}
-
-	arg2 := v.Get(2)
-	idx, ok := arg2.ToInt()
-	if !ok {
-		callerArgError(v, 2, "debug.getupvalue", "number expected")
 	}
 
 	// Native functions have no inspectable upvalues
@@ -367,6 +363,8 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 // Sets the value of upvalue #up of function f.
 // Returns the upvalue name, or nil if the index is out of range.
 func luaDebugSetUpvalue(v *vm.VM) int {
+	idx := getInt(v, 2, "debug.setupvalue")
+
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
 		got := arg1.Type()
@@ -374,12 +372,6 @@ func luaDebugSetUpvalue(v *vm.VM) int {
 			got = "no value"
 		}
 		callerArgError(v, 1, "debug.setupvalue", fmt.Sprintf("function expected, got %s", got))
-	}
-
-	arg2 := v.Get(2)
-	idx, ok := arg2.ToInt()
-	if !ok {
-		callerArgError(v, 2, "debug.setupvalue", "number expected")
 	}
 
 	newVal := v.Get(3)
@@ -409,6 +401,8 @@ func luaDebugSetUpvalue(v *vm.VM) int {
 // Returns a unique identifier for the upvalue #n of function f.
 // Two closures sharing the same upvalue return the same ID.
 func luaDebugUpvalueID(v *vm.VM) int {
+	idx := getInt(v, 2, "debug.upvalueid")
+
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
 		got := arg1.Type()
@@ -416,12 +410,6 @@ func luaDebugUpvalueID(v *vm.VM) int {
 			got = "no value"
 		}
 		callerArgError(v, 1, "debug.upvalueid", fmt.Sprintf("function expected, got %s", got))
-	}
-
-	arg2 := v.Get(2)
-	idx, ok := arg2.ToInt()
-	if !ok {
-		callerArgError(v, 2, "debug.upvalueid", "number expected")
 	}
 
 	// Native functions have 0 upvalues — return nil for any index
@@ -462,11 +450,7 @@ func luaDebugGetLocal(v *vm.VM) int {
 		if tbl != nil && tbl.IsThread() {
 			arg2 := v.Get(2)
 			if arg2.IsCallable() {
-				arg3 := v.Get(3)
-				local, ok := arg3.ToInt()
-				if !ok {
-					callerArgError(v, 3, "debug.getlocal", "number expected")
-				}
+				local := getInt(v, 3, "debug.getlocal")
 				name, found := v.GetFuncLocal(arg2, int(local))
 				if !found {
 					v.Set(0, vm.Nil)
@@ -475,15 +459,8 @@ func luaDebugGetLocal(v *vm.VM) int {
 				v.Set(0, vm.NewString(name))
 				return 1
 			}
-			level, ok := arg2.ToInt()
-			if !ok {
-				callerArgError(v, 2, "debug.getlocal", "number expected")
-			}
-			arg3 := v.Get(3)
-			local, ok := arg3.ToInt()
-			if !ok {
-				callerArgError(v, 3, "debug.getlocal", "number expected")
-			}
+			local := getInt(v, 3, "debug.getlocal")
+			level := getInt(v, 2, "debug.getlocal")
 			coVM := tbl.VMRef()
 			if coVM == nil || !coVM.IsValidLevel(int(level)) {
 				callerArgError(v, 2, "debug.getlocal", "level out of range")
@@ -507,11 +484,7 @@ func luaDebugGetLocal(v *vm.VM) int {
 
 	// Check if first arg is a function (getlocal(func, index) form)
 	if arg1.IsCallable() {
-		arg2 := v.Get(2)
-		local, ok := arg2.ToInt()
-		if !ok {
-			callerArgError(v, 2, "debug.getlocal", "number expected")
-		}
+		local := getInt(v, 2, "debug.getlocal")
 		name, found := v.GetFuncLocal(arg1, int(local))
 		if !found {
 			// Lua 5.4 returns nil (1 value) for out-of-range indices
@@ -522,20 +495,15 @@ func luaDebugGetLocal(v *vm.VM) int {
 		return 1
 	}
 
-	level, ok := arg1.ToInt()
-	if !ok {
-		got := arg1.Type()
-		if v.ArgCount() < 1 {
-			got = "no value"
-		}
-		callerArgError(v, 1, "debug.getlocal", fmt.Sprintf("number expected, got %s", got))
+	if v.ArgCount() >= 3 {
+		// In 3-arg forms, Lua validates argument #2 first, even when
+		// argument #1 is not a valid level/thread/function.
+		_ = getInt(v, 2, "debug.getlocal")
 	}
 
-	arg2 := v.Get(2)
-	local, ok := arg2.ToInt()
-	if !ok {
-		callerArgError(v, 2, "debug.getlocal", "number expected")
-	}
+	level := getInt(v, 1, "debug.getlocal")
+
+	local := getInt(v, 2, "debug.getlocal")
 
 	// Validate level is in range (level 0 = getlocal itself = native frame)
 	if !v.IsValidLevel(int(level)) {
@@ -565,16 +533,8 @@ func luaDebugSetLocal(v *vm.VM) int {
 	if arg1.IsTable() {
 		tbl := arg1.AsTable()
 		if tbl != nil && tbl.IsThread() {
-			arg2 := v.Get(2)
-			level, ok := arg2.ToInt()
-			if !ok {
-				callerArgError(v, 2, "debug.setlocal", "number expected")
-			}
-			arg3 := v.Get(3)
-			local, ok := arg3.ToInt()
-			if !ok {
-				callerArgError(v, 3, "debug.setlocal", "number expected")
-			}
+			level := getInt(v, 2, "debug.setlocal")
+			local := getInt(v, 3, "debug.setlocal")
 			newVal := v.Get(4)
 			coVM := tbl.VMRef()
 			if coVM == nil || !coVM.IsValidLevel(int(level)) {
@@ -592,20 +552,9 @@ func luaDebugSetLocal(v *vm.VM) int {
 		}
 	}
 
-	level, ok := arg1.ToInt()
-	if !ok {
-		got := arg1.Type()
-		if v.ArgCount() < 1 {
-			got = "no value"
-		}
-		callerArgError(v, 1, "debug.setlocal", fmt.Sprintf("number expected, got %s", got))
-	}
+	level := getInt(v, 1, "debug.setlocal")
 
-	arg2 := v.Get(2)
-	local, ok := arg2.ToInt()
-	if !ok {
-		callerArgError(v, 2, "debug.setlocal", "number expected")
-	}
+	local := getInt(v, 2, "debug.setlocal")
 
 	newVal := v.Get(3)
 
@@ -726,15 +675,11 @@ func luaDebugSetHook(v *vm.VM) int {
 		return 0
 	}
 
+	maskStr := getString(v, hookIdx+1, "debug.sethook")
+
 	if !arg1.IsCallable() {
 		callerArgError(v, hookIdx, "debug.sethook", fmt.Sprintf("function expected, got %s", arg1.Type()))
 	}
-
-	maskArg := v.Get(hookIdx + 1)
-	if !maskArg.IsString() {
-		callerArgError(v, hookIdx+1, "debug.sethook", "string expected")
-	}
-	maskStr := maskArg.AsString()
 
 	var mask byte
 	for _, ch := range maskStr {
@@ -753,12 +698,16 @@ func luaDebugSetHook(v *vm.VM) int {
 	count := 0
 	countArg := v.Get(hookIdx + 2)
 	if !countArg.IsNil() {
-		if c, ok := countArg.ToInt(); ok {
-			count = int(c)
-			if count > 0 {
-				mask |= vm.HookMaskCount
-			}
+		c := getInt(v, hookIdx+2, "debug.sethook")
+		count = int(c)
+		if count > 0 {
+			mask |= vm.HookMaskCount
 		}
+	}
+
+	if mask == 0 {
+		targetVM.SetHook(vm.Nil, 0, 0)
+		return 0
 	}
 
 	targetVM.SetHook(arg1, mask, count)
@@ -768,6 +717,8 @@ func luaDebugSetHook(v *vm.VM) int {
 // debug.upvaluejoin(f1, n1, f2, n2)
 // Makes the n1-th upvalue of f1 refer to the same storage as the n2-th upvalue of f2.
 func luaDebugUpvalueJoin(v *vm.VM) int {
+	n1 := getInt(v, 2, "debug.upvaluejoin")
+
 	f1 := v.Get(1)
 	if !f1.IsCallable() {
 		got := f1.Type()
@@ -776,10 +727,14 @@ func luaDebugUpvalueJoin(v *vm.VM) int {
 		}
 		callerArgError(v, 1, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
 	}
-	n1, ok := v.Get(2).ToInt()
-	if !ok {
-		callerArgError(v, 2, "debug.upvaluejoin", "number expected")
+
+	// Native functions have 0 upvalues — any index is invalid
+	c1 := f1.AsClosure()
+	if c1 == nil || n1 < 1 || int(n1) > len(c1.Upvalues) {
+		callerArgError(v, 2, "debug.upvaluejoin", "invalid upvalue index")
 	}
+
+	n2 := getInt(v, 4, "debug.upvaluejoin")
 	f2 := v.Get(3)
 	if !f2.IsCallable() {
 		got := f2.Type()
@@ -787,16 +742,6 @@ func luaDebugUpvalueJoin(v *vm.VM) int {
 			got = "no value"
 		}
 		callerArgError(v, 3, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
-	}
-	n2, ok := v.Get(4).ToInt()
-	if !ok {
-		callerArgError(v, 4, "debug.upvaluejoin", "number expected")
-	}
-
-	// Native functions have 0 upvalues — any index is invalid
-	c1 := f1.AsClosure()
-	if c1 == nil || n1 < 1 || int(n1) > len(c1.Upvalues) {
-		callerArgError(v, 2, "debug.upvaluejoin", "invalid upvalue index")
 	}
 	c2 := f2.AsClosure()
 	if c2 == nil || n2 < 1 || int(n2) > len(c2.Upvalues) {
