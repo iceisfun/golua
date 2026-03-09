@@ -71,18 +71,48 @@ func (vm *VM) IsYieldableContext() bool {
 // EnterUserProtected marks execution as running under pcall/xpcall.
 // The returned function must be called to restore state.
 func (vm *VM) EnterUserProtected() func() {
-	vm.userProtectedDepth++
+	vm.userProtectedBases = append(vm.userProtectedBases, len(vm.callStack))
 	return func() {
-		if vm.userProtectedDepth <= 0 {
+		n := len(vm.userProtectedBases)
+		if n == 0 {
 			panic("internal error: user-protected depth underflow")
 		}
-		vm.userProtectedDepth--
+		vm.userProtectedBases = vm.userProtectedBases[:n-1]
 	}
 }
 
 // InUserProtected reports whether execution is currently under pcall/xpcall.
 func (vm *VM) InUserProtected() bool {
-	return vm.userProtectedDepth > 0
+	return len(vm.userProtectedBases) > 0
+}
+
+// InUserProtectedDirectCallee reports whether the currently executing function
+// is the direct callee of the innermost active pcall/xpcall.
+func (vm *VM) InUserProtectedDirectCallee() bool {
+	n := len(vm.userProtectedBases)
+	if n == 0 {
+		return false
+	}
+	base := vm.userProtectedBases[n-1]
+	return len(vm.callStack) == base+1
+}
+
+// EnterDirectProtectedLoad marks a pcall/xpcall invocation that directly
+// targets load() as its callee.
+func (vm *VM) EnterDirectProtectedLoad() func() {
+	vm.directProtectedLoadDepth++
+	return func() {
+		if vm.directProtectedLoadDepth <= 0 {
+			panic("internal error: direct-protected-load depth underflow")
+		}
+		vm.directProtectedLoadDepth--
+	}
+}
+
+// InDirectProtectedLoad reports whether load() is currently being called as
+// the direct function argument of pcall/xpcall.
+func (vm *VM) InDirectProtectedLoad() bool {
+	return vm.directProtectedLoadDepth > 0
 }
 
 // Push pushes a value onto the stack.

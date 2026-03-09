@@ -49,9 +49,12 @@ type VM struct {
 	// > 0 means current execution is inside a non-yieldable native callback
 	// context (Lua "C-call boundary").
 	nonYieldableDepth int
-	// > 0 when executing inside user-visible protected calls (pcall/xpcall).
-	// Used by native libraries that need Lua-compatible error object behavior.
-	userProtectedDepth int
+	// Stack of call-stack base depths captured by user-visible protected calls
+	// (pcall/xpcall). Used by native libraries that need Lua-compatible behavior
+	// differences between direct protected callees and nested calls.
+	userProtectedBases []int
+	// > 0 while pcall/xpcall is directly invoking load() as its callee.
+	directProtectedLoadDepth int
 
 	// Code loading support
 	codeProvider LuaCodeProvider // Provider for loading Lua chunks (optional)
