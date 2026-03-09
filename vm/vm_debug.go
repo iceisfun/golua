@@ -62,7 +62,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 			if i > 0 {
 				name, nameWhat = vm.funcNameFromCall(&vm.callStack[i-1])
 			}
-			if name == "" && frame.callName != "" {
+			if name == "" && frame.callName != "" && !suppressLuaFrameCallName(frame, hasHigherLuaFrame(vm.callStack, i, start)) {
 				name = frame.callName
 				nameWhat = frame.callNameWhat
 			}
@@ -98,6 +98,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 			// Try to get the function name from the caller's call site
 			name := ""
 			nameWhat := ""
+			suppressCallName := suppressLuaFrameCallName(frame, hasHigherLuaFrame(vm.callStack, i, start))
 			if i > 0 && !frame.isTailCall {
 				callerIdx := i - 1
 				for callerIdx > 0 && vm.callStack[callerIdx].isTailCall {
@@ -107,10 +108,18 @@ func (vm *VM) Traceback(msg string, level int) string {
 					name, nameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
 				}
 			}
+			if suppressCallName && nameWhat == "metamethod" && name == "close" {
+				name = ""
+				nameWhat = ""
+			}
 			// Check for override name (e.g., "close" for __close metamethod calls)
-			if name == "" && frame.callName != "" {
+			if name == "" && frame.callName != "" && !suppressCallName {
 				name = frame.callName
 				nameWhat = frame.callNameWhat
+			}
+			if suppressCallName {
+				name = ""
+				nameWhat = ""
 			}
 			if name == "" {
 				name = vm.frameFuncName(frame)
@@ -241,6 +250,25 @@ func (vm *VM) debugCallStack() ([]callFrame, bool) {
 		return vm.callStack, true
 	}
 	return vm.lastErrorCallStack, false
+}
+
+func suppressLuaFrameCallName(frame *callFrame, hasHigherLuaFrame bool) bool {
+	if frame == nil || frame.closure == nil {
+		return false
+	}
+	if frame.callNameWhat != "metamethod" || frame.callName != "close" {
+		return false
+	}
+	return hasHigherLuaFrame
+}
+
+func hasHigherLuaFrame(stack []callFrame, idx, top int) bool {
+	for i := top; i > idx; i-- {
+		if stack[i].closure != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // frameFuncName attempts to determine a display name for a call frame's function.
@@ -399,12 +427,21 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		if callerIdx >= 0 {
 			info.Name, info.NameWhat = vm.funcNameFromCall(&stack[callerIdx])
 		}
+		suppressCallName := frame.callNameWhat == "metamethod" && frame.callName == "close" && !vm.inHook
+		if suppressCallName && info.NameWhat == "metamethod" && info.Name == "close" {
+			info.Name = ""
+			info.NameWhat = ""
+		}
 
 		// If bytecode-based name inference failed, use the frame's override name
 		// (e.g., "close" for __close metamethod calls)
-		if info.NameWhat == "" && frame.callName != "" {
+		if info.NameWhat == "" && frame.callName != "" && !suppressCallName {
 			info.Name = frame.callName
 			info.NameWhat = frame.callNameWhat
+		}
+		if suppressCallName {
+			info.Name = ""
+			info.NameWhat = ""
 		}
 	}
 

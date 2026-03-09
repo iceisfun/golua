@@ -160,3 +160,24 @@ func TestDebugTracebackRegression_HookFramesUseHookName(t *testing.T) {
 		t.Fatalf("expected %q in error, got: %s", want, err)
 	}
 }
+
+func TestDebugTracebackRegression_XPCallCloseErrorUsesFunctionFrameInLuaHandler(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local function run()
+			local obj = setmetatable({}, {__close = function()
+				error("close")
+			end})
+			local x <close> = obj
+			error("body")
+		end
+
+		local ok, msg = xpcall(run, function(e)
+			return debug.traceback(e, 0)
+		end)
+		assert(ok == false)
+		assert(msg:find("in function <", 1, true), msg)
+		assert(msg:find("in metamethod 'close'", 1, true) == nil, msg)
+	`
+	runLuaWithDebug(t, source, "test_debug_traceback_xpcall_close_custom_handler", provider)
+}
