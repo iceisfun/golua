@@ -113,6 +113,31 @@ func TestLoad_ReaderNonStringTopLevelTraceback(t *testing.T) {
 	runLuaSource(t, source, "test_load_reader_nonstring_top_level_traceback")
 }
 
+func TestLoad_ReaderNonStringWrappedProtectedCallKeepsCallerLocationOnly(t *testing.T) {
+	source := `
+		local function run()
+			return load(function()
+				return {}
+			end)
+		end
+
+		local ok1, f1, err1 = pcall(run)
+		assert(ok1 == true)
+		assert(f1 == nil)
+		assert(type(err1) == "string", type(err1))
+		assert(err1:find(":3: reader function must return a string", 1, true), err1)
+		assert(err1:find("stack traceback:", 1, true) == nil, err1)
+
+		local ok2, f2, err2 = xpcall(run, function(e) return e end)
+		assert(ok2 == true)
+		assert(f2 == nil)
+		assert(type(err2) == "string", type(err2))
+		assert(err2:find(":3: reader function must return a string", 1, true), err2)
+		assert(err2:find("stack traceback:", 1, true) == nil, err2)
+	`
+	runLuaSource(t, source, "test_load_reader_nonstring_wrapped_protected_call")
+}
+
 // Test load() with a custom chunk name
 func TestLoad_ChunkName(t *testing.T) {
 	source := `

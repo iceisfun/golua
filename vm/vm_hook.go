@@ -52,6 +52,15 @@ func (vm *VM) fireHook(event string, line int) {
 	exit := vm.EnterNonYieldable()
 	defer exit()
 
+	savedCallName := vm.pendingCallName
+	savedCallNameWhat := vm.pendingCallNameWhat
+	vm.pendingCallName = "?"
+	vm.pendingCallNameWhat = "hook"
+	defer func() {
+		vm.pendingCallName = savedCallName
+		vm.pendingCallNameWhat = savedCallNameWhat
+	}()
+
 	// Call the hook function directly (unprotected) so errors propagate
 	// to the enclosing pcall/xpcall, matching Lua 5.4 semantics.
 	vm.callUnprotected(vm.hookFunc, args)

@@ -63,12 +63,16 @@ func setLoadReaderError(v *vm.VM, err error) {
 }
 
 func setLoadReaderTypeError(v *vm.VM, msg string) {
-	preserveRaw := v.InDirectProtectedLoad() || (v.InUserProtected() && v.MsgHandler.IsNil())
+	preserveRaw := v.InDirectProtectedLoad()
 	if preserveRaw {
 		v.Set(1, vm.NewString(msg))
 		return
 	}
-	v.Set(1, vm.NewString(v.Traceback(v.AddCallerLocation(msg), 0)))
+	formatted := v.AddCallerLocation(msg)
+	if !v.InUserProtected() {
+		formatted = v.Traceback(formatted, 0)
+	}
+	v.Set(1, vm.NewString(formatted))
 }
 
 func protectedCallPreserveMsgState(v *vm.VM, fn vm.Value, args []vm.Value) ([]vm.Value, error) {

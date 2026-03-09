@@ -117,6 +117,8 @@ func (vm *VM) Traceback(msg string, level int) string {
 			}
 			if nameWhat == "metamethod" {
 				fmt.Fprintf(&b, "%s:%d: in metamethod '%s'", source, line, name)
+			} else if nameWhat == "hook" {
+				fmt.Fprintf(&b, "%s:%d: in hook '%s'", source, line, name)
 			} else if len(name) > 0 && name[0] == '<' {
 				// Anonymous function: "in function <file:line>" (no quotes)
 				fmt.Fprintf(&b, "%s:%d: in function %s", source, line, name)
@@ -142,6 +144,17 @@ func (vm *VM) Traceback(msg string, level int) string {
 }
 
 func (vm *VM) tracebackNativeName(frame *callFrame, name, nameWhat string) string {
+	if name == "" || name == "?" {
+		if resolved, ok := vm.lookupNativeFuncName(frame.funcValue); ok {
+			return resolved
+		}
+		return name
+	}
+	if nameWhat == "field" {
+		if resolved, ok := vm.lookupNativeFuncName(frame.funcValue); ok && strings.Contains(resolved, ".") {
+			return resolved
+		}
+	}
 	if nameWhat != "field" || name != "traceback" {
 		return name
 	}
@@ -157,6 +170,45 @@ func (vm *VM) tracebackNativeName(frame *callFrame, name, nameWhat string) strin
 		return "debug.traceback"
 	}
 	return name
+}
+
+func (vm *VM) lookupNativeFuncName(fn Value) (string, bool) {
+	if fn.IsNil() || vm.globals == nil {
+		return "", false
+	}
+	if name, ok := lookupFuncNameInTable(vm.globals, fn, "", 2); ok {
+		return name, true
+	}
+	return "", false
+}
+
+func lookupFuncNameInTable(tbl LuaTable, target Value, prefix string, depth int) (string, bool) {
+	if tbl == nil || depth < 0 {
+		return "", false
+	}
+	for k, v, err := tbl.Next(Nil); err == nil && !k.IsNil(); k, v, err = tbl.Next(k) {
+		if !k.IsString() {
+			continue
+		}
+		name := k.AsString()
+		full := name
+		if prefix != "" {
+			full = prefix + "." + name
+		}
+		if v.RawEqual(target) {
+			full = strings.TrimPrefix(full, "_G.")
+			return full, true
+		}
+		if depth > 0 && v.IsTable() {
+			if prefix == "" && name == "_G" {
+				continue
+			}
+			if nested, ok := lookupFuncNameInTable(v.AsTable(), target, full, depth-1); ok {
+				return nested, true
+			}
+		}
+	}
+	return "", false
 }
 
 // TracebackFromLastError formats traceback using the most recently captured

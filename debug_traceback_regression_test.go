@@ -1,10 +1,38 @@
 package golua_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/parser"
+	"github.com/iceisfun/golua/stdlib"
 	"github.com/iceisfun/golua/vm"
 )
+
+func runLuaWithDebugError(t *testing.T, source, name string, provider vm.LuaDebugProvider) string {
+	t.Helper()
+
+	block, err := parser.Parse(name, source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	proto, err := compiler.Compile(name, block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	v := vm.New()
+	v.SetDebugProvider(provider)
+	stdlib.Open(v)
+
+	_, err = v.Run(proto)
+	if err == nil {
+		t.Fatal("expected runtime error")
+	}
+	return err.Error()
+}
 
 func TestDebugTracebackRegression_BottomCFrame(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
@@ -98,4 +126,37 @@ assert(ok == false, tostring(ok))
 assert(msg:find("[C]: in function 'debug.traceback'", 1, true), msg)
 `
 	runLuaWithDebug(t, source, "test_debug_traceback_qualified_c_name", provider)
+}
+
+func TestDebugTracebackRegression_TopLevelNativeFramesResolveDisplayName(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `local cases = {
+  {fn = function() return math.abs() end, want = "[C]: in function 'math.abs'"},
+  {fn = function() return string.byte() end, want = "[C]: in function 'string.byte'"},
+  {fn = function() return table.insert({}) end, want = "[C]: in function 'table.insert'"},
+  {fn = function() return pcall() end, want = "[C]: in function 'pcall'"},
+}
+
+for _, tc in ipairs(cases) do
+  local ok, err = xpcall(tc.fn, debug.traceback)
+  assert(ok == false)
+  local msg = tostring(err)
+  assert(msg:find(tc.want, 1, true), msg)
+end
+`
+	runLuaWithDebug(t, source, "test_debug_traceback_top_level_native_names", provider)
+}
+
+func TestDebugTracebackRegression_HookFramesUseHookName(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		debug.sethook(function()
+			error(debug.traceback("hookboom", 0))
+		end, "c")
+		pcall(function() end)
+	`
+	err := runLuaWithDebugError(t, source, "test_debug_traceback_hook_name", provider)
+	if want := "in hook '?'"; !strings.Contains(err, want) {
+		t.Fatalf("expected %q in error, got: %s", want, err)
+	}
 }
