@@ -237,7 +237,9 @@ func makeExecSpawn(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 		if extra.timeout > 0 {
 			// For spawn, the timeout context auto-kills the process
 			// when it expires (via exec.CommandContext).
-			ctx, _ = context.WithTimeout(ctx, extra.timeout)
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, extra.timeout)
+			defer cancel()
 		}
 		proc, err := provider.Spawn(ctx, cmd, args, opts)
 		if err != nil {

@@ -313,8 +313,11 @@ func makeOsTmpname(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
-		if name.IsNil() {
-			panic("bad argument #1 to 'os.remove' (string expected, got nil)")
+		if v.ArgCount() < 1 || name.IsNil() {
+			callerArgError(v, 1, "os.remove", "string expected, got no value")
+		}
+		if !name.IsString() && !name.IsNumber() {
+			callerArgError(v, 1, "os.remove", fmt.Sprintf("string expected, got %s", name.Type()))
 		}
 		nameStr := name.AsString()
 		err := ioProvider.Remove(nameStr)
@@ -353,14 +356,22 @@ func osSetlocale(v *vm.VM) int {
 // makeOsRename creates the os.rename(oldname, newname) function.
 func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		if v.ArgCount() < 1 || v.Get(1).IsNil() {
-			callerArgError(v, 1, "os.rename", "string expected, got nil")
+		arg1 := v.Get(1)
+		if v.ArgCount() < 1 || arg1.IsNil() {
+			callerArgError(v, 1, "os.rename", "string expected, got no value")
 		}
-		if v.ArgCount() < 2 || v.Get(2).IsNil() {
-			callerArgError(v, 2, "os.rename", "string expected, got nil")
+		if !arg1.IsString() && !arg1.IsNumber() {
+			callerArgError(v, 1, "os.rename", fmt.Sprintf("string expected, got %s", arg1.Type()))
 		}
-		oldname := v.Get(1).AsString()
-		newname := v.Get(2).AsString()
+		arg2 := v.Get(2)
+		if v.ArgCount() < 2 || arg2.IsNil() {
+			callerArgError(v, 2, "os.rename", "string expected, got no value")
+		}
+		if !arg2.IsString() && !arg2.IsNumber() {
+			callerArgError(v, 2, "os.rename", fmt.Sprintf("string expected, got %s", arg2.Type()))
+		}
+		oldname := arg1.AsString()
+		newname := arg2.AsString()
 		err := ioProvider.Rename(oldname, newname)
 		if err != nil {
 			msg, errno := formatPathError(oldname, err)
@@ -417,8 +428,11 @@ func makeOsExit(vmRef *vm.VM, handler vm.LuaExitHandler) vm.NativeFunc {
 func makeOsGetenv(provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
-		if name.IsNil() {
-			panic("bad argument #1 to 'os.getenv' (string expected)")
+		if v.ArgCount() < 1 || name.IsNil() {
+			callerArgError(v, 1, "os.getenv", "string expected, got no value")
+		}
+		if !name.IsString() && !name.IsNumber() {
+			callerArgError(v, 1, "os.getenv", fmt.Sprintf("string expected, got %s", name.Type()))
 		}
 
 		val, ok := provider.Getenv(name.AsString())

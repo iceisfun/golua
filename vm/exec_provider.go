@@ -36,11 +36,13 @@ func (p *DefaultExecProvider) Execute(command string) (bool, string, int) {
 	err := cmd.Run()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			status := exitErr.Sys().(syscall.WaitStatus)
-			if status.Signaled() {
-				return false, "signal", int(status.Signal())
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				if status.Signaled() {
+					return false, "signal", int(status.Signal())
+				}
+				return false, "exit", status.ExitStatus()
 			}
-			return false, "exit", status.ExitStatus()
+			return false, "exit", exitErr.ExitCode()
 		}
 		// Command not found or other error
 		return false, "exit", 127
