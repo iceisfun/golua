@@ -205,9 +205,12 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	frame := &vm.callStack[idx]
 	info := &FrameInfo{}
 
-	// Transfer info (from hooks, set on frame before hook fires)
-	info.FTransfer = frame.ftransfer
-	info.NTransfer = frame.ntransfer
+	// Transfer info is only observable during hook execution.
+	// Outside hooks, Lua 5.4 reports 0/0 for these fields.
+	if vm.inHook {
+		info.FTransfer = frame.ftransfer
+		info.NTransfer = frame.ntransfer
+	}
 
 	if frame.closure == nil {
 		// Native (C) function frame

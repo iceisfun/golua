@@ -189,6 +189,8 @@ func luaDebugGetInfo(v *vm.VM) int {
 	arg1 := v.Get(1)
 	var info *vm.FrameInfo
 	var what string
+	whatArg := ""
+	whatGiven := false
 
 	// Check if first arg is a thread (coroutine)
 	targetVM := v
@@ -212,7 +214,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 					}
 					what = "flnSrtu"
 					if !v.Get(3).IsNil() {
-						what = v.Get(3).AsString()
+						what = getString(v, 3, "debug.getinfo")
 					}
 					goto buildResult
 				}
@@ -223,6 +225,10 @@ func luaDebugGetInfo(v *vm.VM) int {
 			whatIdx = 3
 		}
 	}
+	if !v.Get(whatIdx).IsNil() {
+		whatArg = getString(v, whatIdx, "debug.getinfo")
+		whatGiven = true
+	}
 
 	if fArg.IsCallable() {
 		// debug.getinfo([thread,] func [, what])
@@ -232,19 +238,12 @@ func luaDebugGetInfo(v *vm.VM) int {
 			return 1
 		}
 		what = "flnSrtu" // default
-		if !v.Get(whatIdx).IsNil() {
-			what = v.Get(whatIdx).AsString()
+		if whatGiven {
+			what = whatArg
 		}
 	} else {
 		// debug.getinfo([thread,] level [, what])
-		level, ok := fArg.ToInt()
-		if !ok {
-			got := fArg.Type()
-			if v.ArgCount() < whatIdx-1 {
-				got = "no value"
-			}
-			callerArgError(v, whatIdx-1, "debug.getinfo", fmt.Sprintf("number expected, got %s", got))
-		}
+		level := getInt(v, whatIdx-1, "debug.getinfo")
 		if level < 0 {
 			v.Set(0, vm.Nil)
 			return 1
@@ -261,8 +260,8 @@ func luaDebugGetInfo(v *vm.VM) int {
 			return 1
 		}
 		what = "flnSrtu" // default
-		if !v.Get(whatIdx).IsNil() {
-			what = v.Get(whatIdx).AsString()
+		if whatGiven {
+			what = whatArg
 		}
 	}
 
@@ -271,7 +270,7 @@ buildResult:
 	// Validate the what string ('>' is C API only, not valid at Lua level)
 	for _, ch := range what {
 		if !strings.ContainsRune("flnStuLr", ch) {
-			callerArgError(v, 2, "debug.getinfo", "invalid option")
+			callerArgError(v, whatIdx, "debug.getinfo", "invalid option")
 		}
 	}
 
