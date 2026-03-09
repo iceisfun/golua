@@ -290,7 +290,6 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	// Save VM state for recovery
 	savedTop := vm.top
 	savedCallStackLen := len(vm.callStack)
-	savedTbcLen := len(vm.tbcVars)
 	savedOpenUpvaluesLen := len(vm.openUpvalues)
 	// Save and clear skipTBCCleanup: this call's recovery uses the saved
 	// value, but nested ProtectedCalls (from pcall) see false so they
@@ -363,12 +362,22 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 
 			// Close TBC variables AFTER the message handler has run.
 			if !skipTBC {
-				// Remove them from tbcVars BEFORE calling __close to prevent
-				// double-close: the handler's OP_RETURN calls closeUpvalues which
-				// would find the same entry still in tbcVars.
-				tbcToClose := make([]int, len(vm.tbcVars)-savedTbcLen)
-				copy(tbcToClose, vm.tbcVars[savedTbcLen:])
-				vm.tbcVars = vm.tbcVars[:savedTbcLen]
+				// Remove to-be-closed variables created in frames at or above
+				// savedTop BEFORE calling __close to prevent double-close.
+				//
+				// Using stack index level is more robust than relying on append-only
+				// tbcVars growth, because close operations during unwinding may
+				// mutate tbcVars ordering/length.
+				var tbcToClose []int
+				kept := vm.tbcVars[:0]
+				for _, idx := range vm.tbcVars {
+					if idx >= savedTop {
+						tbcToClose = append(tbcToClose, idx)
+					} else {
+						kept = append(kept, idx)
+					}
+				}
+				vm.tbcVars = kept
 				// Extract the Lua error value to pass to __close handlers
 				var closeErrVal Value
 				if le, ok := r.(*LuaError); ok {
@@ -481,18 +490,6 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 
 	if fn.IsFunction() {
 		results, err = vm.call(fn.AsClosure(), args, MultiReturn)
-		if err != nil {
-			// Clean up TBC variables added during the failed call.
-			// The defer/recover path handles panics, but execute() returns
-			// errors (e.g., from OP_TFORCALL) as regular Go errors.
-			if len(vm.tbcVars) > savedTbcLen {
-				tbcToClose := make([]int, len(vm.tbcVars)-savedTbcLen)
-				copy(tbcToClose, vm.tbcVars[savedTbcLen:])
-				vm.tbcVars = vm.tbcVars[:savedTbcLen]
-				vm.callCloseHandlers(tbcToClose, NewString(err.Error()))
-			}
-			vm.top = savedTop
-		}
 		return results, err
 	}
 

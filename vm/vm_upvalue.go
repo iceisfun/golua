@@ -23,6 +23,10 @@ func (vm *VM) findOrCreateUpvalue(stackIdx int) *Upvalue {
 // closeUpvalues closes all open upvalues at or above the given stack level,
 // then calls __close metamethods on any to-be-closed variables in that range.
 func (vm *VM) closeUpvalues(level int) {
+	vm.closeUpvaluesWithError(level, Nil)
+}
+
+func (vm *VM) closeUpvaluesWithError(level int, errVal Value) {
 	// Close all upvalues with stack index >= level
 	remaining := vm.openUpvalues[:0]
 	for _, uv := range vm.openUpvalues {
@@ -69,7 +73,7 @@ func (vm *VM) closeUpvalues(level int) {
 				tbcIndices[k]--
 			}
 		}
-		vm.callCloseMetamethod(stackIdx, Nil)
+		vm.callCloseMetamethod(stackIdx, errVal)
 	}
 }
 

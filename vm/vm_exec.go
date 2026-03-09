@@ -83,6 +83,12 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 
 	// Execute
 	results, err := vm.execute()
+	if err != nil {
+		if le, ok := err.(*LuaError); ok {
+			panic(le)
+		}
+		panic(&LuaError{Value: NewString(err.Error())})
+	}
 
 	// Pop call frame and restore top
 	vm.callStack = vm.callStack[:len(vm.callStack)-1]
@@ -90,12 +96,17 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 
 	// Clear dead stack slots so Go's GC can collect objects
 	// that were only reachable from the called function's frame.
-	clearEnd := base + proto.MaxStack
-	if clearEnd > len(vm.stack) {
-		clearEnd = len(vm.stack)
-	}
-	for i := vm.top; i < clearEnd; i++ {
-		vm.stack[i] = Value{}
+	//
+	// On error, defer clearing: ProtectedCall may need live stack values
+	// for pending to-be-closed variables in this frame.
+	if err == nil {
+		clearEnd := base + proto.MaxStack
+		if clearEnd > len(vm.stack) {
+			clearEnd = len(vm.stack)
+		}
+		for i := vm.top; i < clearEnd; i++ {
+			vm.stack[i] = Value{}
+		}
 	}
 
 	return results, err
