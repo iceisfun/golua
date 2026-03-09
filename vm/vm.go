@@ -71,6 +71,9 @@ type VM struct {
 	// Time provider support
 	timeProvider LuaTimeProvider // Provider for time operations (optional)
 
+	// package.loadlib provider support
+	loadLibProvider LuaLoadLibProvider
+
 	// Process provider support
 	processProvider LuaProcessProvider // Provider for process spawning (optional)
 
@@ -79,12 +82,12 @@ type VM struct {
 	warnEnabled   bool             // Per-VM warn flag (controlled by warn("@on")/"@off")
 
 	// Hook support
-	hookFunc     Value  // Hook callback function
-	hookMask     byte   // Bitmask of active hook events
-	hookCount    int    // Instruction count interval for count hooks
-	hookCounter  int    // Current counter (counts down to 0)
-	inHook       bool   // Re-entrancy guard
-	lastHookLine int    // Last line reported by line hook (-1 = none)
+	hookFunc     Value // Hook callback function
+	hookMask     byte  // Bitmask of active hook events
+	hookCount    int   // Instruction count interval for count hooks
+	hookCounter  int   // Current counter (counts down to 0)
+	inHook       bool  // Re-entrancy guard
+	lastHookLine int   // Last line reported by line hook (-1 = none)
 
 	// Pending call name hint for debug.getinfo name inference.
 	// Set before calling vm.call() and consumed by vm.call().
@@ -103,9 +106,9 @@ type VM struct {
 	ctx           context.Context // nil = no cancellation checking
 	limits        Limits          // zero values = no limit
 	instrCount    int64           // only tracked when MaxInstructions > 0
-	callDepthBase  int             // inherited call depth from parent VM (for coroutines)
-	closeDepth     *int32          // shared counter tracking nested coroutine.close depth (atomic)
-	metaCallDepth  int             // >0 when inside a metamethod call chain (for "C stack overflow" message)
+	callDepthBase int             // inherited call depth from parent VM (for coroutines)
+	closeDepth    *int32          // shared counter tracking nested coroutine.close depth (atomic)
+	metaCallDepth int             // >0 when inside a metamethod call chain (for "C stack overflow" message)
 
 	// GC rate limiting
 	lastLuaGC   time.Time // Last time ProcessGcFinalizers invoked runtime.GC()
@@ -561,37 +564,38 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 // parent and child happens through the yieldCh and resumeCh channels.
 func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 	return &VM{
-		stack:         make([]Value, 256),
-		callStack:     make([]callFrame, 0, 16),
-		globals:       parent.globals,
-		stringMeta:    parent.stringMeta,
-		numberMeta:    parent.numberMeta,
-		boolMeta:      parent.boolMeta,
-		nilMeta:       parent.nilMeta,
-		functionMeta:  parent.functionMeta,
-		threadMeta:    parent.threadMeta,
-		yieldCh:       yieldCh,
-		resumeCh:      resumeCh,
-		coroutineID:   coID,
-		codeProvider:  parent.codeProvider,
-		vmID:          parent.vmID,
-		chunkName:     parent.chunkName,
-		ioProvider:    parent.ioProvider,
-		osProvider:    parent.osProvider,
-		execProvider:  parent.execProvider,
-		exitHandler:   parent.exitHandler,
-		debugProvider: parent.debugProvider,
-		chanProvider:  parent.chanProvider,
-		timeProvider:  parent.timeProvider,
+		stack:           make([]Value, 256),
+		callStack:       make([]callFrame, 0, 16),
+		globals:         parent.globals,
+		stringMeta:      parent.stringMeta,
+		numberMeta:      parent.numberMeta,
+		boolMeta:        parent.boolMeta,
+		nilMeta:         parent.nilMeta,
+		functionMeta:    parent.functionMeta,
+		threadMeta:      parent.threadMeta,
+		yieldCh:         yieldCh,
+		resumeCh:        resumeCh,
+		coroutineID:     coID,
+		codeProvider:    parent.codeProvider,
+		vmID:            parent.vmID,
+		chunkName:       parent.chunkName,
+		ioProvider:      parent.ioProvider,
+		osProvider:      parent.osProvider,
+		execProvider:    parent.execProvider,
+		exitHandler:     parent.exitHandler,
+		debugProvider:   parent.debugProvider,
+		chanProvider:    parent.chanProvider,
+		timeProvider:    parent.timeProvider,
 		processProvider: parent.processProvider,
+		loadLibProvider: parent.loadLibProvider,
 		printProvider:   parent.printProvider,
-		warnEnabled:   parent.warnEnabled,
-		ctx:           parent.ctx,
-		limits:        parent.limits,
-		callDepthBase: parent.callDepthBase + len(parent.callStack),
-		closeDepth:    parent.closeDepth,
-		captureOutput: parent.captureOutput,
-		outputLines:   parent.outputLines,
+		warnEnabled:     parent.warnEnabled,
+		ctx:             parent.ctx,
+		limits:          parent.limits,
+		callDepthBase:   parent.callDepthBase + len(parent.callStack),
+		closeDepth:      parent.closeDepth,
+		captureOutput:   parent.captureOutput,
+		outputLines:     parent.outputLines,
 	}
 }
 

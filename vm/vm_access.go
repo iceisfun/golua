@@ -195,6 +195,16 @@ func (vm *VM) TimeProvider() LuaTimeProvider {
 	return vm.timeProvider
 }
 
+// SetLoadLibProvider sets the package.loadlib provider for this VM.
+func (vm *VM) SetLoadLibProvider(provider LuaLoadLibProvider) {
+	vm.loadLibProvider = provider
+}
+
+// LoadLibProvider returns the current package.loadlib provider, or nil if none is set.
+func (vm *VM) LoadLibProvider() LuaLoadLibProvider {
+	return vm.loadLibProvider
+}
+
 // Process provider
 
 // SetProcessProvider sets the process provider for this VM.
