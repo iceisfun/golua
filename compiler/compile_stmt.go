@@ -676,9 +676,10 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 
 	if len(s.Values) == 1 {
 		// Check for tail call — cannot tail-call when there are to-be-closed
-		// variables or captured upvalues in scope, because they must be closed
-		// after the called function returns.
-		if !fs.needsClose(0) {
+		// variables in scope, because they must be closed after the called
+		// function returns. Captured upvalues are fine: OP_TAILCALL closes
+		// them before entering the new frame.
+		if !fs.needsCloseTBC(0) {
 			if call, ok := s.Values[0].(*ast.FuncCallExpr); ok {
 				base := fs.freeReg
 				c.compileFuncCall(call, base, 0, line) // compile the call

@@ -620,6 +620,23 @@ func (fs *funcState) needsClose(fromLocal int) bool {
 	return false
 }
 
+// needsCloseTBC returns true if any local at or above fromLocal has the <close>
+// attribute. Unlike needsClose, this does NOT check for captured upvalues.
+// Used for tail call optimization: OP_TAILCALL already closes upvalues, so
+// only <close> variables prevent tail calls.
+func (fs *funcState) needsCloseTBC(fromLocal int) bool {
+	start := len(fs.locals) - (fs.nActVar - fromLocal)
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(fs.locals); i++ {
+		if fs.locals[i].attrib == "close" {
+			return true
+		}
+	}
+	return false
+}
+
 // isConst returns true if the named local has the <const> or <close> attribute.
 // Both attributes make a variable immutable (Lua 5.4 §3.3.7).
 func (fs *funcState) isConst(name string) bool {
