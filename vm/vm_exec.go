@@ -1202,10 +1202,13 @@ func (vm *VM) execute() ([]Value, error) {
 			if stepVal.IsInt() {
 				// Integer for loop: counter-based (Lua 5.4 semantics)
 				// R[A+1] is the remaining iterations counter, decremented each loop.
-				counter := vm.stack[frame.base+a+1].AsInt()
-				counter--
-				vm.stack[frame.base+a+1] = NewInt(counter)
-				if counter >= 0 {
+				// Use uint64 arithmetic: when the total iteration count exceeds
+				// MaxInt64, the counter is stored as a negative int64 but must
+				// be treated as unsigned for correct wrap-around behavior.
+				ucounter := uint64(vm.stack[frame.base+a+1].AsInt())
+				ucounter--
+				vm.stack[frame.base+a+1] = NewInt(int64(ucounter))
+				if ucounter != ^uint64(0) { // pre-decrement was > 0 (unsigned)
 					idx := vm.stack[frame.base+a].AsInt()
 					step := stepVal.AsInt()
 					idx += step
