@@ -192,11 +192,8 @@ func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 				}
 
 				v.Set(0, loaded.Get(nameKey))
-				if !extra.IsNil() {
-					v.Set(1, extra)
-					return 2
-				}
-				return 1
+				v.Set(1, extra)
+				return 2
 			}
 		}
 
