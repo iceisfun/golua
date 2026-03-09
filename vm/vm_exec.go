@@ -1010,8 +1010,6 @@ func (vm *VM) execute() ([]Value, error) {
 			// non-callable.
 			tailProto := proto
 			tailPC := frame.pc - 1 // PC of the TAILCALL instruction
-			// Fire tail call hook before reusing frame
-			vm.fireTailCallHook()
 			// Tail call optimization - reuse current frame
 			fn := vm.stack[frame.base+a]
 
@@ -1039,6 +1037,10 @@ func (vm *VM) execute() ([]Value, error) {
 					frame.isTailCall = true
 					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
+
+					// Fire tail call hook AFTER frame is updated with new closure,
+					// so debug.getinfo sees the target function (not the caller).
+					vm.fireTailCallHook()
 
 					// Set up parameters
 					numParams := proto.NumParams

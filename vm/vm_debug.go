@@ -59,12 +59,6 @@ func (vm *VM) Traceback(msg string, level int) string {
 			continue
 		}
 
-		if frame.isTailCall {
-			b.WriteString("(...tail calls...)")
-			written++
-			continue
-		}
-
 		proto := frame.closure.Proto
 		source := shortSrc(proto.Source)
 
@@ -73,6 +67,8 @@ func (vm *VM) Traceback(msg string, level int) string {
 		pc := frame.pc - 1 // pc points to next instruction, so current is pc-1
 		if pc >= 0 && pc < len(proto.Lines) {
 			line = proto.Lines[pc]
+		} else if pc < 0 && len(proto.Lines) > 0 {
+			line = proto.Lines[0]
 		}
 
 		// Determine function name
@@ -111,6 +107,13 @@ func (vm *VM) Traceback(msg string, level int) string {
 			}
 		}
 		written++
+
+		// After printing a tail-called frame, add the tail calls marker
+		// to indicate that intermediate tail call frames were elided.
+		if frame.isTailCall {
+			b.WriteString("\n\t(...tail calls...)")
+			written++
+		}
 	}
 
 	return b.String()
@@ -153,6 +156,8 @@ func (vm *VM) Where(level int) (source string, line int, ok bool) {
 	pc := frame.pc - 1
 	if pc >= 0 && pc < len(proto.Lines) {
 		line = proto.Lines[pc]
+	} else if pc < 0 && len(proto.Lines) > 0 {
+		line = proto.Lines[0]
 	}
 
 	return source, line, true
@@ -250,6 +255,10 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	pc := frame.pc - 1
 	if pc >= 0 && pc < len(proto.Lines) {
 		info.CurrentLine = proto.Lines[pc]
+	} else if pc < 0 && len(proto.Lines) > 0 {
+		// pc == -1 means frame.pc == 0: function just entered (e.g., call hook).
+		// Use the first instruction's line number.
+		info.CurrentLine = proto.Lines[0]
 	} else {
 		info.CurrentLine = -1
 	}
@@ -462,11 +471,16 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 		case compiler.OP_GETI:
 			return "integer index", "field"
 		case compiler.OP_GETTABLE:
-			// R[A] = R[B][R[C]] — try to resolve R[C] to a constant name
-			c := prev.C()
-			kn := kName(proto, i, c)
-			if kn != "" {
-				return kn, "field"
+			// R[A] = R[B][R[C]] — for regular tables, name is "?".
+			// But when the table is _ENV (global fallback for high constant
+			// indices), resolve the key name via kName.
+			b := prev.B()
+			if localName(proto, b, i) == "_ENV" || isUpvalEnv(proto, i, b) {
+				c := prev.C()
+				kn := kName(proto, i, c)
+				if kn != "" {
+					return kn, "global"
+				}
 			}
 			return "?", "field"
 		case compiler.OP_GETFIELD:
@@ -880,19 +894,17 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 		case compiler.OP_GETI:
 			return "integer index", "field"
 		case compiler.OP_GETTABLE:
-			// R[A] = R[B][R[C]] — try to resolve R[C] to a constant name.
+			// R[A] = R[B][R[C]] — for regular tables, name is "?".
 			// When the table was loaded via GETUPVAL of _ENV (upvalue 0),
-			// report "global" instead of "field". This handles the fallback
-			// path emitGetTabUp uses when constant index > MaxArgC.
+			// resolve the key name (global fallback for high constant indices).
 			b := inst.B()
-			c := inst.C()
-			kn := kName(proto, i, c)
-			if kn != "" {
-				what := "field"
-				if isUpvalEnv(proto, i, b) {
-					what = "global"
+			if isUpvalEnv(proto, i, b) {
+				c := inst.C()
+				kn := kName(proto, i, c)
+				if kn != "" {
+					return kn, "global"
 				}
-				return kn, what
+				return "?", "global"
 			}
 			return "?", "field"
 		default:
