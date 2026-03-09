@@ -165,6 +165,13 @@ func (vm *VM) HasLastErrorTraceback() bool {
 	return len(vm.lastErrorCallStack) > 0
 }
 
+func (vm *VM) debugCallStack() ([]callFrame, bool) {
+	if len(vm.callStack) > 0 {
+		return vm.callStack, true
+	}
+	return vm.lastErrorCallStack, false
+}
+
 // frameFuncName attempts to determine a display name for a call frame's function.
 func (vm *VM) frameFuncName(frame *callFrame) string {
 	if frame.closure == nil {
@@ -248,12 +255,13 @@ type FrameInfo struct {
 // Level 0 = current frame, 1 = caller, etc.
 // Returns nil if the level is out of range.
 func (vm *VM) GetFrameInfo(level int) *FrameInfo {
-	idx := len(vm.callStack) - 1 - level
-	if idx < 0 || idx >= len(vm.callStack) {
+	stack, active := vm.debugCallStack()
+	idx := len(stack) - 1 - level
+	if idx < 0 || idx >= len(stack) {
 		return nil
 	}
 
-	frame := &vm.callStack[idx]
+	frame := &stack[idx]
 	info := &FrameInfo{}
 
 	// Transfer info is only observable during hook execution.
@@ -275,7 +283,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		// Name inference: look at the caller frame's bytecode
 		callerIdx := idx - 1
 		if callerIdx >= 0 {
-			info.Name, info.NameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
+			info.Name, info.NameWhat = vm.funcNameFromCall(&stack[callerIdx])
 		}
 		info.Func = frame.funcValue
 		return info
@@ -318,7 +326,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	if !frame.isTailCall {
 		callerIdx := idx - 1
 		if callerIdx >= 0 {
-			info.Name, info.NameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
+			info.Name, info.NameWhat = vm.funcNameFromCall(&stack[callerIdx])
 		}
 
 		// If bytecode-based name inference failed, use the frame's override name
@@ -332,7 +340,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	// When inside a hook and name couldn't be inferred from caller,
 	// mark as "hook". This happens because the hook function is called
 	// by fireHook/ProtectedCall, not by a CALL instruction in the caller.
-	if vm.inHook && info.NameWhat == "" {
+	if active && vm.inHook && info.NameWhat == "" {
 		info.NameWhat = "hook"
 	}
 
@@ -662,12 +670,13 @@ func (vm *VM) metamethodNameFromOp(proto *compiler.Proto, pc int) string {
 // index is 1-based. Negative indices access varargs: -1 = first vararg, etc.
 // Returns ("", Nil, false) if out of range.
 func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
-	idx := len(vm.callStack) - 1 - level
-	if idx < 0 || idx >= len(vm.callStack) {
+	stack, active := vm.debugCallStack()
+	idx := len(stack) - 1 - level
+	if idx < 0 || idx >= len(stack) {
 		return "", Nil, false
 	}
 
-	frame := &vm.callStack[idx]
+	frame := &stack[idx]
 	if frame.closure == nil {
 		// Native (C) function frame: access stack slots directly.
 		// Stack layout: base+0 = function value, base+1 = first arg, ...
@@ -680,9 +689,12 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 			return "", Nil, false
 		}
 		// Upper bound: next frame's base (if any) or vm.top
-		limit := vm.top
-		if idx+1 < len(vm.callStack) {
-			limit = vm.callStack[idx+1].base
+		limit := frame.base + 1 + frame.argc
+		if vm.inHook {
+			limit += frame.ntransfer
+		}
+		if idx+1 < len(stack) && stack[idx+1].base < limit {
+			limit = stack[idx+1].base
 		}
 		if stackIdx >= limit {
 			return "", Nil, false
@@ -719,7 +731,7 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 	name := localName(proto, reg, pc)
 
 	stackIdx := frame.base + reg
-	limit := vm.frameStackLimit(idx, proto.MaxStack)
+	limit := vm.frameStackLimit(stack, idx, proto.MaxStack, active)
 	if stackIdx < frame.base || stackIdx >= limit {
 		return "", Nil, false
 	}
@@ -734,12 +746,15 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 	return name, val, true
 }
 
-func (vm *VM) frameStackLimit(idx, maxStack int) int {
+func (vm *VM) frameStackLimit(stack []callFrame, idx, maxStack int, active bool) int {
 	limit := vm.top
-	if idx+1 < len(vm.callStack) {
-		limit = vm.callStack[idx+1].base
+	if !active {
+		limit = stack[idx].base + maxStack
 	}
-	frameLimit := vm.callStack[idx].base + maxStack
+	if idx+1 < len(stack) {
+		limit = stack[idx+1].base
+	}
+	frameLimit := stack[idx].base + maxStack
 	if frameLimit > limit {
 		limit = frameLimit
 	}
@@ -844,12 +859,13 @@ func (vm *VM) GetFuncLocal(fn Value, index int) (string, bool) {
 // SetLocal sets the value of local variable #index at the given stack level.
 // Returns the name of the variable, or ("", false) if out of range.
 func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
-	idx := len(vm.callStack) - 1 - level
-	if idx < 0 || idx >= len(vm.callStack) {
+	stack, active := vm.debugCallStack()
+	idx := len(stack) - 1 - level
+	if idx < 0 || idx >= len(stack) {
 		return "", false
 	}
 
-	frame := &vm.callStack[idx]
+	frame := &stack[idx]
 	if frame.closure == nil {
 		if index <= 0 {
 			return "", false
@@ -858,9 +874,12 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 		if stackIdx < 0 || stackIdx >= len(vm.stack) {
 			return "", false
 		}
-		limit := vm.top
-		if idx+1 < len(vm.callStack) {
-			limit = vm.callStack[idx+1].base
+		limit := frame.base + 1 + frame.argc
+		if vm.inHook {
+			limit += frame.ntransfer
+		}
+		if idx+1 < len(stack) && stack[idx+1].base < limit {
+			limit = stack[idx+1].base
 		}
 		if stackIdx >= limit {
 			return "", false
@@ -893,11 +912,15 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 
 	reg := index - 1
 	name := localName(proto, reg, pc)
-	if name == "?" {
-		return "", false
-	}
 
 	stackIdx := frame.base + reg
+	limit := vm.frameStackLimit(stack, idx, proto.MaxStack, active)
+	if stackIdx < frame.base || stackIdx >= limit {
+		return "", false
+	}
+	if name == "?" {
+		name = "(temporary)"
+	}
 	if stackIdx >= 0 && stackIdx < len(vm.stack) {
 		vm.stack[stackIdx] = val
 	}
@@ -907,8 +930,9 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 
 // IsValidLevel checks if a stack level is within the current call stack bounds.
 func (vm *VM) IsValidLevel(level int) bool {
-	idx := len(vm.callStack) - 1 - level
-	return idx >= 0 && idx < len(vm.callStack)
+	stack, _ := vm.debugCallStack()
+	idx := len(stack) - 1 - level
+	return idx >= 0 && idx < len(stack)
 }
 
 // GetRegistry returns the VM's registry table, creating it on first access.
