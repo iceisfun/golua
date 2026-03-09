@@ -81,7 +81,7 @@ func (vm *VM) closeUpvaluesWithError(level int, errVal Value) {
 // in reverse order. Each call is individually protected so that all handlers run
 // even if one errors. If any handler errors, the last error is re-raised after
 // all handlers have been called.
-func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
+func (vm *VM) callCloseHandlers(indices []int, errVal Value, useMsgHandler bool) {
 	var lastPanic interface{}
 	for i := len(indices) - 1; i >= 0; i-- {
 		savedTbcLen := len(vm.tbcVars)
@@ -94,18 +94,25 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
 					lastPanic = r
 					// Update errVal for subsequent handlers (Lua 5.4 behavior:
 					// __close receives the most recent error)
+					prevErrVal := errVal
+					rawErrVal := errVal
 					if le, ok := r.(*LuaError); ok {
-						errVal = le.Value
+						rawErrVal = le.Value
 					} else {
-						errVal = NewString(fmt.Sprintf("%v", r))
+						rawErrVal = NewString(fmt.Sprintf("%v", r))
 					}
+					errVal = rawErrVal
 
 					// Save the call stack snapshot for the message handler.
 					// The last error's stack will be used by ProtectedCall
 					// to call xpcall's message handler.
-					if !vm.MsgHandler.IsNil() {
+					if useMsgHandler && !vm.MsgHandler.IsNil() && !rawErrVal.RawEqual(prevErrVal) {
 						vm.lastErrorCallStack = make([]callFrame, len(vm.callStack))
 						copy(vm.lastErrorCallStack, vm.callStack)
+						vm.callMsgHandler(vm.MsgHandler, rawErrVal, vm.lastErrorCallStack)
+						if vm.MsgHandlerUsed {
+							errVal = vm.MsgHandlerResult
+						}
 					}
 
 					// Restore call stack in case the panic left it dirty
@@ -131,7 +138,7 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value) {
 									}
 								}
 							}()
-							vm.callCloseHandlers(innerTBC, errVal)
+							vm.callCloseHandlers(innerTBC, errVal, useMsgHandler)
 						}()
 					}
 				}

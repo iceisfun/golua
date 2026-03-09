@@ -380,10 +380,15 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				vm.tbcVars = kept
 				// Extract the Lua error value to pass to __close handlers
 				var closeErrVal Value
-				if le, ok := r.(*LuaError); ok {
+				if vm.MsgHandlerUsed {
+					closeErrVal = vm.MsgHandlerResult
+				} else if le, ok := r.(*LuaError); ok {
 					closeErrVal = le.Value
 				} else {
 					closeErrVal = NewString(fmt.Sprintf("%v", r))
+				}
+				if !msgh.IsNil() {
+					vm.MsgHandler = msgh
 				}
 				// Use callCloseHandlers to protect each __close call individually.
 				// If a handler errors, it replaces err but other handlers still run.
@@ -400,26 +405,12 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 							}
 						}
 					}()
-					vm.callCloseHandlers(tbcToClose, closeErrVal)
+					vm.callCloseHandlers(tbcToClose, closeErrVal, !msgh.IsNil())
 				}()
+				vm.MsgHandler = Nil
 
-				// If a __close handler errored and we have a message handler,
-				// call it again with the __close error (like Lua 5.4).
-				if closeErrorOccurred && !msgh.IsNil() {
-					var closeErrForHandler Value
-					if le, ok := err.(*LuaError); ok {
-						closeErrForHandler = le.Value
-					} else {
-						closeErrForHandler = NewString(err.Error())
-					}
-					// Use the __close error's call stack if available
-					closeStack := vm.lastErrorCallStack
-					if closeStack == nil {
-						closeStack = errorCallStack
-					}
-					vm.lastErrorCallStack = nil
-					vm.MsgHandlerUsed = false
-					vm.callMsgHandler(msgh, closeErrForHandler, closeStack)
+				if closeErrorOccurred && !msgh.IsNil() && vm.MsgHandlerUsed {
+					err = &LuaError{Value: vm.MsgHandlerResult}
 				}
 			}
 			// Restore vm.top after __close handlers are done.
@@ -740,7 +731,7 @@ func (vm *VM) ClosePendingTBC(errVal Value) (finalErr error) {
 				}
 			}
 		}()
-		vm.callCloseHandlers(tbcToClose, errVal)
+		vm.callCloseHandlers(tbcToClose, errVal, false)
 	}()
 	return finalErr
 }
