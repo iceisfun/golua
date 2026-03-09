@@ -399,11 +399,39 @@ func formatHexFloat(f float64, prec int, hashFlag ...bool) string {
 		digits = append(digits, 0)
 	}
 
-	// Round at position prec
+	// Round at position prec using round-half-to-even (banker's rounding)
 	if prec < len(digits) {
 		roundDigit := digits[prec]
+		// Check if remaining digits beyond roundDigit are all zero (exact halfway)
+		restZero := true
+		for i := prec + 1; i < len(digits); i++ {
+			if digits[i] != 0 {
+				restZero = false
+				break
+			}
+		}
 		digits = digits[:prec]
-		if roundDigit >= 8 { // >= 0.5 in hex
+		roundUp := false
+		if roundDigit > 8 {
+			roundUp = true
+		} else if roundDigit == 8 {
+			if !restZero {
+				// Past halfway, round up
+				roundUp = true
+			} else {
+				// Exactly halfway: round to even
+				lastDigit := 0
+				if len(digits) > 0 {
+					lastDigit = digits[len(digits)-1]
+				} else {
+					lastDigit = lead
+				}
+				if lastDigit%2 != 0 {
+					roundUp = true
+				}
+			}
+		}
+		if roundUp {
 			carry := 1
 			for i := len(digits) - 1; i >= 0 && carry > 0; i-- {
 				digits[i] += carry
@@ -473,8 +501,21 @@ func formatSubnormalHexFloat(f float64, mantissa uint64, prec int, forceDecimal 
 		} else {
 			b.WriteString("0x0")
 		}
-		// Check if we need to round up (first hex digit >= 8)
-		if len(hexDigits) > 0 && hexCharToInt(hexDigits[0]) >= 8 {
+		// Check if we need to round up (first hex digit >= 8, with banker's rounding)
+		firstDigit := 0
+		if len(hexDigits) > 0 {
+			firstDigit = hexCharToInt(hexDigits[0])
+		}
+		restAllZero := true
+		for i := 1; i < len(hexDigits); i++ {
+			if hexCharToInt(hexDigits[i]) != 0 {
+				restAllZero = false
+				break
+			}
+		}
+		shouldRound := firstDigit > 8 || (firstDigit == 8 && !restAllZero)
+		// At prec==0 for subnormals, lead digit is 0, so exact halfway with even lead → no round
+		if shouldRound {
 			b.Reset()
 			if neg {
 				b.WriteByte('-')
@@ -496,8 +537,32 @@ func formatSubnormalHexFloat(f float64, mantissa uint64, prec int, forceDecimal 
 		}
 		if prec < len(digits) {
 			roundDigit := digits[prec]
+			subRestZero := true
+			for i := prec + 1; i < len(digits); i++ {
+				if digits[i] != 0 {
+					subRestZero = false
+					break
+				}
+			}
 			digits = digits[:prec]
-			if roundDigit >= 8 {
+			subRoundUp := false
+			if roundDigit > 8 {
+				subRoundUp = true
+			} else if roundDigit == 8 {
+				if !subRestZero {
+					subRoundUp = true
+				} else {
+					// Exactly halfway: round to even
+					lastD := 0
+					if len(digits) > 0 {
+						lastD = digits[len(digits)-1]
+					}
+					if lastD%2 != 0 {
+						subRoundUp = true
+					}
+				}
+			}
+			if subRoundUp {
 				carry := 1
 				for i := len(digits) - 1; i >= 0 && carry > 0; i-- {
 					digits[i] += carry
