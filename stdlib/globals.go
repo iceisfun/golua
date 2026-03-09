@@ -143,13 +143,13 @@ func luaToNumber(v *vm.VM) int {
 	base := v.Get(2)
 
 	if !base.IsNil() {
+		// Lua 5.4 order: (1) arg2 integer type, (2) arg1 string type, (3) base range.
 		bi := getInt(v, 2, "tonumber")
-		if bi < 2 || bi > 36 {
-			callerArgError(v, 2, "tonumber", "base out of range")
-		}
-		// Lua semantics: with explicit base, first arg must be a string.
 		if !val.IsString() {
 			callerArgError(v, 1, "tonumber", fmt.Sprintf("string expected, got %s", val.Type()))
+		}
+		if bi < 2 || bi > 36 {
+			callerArgError(v, 2, "tonumber", "base out of range")
 		}
 		s := strings.TrimSpace(val.AsString())
 		if i, err := strconv.ParseInt(s, int(bi), 64); err == nil {
