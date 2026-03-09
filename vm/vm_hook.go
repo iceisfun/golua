@@ -52,6 +52,17 @@ func (vm *VM) fireHook(event string, line int) {
 	exit := vm.EnterNonYieldable()
 	defer exit()
 
+	var savedFTransfer, savedNTransfer int
+	hasTopFrame := len(vm.callStack) > 0
+	if hasTopFrame && (event == hookEventLine || event == hookEventCount) {
+		top := &vm.callStack[len(vm.callStack)-1]
+		savedFTransfer, savedNTransfer = top.ftransfer, top.ntransfer
+		top.ftransfer, top.ntransfer = 0, 0
+		defer func() {
+			top.ftransfer, top.ntransfer = savedFTransfer, savedNTransfer
+		}()
+	}
+
 	savedCallName := vm.pendingCallName
 	savedCallNameWhat := vm.pendingCallNameWhat
 	vm.pendingCallName = "?"

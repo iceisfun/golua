@@ -448,7 +448,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	// When inside a hook and name couldn't be inferred from caller,
 	// mark as "hook". This happens because the hook function is called
 	// by fireHook/ProtectedCall, not by a CALL instruction in the caller.
-	if active && vm.inHook && info.NameWhat == "" {
+	if active && vm.inHook && info.NameWhat == "" && info.Func.RawEqual(vm.hookFunc) {
 		info.NameWhat = "hook"
 	}
 

@@ -68,6 +68,8 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		varargPos:    varargPos,
 		numVararg:    numVararg,
 		argc:         UseVMTop, // Lua frames use vm.top for ArgCount
+		ftransfer:    1,
+		ntransfer:    numArgs,
 		callName:     vm.pendingCallName,
 		callNameWhat: vm.pendingCallNameWhat,
 	}
@@ -1777,8 +1779,13 @@ dispatch:
 			vm.stack[retStart+i] = results[i]
 		}
 		vm.top = retEnd
-		nf.ftransfer = 1 + nf.argc
-		nf.ntransfer = nResults
+		if nResults > 0 {
+			nf.ftransfer = 1 + nf.argc
+			nf.ntransfer = nResults
+		} else {
+			nf.ftransfer = 0
+			nf.ntransfer = 0
+		}
 
 		// Fire return hook for native function before popping its frame
 		vm.fireReturnHook()
