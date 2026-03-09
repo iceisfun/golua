@@ -635,6 +635,7 @@ func coClose(v *vm.VM) int {
 	}
 
 	coTable := coVal.AsTable()
+	threadTable, _ := coTable.(*vm.Table)
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
@@ -690,6 +691,9 @@ func coClose(v *vm.VM) int {
 			}
 		}
 		if coErr != nil {
+			if threadTable != nil {
+				threadTable.SetVMRef(nil)
+			}
 			v.Set(0, vm.False)
 			if le, ok := coErr.(*vm.LuaError); ok {
 				v.Set(1, le.Value)
@@ -697,6 +701,9 @@ func coClose(v *vm.VM) int {
 				v.Set(1, vm.NewString(coErr.Error()))
 			}
 			return 2
+		}
+		if threadTable != nil {
+			threadTable.SetVMRef(nil)
 		}
 		v.Set(0, vm.True)
 		return 1
@@ -743,6 +750,9 @@ func coClose(v *vm.VM) int {
 	coErr := co.err
 	co.mu.Unlock()
 	if coErr != nil {
+		if threadTable != nil {
+			threadTable.SetVMRef(nil)
+		}
 		v.Set(0, vm.False)
 		if le, ok := coErr.(*vm.LuaError); ok {
 			v.Set(1, le.Value)
@@ -752,6 +762,9 @@ func coClose(v *vm.VM) int {
 		return 2
 	}
 
+	if threadTable != nil {
+		threadTable.SetVMRef(nil)
+	}
 	v.Set(0, vm.True)
 	return 1
 }

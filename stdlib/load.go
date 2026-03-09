@@ -29,7 +29,7 @@ const maxLoadLines = 1 << 26 // ~67 million lines
 const maxLoadReaderCalls = 1 << 22 // ~4 million calls
 
 func setLoadReaderError(v *vm.VM, err error) {
-	preserveRaw := v.InDirectProtectedLoad() || (v.InUserProtected() && v.MsgHandler.IsNil())
+	preserveRaw := v.InDirectProtectedLoad() || v.InUserProtected()
 	if le, ok := err.(*vm.LuaError); ok {
 		if !le.Value.IsString() {
 			if preserveRaw {
