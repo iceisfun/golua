@@ -407,3 +407,226 @@ func TestDofile_Shebang(t *testing.T) {
 	`
 	runLuaSourceWithProvider(t, source, "test", provider)
 }
+
+func TestLoadfile_NumberFilenameCoercion(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"123": `return "num-ok"`,
+	})
+	source := `
+		local f, err = loadfile(123)
+		assert(f, err)
+		assert(f() == "num-ok")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestLoadfile_BadFilenameType(t *testing.T) {
+	provider := newMockProvider(map[string]string{})
+	source := `
+		local ok, err = pcall(loadfile, {})
+		assert(not ok, "expected failure")
+		assert(type(err) == "string")
+		assert(err:find("bad argument #1 to 'loadfile' %(string expected, got table%)") ~= nil,
+			"unexpected error: " .. tostring(err))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_NumberFilenameCoercion(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"123": `return "num-ok"`,
+	})
+	source := `
+		local got = dofile(123)
+		assert(got == "num-ok", "expected num-ok, got " .. tostring(got))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_BadFilenameType(t *testing.T) {
+	provider := newMockProvider(map[string]string{})
+	source := `
+		local ok, err = pcall(dofile, {})
+		assert(not ok, "expected failure")
+		assert(type(err) == "string")
+		assert(err:find("bad argument #1 to 'dofile' %(string expected, got table%)") ~= nil,
+			"unexpected error: " .. tostring(err))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestLoadfile_NotPermitted(t *testing.T) {
+	provider := &MockProvider{
+		files: map[string]string{"x.lua": "return 1"},
+		caps:  vm.LuaLoaderCaps{AllowDofile: true, AllowLoadfile: false},
+	}
+	source := `
+		assert(loadfile == nil, "expected loadfile to be nil when not permitted")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+type contextRecordingProvider struct {
+	files map[string]string
+	caps  vm.LuaLoaderCaps
+	calls []providerCall
+}
+
+type providerCall struct {
+	name   string
+	caller vm.LuaCallerContext
+}
+
+func (p *contextRecordingProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+	if caller != nil {
+		p.calls = append(p.calls, providerCall{name: name, caller: *caller})
+	} else {
+		p.calls = append(p.calls, providerCall{name: name})
+	}
+	src, ok := p.files[name]
+	if !ok {
+		return nil, "", fmt.Errorf("cannot open '%s': no such file", name)
+	}
+	return []byte(src), "@" + name, nil
+}
+
+func (p *contextRecordingProvider) Capabilities() vm.LuaLoaderCaps {
+	return p.caps
+}
+
+func TestDofile_CallerContext(t *testing.T) {
+	provider := &contextRecordingProvider{
+		files: map[string]string{
+			"outer.lua": `return dofile("inner.lua")`,
+			"inner.lua": `return "ok"`,
+		},
+		caps: vm.LuaLoaderCaps{AllowDofile: true, AllowLoadfile: true},
+	}
+
+	block, err := parser.Parse("test_context", `assert(dofile("outer.lua") == "ok")`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile("test_context", block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	v := vm.New()
+	v.SetVMID("vm-context")
+	v.SetCodeProvider(provider)
+	stdlib.Open(v)
+	if _, err := v.Run(proto); err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+
+	if len(provider.calls) != 2 {
+		t.Fatalf("expected 2 provider calls, got %d", len(provider.calls))
+	}
+	if provider.calls[0].name != "outer.lua" {
+		t.Fatalf("first call name = %q, expected outer.lua", provider.calls[0].name)
+	}
+	if provider.calls[1].name != "inner.lua" {
+		t.Fatalf("second call name = %q, expected inner.lua", provider.calls[1].name)
+	}
+	if provider.calls[0].caller.VMID != "vm-context" || provider.calls[1].caller.VMID != "vm-context" {
+		t.Fatalf("expected VMID vm-context in both calls, got %+v and %+v", provider.calls[0].caller, provider.calls[1].caller)
+	}
+	if provider.calls[0].caller.ScriptName != "" {
+		t.Fatalf("first call ScriptName = %q, expected empty top-level script name", provider.calls[0].caller.ScriptName)
+	}
+	if provider.calls[1].caller.ScriptName != "@outer.lua" {
+		t.Fatalf("second call ScriptName = %q, expected @outer.lua", provider.calls[1].caller.ScriptName)
+	}
+	if provider.calls[1].caller.CallDepth <= provider.calls[0].caller.CallDepth {
+		t.Fatalf("expected nested call depth to increase, got %d then %d", provider.calls[0].caller.CallDepth, provider.calls[1].caller.CallDepth)
+	}
+}
+
+func TestLoadfile_CompileErrorIncludesChunkName(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"broken.lua": `return 1 +`,
+	})
+	source := `
+		local f, err = loadfile("broken.lua")
+		assert(f == nil, "expected nil on compile error")
+		assert(type(err) == "string", "expected string compile error")
+		assert(err:find("broken.lua", 1, true) ~= nil, "expected chunk name in error: " .. tostring(err))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestLoadfile_MissingChunkProviderError(t *testing.T) {
+	provider := newMockProvider(map[string]string{})
+	source := `
+		local f, err = loadfile("missing.lua")
+		assert(f == nil, "expected nil")
+		assert(type(err) == "string", "expected string error")
+		assert(err:find("cannot open", 1, true) ~= nil, "unexpected error: " .. tostring(err))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestLoadfile_EmptyFilenamePassesToProvider(t *testing.T) {
+	provider := newMockProvider(map[string]string{"": `return "empty"`})
+	source := `
+		local f, err = loadfile()
+		assert(f, err)
+		assert(f() == "empty", "expected provider-backed empty-name chunk")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_EmptyFilenamePassesToProvider(t *testing.T) {
+	provider := newMockProvider(map[string]string{"": `return "empty"`})
+	source := `
+		local r = dofile()
+		assert(r == "empty", "expected provider-backed empty-name chunk")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_CompileErrorMessageIncludesChunkName(t *testing.T) {
+	provider := newMockProvider(map[string]string{
+		"bad.lua": `return 1 +`,
+	})
+	source := `
+		local ok, err = pcall(dofile, "bad.lua")
+		assert(not ok, "expected failure")
+		assert(type(err) == "string", "expected string error")
+		assert(err:find("bad.lua", 1, true) ~= nil, "expected chunk name in error: " .. tostring(err))
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestLoadfile_MissingChunkErrorShape(t *testing.T) {
+	provider := newMockProvider(map[string]string{})
+	source := `
+		local f, err = loadfile(999)
+		assert(f == nil, "expected nil")
+		assert(type(err) == "string", "expected string error")
+		assert(err:find("999", 1, true) ~= nil, "expected coerced filename in error")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_MissingChunkErrorShape(t *testing.T) {
+	provider := newMockProvider(map[string]string{})
+	source := `
+		local ok, err = pcall(dofile, 999)
+		assert(not ok, "expected failure")
+		assert(type(err) == "string", "expected string error")
+		assert(err:find("999", 1, true) ~= nil, "expected coerced filename in error")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestLoadfile_NoImplicitFilesystemAssumption(t *testing.T) {
+	provider := newMockProvider(map[string]string{})
+	source := `
+		local f, err = loadfile("not-on-disk.lua")
+		assert(f == nil, "expected nil")
+		assert(type(err) == "string", "expected string error")
+		assert(err:find("cannot open", 1, true) ~= nil, "expected provider error")
+	`
+	runLuaSourceWithProvider(t, source, "test", provider)
+}

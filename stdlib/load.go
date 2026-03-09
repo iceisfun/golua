@@ -342,12 +342,12 @@ func luaLoadfile(v *vm.VM) int {
 	// Get filename
 	filename := ""
 	if !v.Get(1).IsNil() {
-		filename = v.Get(1).AsString()
-	}
-	if filename == "" {
-		v.Set(0, vm.Nil)
-		v.Set(1, vm.NewString("bad argument #1 to 'loadfile' (filename expected)"))
-		return 2
+		arg1 := v.Get(1)
+		if arg1.IsString() || arg1.IsNumber() {
+			filename = valueToString(arg1)
+		} else {
+			callerArgError(v, 1, "loadfile", fmt.Sprintf("string expected, got %s", arg1.Type()))
+		}
 	}
 
 	mode := "bt"
@@ -409,10 +409,12 @@ func luaDofile(v *vm.VM) int {
 	// Get filename
 	filename := ""
 	if !v.Get(1).IsNil() {
-		filename = v.Get(1).AsString()
-	}
-	if filename == "" {
-		panic("bad argument #1 to 'dofile' (filename expected)")
+		arg1 := v.Get(1)
+		if arg1.IsString() || arg1.IsNumber() {
+			filename = valueToString(arg1)
+		} else {
+			callerArgError(v, 1, "dofile", fmt.Sprintf("string expected, got %s", arg1.Type()))
+		}
 	}
 
 	// Load the source via the code provider
@@ -455,9 +457,9 @@ func luaDofile(v *vm.VM) int {
 
 // compileChunkOpts holds optional settings for compileChunk.
 type compileChunkOpts struct {
-	stripShebang  bool
-	rawSource     string // override proto.Source for debug info
-	hasRawSource  bool   // true when rawSource is explicitly set (even if empty)
+	stripShebang bool
+	rawSource    string // override proto.Source for debug info
+	hasRawSource bool   // true when rawSource is explicitly set (even if empty)
 }
 
 // compileChunk parses and compiles Lua source, returning a function value.
