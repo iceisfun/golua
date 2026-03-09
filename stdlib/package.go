@@ -56,7 +56,7 @@ func openPackage(v *vm.VM) {
 	loaded.SetString("package", pkgVal)
 
 	// require — captures pkg table via closure
-	v.SetGlobal("require", vm.NewNativeFunc(makeRequire(v, pkg)))
+	v.SetGlobal("require", vm.NewNativeFunc(makeRequire(v, pkg, loaded)))
 }
 
 // makePackageLoadlib creates package.loadlib(path, init).
@@ -92,7 +92,7 @@ func makePackageLoadlib(provider vm.LuaLoadLibProvider) vm.NativeFunc {
 
 // makeRequire creates the require() function with a captured reference to the
 // package table. This survives reassignment of the package global (Lua 5.4 behavior).
-func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
+func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		if v.ArgCount() < 1 {
 			callerArgError(v, 1, "require", "string expected, got no value")
@@ -109,15 +109,11 @@ func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 		}
 
 		// Check package.loaded
-		loadedVal := pkg.GetString("loaded")
 		nameKey := vm.NewString(name)
-		if !loadedVal.IsNil() {
-			loaded := loadedVal.AsTable()
-			cached := loaded.Get(nameKey)
-			if cached.ToBool() {
-				v.Set(0, cached)
-				return 1
-			}
+		cached := loaded.Get(nameKey)
+		if cached.ToBool() {
+			v.Set(0, cached)
+			return 1
 		}
 
 		// Validate package.searchers
@@ -178,10 +174,6 @@ func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 					}
 					panic(fmt.Sprintf("error loading module '%s':\n\t%s", name, loadErr.Error()))
 				}
-
-				// Get loaded table again (might have been modified by loader)
-				loadedVal = pkg.GetString("loaded")
-				loaded := loadedVal.AsTable()
 
 				// If loader returns non-nil, set package.loaded[name]
 				if len(loadResults) > 0 && !loadResults[0].IsNil() {
