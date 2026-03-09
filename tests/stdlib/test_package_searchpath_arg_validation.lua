@@ -27,6 +27,11 @@ do
 
   s, msg = package.searchpath("a", "?.lua", 7, 8)
   assert(s == nil and type(msg) == "string")
+  assert(string.find(msg, "no file '", 1, true) == 1, msg)
+
+  s, msg = package.searchpath("a", "?.lua;?/init.lua", 7, 8)
+  assert(s == nil and type(msg) == "string")
+  assert(string.find(msg, "\n\tno file '", 1, true) ~= nil, msg)
 
   -- Optional sep/rep reject non-coercible values.
   ok, err = pcall(package.searchpath, "a", "?.lua", {})

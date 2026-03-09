@@ -9,9 +9,10 @@ do
   t[#t + 1] = ";"
   local path = table.concat(t, ";")
   local s, err = package.searchpath("xuxu", path)
+  local _, count = string.gsub(err, "no file '", "")
   assert(not s and
          string.find(err, string.rep("xuxu", 10)) and
-         #string.gsub(err, "[^\n]", "") >= max)
+         count >= max)
   local path = string.rep("?", max)
   local s, err = package.searchpath("xuxu", path)
   assert(not s and string.find(err, string.rep('xuxu', max)))

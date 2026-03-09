@@ -38,11 +38,12 @@ do
     local path = table.concat(t, ";")
     -- use that path in a search
     local s, err = package.searchpath("xuxu", path)
+    local _, count = string.gsub(err, "no file '", "")
     -- search fails; check that message has an occurence of
-    -- '??????????' with ? replaced by xuxu and at least 'max' lines
+    -- '??????????' with ? replaced by xuxu and at least 'max' entries
     assert(not s and
            string.find(err, string.rep("xuxu", 10)) and
-           #string.gsub(err, "[^\n]", "") >= max)
+           count >= max)
     -- path with one very long template
     local path = string.rep("?", max)
     local s, err = package.searchpath("xuxu", path)

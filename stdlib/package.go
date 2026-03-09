@@ -140,9 +140,10 @@ func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 
 			results, err := v.ProtectedCall(searcher, []vm.Value{vm.NewString(name)})
 			if err != nil {
-				errMsgs.WriteString("\n\t")
-				errMsgs.WriteString(err.Error())
-				continue
+				if luaErr, ok := err.(*vm.LuaError); ok {
+					panic(luaErr)
+				}
+				panic(err.Error())
 			}
 
 			if len(results) == 0 {
@@ -151,6 +152,7 @@ func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 
 			// If result is a string, it's an error message
 			if results[0].IsString() {
+				errMsgs.WriteString("\n\t")
 				errMsgs.WriteString(results[0].AsString())
 				continue
 			}
@@ -208,13 +210,13 @@ func makePreloadSearcher(pkg *vm.Table) vm.NativeFunc {
 		name := v.Get(1).AsString()
 		preloadVal := pkg.GetString("preload")
 		if preloadVal.IsNil() {
-			v.Set(0, vm.NewString("\n\tno field package.preload['"+name+"']"))
+			v.Set(0, vm.NewString("no field package.preload['"+name+"']"))
 			return 1
 		}
 		preload := preloadVal.AsTable()
 		loader := preload.Get(vm.NewString(name))
 		if loader.IsNil() {
-			v.Set(0, vm.NewString("\n\tno field package.preload['"+name+"']"))
+			v.Set(0, vm.NewString("no field package.preload['"+name+"']"))
 			return 1
 		}
 		v.Set(0, loader)
@@ -242,18 +244,14 @@ func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 
 		for _, path := range paths {
 			if provider == nil {
-				errBuf.WriteString("\n\tno file '")
-				errBuf.WriteString(path)
-				errBuf.WriteString("'")
+				appendNoFileErr(&errBuf, path)
 				continue
 			}
 
 			ctx := v.CallerContext()
 			source, chunkName, err := provider.LoadChunk(path, ctx)
 			if err != nil {
-				errBuf.WriteString("\n\tno file '")
-				errBuf.WriteString(path)
-				errBuf.WriteString("'")
+				appendNoFileErr(&errBuf, path)
 				continue
 			}
 
@@ -289,9 +287,7 @@ func makeCFileSearcher(pkg *vm.Table) vm.NativeFunc {
 
 		var errBuf strings.Builder
 		for _, path := range paths {
-			errBuf.WriteString("\n\tno file '")
-			errBuf.WriteString(path)
-			errBuf.WriteString("'")
+			appendNoFileErr(&errBuf, path)
 		}
 
 		v.Set(0, vm.NewString(errBuf.String()))
@@ -310,6 +306,15 @@ func expandTemplates(name, path string) []string {
 		result = append(result, strings.ReplaceAll(tmpl, "?", name))
 	}
 	return result
+}
+
+func appendNoFileErr(errBuf *strings.Builder, path string) {
+	if errBuf.Len() > 0 {
+		errBuf.WriteString("\n\t")
+	}
+	errBuf.WriteString("no file '")
+	errBuf.WriteString(path)
+	errBuf.WriteString("'")
 }
 
 // luaSearchPath implements package.searchpath(name, path [, sep [, rep]]).
@@ -348,9 +353,7 @@ func luaSearchPath(v *vm.VM) int {
 				return 1
 			}
 		}
-		errBuf.WriteString("\n\tno file '")
-		errBuf.WriteString(p)
-		errBuf.WriteString("'")
+		appendNoFileErr(&errBuf, p)
 	}
 
 	v.Set(0, vm.Nil)
