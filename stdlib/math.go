@@ -109,7 +109,11 @@ func mathAcos(v *vm.VM) int {
 	n := getNumber(v, 1, "math.acos")
 	result := math.Acos(n)
 	if math.IsNaN(result) {
-		result = math.Copysign(result, -1)
+		if math.IsNaN(n) {
+			result = math.Copysign(math.NaN(), -1)
+		} else {
+			result = math.NaN()
+		}
 	}
 	v.Set(0, vm.NewFloat(result))
 	return 1
@@ -119,7 +123,11 @@ func mathAsin(v *vm.VM) int {
 	n := getNumber(v, 1, "math.asin")
 	result := math.Asin(n)
 	if math.IsNaN(result) {
-		result = math.Copysign(result, -1)
+		if math.IsNaN(n) {
+			result = math.Copysign(math.NaN(), -1)
+		} else {
+			result = math.NaN()
+		}
 	}
 	v.Set(0, vm.NewFloat(result))
 	return 1
@@ -167,7 +175,7 @@ func mathCos(v *vm.VM) int {
 
 func mathDeg(v *vm.VM) int {
 	n := getNumber(v, 1, "math.deg")
-	v.Set(0, vm.NewFloat(n * 180 / math.Pi))
+	v.Set(0, vm.NewFloat(n*180/math.Pi))
 	return 1
 }
 
@@ -196,8 +204,8 @@ func mathFloor(v *vm.VM) int {
 func mathFmod(v *vm.VM) int {
 	v1 := v.Get(1)
 	v2 := v.Get(2)
-	x := getNumber(v, 1, "math.fmod")
 	y := getNumber(v, 2, "math.fmod")
+	x := getNumber(v, 1, "math.fmod")
 	if v1.IsInt() && v2.IsInt() {
 		if y == 0 {
 			callerArgError(v, 2, "math.fmod", "zero")
@@ -311,7 +319,7 @@ func mathModf(v *vm.VM) int {
 
 func mathRad(v *vm.VM) int {
 	n := getNumber(v, 1, "math.rad")
-	v.Set(0, vm.NewFloat(n * math.Pi / 180))
+	v.Set(0, vm.NewFloat(n*math.Pi/180))
 	return 1
 }
 
@@ -485,4 +493,3 @@ func mathUlt(v *vm.VM) int {
 	v.Set(0, vm.NewBool(uint64(m) < uint64(n)))
 	return 1
 }
-
