@@ -486,17 +486,15 @@ func (t *Table) Len() int {
 	if !t.array[n-1].IsNil() {
 		return n
 	}
-	// Binary search for a border in [0, n).
-	lo, hi := 0, n
-	for hi-lo > 1 {
-		mid := (lo + hi) / 2
-		if t.array[mid-1].IsNil() {
-			hi = mid
-		} else {
-			lo = mid
+	// Array slots can contain interior nils (e.g. constructors like
+	// {nil, nil, {}, 2.5, nil}). Lua 5.4's behavior in these cases picks
+	// a border near the end; scan backwards for the last non-nil entry.
+	for i := n - 1; i >= 0; i-- {
+		if !t.array[i].IsNil() {
+			return i + 1
 		}
 	}
-	return lo
+	return 0
 }
 
 // Delete removes a key from the table.
