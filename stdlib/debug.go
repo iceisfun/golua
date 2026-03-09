@@ -105,9 +105,7 @@ func luaDebugTraceback(v *vm.VM) int {
 			}
 			level := 0
 			if !v.Get(3).IsNil() {
-				if l, ok := v.Get(3).ToInt(); ok {
-					level = int(l)
-				}
+				level = int(getInt(v, 3, "debug.traceback"))
 			}
 			if targetVM == nil || targetVM.StackDepth() == 0 {
 				// Dead or never-resumed coroutine — empty traceback
@@ -143,9 +141,7 @@ func luaDebugTraceback(v *vm.VM) int {
 
 	level := 1
 	if !v.Get(2).IsNil() {
-		if l, ok := v.Get(2).ToInt(); ok {
-			level = int(l)
-		}
+		level = int(getInt(v, 2, "debug.traceback"))
 	}
 
 	tb := v.Traceback("", level)
