@@ -238,16 +238,17 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 		return
 	}
 
-	// If there's a local _ENV, look up via that table instead of upvalues/globals
-	if envReg, ok := fs.lookupLocal("_ENV"); ok {
-		nameK := fs.stringConstant(e.Name)
-		fs.emitGetField(reg, envReg, nameK, e.P.Line)
+	// Upvalue — check before local _ENV so that captured locals from
+	// enclosing functions are not shadowed by _ENV table lookups.
+	if uvIdx, ok := c.resolveUpvalue(fs, e.Name); ok {
+		fs.emit(ABC(OP_GETUPVAL, reg, uvIdx, 0, 0), e.P.Line)
 		return
 	}
 
-	// Upvalue
-	if uvIdx, ok := c.resolveUpvalue(fs, e.Name); ok {
-		fs.emit(ABC(OP_GETUPVAL, reg, uvIdx, 0, 0), e.P.Line)
+	// If there's a local _ENV, look up via that table instead of globals
+	if envReg, ok := fs.lookupLocal("_ENV"); ok {
+		nameK := fs.stringConstant(e.Name)
+		fs.emitGetField(reg, envReg, nameK, e.P.Line)
 		return
 	}
 
