@@ -18,6 +18,8 @@ type LuaDebugCaps struct {
 	AllowGetHook        bool
 	AllowUpvalueJoin    bool
 	AllowSetCStackLimit bool
+	AllowGetUserValue   bool
+	AllowSetUserValue   bool
 }
 
 // LuaDebugProvider is a capability interface for diagnostic debug operations.
@@ -56,5 +58,7 @@ func (p *DefaultDebugProvider) Capabilities() LuaDebugCaps {
 		AllowGetHook:        true,
 		AllowUpvalueJoin:    true,
 		AllowSetCStackLimit: true,
+		AllowGetUserValue:   true,
+		AllowSetUserValue:   true,
 	}
 }

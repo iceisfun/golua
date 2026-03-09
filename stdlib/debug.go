@@ -77,6 +77,14 @@ func openDebug(v *vm.VM) {
 		debug.SetString("upvaluejoin", vm.NewNativeFunc(luaDebugUpvalueJoin))
 	}
 
+	if caps.AllowGetUserValue {
+		debug.SetString("getuservalue", vm.NewNativeFunc(luaDebugGetUserValue))
+	}
+
+	if caps.AllowSetUserValue {
+		debug.SetString("setuservalue", vm.NewNativeFunc(luaDebugSetUserValue))
+	}
+
 	if caps.AllowSetCStackLimit {
 		debug.SetString("setcstacklimit", vm.NewNativeFunc(luaDebugSetCStackLimit))
 	}
@@ -284,7 +292,7 @@ buildResult:
 	// Validate the what string ('>' is C API only, not valid at Lua level)
 	for _, ch := range what {
 		if !strings.ContainsRune("flnStuLr", ch) {
-			callerArgError(v, whatIdx, "debug.getinfo", "invalid option")
+			callerArgError(v, whatIdx, "debug.getinfo", fmt.Sprintf("invalid option '%c'", ch))
 		}
 	}
 
@@ -548,14 +556,14 @@ func luaDebugSetLocal(v *vm.VM) int {
 		if tbl != nil && tbl.IsThread() {
 			level := getInt(v, 2, "debug.setlocal")
 			local := getInt(v, 3, "debug.setlocal")
-			if v.ArgCount() < 4 {
-				callerArgError(v, 4, "debug.setlocal", "value expected")
-			}
-			newVal := v.Get(4)
 			coVM := tbl.VMRef()
 			if coVM == nil || !coVM.IsValidLevel(int(level)) {
 				callerArgError(v, 2, "debug.setlocal", "level out of range")
 			}
+			if v.ArgCount() < 4 {
+				callerArgError(v, 4, "debug.setlocal", "value expected")
+			}
+			newVal := v.Get(4)
 			// For suspended coroutines, level numbering matches the coroutine's
 			// own call stack: level 0 = yield, level 1 = function that called yield.
 			name, found := coVM.SetLocal(int(level), int(local), newVal)
@@ -645,6 +653,35 @@ func luaDebugGetMetatable(v *vm.VM) int {
 func luaDebugSetCStackLimit(v *vm.VM) int {
 	_ = getInt(v, 1, "debug.setcstacklimit")
 	v.Set(0, vm.NewInt(200))
+	return 1
+}
+
+// debug.getuservalue(u [, n])
+func luaDebugGetUserValue(v *vm.VM) int {
+	val := v.Get(1)
+	if v.ArgCount() >= 2 {
+		_ = getInt(v, 2, "debug.getuservalue")
+	}
+	if ud := val.AsUserdata(); ud != nil {
+		v.Set(0, ud.UserValue())
+		return 1
+	}
+	v.Set(0, vm.Nil)
+	return 1
+}
+
+// debug.setuservalue(ud, value)
+func luaDebugSetUserValue(v *vm.VM) int {
+	ud := v.Get(1).AsUserdata()
+	if ud == nil {
+		callerArgError(v, 1, "debug.setuservalue", fmt.Sprintf("userdata expected, got %s", v.Get(1).Type()))
+	}
+	if v.ArgCount() < 2 {
+		callerArgError(v, 2, "debug.setuservalue", "value expected")
+	}
+	old := ud.UserValue()
+	ud.SetUserValue(v.Get(2))
+	v.Set(0, old)
 	return 1
 }
 

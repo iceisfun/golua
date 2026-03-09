@@ -10,12 +10,13 @@ import "fmt"
 type Userdata struct {
 	Data      interface{} // Arbitrary Go value
 	metatable LuaTable    // Optional metatable
+	uservalue Value       // Single Lua 5.4 user value slot
 }
 
 // NewUserdataValue creates a Value of type userdata wrapping arbitrary Go data.
 // The metatable controls method dispatch and metamethod behavior.
 func NewUserdataValue(data interface{}, mt LuaTable) Value {
-	ud := &Userdata{Data: data, metatable: mt}
+	ud := &Userdata{Data: data, metatable: mt, uservalue: Nil}
 	return Value{typ: typeUpvalue, ptr: ud}
 }
 
@@ -46,6 +47,16 @@ func (u *Userdata) Metatable() LuaTable {
 // SetMetatable sets the userdata's metatable.
 func (u *Userdata) SetMetatable(mt LuaTable) {
 	u.metatable = mt
+}
+
+// UserValue returns the userdata's single user value slot.
+func (u *Userdata) UserValue() Value {
+	return u.uservalue
+}
+
+// SetUserValue replaces the userdata's single user value slot.
+func (u *Userdata) SetUserValue(v Value) {
+	u.uservalue = v
 }
 
 // String returns a string representation of the userdata.

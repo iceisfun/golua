@@ -28,6 +28,9 @@ func openPackage(v *vm.VM) {
 	// package.preload — empty
 	preload := vm.NewEmptyTable()
 	pkg.SetString("preload", vm.NewTable(preload))
+	registry := v.GetRegistry()
+	registry.Set(vm.NewString("_LOADED"), vm.NewTable(loaded))
+	registry.Set(vm.NewString("_PRELOAD"), vm.NewTable(preload))
 
 	// package.path / package.cpath
 	pkg.SetString("path", vm.NewString("?.lua;?/init.lua"))

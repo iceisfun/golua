@@ -1083,9 +1083,8 @@ func TestDebug_GetInfo_InvalidOption(t *testing.T) {
 	src := `
 		local ok, err = pcall(debug.getinfo, 1, "X")
 		assert(not ok, "invalid option should error")
-		-- Should NOT include the character in the error message
-		assert(string.find(err, "invalid option$") or string.find(err, "invalid option%)"),
-			"should say 'invalid option' without character, got: " .. tostring(err))
+		assert(string.find(err, "invalid option 'X'", 1, true),
+			"should include the invalid option character, got: " .. tostring(err))
 	`
 	runLuaWithDebug(t, src, "test_getinfo_invalid_option", provider)
 }

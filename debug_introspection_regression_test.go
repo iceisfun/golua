@@ -160,6 +160,38 @@ assert(val2 == 99, tostring(val2))
 	runLuaWithDebug(t, source, "test_debug_dead_coroutine_error_snapshot", provider)
 }
 
+func TestDebugSetLocalRegression_CoroutineLevelCheckedBeforeMissingValue(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local co = coroutine.create(function() end)
+		coroutine.resume(co)
+		local ok, err = pcall(debug.setlocal, co, 1, 1)
+		assert(ok == false)
+		assert(tostring(err):find("bad argument #2 to 'debug.setlocal' (level out of range)", 1, true), tostring(err))
+	`
+	runLuaWithDebug(t, source, "test_debug_setlocal_thread_level_error_order", provider)
+}
+
+func TestDebugGetInfoRegression_ActiveLinesIncludeIfHeaders(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local function f(a)
+			if a then
+				return 1
+			else
+				return 2
+			end
+		end
+
+		local lines = debug.getinfo(f, "L").activelines
+		assert(lines[3], "if header should be active")
+		assert(lines[4], "then branch line missing")
+		assert(lines[6], "else branch line missing")
+		assert(lines[8], "function end line missing")
+	`
+	runLuaWithDebug(t, source, "test_debug_activelines_if_header", provider)
+}
+
 func TestDebugGetLocalRegression_SuspendedCoroutineHidesLuaTemporaries(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	source := `local co = coroutine.create(function(a)

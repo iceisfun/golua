@@ -21,3 +21,23 @@ func TestDebugStdlibRegression_SetCStackLimitExistsAndReturnsPreviousLimit(t *te
 	`
 	runLuaWithDebug(t, source, "test_debug_setcstacklimit_exists", provider)
 }
+
+func TestDebugStdlibRegression_GetInfoReportsInvalidOptionCharacter(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local ok, err = pcall(debug.getinfo, print, ">S")
+		assert(ok == false)
+		assert(tostring(err):find("invalid option '>'", 1, true), tostring(err))
+	`
+	runLuaWithDebug(t, source, "test_debug_getinfo_invalid_option_char", provider)
+}
+
+func TestDebugStdlibRegression_GetRegistryExposesPackageAliases(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local r = debug.getregistry()
+		assert(r._LOADED == package.loaded)
+		assert(r._PRELOAD == package.preload)
+	`
+	runLuaWithDebug(t, source, "test_debug_getregistry_package_aliases", provider)
+}

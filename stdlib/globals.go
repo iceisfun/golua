@@ -664,7 +664,7 @@ func luaSelect(v *vm.VM) int {
 // rawget(table, index)
 func luaRawget(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
-	if tbl == nil {
+	if tbl == nil || tbl.IsThread() {
 		callerArgError(v, 1, "rawget", "table expected"+gotDesc(v, 1))
 	}
 	if v.ArgCount() < 2 {
@@ -678,7 +678,7 @@ func luaRawget(v *vm.VM) int {
 // rawset(table, index, value)
 func luaRawset(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
-	if tbl == nil {
+	if tbl == nil || tbl.IsThread() {
 		callerArgError(v, 1, "rawset", "table expected"+gotDesc(v, 1))
 	}
 	if v.ArgCount() < 2 {
@@ -782,7 +782,7 @@ func luaGetmetatable(v *vm.VM) int {
 // setmetatable(table, metatable)
 func luaSetmetatable(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
-	if tbl == nil {
+	if tbl == nil || tbl.IsThread() {
 		callerArgError(v, 1, "setmetatable", "table expected"+gotDesc(v, 1))
 	}
 	if v.ArgCount() < 2 {
