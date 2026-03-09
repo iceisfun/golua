@@ -78,8 +78,12 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		// Validate width and precision (Lua 5.4: must be < 100)
 		validateFormatWidthPrec(spec, specChar)
 
-		// Validate flag/conversion combinations (Lua 5.4 restrictions)
-		validateConversion(spec, specChar)
+		// Validate flag/conversion combinations (Lua 5.4 restrictions).
+		// For unsigned integer conversions (u/o/x/X), Lua checks argument
+		// availability/type before rejecting invalid flag combos.
+		if specChar != 'd' && specChar != 'i' && specChar != 'u' && specChar != 'o' && specChar != 'x' && specChar != 'X' {
+			validateConversion(spec, specChar)
+		}
 
 		if argIdx >= len(vals) {
 			callerArgError(v, argIdx+2, "string.format", "no value")
@@ -91,6 +95,29 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		case 'd', 'i':
 			goSpec := spec + "d"
 			if i, ok := val.ToInt(); ok {
+				validateConversion(spec, specChar)
+				if i == 0 {
+					if prec, hasPrec := parsePrecision(spec); hasPrec && prec == 0 {
+						sign := ""
+						if strings.Contains(spec, "+") {
+							sign = "+"
+						} else if strings.Contains(spec, " ") {
+							sign = " "
+						}
+						width, left := parseFormatWidth(spec)
+						out := sign
+						if width > len(out) {
+							pad := strings.Repeat(" ", width-len(out))
+							if left {
+								out += pad
+							} else {
+								out = pad + out
+							}
+						}
+						result.WriteString(out)
+						break
+					}
+				}
 				result.WriteString(fmt.Sprintf(goSpec, i))
 			} else if _, ok := val.ToNumber(); ok {
 				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
@@ -100,6 +127,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		case 'u':
 			goSpec := spec + "d"
 			if i, ok := val.ToInt(); ok {
+				validateConversion(spec, specChar)
 				result.WriteString(fmt.Sprintf(goSpec, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
 				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
@@ -108,6 +136,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			}
 		case 'o', 'x', 'X':
 			if i, ok := val.ToInt(); ok {
+				validateConversion(spec, specChar)
 				result.WriteString(formatIntHex(spec, specChar, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
 				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
@@ -148,7 +177,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 						widthSpec = widthSpec[:dotIdx]
 					}
 					hashFlag := strings.Contains(spec, "#")
-				s := formatHexFloat(n, prec, hashFlag)
+					s := formatHexFloat(n, prec, hashFlag)
 					if specChar == 'A' {
 						s = strings.ToUpper(s)
 					}
@@ -682,6 +711,24 @@ func parseFormatFlags(spec string) (zeroPad, width int, left bool, hash bool) {
 		}
 	}
 	return zeroPad, width, left, hash
+}
+
+func parsePrecision(spec string) (precision int, hasPrecision bool) {
+	dot := strings.IndexByte(spec, '.')
+	if dot < 0 {
+		return 0, false
+	}
+	i := dot + 1
+	precision = 0
+	for i < len(spec) && spec[i] >= '0' && spec[i] <= '9' {
+		hasPrecision = true
+		precision = precision*10 + int(spec[i]-'0')
+		i++
+	}
+	if !hasPrecision {
+		return 0, true
+	}
+	return precision, true
 }
 
 // validateFormatStructure checks that the format specifier follows the valid
