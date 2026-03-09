@@ -15,16 +15,15 @@ assert(not ok1b)
 assert(err1b:find("%(global 'undeclared_global'%)"),
     "GETTABUP _ENV: expected (global 'undeclared_global'), got: " .. err1b)
 
--- GETTABLE with integer key: golua compiler emits GETTABLE (not GETI),
--- so the annotation is (field '?') matching lua5.4's GETTABLE behavior.
--- (GETI is only encountered when loading binary chunks from the standard compiler.)
+-- GETI with constant integer key (0-255): compiler emits OP_GETI,
+-- which reports (field 'integer index') matching lua5.4 behavior.
 local function test_geti()
     local u = {}
     u[1]()
 end
 local ok2, err2 = pcall(test_geti)
 assert(not ok2)
-assert(err2:find("%(field '%?'%)"), "GETTABLE int key: expected (field '?'), got: " .. err2)
+assert(err2:find("%(field 'integer index'%)"), "GETI int key: expected (field 'integer index'), got: " .. err2)
 
 -- GETTABLE with dynamic key should say (field '?')
 local function test_gettable_dynamic()

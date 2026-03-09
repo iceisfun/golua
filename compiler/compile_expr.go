@@ -1026,6 +1026,20 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 				kIdx := fs.stringConstant(key.Value)
 				fs.emitSetField(reg, kIdx, valReg, line)
 				fs.freeReg = valReg
+			case *ast.NumberExpr:
+				if key.Value >= 0 && key.Value <= int64(MaxArgC) {
+					valReg := fs.reserveReg()
+					c.compileExprToReg(f.Value, valReg)
+					fs.emit(ABC(OP_SETI, reg, int(key.Value), valReg, 0), line)
+					fs.freeReg = valReg
+				} else {
+					keyReg := fs.reserveReg()
+					c.compileExprToReg(f.Key, keyReg)
+					valReg := fs.reserveReg()
+					c.compileExprToReg(f.Value, valReg)
+					fs.emit(ABC(OP_SETTABLE, reg, keyReg, valReg, 0), line)
+					fs.freeReg = keyReg
+				}
 			default:
 				keyReg := fs.reserveReg()
 				c.compileExprToReg(f.Key, keyReg)
@@ -1082,13 +1096,17 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 	fs.freeReg = tableReg
 }
 
-// compileIndexExpr compiles t[key] into GETTABLE.
+// compileIndexExpr compiles t[key] into GETI (constant int 0-255) or GETTABLE.
 func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 	fs := c.fs
 	tableReg := fs.reserveReg()
 	c.compileExprToReg(e.Table, tableReg)
-	keyReg := fs.reserveReg()
-	c.compileExprToReg(e.Key, keyReg)
-	fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), e.P.Line)
+	if n, ok := e.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
+		fs.emit(ABC(OP_GETI, reg, tableReg, int(n.Value), 0), e.P.Line)
+	} else {
+		keyReg := fs.reserveReg()
+		c.compileExprToReg(e.Key, keyReg)
+		fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), e.P.Line)
+	}
 	fs.freeReg = tableReg
 }

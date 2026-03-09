@@ -379,8 +379,9 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	// Phase 1: Pre-evaluate LHS indexed targets into temp registers.
 	type precomputedTarget struct {
 		tableReg int // temp reg holding table reference
-		keyReg   int // temp reg holding key (-1 for field targets using constant)
-		fieldK   int // constant index for field targets (-1 for index targets)
+		keyReg   int // temp reg holding key (-1 for field/intKey targets)
+		fieldK   int // constant index for field targets (-1 otherwise)
+		intKey   int // constant integer key for SETI (-1 if not applicable)
 	}
 	precomputed := make([]precomputedTarget, nTargets)
 	tempBase := fs.freeReg
@@ -390,16 +391,20 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		case *ast.IndexExpr:
 			tReg := fs.reserveReg()
 			c.compileExprToReg(t.Table, tReg)
-			kReg := fs.reserveReg()
-			c.compileExprToReg(t.Key, kReg)
-			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1}
+			if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
+				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: -1, intKey: int(n.Value)}
+			} else {
+				kReg := fs.reserveReg()
+				c.compileExprToReg(t.Key, kReg)
+				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1, intKey: -1}
+			}
 		case *ast.FieldExpr:
 			tReg := fs.reserveReg()
 			c.compileExprToReg(t.Table, tReg)
 			fK := fs.stringConstant(t.Field)
-			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK}
+			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK, intKey: -1}
 		default:
-			precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: -1}
+			precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: -1, intKey: -1}
 		}
 	}
 
@@ -470,9 +475,11 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		pc := precomputed[i]
 		if pc.tableReg >= 0 {
 			// Pre-evaluated indexed/field target
-			if pc.keyReg >= 0 {
+			if pc.intKey >= 0 {
+				fs.emit(ABC(OP_SETI, pc.tableReg, pc.intKey, valBase+i, 0), line)
+			} else if pc.keyReg >= 0 {
 				fs.emit(ABC(OP_SETTABLE, pc.tableReg, pc.keyReg, valBase+i, 0), line)
-			} else {
+			} else if pc.fieldK >= 0 {
 				fs.emitSetField(pc.tableReg, pc.fieldK, valBase+i, line)
 			}
 		} else {
@@ -538,11 +545,17 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 	case *ast.IndexExpr:
 		tableReg := fs.reserveReg()
 		c.compileExprToReg(t.Table, tableReg)
-		keyReg := fs.reserveReg()
-		c.compileExprToReg(t.Key, keyReg)
-		valReg := fs.reserveReg()
-		c.compileExprToReg(value, valReg)
-		fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, valReg, 0), line)
+		if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
+			valReg := fs.reserveReg()
+			c.compileExprToReg(value, valReg)
+			fs.emit(ABC(OP_SETI, tableReg, int(n.Value), valReg, 0), line)
+		} else {
+			keyReg := fs.reserveReg()
+			c.compileExprToReg(t.Key, keyReg)
+			valReg := fs.reserveReg()
+			c.compileExprToReg(value, valReg)
+			fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, valReg, 0), line)
+		}
 		fs.freeReg = tableReg
 
 	default:
@@ -596,9 +609,13 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 	case *ast.IndexExpr:
 		tableReg := fs.reserveReg()
 		c.compileExprToReg(t.Table, tableReg)
-		keyReg := fs.reserveReg()
-		c.compileExprToReg(t.Key, keyReg)
-		fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, srcReg, 0), line)
+		if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
+			fs.emit(ABC(OP_SETI, tableReg, int(n.Value), srcReg, 0), line)
+		} else {
+			keyReg := fs.reserveReg()
+			c.compileExprToReg(t.Key, keyReg)
+			fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, srcReg, 0), line)
+		}
 		fs.freeReg = tableReg
 
 	default:
