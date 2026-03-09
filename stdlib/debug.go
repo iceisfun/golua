@@ -77,6 +77,10 @@ func openDebug(v *vm.VM) {
 		debug.SetString("upvaluejoin", vm.NewNativeFunc(luaDebugUpvalueJoin))
 	}
 
+	if caps.AllowSetCStackLimit {
+		debug.SetString("setcstacklimit", vm.NewNativeFunc(luaDebugSetCStackLimit))
+	}
+
 	v.SetGlobal("debug", vm.NewTable(debug))
 }
 
@@ -632,6 +636,15 @@ func luaDebugGetMetatable(v *vm.VM) int {
 		return 1
 	}
 	v.Set(0, vm.Nil)
+	return 1
+}
+
+// debug.setcstacklimit(n)
+// GoLua does not expose Lua's internal C stack accounting, so keep a
+// compatibility stub that reports the conventional default limit used by Lua.
+func luaDebugSetCStackLimit(v *vm.VM) int {
+	_ = getInt(v, 1, "debug.setcstacklimit")
+	v.Set(0, vm.NewInt(200))
 	return 1
 }
 

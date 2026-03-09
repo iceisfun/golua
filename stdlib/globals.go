@@ -719,7 +719,7 @@ func luaRawlen(v *vm.VM) int {
 		v.Set(0, vm.NewInt(int64(len(val.AsString()))))
 		return 1
 	}
-	if val.IsTable() {
+	if val.IsTable() && !val.AsTable().IsThread() {
 		v.Set(0, vm.NewInt(int64(val.AsTable().Len())))
 		return 1
 	}
