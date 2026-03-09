@@ -363,6 +363,10 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 // Sets the value of upvalue #up of function f.
 // Returns the upvalue name, or nil if the index is out of range.
 func luaDebugSetUpvalue(v *vm.VM) int {
+	if v.ArgCount() < 3 {
+		callerArgError(v, 3, "debug.setupvalue", "value expected")
+	}
+
 	idx := getInt(v, 2, "debug.setupvalue")
 
 	arg1 := v.Get(1)
@@ -495,15 +499,10 @@ func luaDebugGetLocal(v *vm.VM) int {
 		return 1
 	}
 
-	if v.ArgCount() >= 3 {
-		// In 3-arg forms, Lua validates argument #2 first, even when
-		// argument #1 is not a valid level/thread/function.
-		_ = getInt(v, 2, "debug.getlocal")
-	}
-
-	level := getInt(v, 1, "debug.getlocal")
-
+	// In level-based forms, Lua validates argument #2 first, including when
+	// it is missing, before validating argument #1.
 	local := getInt(v, 2, "debug.getlocal")
+	level := getInt(v, 1, "debug.getlocal")
 
 	// Validate level is in range (level 0 = getlocal itself = native frame)
 	if !v.IsValidLevel(int(level)) {
@@ -535,6 +534,9 @@ func luaDebugSetLocal(v *vm.VM) int {
 		if tbl != nil && tbl.IsThread() {
 			level := getInt(v, 2, "debug.setlocal")
 			local := getInt(v, 3, "debug.setlocal")
+			if v.ArgCount() < 4 {
+				callerArgError(v, 4, "debug.setlocal", "value expected")
+			}
 			newVal := v.Get(4)
 			coVM := tbl.VMRef()
 			if coVM == nil || !coVM.IsValidLevel(int(level)) {
@@ -555,6 +557,9 @@ func luaDebugSetLocal(v *vm.VM) int {
 	level := getInt(v, 1, "debug.setlocal")
 
 	local := getInt(v, 2, "debug.setlocal")
+	if v.ArgCount() < 3 {
+		callerArgError(v, 3, "debug.setlocal", "value expected")
+	}
 
 	newVal := v.Get(3)
 

@@ -21,6 +21,20 @@ do
 end
 
 do
+  local ok, err = pcall(debug.setupvalue)
+  assert(ok == false)
+  expect_arg(err, 3, "debug.setupvalue")
+  assert(string.find(tostring(err), "value expected", 1, true) ~= nil)
+end
+
+do
+  local ok, err = pcall(debug.setlocal, 0, 1)
+  assert(ok == false)
+  expect_arg(err, 3, "debug.setlocal")
+  assert(string.find(tostring(err), "value expected", 1, true) ~= nil)
+end
+
+do
   local ok, err = pcall(debug.upvalueid, nil, "x")
   assert(ok == false)
   expect_arg(err, 2, "debug.upvalueid")
