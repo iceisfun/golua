@@ -11,6 +11,7 @@
 //   - debug: requires [vm.LuaDebugProvider] (e.g. [vm.DefaultDebugProvider])
 //   - chan: requires [vm.LuaChanProvider] (e.g. [vm.DefaultChanProvider])
 //   - time: requires [vm.LuaTimeProvider] (e.g. [vm.DefaultTimeProvider])
+//   - package.loadlib: requires [vm.LuaLoadLibProvider] (host-defined native module hook)
 //
 // GoLua extensions beyond Lua 5.4: bit32 (from Lua 5.2), chan (Go channels),
 // time (millisecond timing), glob (Go-style pattern matching).

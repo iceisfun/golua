@@ -38,6 +38,11 @@ func openPackage(v *vm.VM) {
 	// package.searchpath
 	pkg.SetString("searchpath", vm.NewNativeFunc(luaSearchPath))
 
+	// package.loadlib (only if provider is set)
+	if provider := v.LoadLibProvider(); provider != nil {
+		pkg.SetString("loadlib", vm.NewNativeFunc(makePackageLoadlib(provider)))
+	}
+
 	// package.searchers
 	searchers := vm.NewEmptyTable()
 	searchers.SetInt(1, vm.NewNativeFunc(makePreloadSearcher(pkg)))
@@ -52,6 +57,37 @@ func openPackage(v *vm.VM) {
 
 	// require — captures pkg table via closure
 	v.SetGlobal("require", vm.NewNativeFunc(makeRequire(v, pkg)))
+}
+
+// makePackageLoadlib creates package.loadlib(path, init).
+func makePackageLoadlib(provider vm.LuaLoadLibProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		if v.ArgCount() < 1 {
+			callerArgError(v, 1, "package.loadlib", "string expected, got no value")
+		}
+		if v.ArgCount() < 2 {
+			callerArgError(v, 2, "package.loadlib", "string expected, got no value")
+		}
+
+		pathVal := v.Get(1)
+		if !pathVal.IsString() {
+			callerArgError(v, 1, "package.loadlib", fmt.Sprintf("string expected, got %s", pathVal.Type()))
+		}
+		initVal := v.Get(2)
+		if !initVal.IsString() {
+			callerArgError(v, 2, "package.loadlib", fmt.Sprintf("string expected, got %s", initVal.Type()))
+		}
+
+		loader, err := provider.LoadLib(pathVal.AsString(), initVal.AsString(), v.CallerContext())
+		if err != nil {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(err.Error()))
+			return 2
+		}
+
+		v.Set(0, vm.NewNativeFunc(loader))
+		return 1
+	}
 }
 
 // makeRequire creates the require() function with a captured reference to the
