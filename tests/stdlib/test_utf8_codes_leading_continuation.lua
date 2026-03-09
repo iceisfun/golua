@@ -1,15 +1,17 @@
--- utf8.codes should skip leading continuation bytes and only error on
--- malformed UTF-8 when attempting to decode a rune-start byte.
+-- utf8.codes should error on invalid UTF-8, including stray continuation bytes.
+-- Lua 5.4 does NOT skip continuation bytes — it raises an error.
 
+-- Leading continuation bytes → error
 do
   local s = string.char(0xB2, 0xBD, 0xB8, 0x2A, 0x09, 0x5E)
-  local out = {}
-  for p, c in utf8.codes(s) do
-    out[#out + 1] = p .. ":" .. c
-  end
-  assert(table.concat(out, ",") == "4:42,5:9,6:94")
+  local ok, err = pcall(function()
+    for p, c in utf8.codes(s) do end
+  end)
+  assert(not ok, "should error on leading continuation bytes")
+  assert(string.find(tostring(err), "invalid UTF%-8 code"))
 end
 
+-- Stray continuation after valid codepoint → error
 do
   local s = string.char(0x94, 0x7E, 0x69, 0xE5)
   local ok, err = pcall(function()
@@ -20,11 +22,12 @@ do
   assert(string.find(tostring(err), "invalid UTF-8 code", 1, true) ~= nil)
 end
 
+-- Trailing continuation byte after valid ASCII → error
 do
   local s = string.char(0x61, 0xBA)
-  local out = {}
-  for p, c in utf8.codes(s) do
-    out[#out + 1] = p .. ":" .. c
-  end
-  assert(table.concat(out, ",") == "1:97")
+  local ok, err = pcall(function()
+    for p, c in utf8.codes(s) do end
+  end)
+  assert(not ok, "should error on trailing continuation byte")
+  assert(string.find(tostring(err), "invalid UTF%-8 code"))
 end

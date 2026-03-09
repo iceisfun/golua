@@ -1,6 +1,7 @@
 -- Test: Errors in utf8.codes
 -- From: utf8.lua
--- What: Tests that iterating with utf8.codes over invalid UTF-8 raises errors, and that calling the iteration function with out-of-range positions returns nil.
+-- What: Tests that iterating with utf8.codes over invalid UTF-8 raises errors,
+-- and that calling the iteration function with out-of-range positions returns nil.
 
 do
   local function checkerror (msg, f, ...)
@@ -17,10 +18,16 @@ do
   errorcodes("ab\xff")
   errorcodes("\u{110000}")
 
-  -- Lua 5.4 skips stray continuation bytes in utf8.codes iteration.
-  for _ in utf8.codes("in\x80valid") do end
-  for _ in utf8.codes("\xbfinvalid") do end
-  for _ in utf8.codes("αλφ\xBFα") do end
+  -- Lua 5.4 errors on stray continuation bytes (does NOT skip them)
+  checkerror("invalid UTF%-8 code", function()
+    for _ in utf8.codes("in\x80valid") do end
+  end)
+  checkerror("invalid UTF%-8 code", function()
+    for _ in utf8.codes("\xbfinvalid") do end
+  end)
+  checkerror("invalid UTF%-8 code", function()
+    for _ in utf8.codes("αλφ\xBFα") do end
+  end)
 
   local f = utf8.codes("")
   assert(f("", 2) == nil)

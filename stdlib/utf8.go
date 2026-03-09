@@ -270,17 +270,29 @@ func luaUtf8Codes(v *vm.VM) int {
 		str := v.Get(1).AsString()
 		state, _ := v.Get(2).ToInt()
 
-		// Convert state to byte offset (0-indexed)
+		// State is: 0 = initial, >0 = 1-indexed position of last returned codepoint.
+		// Convert to 0-indexed byte offset for next codepoint to decode.
 		n := int(state)
 
-		if n < 0 || n >= len(str) {
-			v.Set(0, vm.Nil)
-			return 1
-		}
-
-		// Skip continuation bytes (handles post-decode position)
-		for n < len(str) && !utf8.RuneStart(str[n]) {
-			n++
+		if n <= 0 {
+			// Initial call: decode at byte 0
+			n = 0
+		} else {
+			// Advance past previous codepoint: state is 1-indexed position,
+			// so byte[state-1] was the start of the previous codepoint.
+			// Decode it to find its size, then advance past it.
+			prev := n - 1 // 0-indexed position of previous codepoint
+			if prev < len(str) {
+				if lax {
+					_, size := decodeExtendedUTF8(str[prev:])
+					if size > 0 {
+						n = prev + size
+					}
+				} else {
+					_, size := utf8.DecodeRuneInString(str[prev:])
+					n = prev + size
+				}
+			}
 		}
 
 		if n >= len(str) {
@@ -296,6 +308,11 @@ func luaUtf8Codes(v *vm.VM) int {
 			v.Set(0, vm.NewInt(int64(n+1)))
 			v.Set(1, vm.NewInt(cp))
 			return 2
+		}
+
+		// In strict mode, error if current byte is not a valid start
+		if !utf8.RuneStart(str[n]) {
+			panic("invalid UTF-8 code")
 		}
 
 		r, size := utf8.DecodeRuneInString(str[n:])
