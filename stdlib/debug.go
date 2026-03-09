@@ -210,7 +210,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 						v.Set(0, vm.Nil)
 						return 1
 					}
-					what = "flnStu"
+					what = "flnSrtu"
 					if !v.Get(3).IsNil() {
 						what = v.Get(3).AsString()
 					}
@@ -231,7 +231,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 			v.Set(0, vm.Nil)
 			return 1
 		}
-		what = "flnStu" // default
+		what = "flnSrtu" // default
 		if !v.Get(whatIdx).IsNil() {
 			what = v.Get(whatIdx).AsString()
 		}
@@ -260,7 +260,7 @@ func luaDebugGetInfo(v *vm.VM) int {
 			v.Set(0, vm.Nil)
 			return 1
 		}
-		what = "flnStu" // default
+		what = "flnSrtu" // default
 		if !v.Get(whatIdx).IsNil() {
 			what = v.Get(whatIdx).AsString()
 		}
