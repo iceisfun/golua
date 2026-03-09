@@ -2,18 +2,22 @@ package vm
 
 import "fmt"
 
-// tableGet gets a value from a table, handling __index metamethod
+// tableGet gets a value from a table, handling __index metamethod.
+// The loop structure matches Lua 5.4's luaV_finishget: the initial table check
+// is "free" (not counted), and each loop iteration performs one redirect + check.
+// This means MAXTAGLOOP redirects are allowed when the value is found, but
+// MAXTAGLOOP redirects with no value triggers the chain-too-long error.
 func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 	// Fast path: concrete table with no metatable (most common case)
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.Get(key), nil
 	}
-	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
-		val := t.Get(key)
-		if !val.IsNil() {
-			return val, nil
-		}
-
+	// Initial table check (free, like Lua 5.4's inline bytecode fast path)
+	val := t.Get(key)
+	if !val.IsNil() {
+		return val, nil
+	}
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Key not found, check for __index metamethod
 		mt := t.Metatable()
 		if mt == nil {
@@ -28,6 +32,11 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 		if index.IsTable() {
 			// __index is a table, follow the chain
 			t = index.AsTable()
+			// Check the redirected-to table
+			val = t.Get(key)
+			if !val.IsNil() {
+				return val, nil
+			}
 			continue
 		}
 
@@ -48,18 +57,17 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.GetString(key), nil
 	}
-	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
-		// Fast path: use *Table.GetString to avoid NewString allocation
-		var val Value
-		if ct, ok := t.(*Table); ok {
-			val = ct.GetString(key)
-		} else {
-			val = t.Get(NewString(key))
-		}
-		if !val.IsNil() {
+	// Initial table check (free, like Lua 5.4's inline bytecode fast path)
+	if ct, ok := t.(*Table); ok {
+		if val := ct.GetString(key); !val.IsNil() {
 			return val, nil
 		}
-
+	} else {
+		if val := t.Get(NewString(key)); !val.IsNil() {
+			return val, nil
+		}
+	}
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Key not found, check for __index metamethod
 		mt := t.Metatable()
 		if mt == nil {
@@ -74,6 +82,16 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 		if index.IsTable() {
 			// __index is a table, follow the chain
 			t = index.AsTable()
+			// Check the redirected-to table
+			if ct, ok := t.(*Table); ok {
+				if val := ct.GetString(key); !val.IsNil() {
+					return val, nil
+				}
+			} else {
+				if val := t.Get(NewString(key)); !val.IsNil() {
+					return val, nil
+				}
+			}
 			continue
 		}
 
@@ -94,18 +112,17 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.GetInt(key), nil
 	}
-	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
-		// Fast path: use *Table.GetInt to avoid NewInt/hashKey overhead
-		var val Value
-		if ct, ok := t.(*Table); ok {
-			val = ct.GetInt(key)
-		} else {
-			val = t.Get(NewInt(int64(key)))
-		}
-		if !val.IsNil() {
+	// Initial table check (free, like Lua 5.4's inline bytecode fast path)
+	if ct, ok := t.(*Table); ok {
+		if val := ct.GetInt(key); !val.IsNil() {
 			return val, nil
 		}
-
+	} else {
+		if val := t.Get(NewInt(int64(key))); !val.IsNil() {
+			return val, nil
+		}
+	}
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Key not found, check for __index metamethod
 		mt := t.Metatable()
 		if mt == nil {
@@ -120,6 +137,16 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 		if index.IsTable() {
 			// __index is a table, follow the chain
 			t = index.AsTable()
+			// Check the redirected-to table
+			if ct, ok := t.(*Table); ok {
+				if val := ct.GetInt(key); !val.IsNil() {
+					return val, nil
+				}
+			} else {
+				if val := t.Get(NewInt(int64(key))); !val.IsNil() {
+					return val, nil
+				}
+			}
 			continue
 		}
 
@@ -174,7 +201,9 @@ func (vm *VM) resolveIndex(mm Value, obj Value, key Value) (Value, error) {
 	return Nil, vm.runtimeError("attempt to index a %s value", obj.Type())
 }
 
-// tableSet sets a value in a table, handling __newindex metamethod
+// tableSet sets a value in a table, handling __newindex metamethod.
+// The loop structure matches Lua 5.4's luaV_finishset: the initial table check
+// is "free" (not counted), and each loop iteration performs one redirect + check.
 func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 	// Fast path: concrete table with no metatable (skip existence check)
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
@@ -183,17 +212,15 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		}
 		return nil
 	}
-	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
-		// Check if key already exists (raw access)
-		existing := t.Get(key)
-		if !existing.IsNil() {
-			// Key exists, set directly
-			if err := t.Set(key, value); err != nil {
-				return vm.runtimeError("%s", err)
-			}
-			return nil
+	// Initial check (free, like Lua 5.4's inline bytecode fast path)
+	existing := t.Get(key)
+	if !existing.IsNil() {
+		if err := t.Set(key, value); err != nil {
+			return vm.runtimeError("%s", err)
 		}
-
+		return nil
+	}
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Key doesn't exist, check for __newindex metamethod
 		mt := t.Metatable()
 		if mt == nil {
@@ -214,6 +241,14 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		if newindex.IsTable() {
 			// __newindex is a table, follow the chain
 			t = newindex.AsTable()
+			// Check the redirected-to table
+			existing = t.Get(key)
+			if !existing.IsNil() {
+				if err := t.Set(key, value); err != nil {
+					return vm.runtimeError("%s", err)
+				}
+				return nil
+			}
 			continue
 		}
 
@@ -237,15 +272,24 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 		ct.SetString(key, value)
 		return nil
 	}
-	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
+	// Initial check (free, like Lua 5.4's inline bytecode fast path)
+	if ct, ok := t.(*Table); ok {
+		if existing := ct.GetString(key); !existing.IsNil() {
+			ct.SetString(key, value)
+			return nil
+		}
+	} else {
+		keyVal := NewString(key)
+		if existing := t.Get(keyVal); !existing.IsNil() {
+			if err := t.Set(keyVal, value); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Fast path: use *Table methods to avoid NewString allocation
 		if ct, ok := t.(*Table); ok {
-			existing := ct.GetString(key)
-			if !existing.IsNil() {
-				ct.SetString(key, value)
-				return nil
-			}
-
 			mt := ct.Metatable()
 			if mt == nil {
 				ct.SetString(key, value)
@@ -260,6 +304,21 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 
 			if newindex.IsTable() {
 				t = newindex.AsTable()
+				// Check the redirected-to table
+				if ct2, ok := t.(*Table); ok {
+					if existing := ct2.GetString(key); !existing.IsNil() {
+						ct2.SetString(key, value)
+						return nil
+					}
+				} else {
+					keyVal := NewString(key)
+					if existing := t.Get(keyVal); !existing.IsNil() {
+						if err := t.Set(keyVal, value); err != nil {
+							return err
+						}
+						return nil
+					}
+				}
 				continue
 			}
 
@@ -273,14 +332,6 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 
 		// Slow path: generic LuaTable interface
 		keyVal := NewString(key)
-		existing := t.Get(keyVal)
-		if !existing.IsNil() {
-			if err := t.Set(keyVal, value); err != nil {
-				return err
-			}
-			return nil
-		}
-
 		mt := t.Metatable()
 		if mt == nil {
 			if err := t.Set(keyVal, value); err != nil {
@@ -299,6 +350,13 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 
 		if newindex.IsTable() {
 			t = newindex.AsTable()
+			// Check the redirected-to table
+			if existing := t.Get(keyVal); !existing.IsNil() {
+				if err := t.Set(keyVal, value); err != nil {
+					return err
+				}
+				return nil
+			}
 			continue
 		}
 
@@ -319,15 +377,24 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 		ct.SetInt(key, value)
 		return nil
 	}
-	for depth := 0; depth <= vm.MaxMetaDepth(); depth++ {
+	// Initial check (free, like Lua 5.4's inline bytecode fast path)
+	if ct, ok := t.(*Table); ok {
+		if existing := ct.GetInt(key); !existing.IsNil() {
+			ct.SetInt(key, value)
+			return nil
+		}
+	} else {
+		keyVal := NewInt(int64(key))
+		if existing := t.Get(keyVal); !existing.IsNil() {
+			if err := t.Set(keyVal, value); err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
 		// Fast path: use *Table methods to avoid NewInt/hashKey overhead
 		if ct, ok := t.(*Table); ok {
-			existing := ct.GetInt(key)
-			if !existing.IsNil() {
-				ct.SetInt(key, value)
-				return nil
-			}
-
 			mt := ct.Metatable()
 			if mt == nil {
 				ct.SetInt(key, value)
@@ -342,6 +409,21 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 
 			if newindex.IsTable() {
 				t = newindex.AsTable()
+				// Check the redirected-to table
+				if ct2, ok := t.(*Table); ok {
+					if existing := ct2.GetInt(key); !existing.IsNil() {
+						ct2.SetInt(key, value)
+						return nil
+					}
+				} else {
+					keyVal := NewInt(int64(key))
+					if existing := t.Get(keyVal); !existing.IsNil() {
+						if err := t.Set(keyVal, value); err != nil {
+							return err
+						}
+						return nil
+					}
+				}
 				continue
 			}
 
@@ -355,14 +437,6 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 
 		// Slow path: generic LuaTable interface
 		keyVal := NewInt(int64(key))
-		existing := t.Get(keyVal)
-		if !existing.IsNil() {
-			if err := t.Set(keyVal, value); err != nil {
-				return err
-			}
-			return nil
-		}
-
 		mt := t.Metatable()
 		if mt == nil {
 			if err := t.Set(keyVal, value); err != nil {
@@ -381,6 +455,13 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 
 		if newindex.IsTable() {
 			t = newindex.AsTable()
+			// Check the redirected-to table
+			if existing := t.Get(keyVal); !existing.IsNil() {
+				if err := t.Set(keyVal, value); err != nil {
+					return err
+				}
+				return nil
+			}
 			continue
 		}
 
