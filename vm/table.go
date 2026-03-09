@@ -32,6 +32,7 @@ type Table struct {
 	keys      []any            // insertion-ordered hash keys (may contain dead keys)
 	deadKeys  int              // count of keys in t.keys not in t.hash/strHash/intHash
 	iterBound int              // upper bound on keys slice for next() iteration (0 = no limit)
+	iterHash  bool             // true after current next() traversal enters hash part
 	metatable LuaTable         // per-table metatable for operator/event overrides
 	isThread  bool             // true if this table represents a coroutine thread
 	vmRef     *VM              // reference to coroutine VM (only set for thread tables)
@@ -375,6 +376,9 @@ func (t *Table) Set(key, value Value) error {
 				} else if idx == len(t.array)+1 && !value.IsNil() {
 					// Extend array
 					t.array = append(t.array, value)
+					// If this key previously existed in integer hash, clear it to
+					// avoid dual storage (array + hash) for the same numeric index.
+					t.setIntHash(i, Nil)
 					// Move any hash entries that now belong in array
 					t.rehashToArray()
 					return nil
@@ -418,6 +422,9 @@ func (t *Table) SetInt(i int, value Value) {
 	}
 	if i == len(t.array)+1 && !value.IsNil() {
 		t.array = append(t.array, value)
+		// Clear stale integer-hash entry for this key to prevent duplicate
+		// traversal via pairs/next after promotion into the array part.
+		t.setIntHash(int64(i), Nil)
 		t.rehashToArray()
 		return
 	}
@@ -558,6 +565,7 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 		// Start iteration: snapshot the hash key count so that keys added
 		// during traversal don't extend iteration indefinitely.
 		t.iterBound = len(t.keys)
+		t.iterHash = false
 		// Start iteration: find first non-nil array entry
 		if kv, vv, ok := t.nextArrayEntry(0); ok {
 			return kv, vv, nil
@@ -580,11 +588,24 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 			if kv, vv, ok := t.nextArrayEntry(int(i)); ok {
 				return kv, vv, nil
 			}
-			// No more non-nil array entries, start hash
+			// If this numeric key was being traversed through the hash part
+			// (e.g. it was promoted into array during iteration), continue from
+			// its hash position instead of restarting hash traversal.
+			if t.iterHash {
+				if kv, vv, ok := t.nextHashAfter(hashKey(key)); ok {
+					if kv.IsNil() {
+						t.iterHash = false
+					}
+					return kv, vv, nil
+				}
+			}
 			if kv, vv, ok := t.firstLiveHashEntry(); ok {
+				t.iterHash = true
 				return kv, vv, nil
 			}
+			// No more entries.
 			t.iterBound = 0
+			t.iterHash = false
 			return Nil, Nil, nil
 		}
 		// The key may have been a valid array index before the array
@@ -595,9 +616,11 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 		// continue iteration into the hash part (or return nil).
 		if i := key.AsInt(); i >= 1 && int(i) <= cap(t.array) {
 			if kv, vv, ok := t.firstLiveHashEntry(); ok {
+				t.iterHash = true
 				return kv, vv, nil
 			}
 			t.iterBound = 0
+			t.iterHash = false
 			return Nil, Nil, nil
 		}
 	}
@@ -615,29 +638,13 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 	}
 
 	// In hash part — find current key in ordered keys, return the next live one.
-	// The key may be dead (deleted during iteration) but still present in t.keys.
-	// Use iterBound to cap the search so that keys added during iteration
-	// cannot extend traversal indefinitely (matches Lua 5.4 fixed-size hash
-	// behavior where new keys beyond the table size are not visited).
-	k := hashKey(key)
-	bound := len(t.keys)
-	if t.iterBound > 0 && t.iterBound < bound {
-		bound = t.iterBound
-	}
-	for i := 0; i < bound; i++ {
-		hk := t.keys[i]
-		if hk == k {
-			// Found key (live or dead) — advance to next live key
-			for j := i + 1; j < bound; j++ {
-				nextK := t.keys[j]
-				if v, alive := t.getKeyValue(nextK); alive {
-					return keyToValue(nextK), v, nil
-				}
-			}
-			t.iterBound = 0
-			return Nil, Nil, nil
+	if kv, vv, ok := t.nextHashAfter(hashKey(key)); ok {
+		if kv.IsNil() {
+			t.iterHash = false
 		}
+		return kv, vv, nil
 	}
+	t.iterHash = false
 	return Nil, Nil, fmt.Errorf("invalid key to 'next'")
 }
 
@@ -675,6 +682,30 @@ func (t *Table) firstLiveHashEntry() (Value, Value, bool) {
 		if v, alive := t.getKeyValue(k); alive {
 			return keyToValue(k), v, true
 		}
+	}
+	return Nil, Nil, false
+}
+
+// nextHashAfter returns the next live hash entry after hash key k.
+// If k exists and has no following live entries, returns (Nil, Nil, true).
+// If k is not found in the current hash traversal window, returns ok=false.
+func (t *Table) nextHashAfter(k any) (Value, Value, bool) {
+	bound := len(t.keys)
+	if t.iterBound > 0 && t.iterBound < bound {
+		bound = t.iterBound
+	}
+	for i := 0; i < bound; i++ {
+		if t.keys[i] != k {
+			continue
+		}
+		for j := i + 1; j < bound; j++ {
+			nextK := t.keys[j]
+			if v, alive := t.getKeyValue(nextK); alive {
+				return keyToValue(nextK), v, true
+			}
+		}
+		t.iterBound = 0
+		return Nil, Nil, true
 	}
 	return Nil, Nil, false
 }
