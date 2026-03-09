@@ -289,11 +289,8 @@ func makeCFileSearcher(pkg *vm.Table) vm.NativeFunc {
 // expandTemplates splits a path template string by ";" and replaces "?" with name.
 func expandTemplates(name, path string) []string {
 	templates := strings.Split(path, ";")
-	var result []string
+	result := make([]string, 0, len(templates))
 	for _, tmpl := range templates {
-		if tmpl == "" {
-			continue
-		}
 		result = append(result, strings.ReplaceAll(tmpl, "?", name))
 	}
 	return result
