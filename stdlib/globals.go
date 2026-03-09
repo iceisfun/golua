@@ -315,6 +315,8 @@ func luaPcall(v *vm.VM) int {
 	v.MsgHandler = vm.Nil
 	v.MsgHandlerUsed = false
 	v.MsgHandlerResult = vm.Nil
+	exitUserProtected := v.EnterUserProtected()
+	defer exitUserProtected()
 
 	// Call the function with error protection
 	// ProtectedCall handles __call metamethods for tables
@@ -369,6 +371,8 @@ func luaXpcall(v *vm.VM) int {
 	v.MsgHandler = msgh
 	v.MsgHandlerUsed = false
 	v.MsgHandlerResult = vm.Nil
+	exitUserProtected := v.EnterUserProtected()
+	defer exitUserProtected()
 
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {

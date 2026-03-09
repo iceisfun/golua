@@ -68,6 +68,23 @@ func (vm *VM) IsYieldableContext() bool {
 	return vm.yieldCh != nil && vm.nonYieldableDepth == 0
 }
 
+// EnterUserProtected marks execution as running under pcall/xpcall.
+// The returned function must be called to restore state.
+func (vm *VM) EnterUserProtected() func() {
+	vm.userProtectedDepth++
+	return func() {
+		if vm.userProtectedDepth <= 0 {
+			panic("internal error: user-protected depth underflow")
+		}
+		vm.userProtectedDepth--
+	}
+}
+
+// InUserProtected reports whether execution is currently under pcall/xpcall.
+func (vm *VM) InUserProtected() bool {
+	return vm.userProtectedDepth > 0
+}
+
 // Push pushes a value onto the stack.
 // Must be called from within a ProtectedCall boundary (i.e., from a
 // NativeFunc). Panics on stack overflow, caught by ProtectedCall's recover.

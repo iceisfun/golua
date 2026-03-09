@@ -28,6 +28,26 @@ const maxLoadLines = 1 << 26 // ~67 million lines
 // alone would require tens of millions of calls to trigger.
 const maxLoadReaderCalls = 1 << 22 // ~4 million calls
 
+func setLoadReaderError(v *vm.VM, err error) {
+	if le, ok := err.(*vm.LuaError); ok {
+		if !le.Value.IsString() {
+			if v.InUserProtected() {
+				v.Set(1, le.Value)
+				return
+			}
+			msg := fmt.Sprintf("(error object is a %s value)", le.Value.Type())
+			if tb := v.Traceback("", 0); tb != "" {
+				msg += "\n" + tb
+			}
+			v.Set(1, vm.NewString(msg))
+			return
+		}
+		v.Set(1, le.Value)
+		return
+	}
+	v.Set(1, vm.NewString(err.Error()))
+}
+
 // openLoad registers load, loadfile, and dofile functions.
 // These are only registered if a code provider is available and has the right capabilities.
 func openLoad(v *vm.VM) {
@@ -107,22 +127,7 @@ func luaLoad(v *vm.VM) int {
 			results, err := v.ProtectedCall(chunk, nil)
 			if err != nil {
 				v.Set(0, vm.Nil)
-				// Return the reader error without traceback. In Lua 5.4,
-				// load() internally uses luaD_pcall which adds a traceback
-				// when called directly, but when load() is called via pcall
-				// the traceback is absent. We omit the traceback to match
-				// the pcall(load, reader) behavior which is the common case.
-				var errMsg string
-				if le, ok := err.(*vm.LuaError); ok {
-					if le.Value.IsString() {
-						errMsg = le.Value.AsString()
-					} else {
-						errMsg = fmt.Sprintf("(error object is a %s value)", le.Value.Type())
-					}
-				} else {
-					errMsg = err.Error()
-				}
-				v.Set(1, vm.NewString(errMsg))
+				setLoadReaderError(v, err)
 				return 2
 			}
 			if len(results) == 0 || results[0].IsNil() {
@@ -162,17 +167,7 @@ func luaLoad(v *vm.VM) int {
 					results2, err2 := v.ProtectedCall(chunk, nil)
 					if err2 != nil {
 						v.Set(0, vm.Nil)
-						var errMsg2 string
-						if le, ok := err2.(*vm.LuaError); ok {
-							if le.Value.IsString() {
-								errMsg2 = le.Value.AsString()
-							} else {
-								errMsg2 = fmt.Sprintf("(error object is a %s value)", le.Value.Type())
-							}
-						} else {
-							errMsg2 = err2.Error()
-						}
-						v.Set(1, vm.NewString(errMsg2))
+						setLoadReaderError(v, err2)
 						return 2
 					}
 					if len(results2) == 0 || results2[0].IsNil() {
