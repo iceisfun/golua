@@ -484,7 +484,31 @@ func (t *Table) Len() int {
 	}
 	// Fast path: last element is non-nil → the border is at the end.
 	if !t.array[n-1].IsNil() {
-		return n
+		// Lua 5.4 may extend the border into integer hash keys contiguous
+		// after the array part.
+		if t.GetInt(n + 1).IsNil() {
+			return n
+		}
+		lo := n
+		hi := n + 1
+		maxInt := int(^uint(0) >> 1)
+		for !t.GetInt(hi).IsNil() {
+			lo = hi
+			if hi > maxInt/2 {
+				hi = maxInt
+				break
+			}
+			hi *= 2
+		}
+		for hi-lo > 1 {
+			mid := lo + (hi-lo)/2
+			if t.GetInt(mid).IsNil() {
+				hi = mid
+			} else {
+				lo = mid
+			}
+		}
+		return lo
 	}
 	// Array slots can contain interior nils (e.g. constructors like
 	// {nil, nil, {}, 2.5, nil}). Lua 5.4's behavior in these cases picks

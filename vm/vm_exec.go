@@ -727,12 +727,12 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				if v.IsString() {
 					l := len(v.AsString())
-					if totalLen > (1<<30) - l {
+					if totalLen > (1<<30)-l {
 						return nil, vm.runtimeError("string length overflow")
 					}
 					totalLen += l
 				} else {
-					if totalLen > (1<<30) - 20 {
+					if totalLen > (1<<30)-20 {
 						return nil, vm.runtimeError("string length overflow")
 					}
 					totalLen += 20
@@ -1530,10 +1530,17 @@ func (vm *VM) execute() ([]Value, error) {
 					ct.array = newArr
 				}
 				for i := 0; i < n; i++ {
-					ct.array[offset-1+i] = vm.stack[frame.base+a+1+i]
+					idx := offset + i
+					ct.array[idx-1] = vm.stack[frame.base+a+1+i]
+					// OP_SETLIST writes array slots directly; clear any stale integer
+					// hash entry for the same index (from earlier keyed fields in the
+					// same constructor) so later shrink/lookup cannot expose old values.
+					ct.setIntHash(int64(idx), Nil)
 				}
-				// Move any consecutive hash entries that now belong in array.
-				ct.rehashToArray()
+				// Do not rehash hash keys into array here. In mixed constructors
+				// like {"a", false, [3] = {}, [4] = {}}, Lua 5.4 keeps explicit
+				// keyed entries from the hash part from influencing the constructor's
+				// list border selection.
 			} else {
 				for i := 0; i < n; i++ {
 					if err := tbl.Set(NewInt(int64(offset+i)), vm.stack[frame.base+a+1+i]); err != nil {
@@ -1591,6 +1598,7 @@ func (vm *VM) execute() ([]Value, error) {
 		}
 	}
 }
+
 // Helper methods
 
 // ensureStack grows the VM stack to hold at least n slots.
@@ -1630,7 +1638,6 @@ func (vm *VM) CheckStack(n int) bool {
 	return limit < 0 || n < limit
 }
 
-
 // getRK returns either a constant (when k != 0) or a register value.
 // Used by instructions that encode an operand as "register or constant".
 func (vm *VM) getRK(frame *callFrame, c, k int) Value {
@@ -1639,6 +1646,7 @@ func (vm *VM) getRK(frame *callFrame, c, k int) Value {
 	}
 	return vm.stack[frame.base+c]
 }
+
 // doCall dispatches an OP_CALL instruction. It collects arguments from the
 // stack, calls the target (closure, native, or __call metamethod), and stores
 // the results back into the caller's registers.
