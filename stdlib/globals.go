@@ -307,6 +307,10 @@ func luaPcall(v *vm.VM) int {
 		args[i-2] = v.Get(i)
 	}
 
+	// Match Lua 5.4 C-frame local visibility: while pcall is active,
+	// local #1 in the pcall C frame is the status slot.
+	v.Set(1, vm.True)
+
 	// Save and clear the message handler so that a nested pcall inside
 	// xpcall doesn't accidentally trigger the xpcall message handler.
 	savedMsgHandler := v.MsgHandler
@@ -344,7 +348,7 @@ func luaPcall(v *vm.VM) int {
 
 	// Success: return true followed by all results
 	v.EnsureStack(v.Base() + 1 + len(results))
-	v.Set(0, vm.True)
+	v.Set(0, v.Get(1))
 	for i, r := range results {
 		v.Set(i+1, r)
 	}
