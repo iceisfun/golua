@@ -14,7 +14,8 @@ func (vm *VM) equal(v1, v2 Value) (bool, error) {
 
 	// 3. Userdata/Table check for __eq
 	// Lua 5.4: try left operand's __eq first, then right's.
-	if v1.IsTable() && v2.IsTable() {
+	// __eq is only called for tables and full userdata, NOT threads.
+	if (v1.IsTable() && !v1.isThread()) && (v2.IsTable() && !v2.isThread()) {
 		mm := vm.getMetafield(v1, "__eq")
 		if mm.IsNil() {
 			mm = vm.getMetafield(v2, "__eq")

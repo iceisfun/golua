@@ -175,6 +175,17 @@ func (v Value) IsString() bool { return v.typ == typeString }
 // IsTable reports whether v is a table.
 func (v Value) IsTable() bool { return v.typ == typeTable }
 
+// isThread reports whether v is a thread (coroutine).
+func (v Value) isThread() bool {
+	if v.typ != typeTable {
+		return false
+	}
+	if tbl, ok := v.ptr.(*Table); ok {
+		return tbl.isThread
+	}
+	return false
+}
+
 // IsFunction reports whether v is a Lua closure.
 func (v Value) IsFunction() bool { return v.typ == typeFunction }
 

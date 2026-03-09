@@ -196,6 +196,10 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 	if val.IsTable() {
 		t := val.AsTable()
 		mt := t.Metatable()
+		if mt == nil {
+			// Check type-level metatable (threads have no per-instance metatable)
+			mt = vm.GetTypeMeta(val)
+		}
 		if mt != nil {
 			closeFunc = mt.Get(metaClose)
 		}

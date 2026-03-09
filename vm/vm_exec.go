@@ -233,8 +233,8 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+b]
 			key := vm.stack[frame.base+c]
-			if table.typ == typeTable {
-				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
+				if ct.metatable == nil {
 					vm.stack[frame.base+a] = ct.Get(key)
 				} else {
 					val, err := vm.tableGet(table.ptr.(LuaTable), key)
@@ -258,8 +258,8 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_GETI:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+b]
-			if table.typ == typeTable {
-				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
+				if ct.metatable == nil {
 					vm.stack[frame.base+a] = ct.GetInt(c)
 				} else {
 					val, err := vm.tableGetInt(table.ptr.(LuaTable), c)
@@ -283,9 +283,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+b]
 			key := proto.Constants[c].SVal
-			if table.typ == typeTable {
+			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
 				// Fast path: concrete *Table with no metatable (avoids interface assertions)
-				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+				if ct.metatable == nil {
 					vm.stack[frame.base+a] = ct.GetString(key)
 				} else {
 					val, err := vm.tableGetString(table.ptr.(LuaTable), key)
@@ -330,8 +330,8 @@ func (vm *VM) execute() ([]Value, error) {
 			table := vm.stack[frame.base+a]
 			key := vm.stack[frame.base+b]
 			value := vm.getRK(frame, c, inst.K())
-			if table.typ == typeTable {
-				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
+				if ct.metatable == nil {
 					if err := ct.Set(key, value); err != nil {
 						return nil, vm.runtimeError("%s", err)
 					}
@@ -363,8 +363,8 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+a]
 			value := vm.getRK(frame, c, inst.K())
-			if table.typ == typeTable {
-				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
+				if ct.metatable == nil {
 					ct.SetInt(b, value)
 				} else {
 					if err := vm.tableSetInt(table.ptr.(LuaTable), b, value); err != nil {
@@ -397,9 +397,9 @@ func (vm *VM) execute() ([]Value, error) {
 			table := vm.stack[frame.base+a]
 			key := proto.Constants[b].SVal
 			value := vm.getRK(frame, c, inst.K())
-			if table.typ == typeTable {
+			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
 				// Fast path: concrete *Table with no metatable
-				if ct, ok := table.ptr.(*Table); ok && ct.metatable == nil {
+				if ct.metatable == nil {
 					ct.SetString(key, value)
 				} else {
 					if err := vm.tableSetString(table.ptr.(LuaTable), key, value); err != nil {
@@ -787,6 +787,10 @@ func (vm *VM) execute() ([]Value, error) {
 				needErr := false
 				if val.IsTable() {
 					mt := val.AsTable().Metatable()
+					if mt == nil {
+						// Check type-level metatable (threads have no per-instance metatable)
+						mt = vm.GetTypeMeta(val)
+					}
 					if mt == nil || mt.Get(metaClose).IsNil() {
 						needErr = true
 					}
@@ -1180,38 +1184,24 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_FORLOOP:
 			a, bx := inst.A(), inst.Bx()
-			// R[A] = index, R[A+1] = limit, R[A+2] = step
+			// R[A] = index, R[A+1] = counter (remaining iterations), R[A+2] = step
 			stepVal := vm.stack[frame.base+a+2]
 			if stepVal.IsInt() {
-				// Integer for loop
-				idx := vm.stack[frame.base+a].AsInt()
-				limit := vm.stack[frame.base+a+1].AsInt()
-				step := stepVal.AsInt()
-				// Check for overflow before adding step
-				if step > 0 && idx > math.MaxInt64-step {
-					// Would overflow — exit loop
-				} else if step < 0 && idx < math.MinInt64-step {
-					// Would underflow — exit loop
-				} else {
+				// Integer for loop: counter-based (Lua 5.4 semantics)
+				// R[A+1] is the remaining iterations counter, decremented each loop.
+				counter := vm.stack[frame.base+a+1].AsInt()
+				counter--
+				vm.stack[frame.base+a+1] = NewInt(counter)
+				if counter >= 0 {
+					idx := vm.stack[frame.base+a].AsInt()
+					step := stepVal.AsInt()
 					idx += step
 					vm.stack[frame.base+a] = NewInt(idx)
-					if step >= 0 {
-						if idx <= limit {
-							if err := vm.CheckInterrupt(); err != nil {
-								return nil, err
-							}
-							frame.pc -= bx + 1
-							vm.stack[frame.base+a+3] = NewInt(idx)
-						}
-					} else {
-						if idx >= limit {
-							if err := vm.CheckInterrupt(); err != nil {
-								return nil, err
-							}
-							frame.pc -= bx + 1
-							vm.stack[frame.base+a+3] = NewInt(idx)
-						}
+					vm.stack[frame.base+a+3] = NewInt(idx)
+					if err := vm.CheckInterrupt(); err != nil {
+						return nil, err
 					}
+					frame.pc -= bx + 1
 				}
 			} else {
 				// Float for loop
@@ -1345,22 +1335,39 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", limit.Type())
 				}
 
-				// Integer for loop
-				vm.stack[frame.base+a] = NewInt(initI)
-				vm.stack[frame.base+a+1] = NewInt(limitI)
-				vm.stack[frame.base+a+2] = NewInt(stepI)
+				// Integer for loop: counter-based (Lua 5.4 semantics)
+				// R[A] = current index
+				// R[A+1] = remaining iterations counter = (limit - init) / step
+				// R[A+2] = step
+				// R[A+3] = visible i (copy of index)
+				shouldSkip := false
 				if stepI >= 0 {
 					if initI > limitI {
-						frame.pc += bx + 1
-					} else {
-						vm.stack[frame.base+a+3] = NewInt(initI)
+						shouldSkip = true
 					}
 				} else {
 					if initI < limitI {
-						frame.pc += bx + 1
-					} else {
-						vm.stack[frame.base+a+3] = NewInt(initI)
+						shouldSkip = true
 					}
+				}
+				if shouldSkip {
+					vm.stack[frame.base+a] = NewInt(initI)
+					vm.stack[frame.base+a+1] = NewInt(0)
+					vm.stack[frame.base+a+2] = NewInt(stepI)
+					frame.pc += bx + 1
+				} else {
+					// Compute counter using unsigned division to avoid overflow.
+					// Lua 5.4 uses: (uint64)(limit - init) / (uint64)(step)
+					var counter int64
+					if stepI > 0 {
+						counter = int64(uint64(limitI-initI) / uint64(stepI))
+					} else {
+						counter = int64(uint64(initI-limitI) / uint64(-stepI))
+					}
+					vm.stack[frame.base+a] = NewInt(initI)
+					vm.stack[frame.base+a+1] = NewInt(counter)
+					vm.stack[frame.base+a+2] = NewInt(stepI)
+					vm.stack[frame.base+a+3] = NewInt(initI)
 				}
 			} else {
 				// Float for loop — validate in Lua 5.4 order: limit, step, initial
