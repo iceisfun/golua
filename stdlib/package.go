@@ -150,10 +150,12 @@ func makeRequire(v *vm.VM, pkg *vm.Table) vm.NativeFunc {
 				continue
 			}
 
-			// If result is a string, it's an error message
-			if results[0].IsString() {
+			// If result is a string/number, it's an error message.
+			// Match Lua 5.4 behavior: numeric results are stringified and appended,
+			// while other non-function values are ignored.
+			if results[0].IsString() || results[0].IsNumber() {
 				errMsgs.WriteString("\n\t")
-				errMsgs.WriteString(results[0].AsString())
+				errMsgs.WriteString(vm.ValueToString(results[0]))
 				continue
 			}
 
