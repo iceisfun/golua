@@ -24,6 +24,9 @@ func (vm *VM) Traceback(msg string, level int) string {
 	}
 	b.WriteString("stack traceback:")
 
+	if level < 0 {
+		level = 0
+	}
 	start := len(vm.callStack) - 1 - level
 	if start < 0 {
 		return b.String()
