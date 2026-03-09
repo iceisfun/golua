@@ -12,4 +12,9 @@ assert(pcall(collectgarbage, "count"))
 assert(pcall(collectgarbage, "stop"))
 assert(pcall(collectgarbage, "restart"))
 
+-- Test 3: count returns positive number
+local kb = collectgarbage("count")
+assert(type(kb) == "number", "count should return number")
+assert(kb > 0, "count should be positive, got " .. tostring(kb))
+
 print("PASS")

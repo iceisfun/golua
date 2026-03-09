@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -450,8 +451,10 @@ func luaCollectgarbage(v *vm.VM) int {
 		v.Set(0, vm.NewInt(0))
 		return 1
 	case "count":
-		// Return approximate memory in use (in KB)
-		v.Set(0, vm.NewInt(0))
+		// Return approximate memory in use (in KB) via Go runtime stats.
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		v.Set(0, vm.NewFloat(float64(m.Alloc)/1024.0))
 		return 1
 	case "stop", "restart":
 		// No-op, return 0 to match Lua 5.4
