@@ -60,6 +60,7 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 	// Push call frame
 	frame := callFrame{
 		closure:      closure,
+		funcValue:    NewFunction(closure),
 		pc:           0,
 		base:         base,
 		nResults:     nResults,
@@ -1107,8 +1108,9 @@ func (vm *VM) execute() ([]Value, error) {
 					vm.top = nativeBase + 1 + len(args)
 					// Push native call frame
 					nativeFrame := callFrame{
-						base: nativeBase,
-						argc: len(args),
+						base:      nativeBase,
+						argc:      len(args),
+						funcValue: fn,
 					}
 					vm.callStack = append(vm.callStack, nativeFrame)
 					nResults := nf(vm)
@@ -1173,6 +1175,8 @@ func (vm *VM) execute() ([]Value, error) {
 			vm.closeUpvalues(frame.base)
 
 			// Fire return hook after __close metamethods
+			frame.ftransfer = a + 1
+			frame.ntransfer = nret
 			vm.fireReturnHook()
 
 			// Copy to vm.retBuf AFTER close handlers have finished
@@ -1184,6 +1188,8 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_RETURN0:
 			vm.closeUpvalues(frame.base)
+			frame.ftransfer = 0
+			frame.ntransfer = 0
 			vm.fireReturnHook()
 			return nil, nil
 
@@ -1191,6 +1197,8 @@ func (vm *VM) execute() ([]Value, error) {
 			a := inst.A()
 			result := vm.stack[frame.base+a]
 			vm.closeUpvalues(frame.base)
+			frame.ftransfer = a + 1
+			frame.ntransfer = 1
 			vm.fireReturnHook()
 			vm.retBuf[0] = result
 			return vm.retBuf[:1], nil
@@ -1449,8 +1457,9 @@ func (vm *VM) execute() ([]Value, error) {
 
 				// Push temporary call frame for native function
 				nativeFrame := callFrame{
-					base: nativeBase,
-					argc: 2, // iterator always called with (state, ctrl)
+					base:      nativeBase,
+					argc:      2, // iterator always called with (state, ctrl)
+					funcValue: fn,
 				}
 				vm.callStack = append(vm.callStack, nativeFrame)
 
@@ -1718,6 +1727,7 @@ dispatch:
 		nativeFrame := callFrame{
 			base:      nativeBase,
 			argc:      len(args),
+			funcValue: fn,
 			ftransfer: 1,         // args start at getlocal index 1 (base+1 = first arg)
 			ntransfer: len(args), // number of arguments
 		}

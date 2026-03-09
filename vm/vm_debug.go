@@ -32,8 +32,8 @@ func (vm *VM) Traceback(msg string, level int) string {
 		return b.String()
 	}
 
-	// Count total frames
-	totalFrames := start + 1
+	// Count total frames, including the synthetic final [C] frame.
+	totalFrames := start + 2
 
 	// Determine if we need truncation
 	needTruncate := totalFrames > levels1+levels2
@@ -42,11 +42,12 @@ func (vm *VM) Traceback(msg string, level int) string {
 	for i := start; i >= 0; i-- {
 		// Handle truncation: skip the middle frames
 		if needTruncate && written == levels1 {
-			// Skip to the last levels2 frames
+			// Skip to the last levels2-1 stack frames; the synthetic trailing
+			// [C] frame occupies the final slot in the truncated tail section.
 			remaining := i + 1 // frames from index i down to 0
-			if remaining > levels2 {
+			if remaining > levels2-1 {
 				b.WriteString("\n\t...")
-				i = levels2 // after i-- in for loop, becomes levels2-1
+				i = levels2 - 1 // after i-- in for loop, becomes levels2-2
 				continue
 			}
 		}
@@ -56,8 +57,23 @@ func (vm *VM) Traceback(msg string, level int) string {
 		b.WriteByte('\t')
 
 		if frame.closure == nil {
-			// Native frame
-			b.WriteString("[Go]: in ?")
+			name := ""
+			nameWhat := ""
+			if i > 0 {
+				name, nameWhat = vm.funcNameFromCall(&vm.callStack[i-1])
+			}
+			if name == "" && frame.callName != "" {
+				name = frame.callName
+				nameWhat = frame.callNameWhat
+			}
+			switch {
+			case nameWhat == "metamethod":
+				fmt.Fprintf(&b, "[C]: in metamethod '%s'", name)
+			case name != "":
+				fmt.Fprintf(&b, "[C]: in function '%s'", name)
+			default:
+				b.WriteString("[C]: in ?")
+			}
 			written++
 			continue
 		}
@@ -81,7 +97,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 			// Try to get the function name from the caller's call site
 			name := ""
 			nameWhat := ""
-			if i > 0 {
+			if i > 0 && !frame.isTailCall {
 				callerIdx := i - 1
 				for callerIdx > 0 && vm.callStack[callerIdx].isTailCall {
 					callerIdx--
@@ -118,6 +134,8 @@ func (vm *VM) Traceback(msg string, level int) string {
 			written++
 		}
 	}
+
+	b.WriteString("\n\t[C]: in ?")
 
 	return b.String()
 }
@@ -259,6 +277,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		if callerIdx >= 0 {
 			info.Name, info.NameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
 		}
+		info.Func = frame.funcValue
 		return info
 	}
 
@@ -271,7 +290,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	info.NParams = proto.NumParams
 	info.IsVarArg = proto.IsVarArg
 	info.IsTailCall = frame.isTailCall
-	info.Func = NewFunction(frame.closure)
+	info.Func = frame.funcValue
 
 	if proto.LineDef == 0 {
 		info.What = "main"
@@ -291,18 +310,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		info.CurrentLine = -1
 	}
 
-	// Active lines
-	info.ActiveLines = make(map[int]bool)
-	for _, line := range proto.Lines {
-		if line > 0 {
-			info.ActiveLines[line] = true
-		}
-	}
-	// Include the 'end' line (LastLine) which may not have an instruction,
-	// but only when the function has line info (non-stripped).
-	if proto.LastLine > 0 && len(proto.Lines) > 0 {
-		info.ActiveLines[proto.LastLine] = true
-	}
+	info.ActiveLines = activeLines(proto)
 
 	// Name inference: look at the caller frame's bytecode.
 	// For tail calls, the original caller frame is gone, so name resolution
@@ -368,18 +376,7 @@ func (vm *VM) GetFuncInfo(fn Value) *FrameInfo {
 			info.What = "Lua"
 		}
 
-		// Active lines
-		info.ActiveLines = make(map[int]bool)
-		for _, line := range proto.Lines {
-			if line > 0 {
-				info.ActiveLines[line] = true
-			}
-		}
-		// Include the 'end' line (LastLine) which may not have an instruction,
-		// but only when the function has line info (non-stripped).
-		if proto.LastLine > 0 && len(proto.Lines) > 0 {
-			info.ActiveLines[proto.LastLine] = true
-		}
+		info.ActiveLines = activeLines(proto)
 
 		return info
 	}
@@ -720,17 +717,100 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 	// Use localName to resolve the name from the register number.
 	reg := index - 1
 	name := localName(proto, reg, pc)
-	if name == "?" {
-		return "", Nil, false
-	}
 
 	stackIdx := frame.base + reg
+	limit := vm.frameStackLimit(idx, proto.MaxStack)
+	if stackIdx < frame.base || stackIdx >= limit {
+		return "", Nil, false
+	}
+	if name == "?" {
+		name = "(temporary)"
+	}
 	val := Nil
 	if stackIdx >= 0 && stackIdx < len(vm.stack) {
 		val = vm.stack[stackIdx]
 	}
 
 	return name, val, true
+}
+
+func (vm *VM) frameStackLimit(idx, maxStack int) int {
+	limit := vm.top
+	if idx+1 < len(vm.callStack) {
+		limit = vm.callStack[idx+1].base
+	}
+	frameLimit := vm.callStack[idx].base + maxStack
+	if frameLimit > limit {
+		limit = frameLimit
+	}
+	return limit
+}
+
+func activeLines(proto *compiler.Proto) map[int]bool {
+	lines := make(map[int]bool)
+	lineSeen := make(map[int]bool)
+	lineHasControl := make(map[int]bool)
+	lineHasRealWork := make(map[int]bool)
+	for pc, line := range proto.Lines {
+		if line <= 0 || pc >= len(proto.Code) {
+			continue
+		}
+		lineSeen[line] = true
+		op := proto.Code[pc].OpCode()
+		if isDebugControlOpcode(op) {
+			lineHasControl[line] = true
+		}
+		if !isDebugSetupOpcode(op) {
+			lineHasRealWork[line] = true
+		}
+	}
+	for line := range lineSeen {
+		if lineHasRealWork[line] || !lineHasControl[line] {
+			lines[line] = true
+		}
+	}
+	if proto.LastLine > 0 && len(proto.Lines) > 0 {
+		lines[proto.LastLine] = true
+	}
+	return lines
+}
+
+func isDebugControlOpcode(op compiler.OpCode) bool {
+	switch op {
+	case compiler.OP_EQ, compiler.OP_EQK, compiler.OP_EQI,
+		compiler.OP_LT, compiler.OP_LE, compiler.OP_LTI, compiler.OP_LEI,
+		compiler.OP_GTI, compiler.OP_GEI,
+		compiler.OP_TEST, compiler.OP_TESTSET,
+		compiler.OP_FORPREP, compiler.OP_FORLOOP,
+		compiler.OP_TFORPREP, compiler.OP_TFORCALL, compiler.OP_TFORLOOP,
+		compiler.OP_JMP:
+		return true
+	default:
+		return false
+	}
+}
+
+func isDebugSetupOpcode(op compiler.OpCode) bool {
+	switch op {
+	case compiler.OP_MOVE,
+		compiler.OP_LOADI, compiler.OP_LOADF,
+		compiler.OP_LOADK, compiler.OP_LOADKX,
+		compiler.OP_LOADFALSE, compiler.OP_LFALSESKIP, compiler.OP_LOADTRUE,
+		compiler.OP_LOADNIL,
+		compiler.OP_GETUPVAL, compiler.OP_GETTABUP, compiler.OP_GETTABLE,
+		compiler.OP_GETI, compiler.OP_GETFIELD,
+		compiler.OP_SELF,
+		compiler.OP_EQ, compiler.OP_EQK, compiler.OP_EQI,
+		compiler.OP_LT, compiler.OP_LE, compiler.OP_LTI, compiler.OP_LEI,
+		compiler.OP_GTI, compiler.OP_GEI,
+		compiler.OP_TEST, compiler.OP_TESTSET,
+		compiler.OP_FORPREP, compiler.OP_FORLOOP,
+		compiler.OP_TFORPREP, compiler.OP_TFORCALL, compiler.OP_TFORLOOP,
+		compiler.OP_JMP:
+		return true
+	default:
+		return false
+	}
 }
 
 // GetFuncLocal returns the name of local variable #index from a function's

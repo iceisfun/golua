@@ -140,6 +140,7 @@ const (
 // callFrame represents a function call on the call stack.
 type callFrame struct {
 	closure      *Closure // Function being executed
+	funcValue    Value    // Function value for debug info / native frames
 	pc           int      // Program counter (next instruction to execute)
 	base         int      // Base stack index for this frame's registers
 	nResults     int      // Expected number of results (MultiReturn = variable)
@@ -446,6 +447,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		vm.ensureStack(base + len(args) + 10)
 
 		// Copy arguments (slot 0 is reserved for the function, args start at 1)
+		vm.stack[base] = fn
 		for i, arg := range args {
 			vm.stack[base+1+i] = arg
 		}
@@ -464,8 +466,9 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		// Push a call frame so Get/Set/ArgCount work correctly
 		// argc stored so ArgCount doesn't depend on vm.top
 		vm.callStack = append(vm.callStack, callFrame{
-			base: base,
-			argc: len(args),
+			base:      base,
+			argc:      len(args),
+			funcValue: fn,
 		})
 
 		// Advance vm.top past the arguments so that any metamethod
@@ -519,6 +522,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 		savedTop := vm.top
 		base := vm.top
 		vm.ensureStack(base + len(args) + 10)
+		vm.stack[base] = fn
 
 		for i, arg := range args {
 			vm.stack[base+1+i] = arg
@@ -533,8 +537,9 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 		}
 
 		vm.callStack = append(vm.callStack, callFrame{
-			base: base,
-			argc: len(args),
+			base:      base,
+			argc:      len(args),
+			funcValue: fn,
 		})
 		// Advance vm.top past args so metamethod frames don't overlap.
 		vm.top = base + 1 + len(args)
@@ -857,6 +862,7 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 		nativeFrame := callFrame{
 			base:         nativeBase,
 			argc:         2,
+			funcValue:    fn,
 			callName:     name,
 			callNameWhat: "metamethod",
 		}
@@ -920,6 +926,7 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 		nativeFrame := callFrame{
 			base:         nativeBase,
 			argc:         3,
+			funcValue:    fn,
 			callName:     name,
 			callNameWhat: "metamethod",
 		}
@@ -990,6 +997,7 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 			nativeFrame := callFrame{
 				base:         nativeBase,
 				argc:         len(args),
+				funcValue:    mm,
 				callName:     name,
 				callNameWhat: "metamethod",
 			}
