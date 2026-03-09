@@ -314,19 +314,17 @@ func expandTemplates(name, path string) []string {
 
 // luaSearchPath implements package.searchpath(name, path [, sep [, rep]]).
 func luaSearchPath(v *vm.VM) int {
-	if v.ArgCount() < 2 {
-		callerArgError(v, 1, "package.searchpath", "string expected, got no value")
-	}
-	name := v.Get(1).AsString()
-	path := v.Get(2).AsString()
+	// Match Lua 5.4 argument error order by validating #2 (path) before #1 (name).
+	path := getString(v, 2, "package.searchpath")
+	name := getString(v, 1, "package.searchpath")
 
 	sep := "."
 	if v.ArgCount() >= 3 && !v.Get(3).IsNil() {
-		sep = v.Get(3).AsString()
+		sep = getString(v, 3, "package.searchpath")
 	}
 	rep := "/"
 	if v.ArgCount() >= 4 && !v.Get(4).IsNil() {
-		rep = v.Get(4).AsString()
+		rep = getString(v, 4, "package.searchpath")
 	}
 
 	// Replace sep with rep in name
@@ -336,9 +334,20 @@ func luaSearchPath(v *vm.VM) int {
 	}
 
 	paths := expandTemplates(fname, path)
+	provider := v.CodeProvider()
+	var caller *vm.LuaCallerContext
+	if provider != nil {
+		caller = v.CallerContext()
+	}
 
 	var errBuf strings.Builder
 	for _, p := range paths {
+		if provider != nil {
+			if _, _, err := provider.LoadChunk(p, caller); err == nil {
+				v.Set(0, vm.NewString(p))
+				return 1
+			}
+		}
 		errBuf.WriteString("\n\tno file '")
 		errBuf.WriteString(p)
 		errBuf.WriteString("'")
