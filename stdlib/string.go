@@ -273,6 +273,7 @@ func stringFind(v *vm.VM) int {
 		v.Set(0, vm.Nil)
 		return 1
 	}
+	checkCaptures(caps)
 
 	v.Set(0, vm.NewInt(int64(mStart+1))) // 1-based
 	v.Set(1, vm.NewInt(int64(mEnd)))     // inclusive end
@@ -340,10 +341,14 @@ func stringGsub(v *vm.VM) int {
 			// Get replacement
 			var replacement string
 			if repl.IsString() {
+				// For string replacements, unfinished captures are only
+				// an error if %N actually references them.
 				replacement = expandReplacement(repl.AsString(), s, pos, end, matchCaps)
 			} else if repl.IsFunction() || repl.IsNativeFunc() {
+				checkCaptures(matchCaps)
 				replacement = callGsubFunc(v, repl, matchCaps, s[pos:end])
 			} else if repl.IsTable() {
+				checkCaptures(matchCaps)
 				replacement = lookupGsubTable(v, repl, matchCaps, s[pos:end])
 			}
 
@@ -398,6 +403,9 @@ func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureVa
 					result.WriteString(s[mStart:mEnd])
 				} else if idx <= len(caps) {
 					c := caps[idx-1]
+					if c.unfinished {
+						panic("unfinished capture")
+					}
 					if c.isPos {
 						result.WriteString(fmt.Sprintf("%d", c.pos))
 					} else {
@@ -490,6 +498,7 @@ func stringMatch(v *vm.VM) int {
 		v.Set(0, vm.Nil)
 		return 1
 	}
+	checkCaptures(caps)
 
 	if len(caps) == 0 {
 		// No explicit captures, return whole match
@@ -545,6 +554,7 @@ func stringGmatch(v *vm.VM) int {
 
 				// Return captures or whole match
 				if len(caps) > 0 {
+					checkCaptures(caps)
 					for i, c := range caps {
 						if c.isPos {
 							v.Set(i, vm.NewInt(int64(c.pos)))

@@ -28,10 +28,15 @@ type capSlot struct {
 
 // captureValue represents a resolved capture from a match.
 type captureValue struct {
-	str   string
-	pos   int  // 1-based position (only valid when isPos is true)
-	isPos bool // true for position captures ()
+	str        string
+	pos        int  // 1-based position (only valid when isPos is true)
+	isPos      bool // true for position captures ()
+	unfinished bool // true for unfinished captures (unclosed parenthesis)
 }
+
+// Unfinished captures are marked rather than causing a panic, so callers
+// can decide whether to error (e.g., gsub with plain string replacement
+// that doesn't reference captures should not error).
 
 // getCaptures extracts resolved capture values from the match state.
 func (ms *matchState) getCaptures() []captureValue {
@@ -44,12 +49,22 @@ func (ms *matchState) getCaptures() []captureValue {
 		if c.slen == capPosition {
 			caps[i] = captureValue{isPos: true, pos: c.init + 1}
 		} else if c.slen == capUnfinished {
-			panic("unfinished capture")
+			caps[i] = captureValue{unfinished: true}
 		} else {
 			caps[i] = captureValue{str: ms.s[c.init : c.init+c.slen]}
 		}
 	}
 	return caps
+}
+
+// checkCaptures panics if any capture is unfinished. Called by find/match/gmatch
+// which always need resolved captures.
+func checkCaptures(caps []captureValue) {
+	for _, c := range caps {
+		if c.unfinished {
+			panic("unfinished capture")
+		}
+	}
 }
 
 // match tries to match pattern starting at pp against string position si.
