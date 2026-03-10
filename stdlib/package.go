@@ -52,6 +52,7 @@ func openPackage(v *vm.VM) {
 	searchers.SetInt(1, vm.NewNativeFunc(makePreloadSearcher(preload)))
 	searchers.SetInt(2, vm.NewNativeFunc(makeLuaFileSearcher(v, pkg)))
 	searchers.SetInt(3, vm.NewNativeFunc(makeCFileSearcher(pkg)))
+	searchers.SetInt(4, vm.NewNativeFunc(makeCRootSearcher(pkg)))
 	pkg.SetString("searchers", vm.NewTable(searchers))
 
 	// Register package table (before loaded snapshot, but we already set it above)
@@ -273,6 +274,36 @@ func makeCFileSearcher(pkg *vm.Table) vm.NativeFunc {
 
 		fname := strings.ReplaceAll(name, ".", "/")
 		paths := expandTemplates(fname, cpathVal.AsString())
+
+		var errBuf strings.Builder
+		for _, path := range paths {
+			appendNoFileErr(&errBuf, path)
+		}
+
+		v.Set(0, vm.NewString(errBuf.String()))
+		return 1
+	}
+}
+
+// makeCRootSearcher returns a searcher for the root module of dotted names.
+// GoLua does not load C modules here, but Lua 5.4 still exposes the searcher
+// and includes its path probes in module-not-found errors.
+func makeCRootSearcher(pkg *vm.Table) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		name := v.Get(1).AsString()
+		dot := strings.IndexByte(name, '.')
+		if dot < 0 {
+			return 0
+		}
+
+		cpathVal := pkg.GetString("cpath")
+		if !cpathVal.IsString() {
+			v.Set(0, vm.Nil)
+			return 1
+		}
+
+		root := name[:dot]
+		paths := expandTemplates(strings.ReplaceAll(root, ".", "/"), cpathVal.AsString())
 
 		var errBuf strings.Builder
 		for _, path := range paths {
