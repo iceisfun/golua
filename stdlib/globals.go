@@ -528,25 +528,19 @@ func luaPairs(v *vm.VM) int {
 	}
 	arg := v.Get(1)
 
-	// Check for __pairs metamethod (only on tables)
-	if arg.IsTable() {
-		tbl := arg.AsTable()
-		if mt := tbl.Metatable(); mt != nil {
-			if mp := mt.Get(vm.NewString("__pairs")); !mp.IsNil() {
-				results, err := v.ProtectedCall(mp, []vm.Value{arg})
-				if err != nil {
-					panic(err)
-				}
-				for i := 0; i < 3; i++ {
-					if i < len(results) {
-						v.Set(i, results[i])
-					} else {
-						v.Set(i, vm.Nil)
-					}
-				}
-				return 3
+	if mp := v.GetMetafield(arg, "__pairs"); !mp.IsNil() {
+		results, err := v.ProtectedCall(mp, []vm.Value{arg})
+		if err != nil {
+			panic(err)
+		}
+		for i := 0; i < 3; i++ {
+			if i < len(results) {
+				v.Set(i, results[i])
+			} else {
+				v.Set(i, vm.Nil)
 			}
 		}
+		return 3
 	}
 
 	// Return next, t, nil — next will validate the table arg when called
@@ -600,6 +594,9 @@ func luaIpairs(v *vm.VM) int {
 func luaNext(v *vm.VM) int {
 	tbl := v.Get(1).AsTable()
 	if tbl == nil {
+		callerArgError(v, 1, "next", "table expected"+gotDesc(v, 1))
+	}
+	if tbl.IsThread() {
 		callerArgError(v, 1, "next", "table expected"+gotDesc(v, 1))
 	}
 	key := v.Get(2)
