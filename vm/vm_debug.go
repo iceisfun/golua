@@ -831,10 +831,9 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 		if varIdx >= frame.numVararg {
 			return "", Nil, false
 		}
-		stackIdx := frame.varargPos + varIdx
 		val := Nil
-		if stackIdx >= 0 && stackIdx < len(vm.stack) {
-			val = vm.stack[stackIdx]
+		if frame.varargs != nil && varIdx < len(frame.varargs) {
+			val = frame.varargs[varIdx]
 		}
 		return "(vararg)", val, true
 	}
@@ -1045,9 +1044,8 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 		if varIdx >= frame.numVararg {
 			return "", false
 		}
-		stackIdx := frame.varargPos + varIdx
-		if stackIdx >= 0 && stackIdx < len(vm.stack) {
-			vm.stack[stackIdx] = val
+		if frame.varargs != nil && varIdx < len(frame.varargs) {
+			frame.varargs[varIdx] = val
 		}
 		return "(vararg)", true
 	}

@@ -22,8 +22,8 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 	// Handle varargs
 	numParams := proto.NumParams
 	numArgs := len(args)
-	varargPos := 0
 	numVararg := 0
+	var varargSlice []Value
 
 	if proto.IsVarArg {
 		// Copy fixed params first
@@ -34,18 +34,13 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		for i := numArgs; i < numParams; i++ {
 			vm.stack[base+i] = Nil
 		}
-		// Varargs go after fixed params conceptually, but we need to store them
-		// In Lua 5.5, varargs are accessed via VARARG opcode
+		// Store varargs in a Go slice to prevent cross-frame overlap.
+		// Previously stored on the shared stack at base+MaxStack+256, but
+		// callee frames could overwrite caller varargs.
 		if numArgs > numParams {
-			// Store varargs well beyond the frame to prevent overlap with function return values
-			// Native functions can return multiple values which get written to registers,
-			// so we need a buffer between MaxStack and varargs
-			varargPos = base + proto.MaxStack + VarargBufferOffset
 			numVararg = numArgs - numParams
-			vm.ensureStack(varargPos + numVararg)
-			for i := 0; i < numVararg; i++ {
-				vm.stack[varargPos+i] = args[numParams+i]
-			}
+			varargSlice = make([]Value, numVararg)
+			copy(varargSlice, args[numParams:numParams+numVararg])
 		}
 	} else {
 		// Non-vararg: copy args, nil-fill rest
@@ -65,8 +60,8 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		base:         base,
 		nResults:     nResults,
 		isVararg:     proto.IsVarArg,
-		varargPos:    varargPos,
 		numVararg:    numVararg,
+		varargs:      varargSlice,
 		argc:         UseVMTop, // Lua frames use vm.top for ArgCount
 		ftransfer:    1,
 		ntransfer:    numArgs,
@@ -1057,14 +1052,12 @@ func (vm *VM) execute() ([]Value, error) {
 							vm.stack[frame.base+i] = Nil
 						}
 						if numArgs > numParams {
-							frame.varargPos = frame.base + proto.MaxStack + VarargBufferOffset
 							frame.numVararg = numArgs - numParams
-							vm.ensureStack(frame.varargPos + frame.numVararg)
-							for i := 0; i < frame.numVararg; i++ {
-								vm.stack[frame.varargPos+i] = args[numParams+i]
-							}
+							frame.varargs = make([]Value, frame.numVararg)
+							copy(frame.varargs, args[numParams:numParams+frame.numVararg])
 						} else {
 							frame.numVararg = 0
+							frame.varargs = nil
 						}
 						frame.isVararg = true
 					} else {
@@ -1608,7 +1601,7 @@ func (vm *VM) execute() ([]Value, error) {
 
 			for i := 0; i < numWanted; i++ {
 				if i < frame.numVararg {
-					vm.stack[frame.base+a+i] = vm.stack[frame.varargPos+i]
+					vm.stack[frame.base+a+i] = frame.varargs[i]
 				} else {
 					vm.stack[frame.base+a+i] = Nil
 				}

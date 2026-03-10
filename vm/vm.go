@@ -145,8 +145,9 @@ type callFrame struct {
 	base         int      // Base stack index for this frame's registers
 	nResults     int      // Expected number of results (MultiReturn = variable)
 	isVararg     bool     // True if function is vararg
-	varargPos    int      // Stack position where varargs start
+	varargPos    int      // Stack position where varargs start (legacy, used by debug)
 	numVararg    int      // Number of varargs
+	varargs      []Value  // Vararg values stored off-stack to prevent cross-frame overlap
 	isTailCall   bool     // True if this was a tail call
 	argc         int      // Argument count for native functions (UseVMTop = use vm.top)
 	callName     string   // Override name for debug.getinfo (e.g., "close" for __close)
