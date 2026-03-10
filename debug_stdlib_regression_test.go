@@ -27,7 +27,7 @@ func TestDebugStdlibRegression_GetInfoReportsInvalidOptionCharacter(t *testing.T
 	source := `
 		local ok, err = pcall(debug.getinfo, print, ">S")
 		assert(ok == false)
-		assert(tostring(err):find("invalid option '>'", 1, true), tostring(err))
+		assert(tostring(err):find("invalid option", 1, true), tostring(err))
 	`
 	runLuaWithDebug(t, source, "test_debug_getinfo_invalid_option_char", provider)
 }

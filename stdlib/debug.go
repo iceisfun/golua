@@ -292,7 +292,7 @@ buildResult:
 	// Validate the what string ('>' is C API only, not valid at Lua level)
 	for _, ch := range what {
 		if !strings.ContainsRune("flnStuLr", ch) {
-			callerArgError(v, whatIdx, "debug.getinfo", fmt.Sprintf("invalid option '%c'", ch))
+			callerArgError(v, whatIdx, "debug.getinfo", "invalid option")
 		}
 	}
 
@@ -832,9 +832,7 @@ func luaDebugGetHook(v *vm.VM) int {
 			} else {
 				// Dead/never-resumed coroutine: no hook
 				v.Set(0, vm.Nil)
-				v.Set(1, vm.Nil)
-				v.Set(2, vm.Nil)
-				return 3
+				return 1
 			}
 		}
 	}
@@ -843,11 +841,9 @@ func luaDebugGetHook(v *vm.VM) int {
 
 	v.Set(0, hookFunc)
 
-	// Lua 5.4: when no hook is set, gethook returns nil, nil, nil (not nil, "", 0).
+	// Lua 5.4: when no hook is set, gethook returns only nil (1 value).
 	if hookFunc == vm.Nil {
-		v.Set(1, vm.Nil)
-		v.Set(2, vm.Nil)
-		return 3
+		return 1
 	}
 
 	// Build mask string

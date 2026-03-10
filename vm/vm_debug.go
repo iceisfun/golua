@@ -32,8 +32,12 @@ func (vm *VM) Traceback(msg string, level int) string {
 		return b.String()
 	}
 
-	// Count total frames, including the synthetic final [C] frame.
-	totalFrames := start + 2
+	// Count total frames. The main VM has a synthetic final [C] frame;
+	// coroutines do not.
+	totalFrames := start + 1
+	if vm.yieldCh == nil {
+		totalFrames++
+	}
 
 	// Determine if we need truncation
 	needTruncate := totalFrames > levels1+levels2
@@ -42,12 +46,17 @@ func (vm *VM) Traceback(msg string, level int) string {
 	for i := start; i >= 0; i-- {
 		// Handle truncation: skip the middle frames
 		if needTruncate && written == levels1 {
-			// Skip to the last levels2-1 stack frames; the synthetic trailing
-			// [C] frame occupies the final slot in the truncated tail section.
+			// Skip to the last tail frames. For the main VM, the synthetic
+			// [C]: in ? frame occupies the final slot; coroutines use all slots
+			// for real frames.
+			tailSlots := levels2 - 1
+			if vm.yieldCh != nil {
+				tailSlots = levels2
+			}
 			remaining := i + 1 // frames from index i down to 0
-			if remaining > levels2-1 {
+			if remaining > tailSlots {
 				b.WriteString("\n\t...")
-				i = levels2 - 1 // after i-- in for loop, becomes levels2-2
+				i = tailSlots // after i-- in for loop, becomes tailSlots-1
 				continue
 			}
 		}
@@ -147,7 +156,10 @@ func (vm *VM) Traceback(msg string, level int) string {
 		}
 	}
 
-	b.WriteString("\n\t[C]: in ?")
+	// Only append [C]: in ? for the main VM, not coroutines.
+	if vm.yieldCh == nil {
+		b.WriteString("\n\t[C]: in ?")
+	}
 
 	return b.String()
 }
