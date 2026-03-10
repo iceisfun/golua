@@ -161,6 +161,8 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			if n, ok := val.ToNumber(); ok {
 				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
 					result.WriteString(special)
+				} else if (specChar == 'g' || specChar == 'G') && strings.Contains(spec, "#") {
+					result.WriteString(formatAltGeneralFloat(spec, specChar, n))
 				} else {
 					result.WriteString(fmt.Sprintf(goSpec, n))
 				}
@@ -729,6 +731,134 @@ func formatSpecialFloat(spec string, specChar byte, n float64) (string, bool) {
 func parseFormatWidth(spec string) (width int, left bool) {
 	_, width, left, _ = parseFormatFlags(spec)
 	return width, left
+}
+
+func formatAltGeneralFloat(spec string, specChar byte, n float64) string {
+	prec, hasPrecision := parsePrecision(spec)
+	if !hasPrecision {
+		prec = 6
+	} else if prec == 0 {
+		prec = 1
+	}
+
+	abs := math.Abs(n)
+	core := fmt.Sprintf("%."+strconv.Itoa(prec)+string(specChar), abs)
+	isExp := strings.ContainsAny(core, "eE")
+	origExp := decimalExponent(abs)
+	crossedToExp := isExp && origExp < prec
+
+	var out string
+	if isExp {
+		out = formatAltExpCore(core, prec, crossedToExp)
+	} else {
+		out = formatAltFixedCore(core, prec)
+	}
+
+	if math.Signbit(n) {
+		out = "-" + out
+	} else if strings.Contains(spec, "+") {
+		out = "+" + out
+	} else if strings.Contains(spec, " ") {
+		out = " " + out
+	}
+
+	zeroPad, width, left, _ := parseFormatFlags(spec)
+	if width > len(out) {
+		pad := width - len(out)
+		if left {
+			out += strings.Repeat(" ", pad)
+		} else if zeroPad != 0 {
+			out = zeroPadNumber(out, width)
+		} else {
+			out = strings.Repeat(" ", pad) + out
+		}
+	}
+
+	return out
+}
+
+func formatAltExpCore(core string, prec int, crossedToExp bool) string {
+	eIdx := strings.IndexAny(core, "eE")
+	mantissa, expPart := core[:eIdx], core[eIdx:]
+	intPart, fracPart := splitFloatParts(mantissa)
+	if crossedToExp {
+		if fracPart == "" {
+			mantissa = intPart + "."
+		}
+		return mantissa + expPart
+	}
+	desiredFrac := prec - 1
+	if desiredFrac < 0 {
+		desiredFrac = 0
+	}
+	if len(fracPart) < desiredFrac {
+		fracPart += strings.Repeat("0", desiredFrac-len(fracPart))
+	}
+	return intPart + "." + fracPart + expPart
+}
+
+func formatAltFixedCore(core string, prec int) string {
+	intPart, fracPart := splitFloatParts(core)
+	exp := decimalExponentFromFixedCore(core)
+	desiredFrac := prec - (exp + 1)
+	if desiredFrac < 0 {
+		desiredFrac = 0
+	}
+	if len(fracPart) < desiredFrac {
+		fracPart += strings.Repeat("0", desiredFrac-len(fracPart))
+	}
+	return intPart + "." + fracPart
+}
+
+func splitFloatParts(s string) (string, string) {
+	if dot := strings.IndexByte(s, '.'); dot >= 0 {
+		return s[:dot], s[dot+1:]
+	}
+	return s, ""
+}
+
+func decimalExponent(n float64) int {
+	if n == 0 {
+		return 0
+	}
+	s := strconv.FormatFloat(n, 'e', -1, 64)
+	eIdx := strings.IndexByte(s, 'e')
+	exp, _ := strconv.Atoi(s[eIdx+1:])
+	return exp
+}
+
+func decimalExponentFromFixedCore(core string) int {
+	if dot := strings.IndexByte(core, '.'); dot >= 0 {
+		for i, c := range core[:dot] {
+			if c != '0' {
+				return dot - i - 1
+			}
+		}
+		for i, c := range core[dot+1:] {
+			if c != '0' {
+				return -i - 1
+			}
+		}
+		return 0
+	}
+	for i, c := range core {
+		if c != '0' {
+			return len(core) - i - 1
+		}
+	}
+	return 0
+}
+
+func zeroPadNumber(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	prefix := ""
+	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") || strings.HasPrefix(s, " ") {
+		prefix = s[:1]
+		s = s[1:]
+	}
+	return prefix + strings.Repeat("0", width-len(prefix)-len(s)) + s
 }
 
 func parseFormatFlags(spec string) (zeroPad, width int, left bool, hash bool) {

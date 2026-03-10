@@ -166,6 +166,14 @@ do
 end
 assert(string.format("%.1a", 0x0.fffffffffffffp-1022) == "0x1.0p-1022",
   "subnormal %a rounding should carry into leading digit")
+assert(string.format("%#.2g", 99.99995) == "1.e+02",
+  "alternate %g should match Lua exponent-boundary rounding")
+assert(string.format("%#.6g", 999999.5) == "1.e+06",
+  "alternate %g should keep decimal point without extra zeros after carry")
+assert(string.format("%#010.6g", 999999.5) == "00001.e+06",
+  "alternate %g zero padding should apply after Lua-style mantissa rewrite")
+assert(string.format("%#.6G", 999999.5) == "1.E+06",
+  "alternate %G should match uppercase exponent-boundary rounding")
 
 -- Integer specs must reject non-integer numbers
 do
