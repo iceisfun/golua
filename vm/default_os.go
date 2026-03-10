@@ -2,7 +2,9 @@ package vm
 
 import (
 	"fmt"
+	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -35,20 +37,16 @@ func (p *DefaultOsProvider) Clock() float64 {
 }
 
 // Time returns the current Unix timestamp, or constructs one from dateTable fields.
-func (p *DefaultOsProvider) Time(dateTable map[string]int) (int64, error) {
+func (p *DefaultOsProvider) Time(dateTable *LuaTimeInput) (int64, *LuaDateTime, error) {
 	if dateTable == nil {
-		return time.Now().Unix(), nil
+		return time.Now().Unix(), nil, nil
 	}
 
-	year := dateTable["year"]
-	month := dateTable["month"]
-	day := dateTable["day"]
-	hour := dateTable["hour"]
-	min := dateTable["min"]
-	sec := dateTable["sec"]
-
-	t := time.Date(year, time.Month(month), day, hour, min, sec, 0, time.Local)
-	return t.Unix(), nil
+	t, ok := resolveLocalTime(*dateTable)
+	if !ok {
+		t = time.Date(dateTable.Year, time.Month(dateTable.Month), dateTable.Day, dateTable.Hour, dateTable.Min, dateTable.Sec, 0, time.Local)
+	}
+	return t.Unix(), dateTimeFromTime(t, true), nil
 }
 
 // Date formats a timestamp using strftime-style format specifiers.
@@ -65,31 +63,86 @@ func (p *DefaultOsProvider) Date(format string, timestamp int64) (string, error)
 }
 
 // DateTable returns a map of date/time components for the given timestamp.
-func (p *DefaultOsProvider) DateTable(timestamp int64, utc bool) map[string]int {
+func (p *DefaultOsProvider) DateTable(timestamp int64, utc bool) *LuaDateTime {
 	t := time.Unix(timestamp, 0)
 	if utc {
 		t = t.UTC()
 	}
+	return dateTimeFromTime(t, true)
+}
 
-	wday := int(t.Weekday()) + 1 // Lua: Sunday = 1
-	yday := t.YearDay()
+func dateTimeFromTime(t time.Time, hasDST bool) *LuaDateTime {
+	return &LuaDateTime{
+		Year:   t.Year(),
+		Month:  int(t.Month()),
+		Day:    t.Day(),
+		Hour:   t.Hour(),
+		Min:    t.Minute(),
+		Sec:    t.Second(),
+		Wday:   int(t.Weekday()) + 1,
+		Yday:   t.YearDay(),
+		IsDST:  t.IsDST(),
+		HasDST: hasDST,
+	}
+}
 
-	isdst := 0
-	if t.IsDST() {
-		isdst = 1
+func resolveLocalTime(input LuaTimeInput) (time.Time, bool) {
+	base := time.Date(input.Year, time.Month(input.Month), input.Day, input.Hour, input.Min, input.Sec, 0, time.Local)
+	if !input.HasIsDST {
+		return base, true
 	}
 
-	return map[string]int{
-		"year":  t.Year(),
-		"month": int(t.Month()),
-		"day":   t.Day(),
-		"hour":  t.Hour(),
-		"min":   t.Minute(),
-		"sec":   t.Second(),
-		"wday":  wday,
-		"yday":  yday,
-		"isdst": isdst,
+	offsets := []int{}
+	seen := map[int]bool{}
+	for _, delta := range []time.Duration{-48 * time.Hour, -24 * time.Hour, 0, 24 * time.Hour, 48 * time.Hour} {
+		_, off := base.Add(delta).Zone()
+		if !seen[off] {
+			seen[off] = true
+			offsets = append(offsets, off)
+		}
 	}
+	sort.Slice(offsets, func(i, j int) bool {
+		if input.IsDST {
+			return offsets[i] > offsets[j]
+		}
+		return offsets[i] < offsets[j]
+	})
+
+	localBase := time.Date(input.Year, time.Month(input.Month), input.Day, input.Hour, input.Min, input.Sec, 0, time.UTC)
+	for _, off := range offsets {
+		cand := time.Unix(localBase.Unix()-int64(off), 0).In(time.Local)
+		if cand.Year() == input.Year && int(cand.Month()) == input.Month && cand.Day() == input.Day && cand.Hour() == input.Hour && cand.Minute() == input.Min && cand.Second() == input.Sec && cand.IsDST() == input.IsDST {
+			return cand, true
+		}
+	}
+
+	best := base
+	bestScore := math.MaxInt32
+	for _, off := range offsets {
+		cand := time.Unix(localBase.Unix()-int64(off), 0).In(time.Local)
+		score := 0
+		if cand.IsDST() != input.IsDST {
+			score += 1000000
+		}
+		score += absInt(cand.Year()-input.Year) * 366 * 86400
+		score += absInt(int(cand.Month())-input.Month) * 31 * 86400
+		score += absInt(cand.Day()-input.Day) * 86400
+		score += absInt(cand.Hour()-input.Hour) * 3600
+		score += absInt(cand.Minute()-input.Min) * 60
+		score += absInt(cand.Second() - input.Sec)
+		if score < bestScore {
+			best = cand
+			bestScore = score
+		}
+	}
+	return best, true
+}
+
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // Getenv returns an environment variable, respecting the optional filter.

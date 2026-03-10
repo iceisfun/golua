@@ -12,6 +12,30 @@ type LuaOsCaps struct {
 	AllowRename  bool
 }
 
+type LuaDateTime struct {
+	Year   int
+	Month  int
+	Day    int
+	Hour   int
+	Min    int
+	Sec    int
+	Wday   int
+	Yday   int
+	IsDST  bool
+	HasDST bool
+}
+
+type LuaTimeInput struct {
+	Year     int
+	Month    int
+	Day      int
+	Hour     int
+	Min      int
+	Sec      int
+	HasIsDST bool
+	IsDST    bool
+}
+
 // LuaOsProvider is a capability interface for sandboxed OS operations.
 // When provided to a VM, the stdlib os library becomes available.
 // Without a provider, os.* functions are not registered.
@@ -23,8 +47,9 @@ type LuaOsProvider interface {
 
 	// Time returns the current time as a Unix timestamp,
 	// or constructs a timestamp from the given date table fields.
-	// If dateTable is nil, returns current time.
-	Time(dateTable map[string]int) (int64, error)
+	// If dateTable is nil, returns current time. When constructing from a
+	// table, it also returns normalized local-time fields like Lua's mktime.
+	Time(dateTable *LuaTimeInput) (int64, *LuaDateTime, error)
 
 	// Date formats a timestamp according to a format string.
 	// Returns the formatted date string.
@@ -33,7 +58,7 @@ type LuaOsProvider interface {
 	// DateTable returns a table of date/time components for the given timestamp.
 	// Keys: "year", "month", "day", "hour", "min", "sec", "wday", "yday", "isdst"
 	// If utc is true, the components are in UTC; otherwise local time.
-	DateTable(timestamp int64, utc bool) map[string]int
+	DateTable(timestamp int64, utc bool) *LuaDateTime
 
 	// Getenv returns the value of an environment variable.
 	Getenv(name string) (string, bool)

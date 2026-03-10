@@ -125,6 +125,42 @@ func TestOs_TimeWithTable(t *testing.T) {
 	runLuaWithOs(t, source, "test_os_time_table", provider)
 }
 
+func TestOs_TimeHonorsIsDST(t *testing.T) {
+	t.Setenv("TZ", "America/New_York")
+	provider := vm.NewDefaultOsProvider()
+	source := `
+		local a = os.time{year=2021, month=11, day=7, hour=1, min=30, sec=0, isdst=true}
+		local b = os.time{year=2021, month=11, day=7, hour=1, min=30, sec=0, isdst=false}
+		assert(b - a == 3600, tostring(b - a))
+	`
+	runLuaWithOs(t, source, "test_os_time_isdst", provider)
+}
+
+func TestOs_TimeUsesMetamethods(t *testing.T) {
+	provider := vm.NewDefaultOsProvider()
+	source := `
+		local reads, writes = {}, {}
+		local proxy = setmetatable({}, {
+			__index = function(_, k)
+				reads[#reads+1] = k
+				local src = {year=2024, month=1, day=1, hour=0, min=0, sec=0}
+				return src[k]
+			end,
+			__newindex = function(_, k, v)
+				writes[k] = v
+			end,
+		})
+		local ts = os.time(proxy)
+		assert(type(ts) == "number")
+		assert(#reads >= 6, tostring(#reads))
+		assert(type(writes.year) == "number")
+		assert(type(writes.wday) == "number")
+		assert(type(writes.yday) == "number")
+		assert(type(writes.isdst) == "boolean")
+	`
+	runLuaWithOs(t, source, "test_os_time_metamethods", provider)
+}
+
 func TestOs_FilteredGetenv(t *testing.T) {
 	// Test that filtered provider restricts env access
 	provider := vm.NewFilteredOsProvider(func(name string) bool {

@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/iceisfun/golua/vm"
 )
@@ -156,7 +155,7 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		arg := v.Get(1)
 		if arg.IsNil() {
-			ts, err := provider.Time(nil)
+			ts, _, err := provider.Time(nil)
 			if err != nil {
 				panic(err.Error())
 			}
@@ -164,16 +163,18 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			return 1
 		}
 
-		if !arg.IsTable() {
+		if !arg.IsTable() && v.GetMetafield(arg, "__index").IsNil() {
 			panic("bad argument #1 to 'os.time' (table expected)")
 		}
 
-		t := arg.AsTable()
-		dateTable := make(map[string]int)
+		dateTable := &vm.LuaTimeInput{}
 
 		// Required fields
 		for _, key := range []string{"year", "month", "day"} {
-			val := t.Get(vm.NewString(key))
+			val, err := v.IndexValue(arg, vm.NewString(key))
+			if err != nil {
+				panic(err)
+			}
 			if val.IsNil() {
 				panic(fmt.Sprintf("field '%s' missing in date table", key))
 			}
@@ -181,40 +182,75 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			if !ok {
 				panic(fmt.Sprintf("field '%s' is not an integer", key))
 			}
-			dateTable[key] = int(i)
+			switch key {
+			case "year":
+				dateTable.Year = int(i)
+			case "month":
+				dateTable.Month = int(i)
+			case "day":
+				dateTable.Day = int(i)
+			}
 		}
 
 		// Optional fields with Lua 5.4 defaults: hour=12, min=0, sec=0
 		defaults := map[string]int{"hour": 12, "min": 0, "sec": 0}
 		for _, key := range []string{"hour", "min", "sec"} {
-			val := t.Get(vm.NewString(key))
+			val, err := v.IndexValue(arg, vm.NewString(key))
+			if err != nil {
+				panic(err)
+			}
 			if !val.IsNil() {
 				i, ok := val.ToInt()
 				if !ok {
 					panic(fmt.Sprintf("field '%s' is not an integer", key))
 				}
-				dateTable[key] = int(i)
+				switch key {
+				case "hour":
+					dateTable.Hour = int(i)
+				case "min":
+					dateTable.Min = int(i)
+				case "sec":
+					dateTable.Sec = int(i)
+				}
 			} else {
-				dateTable[key] = defaults[key]
+				switch key {
+				case "hour":
+					dateTable.Hour = defaults[key]
+				case "min":
+					dateTable.Min = defaults[key]
+				case "sec":
+					dateTable.Sec = defaults[key]
+				}
 			}
 		}
 
-		ts, err := provider.Time(dateTable)
+		isdstVal, err := v.IndexValue(arg, vm.NewString("isdst"))
+		if err != nil {
+			panic(err)
+		}
+		if !isdstVal.IsNil() {
+			dateTable.HasIsDST = true
+			dateTable.IsDST = isdstVal.ToBool()
+		}
+
+		ts, norm, err := provider.Time(dateTable)
 		if err != nil {
 			panic(err.Error())
 		}
 
-		// Normalize fields back into the table (like C's mktime)
-		norm := time.Unix(ts, 0).Local()
-		t.Set(vm.NewString("year"), vm.NewInt(int64(norm.Year())))
-		t.Set(vm.NewString("month"), vm.NewInt(int64(norm.Month())))
-		t.Set(vm.NewString("day"), vm.NewInt(int64(norm.Day())))
-		t.Set(vm.NewString("hour"), vm.NewInt(int64(norm.Hour())))
-		t.Set(vm.NewString("min"), vm.NewInt(int64(norm.Minute())))
-		t.Set(vm.NewString("sec"), vm.NewInt(int64(norm.Second())))
-		t.Set(vm.NewString("yday"), vm.NewInt(int64(norm.YearDay())))
-		wday := int(norm.Weekday()) + 1 // Lua: Sunday=1
-		t.Set(vm.NewString("wday"), vm.NewInt(int64(wday)))
+		if norm != nil {
+			setOSDateField(v, arg, "year", vm.NewInt(int64(norm.Year)))
+			setOSDateField(v, arg, "month", vm.NewInt(int64(norm.Month)))
+			setOSDateField(v, arg, "day", vm.NewInt(int64(norm.Day)))
+			setOSDateField(v, arg, "hour", vm.NewInt(int64(norm.Hour)))
+			setOSDateField(v, arg, "min", vm.NewInt(int64(norm.Min)))
+			setOSDateField(v, arg, "sec", vm.NewInt(int64(norm.Sec)))
+			setOSDateField(v, arg, "yday", vm.NewInt(int64(norm.Yday)))
+			setOSDateField(v, arg, "wday", vm.NewInt(int64(norm.Wday)))
+			if norm.HasDST {
+				setOSDateField(v, arg, "isdst", vm.NewBool(norm.IsDST))
+			}
+		}
 
 		v.Set(0, vm.NewInt(ts))
 		return 1
@@ -256,7 +292,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			}
 			timestamp = ts
 		} else {
-			ts, _ := provider.Time(nil)
+			ts, _, _ := provider.Time(nil)
 			timestamp = ts
 		}
 
@@ -271,19 +307,15 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		if checkFmt == "*t" {
 			dt := provider.DateTable(timestamp, utc)
 			t := vm.NewEmptyTable()
-			t.SetString("year", vm.NewInt(int64(dt["year"])))
-			t.SetString("month", vm.NewInt(int64(dt["month"])))
-			t.SetString("day", vm.NewInt(int64(dt["day"])))
-			t.SetString("hour", vm.NewInt(int64(dt["hour"])))
-			t.SetString("min", vm.NewInt(int64(dt["min"])))
-			t.SetString("sec", vm.NewInt(int64(dt["sec"])))
-			t.SetString("wday", vm.NewInt(int64(dt["wday"])))
-			t.SetString("yday", vm.NewInt(int64(dt["yday"])))
-			isdst := false
-			if dt["isdst"] != 0 {
-				isdst = true
-			}
-			t.SetString("isdst", vm.NewBool(isdst))
+			t.SetString("year", vm.NewInt(int64(dt.Year)))
+			t.SetString("month", vm.NewInt(int64(dt.Month)))
+			t.SetString("day", vm.NewInt(int64(dt.Day)))
+			t.SetString("hour", vm.NewInt(int64(dt.Hour)))
+			t.SetString("min", vm.NewInt(int64(dt.Min)))
+			t.SetString("sec", vm.NewInt(int64(dt.Sec)))
+			t.SetString("wday", vm.NewInt(int64(dt.Wday)))
+			t.SetString("yday", vm.NewInt(int64(dt.Yday)))
+			t.SetString("isdst", vm.NewBool(dt.IsDST))
 			v.Set(0, vm.NewTable(t))
 			return 1
 		}
@@ -294,6 +326,12 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		}
 		v.Set(0, vm.NewString(result))
 		return 1
+	}
+}
+
+func setOSDateField(v *vm.VM, tableVal vm.Value, key string, value vm.Value) {
+	if err := v.SetIndexValue(tableVal, vm.NewString(key), value); err != nil {
+		panic(err)
 	}
 }
 
