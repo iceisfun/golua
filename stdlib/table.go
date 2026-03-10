@@ -26,17 +26,29 @@ func openTable(v *vm.VM) {
 }
 
 // tableGetTable extracts a table from argument idx, panicking with a standard error if not a table.
-func tableGetTable(v *vm.VM, idx int, fname string) vm.LuaTable {
+const (
+	tabR = 1 << iota
+	tabW
+	tabL
+	tabRW = tabR | tabW
+)
+
+func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 	val := v.Get(idx)
 	if val.IsTable() {
-		return val.AsTable()
+		return val
+	}
+	if ((need&tabR) == 0 || !v.GetMetafield(val, "__index").IsNil()) &&
+		((need&tabW) == 0 || !v.GetMetafield(val, "__newindex").IsNil()) &&
+		((need&tabL) == 0 || !v.GetMetafield(val, "__len").IsNil()) {
+		return val
 	}
 	got := val.Type()
 	if v.ArgCount() < idx {
 		got = "no value"
 	}
 	callerArgError(v, idx, fname, fmt.Sprintf("table expected, got %s", got))
-	return nil // unreachable
+	return vm.Nil // unreachable
 }
 
 // tableObjLen returns #val via metamethod-aware ObjLen, panicking on error.
@@ -51,8 +63,8 @@ func tableObjLen(v *vm.VM, val vm.Value) int {
 }
 
 // tableGetInt reads t[key] via metamethod-aware TableGetInt, panicking on error.
-func tableGetIdx(v *vm.VM, t vm.LuaTable, key int) vm.Value {
-	val, err := v.TableGetInt(t, key)
+func tableGetIdx(v *vm.VM, obj vm.Value, key int) vm.Value {
+	val, err := v.IndexValue(obj, vm.NewInt(int64(key)))
 	if err != nil {
 		panic(err)
 	}
@@ -60,8 +72,8 @@ func tableGetIdx(v *vm.VM, t vm.LuaTable, key int) vm.Value {
 }
 
 // tableSetIdx writes t[key]=value via metamethod-aware TableSetInt, panicking on error.
-func tableSetIdx(v *vm.VM, t vm.LuaTable, key int, value vm.Value) {
-	err := v.TableSetInt(t, key, value)
+func tableSetIdx(v *vm.VM, obj vm.Value, key int, value vm.Value) {
+	err := v.SetIndexInt(obj, key, value)
 	if err != nil {
 		panic(err)
 	}
@@ -69,7 +81,7 @@ func tableSetIdx(v *vm.VM, t vm.LuaTable, key int, value vm.Value) {
 
 // table.concat(list [, sep [, i [, j]]])
 func tableConcat(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "table.concat")
+	obj := tableCheckLike(v, 1, "table.concat", tabR|tabL)
 
 	// Snapshot all args before any metamethod calls (__len, __index).
 	// Metamethod frames can overlap arg slots on the stack.
@@ -101,7 +113,7 @@ func tableConcat(v *vm.VM) int {
 
 	var parts []string
 	for idx := i; idx <= j; idx++ {
-		val := tableGetIdx(v, tbl, int(idx))
+		val := tableGetIdx(v, obj, int(idx))
 		if val.IsString() {
 			parts = append(parts, val.AsString())
 		} else if val.IsNumber() {
@@ -120,7 +132,7 @@ func tableConcat(v *vm.VM) int {
 
 // table.insert(list, [pos,] value)
 func tableInsert(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "table.insert")
+	obj := tableCheckLike(v, 1, "table.insert", tabRW|tabL)
 
 	n := v.ArgCount()
 	if n < 2 || n > 3 {
@@ -131,7 +143,7 @@ func tableInsert(v *vm.VM) int {
 
 	if n == 2 {
 		// table.insert(list, value) - append to end
-		tableSetIdx(v, tbl, length+1, v.Get(2))
+		tableSetIdx(v, obj, length+1, v.Get(2))
 	} else if n >= 3 {
 		// table.insert(list, pos, value)
 		pos := int(getInt(v, 2, "table.insert"))
@@ -145,10 +157,10 @@ func tableInsert(v *vm.VM) int {
 		// so that signed overflow naturally skips the loop when
 		// length == math.MaxInt64.
 		for i := length + 1; i > pos; i-- {
-			elem := tableGetIdx(v, tbl, i-1)
-			tableSetIdx(v, tbl, i, elem)
+			elem := tableGetIdx(v, obj, i-1)
+			tableSetIdx(v, obj, i, elem)
 		}
-		tableSetIdx(v, tbl, pos, val)
+		tableSetIdx(v, obj, pos, val)
 	}
 
 	return 0
@@ -157,7 +169,7 @@ func tableInsert(v *vm.VM) int {
 // table.remove(list [, pos])
 // Lua 5.4 semantics: pos defaults to #list. If pos != #list, validate 1 <= pos <= #list.
 func tableRemove(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "table.remove")
+	obj := tableCheckLike(v, 1, "table.remove", tabRW|tabL)
 
 	length := tableObjLen(v, v.Get(1))
 	pos := length
@@ -180,15 +192,15 @@ func tableRemove(v *vm.VM) int {
 	}
 
 	// Get the value being removed
-	removed := tableGetIdx(v, tbl, pos)
+	removed := tableGetIdx(v, obj, pos)
 
 	// Shift elements down
 	for i := pos; i < length; i++ {
-		elem := tableGetIdx(v, tbl, i+1)
-		tableSetIdx(v, tbl, i, elem)
+		elem := tableGetIdx(v, obj, i+1)
+		tableSetIdx(v, obj, i, elem)
 	}
 	// Clear the last slot (or the removed slot when length == 0 and pos == 0)
-	tableSetIdx(v, tbl, length, vm.Nil)
+	tableSetIdx(v, obj, length, vm.Nil)
 
 	v.Set(0, removed)
 	return 1
@@ -197,7 +209,7 @@ func tableRemove(v *vm.VM) int {
 // table.sort(list [, comp])
 // Sorts in-place through metamethods, matching Lua 5.4's auxsort behavior.
 func tableSort(v *vm.VM) int {
-	tbl := tableGetTable(v, 1, "table.sort")
+	obj := tableCheckLike(v, 1, "table.sort", tabRW|tabL)
 
 	length := tableObjLen(v, v.Get(1))
 	if length <= 1 {
@@ -214,12 +226,12 @@ func tableSort(v *vm.VM) int {
 	var sortErr any
 
 	if comp.IsNil() {
-		auxSort(v, tbl, 1, length, vm.Nil, &sortErr)
+		auxSort(v, obj, 1, length, vm.Nil, &sortErr)
 	} else {
 		if !comp.IsFunction() && !comp.IsNativeFunc() {
 			callerArgError(v, 2, "table.sort", fmt.Sprintf("function expected, got %s", comp.Type()))
 		}
-		auxSort(v, tbl, 1, length, comp, &sortErr)
+		auxSort(v, obj, 1, length, comp, &sortErr)
 	}
 	if sortErr != nil {
 		if val, errIsValue := sortErr.(vm.Value); errIsValue {
@@ -238,30 +250,30 @@ func tableSort(v *vm.VM) int {
 }
 
 // sortGet reads table element at 1-based index through metamethods.
-func sortGet(v *vm.VM, tbl vm.LuaTable, idx int, err *any) vm.Value {
+func sortGet(v *vm.VM, obj vm.Value, idx int, err *any) vm.Value {
 	if *err != nil {
 		return vm.Nil
 	}
-	return tableGetIdx(v, tbl, idx)
+	return tableGetIdx(v, obj, idx)
 }
 
 // sortSet writes table element at 1-based index through metamethods.
-func sortSet(v *vm.VM, tbl vm.LuaTable, idx int, val vm.Value, err *any) {
+func sortSet(v *vm.VM, obj vm.Value, idx int, val vm.Value, err *any) {
 	if *err != nil {
 		return
 	}
-	tableSetIdx(v, tbl, idx, val)
+	tableSetIdx(v, obj, idx, val)
 }
 
 // sortSwap swaps two elements in the table through metamethods.
-func sortSwap(v *vm.VM, tbl vm.LuaTable, i, j int, err *any) {
+func sortSwap(v *vm.VM, obj vm.Value, i, j int, err *any) {
 	if *err != nil {
 		return
 	}
-	a := tableGetIdx(v, tbl, i)
-	b := tableGetIdx(v, tbl, j)
-	tableSetIdx(v, tbl, i, b)
-	tableSetIdx(v, tbl, j, a)
+	a := tableGetIdx(v, obj, i)
+	b := tableGetIdx(v, obj, j)
+	tableSetIdx(v, obj, i, b)
+	tableSetIdx(v, obj, j, a)
 }
 
 // sortComp evaluates a < b using the optional user comparator or CompareLT.
@@ -300,14 +312,14 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 // auxSort implements Lua 5.4's sorting algorithm (QuickSort with median-of-3 pivot).
 // Sorts in-place on the table through metamethods (__index/__newindex).
 // lo and up are 1-based indices into the table.
-func auxSort(v *vm.VM, tbl vm.LuaTable, lo, up int, comp vm.Value, err *any) {
+func auxSort(v *vm.VM, obj vm.Value, lo, up int, comp vm.Value, err *any) {
 	for lo < up {
 		// Read and compare tbl[lo] and tbl[up]; handles 2-element case
-		loVal := sortGet(v, tbl, lo, err)
-		upVal := sortGet(v, tbl, up, err)
+		loVal := sortGet(v, obj, lo, err)
+		upVal := sortGet(v, obj, up, err)
 		if sortComp(v, upVal, loVal, comp, err) {
-			sortSet(v, tbl, lo, upVal, err)
-			sortSet(v, tbl, up, loVal, err)
+			sortSet(v, obj, lo, upVal, err)
+			sortSet(v, obj, up, loVal, err)
 		}
 		if *err != nil {
 			return
@@ -319,16 +331,16 @@ func auxSort(v *vm.VM, tbl vm.LuaTable, lo, up int, comp vm.Value, err *any) {
 		p := (lo + up) / 2
 
 		// Median-of-3: sort tbl[lo], tbl[p], tbl[up] to pick pivot
-		pVal := sortGet(v, tbl, p, err)
-		loVal = sortGet(v, tbl, lo, err)
+		pVal := sortGet(v, obj, p, err)
+		loVal = sortGet(v, obj, lo, err)
 		if sortComp(v, pVal, loVal, comp, err) {
-			sortSet(v, tbl, p, loVal, err)
-			sortSet(v, tbl, lo, pVal, err)
+			sortSet(v, obj, p, loVal, err)
+			sortSet(v, obj, lo, pVal, err)
 		} else {
-			upVal = sortGet(v, tbl, up, err)
+			upVal = sortGet(v, obj, up, err)
 			if sortComp(v, upVal, pVal, comp, err) {
-				sortSet(v, tbl, up, pVal, err)
-				sortSet(v, tbl, p, upVal, err)
+				sortSet(v, obj, up, pVal, err)
+				sortSet(v, obj, p, upVal, err)
 			}
 		}
 		if *err != nil {
@@ -339,10 +351,10 @@ func auxSort(v *vm.VM, tbl vm.LuaTable, lo, up int, comp vm.Value, err *any) {
 		}
 
 		// Pivot is tbl[p]; move it to tbl[up-1]
-		pivot := sortGet(v, tbl, p, err)
-		upM1Val := sortGet(v, tbl, up-1, err)
-		sortSet(v, tbl, p, upM1Val, err)
-		sortSet(v, tbl, up-1, pivot, err)
+		pivot := sortGet(v, obj, p, err)
+		upM1Val := sortGet(v, obj, up-1, err)
+		sortSet(v, obj, p, upM1Val, err)
+		sortSet(v, obj, up-1, pivot, err)
 
 		// Partition: match Lua 5.4's partition() exactly
 		i := lo
@@ -351,7 +363,7 @@ func auxSort(v *vm.VM, tbl vm.LuaTable, lo, up int, comp vm.Value, err *any) {
 			// Scan right: find first tbl[i] >= pivot
 			for {
 				i++
-				iVal := sortGet(v, tbl, i, err)
+				iVal := sortGet(v, obj, i, err)
 				if !sortComp(v, iVal, pivot, comp, err) {
 					break
 				}
@@ -363,7 +375,7 @@ func auxSort(v *vm.VM, tbl vm.LuaTable, lo, up int, comp vm.Value, err *any) {
 			// Scan left: find first tbl[j] <= pivot
 			for {
 				j--
-				jVal := sortGet(v, tbl, j, err)
+				jVal := sortGet(v, obj, j, err)
 				if !sortComp(v, pivot, jVal, comp, err) {
 					break
 				}
@@ -377,21 +389,21 @@ func auxSort(v *vm.VM, tbl vm.LuaTable, lo, up int, comp vm.Value, err *any) {
 			}
 			if j < i {
 				// Swap pivot back into position
-				iVal := sortGet(v, tbl, i, err)
-				sortSet(v, tbl, up-1, iVal, err)
-				sortSet(v, tbl, i, pivot, err)
+				iVal := sortGet(v, obj, i, err)
+				sortSet(v, obj, up-1, iVal, err)
+				sortSet(v, obj, i, pivot, err)
 				break
 			}
 			// Swap tbl[i] and tbl[j]
-			sortSwap(v, tbl, i, j, err)
+			sortSwap(v, obj, i, j, err)
 		}
 
 		// Recurse on smaller partition, tail-call on larger
 		if i-lo < up-i {
-			auxSort(v, tbl, lo, i-1, comp, err)
+			auxSort(v, obj, lo, i-1, comp, err)
 			lo = i + 1
 		} else {
-			auxSort(v, tbl, i+1, up, comp, err)
+			auxSort(v, obj, i+1, up, comp, err)
 			up = i - 1
 		}
 	}
@@ -445,19 +457,9 @@ func tableUnpack(v *vm.VM) int {
 	// Writing results incrementally via v.Set() while calling __index
 	// metamethods between writes would clobber earlier results because
 	// metamethod frames overlap the result slots on the stack.
-	tbl := list.AsTable()
 	results := make([]vm.Value, 0, nResults)
 	for idx := i; idx <= j; idx++ {
-		var val vm.Value
-		if tbl != nil {
-			val = tableGetIdx(v, tbl, int(idx))
-		} else {
-			var err error
-			val, err = v.IndexValue(list, vm.NewInt(idx))
-			if err != nil {
-				panic(err)
-			}
-		}
+		val := tableGetIdx(v, list, int(idx))
 		results = append(results, val)
 		if idx == j {
 			break // avoid int64 overflow on idx++ when j == math.MaxInt64
@@ -492,11 +494,11 @@ func tableMove(v *vm.VM) int {
 	e := getInt(v, 3, "table.move")
 	tt := getInt(v, 4, "table.move")
 
-	a1 := tableGetTable(v, 1, "table.move")
+	a1 := tableCheckLike(v, 1, "table.move", tabR)
 
 	a2 := a1
 	if !v.Get(5).IsNil() {
-		a2 = tableGetTable(v, 5, "table.move")
+		a2 = tableCheckLike(v, 5, "table.move", tabW)
 	}
 
 	if f <= e {
@@ -522,7 +524,7 @@ func tableMove(v *vm.VM) int {
 			}
 		}
 
-		if a1 == a2 && tt > f && tt <= e {
+		if a1.RawEqual(a2) && tt > f && tt <= e {
 			// Copy backwards to avoid overwriting (overlapping same-table move)
 			for i := count - 1; i >= 0; i-- {
 				val := tableGetIdx(v, a1, int(f+i))
@@ -536,6 +538,6 @@ func tableMove(v *vm.VM) int {
 		}
 	}
 
-	v.Set(0, vm.NewTable(a2))
+	v.Set(0, a2)
 	return 1
 }

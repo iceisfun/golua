@@ -485,6 +485,52 @@ func (vm *VM) TableGetInt(t LuaTable, key int) (Value, error) {
 	return vm.tableGetInt(t, key)
 }
 
+// SetIndexValue sets val[key]=value with __newindex metamethod support.
+func (vm *VM) SetIndexValue(val Value, key Value, value Value) error {
+	if ct, ok := val.ptr.(*Table); ok && val.typ == typeTable && !ct.isThread {
+		if ct.metatable == nil {
+			if err := ct.Set(key, value); err != nil {
+				return vm.runtimeError("%s", err)
+			}
+			return nil
+		}
+		return vm.tableSet(val.ptr.(LuaTable), key, value)
+	}
+	if mm := vm.getMetafield(val, "__newindex"); !mm.IsNil() {
+		if mm.IsFunction() || mm.IsNativeFunc() {
+			_, err := vm.callMetamethod3("newindex", mm, val, key, value)
+			return err
+		}
+		if mm.IsTable() {
+			return vm.tableSet(mm.AsTable(), key, value)
+		}
+		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
+	}
+	return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
+}
+
+// SetIndexInt sets val[key]=value with __newindex metamethod support.
+func (vm *VM) SetIndexInt(val Value, key int, value Value) error {
+	if ct, ok := val.ptr.(*Table); ok && val.typ == typeTable && !ct.isThread {
+		if ct.metatable == nil {
+			ct.SetInt(key, value)
+			return nil
+		}
+		return vm.tableSetInt(val.ptr.(LuaTable), key, value)
+	}
+	if mm := vm.getMetafield(val, "__newindex"); !mm.IsNil() {
+		if mm.IsFunction() || mm.IsNativeFunc() {
+			_, err := vm.callMetamethod3("newindex", mm, val, NewInt(int64(key)), value)
+			return err
+		}
+		if mm.IsTable() {
+			return vm.tableSet(mm.AsTable(), NewInt(int64(key)), value)
+		}
+		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
+	}
+	return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
+}
+
 // TableSetInt sets t[key]=value with __newindex metamethod support.
 func (vm *VM) TableSetInt(t LuaTable, key int, value Value) error {
 	return vm.tableSetInt(t, key, value)
