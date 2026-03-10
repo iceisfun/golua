@@ -55,6 +55,7 @@ func openMath(v *vm.VM) {
 	// Per-VM xoshiro256** random source (matches Lua 5.4 exactly)
 	rng := &xoshiro256ss{}
 	rng.seed(time.Now().UnixNano(), 0)
+	atanVal := vm.NewNativeFunc(mathAtan)
 
 	// Constants
 	m.SetString("pi", vm.NewFloat(math.Pi))
@@ -66,22 +67,30 @@ func openMath(v *vm.VM) {
 	m.SetString("abs", vm.NewNativeFunc(mathAbs))
 	m.SetString("acos", vm.NewNativeFunc(mathAcos))
 	m.SetString("asin", vm.NewNativeFunc(mathAsin))
-	m.SetString("atan", vm.NewNativeFunc(mathAtan))
+	m.SetString("atan", atanVal)
+	m.SetString("atan2", atanVal)
 	m.SetString("ceil", vm.NewNativeFunc(mathCeil))
+	m.SetString("cosh", vm.NewNativeFunc(mathCosh))
 	m.SetString("cos", vm.NewNativeFunc(mathCos))
 	m.SetString("deg", vm.NewNativeFunc(mathDeg))
 	m.SetString("exp", vm.NewNativeFunc(mathExp))
 	m.SetString("floor", vm.NewNativeFunc(mathFloor))
+	m.SetString("frexp", vm.NewNativeFunc(mathFrexp))
 	m.SetString("fmod", vm.NewNativeFunc(mathFmod))
+	m.SetString("ldexp", vm.NewNativeFunc(mathLdexp))
 	m.SetString("log", vm.NewNativeFunc(mathLog))
+	m.SetString("log10", vm.NewNativeFunc(mathLog10))
 	m.SetString("max", vm.NewNativeFunc(mathMax))
 	m.SetString("min", vm.NewNativeFunc(mathMin))
 	m.SetString("modf", vm.NewNativeFunc(mathModf))
+	m.SetString("pow", vm.NewNativeFunc(mathPow))
 	m.SetString("rad", vm.NewNativeFunc(mathRad))
 	m.SetString("random", vm.NewNativeFunc(mathRandomClosure(rng)))
 	m.SetString("randomseed", vm.NewNativeFunc(mathRandomseedClosure(rng)))
+	m.SetString("sinh", vm.NewNativeFunc(mathSinh))
 	m.SetString("sin", vm.NewNativeFunc(mathSin))
 	m.SetString("sqrt", vm.NewNativeFunc(mathSqrt))
+	m.SetString("tanh", vm.NewNativeFunc(mathTanh))
 	m.SetString("tan", vm.NewNativeFunc(mathTan))
 	m.SetString("tointeger", vm.NewNativeFunc(mathTointeger))
 	m.SetString("type", vm.NewNativeFunc(mathType))
@@ -173,6 +182,12 @@ func mathCos(v *vm.VM) int {
 	return 1
 }
 
+func mathCosh(v *vm.VM) int {
+	n := getNumber(v, 1, "math.cosh")
+	v.Set(0, vm.NewFloat(math.Cosh(n)))
+	return 1
+}
+
 func mathDeg(v *vm.VM) int {
 	n := getNumber(v, 1, "math.deg")
 	v.Set(0, vm.NewFloat(n*180/math.Pi))
@@ -199,6 +214,19 @@ func mathFloor(v *vm.VM) int {
 		v.Set(0, vm.NewFloat(f))
 	}
 	return 1
+}
+
+func mathFrexp(v *vm.VM) int {
+	n := getNumber(v, 1, "math.frexp")
+	if math.IsNaN(n) {
+		v.Set(0, vm.NewFloat(math.Copysign(math.NaN(), -1)))
+		v.Set(1, vm.NewInt(0))
+		return 2
+	}
+	m, e := math.Frexp(n)
+	v.Set(0, vm.NewFloat(m))
+	v.Set(1, vm.NewInt(int64(e)))
+	return 2
 }
 
 func mathFmod(v *vm.VM) int {
@@ -246,6 +274,19 @@ func mathLog(v *vm.VM) int {
 		result = math.Copysign(math.NaN(), -1)
 	}
 	v.Set(0, vm.NewFloat(result))
+	return 1
+}
+
+func mathLdexp(v *vm.VM) int {
+	x := getNumber(v, 1, "math.ldexp")
+	exp := getInt(v, 2, "math.ldexp")
+	v.Set(0, vm.NewFloat(math.Ldexp(x, int(exp))))
+	return 1
+}
+
+func mathLog10(v *vm.VM) int {
+	x := getNumber(v, 1, "math.log10")
+	v.Set(0, vm.NewFloat(math.Log10(x)))
 	return 1
 }
 
@@ -320,6 +361,13 @@ func mathModf(v *vm.VM) int {
 func mathRad(v *vm.VM) int {
 	n := getNumber(v, 1, "math.rad")
 	v.Set(0, vm.NewFloat(n*math.Pi/180))
+	return 1
+}
+
+func mathPow(v *vm.VM) int {
+	x := getNumber(v, 1, "math.pow")
+	y := getNumber(v, 2, "math.pow")
+	v.Set(0, vm.NewFloat(math.Pow(x, y)))
 	return 1
 }
 
@@ -439,6 +487,12 @@ func mathSin(v *vm.VM) int {
 	return 1
 }
 
+func mathSinh(v *vm.VM) int {
+	n := getNumber(v, 1, "math.sinh")
+	v.Set(0, vm.NewFloat(math.Sinh(n)))
+	return 1
+}
+
 func mathSqrt(v *vm.VM) int {
 	n := getNumber(v, 1, "math.sqrt")
 	v.Set(0, vm.NewFloat(math.Sqrt(n)))
@@ -452,6 +506,12 @@ func mathTan(v *vm.VM) int {
 		result = math.Copysign(result, -1)
 	}
 	v.Set(0, vm.NewFloat(result))
+	return 1
+}
+
+func mathTanh(v *vm.VM) int {
+	n := getNumber(v, 1, "math.tanh")
+	v.Set(0, vm.NewFloat(math.Tanh(n)))
 	return 1
 }
 
