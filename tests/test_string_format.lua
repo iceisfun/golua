@@ -136,6 +136,8 @@ assert(string.byte(string.format("%c", -1)) == 255, "%c -1 should wrap to byte 2
 
 -- %x/%X/%o
 assert(string.format("%x", 255) == "ff", "format %x")
+assert(string.format("txt%#5.5o%0#10.5X", 1, 123) == "txt00001   0X0007B",
+  "precision should disable integer zero-padding")
 
 -- %p pointer format
 assert(string.format("%p", 1) == "(null)", "format %p int")

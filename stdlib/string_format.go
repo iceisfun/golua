@@ -326,8 +326,9 @@ func formatIntHex(spec string, conv byte, val uint64) string {
 	}
 
 	// If we have both # and 0 flags with a width for x/X, handle manually
-	// to ensure the 0x/0X prefix is counted in the width.
-	if hasHash && hasZero && (conv == 'x' || conv == 'X') {
+	// to ensure the 0x/0X prefix is counted in the width. Precision disables
+	// zero-padding for integer conversions, so leave those cases to fmt.
+	if hasHash && hasZero && (conv == 'x' || conv == 'X') && !strings.Contains(spec, ".") {
 		width, leftAlign := parseFormatWidth(spec)
 		if width > 0 && !leftAlign {
 			// Format digits without prefix or padding
