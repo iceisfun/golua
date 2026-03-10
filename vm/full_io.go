@@ -158,12 +158,12 @@ func (p *FullIoProvider) Rename(oldname, newname string) error {
 
 // fullFile wraps an os.File with buffered reading and writing.
 type fullFile struct {
-	file     *os.File
-	reader   *bufio.Reader
-	writer   *bufio.Writer
-	closed   bool
-	bufMode  string // "no", "full", "line"
-	bufSize  int    // buffer size for "full" mode
+	file    *os.File
+	reader  *bufio.Reader
+	writer  *bufio.Writer
+	closed  bool
+	bufMode string // "no", "full", "line"
+	bufSize int    // buffer size for "full" mode
 }
 
 func (f *fullFile) Read(format string) (string, error) {
@@ -553,7 +553,7 @@ func (f *stdFile) Flush() error {
 	if !f.writable {
 		return fmt.Errorf("%s is not writable", f.name)
 	}
-	return f.file.Sync()
+	return nil
 }
 
 func (f *stdFile) SetVBuf(mode string, size int) error {

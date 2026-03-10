@@ -102,6 +102,9 @@ func openIo(v *vm.VM) {
 	}
 
 	ioTable.SetString("close", vm.NewNativeFunc(makeIoClose(provider)))
+	if caps.AllowWrite {
+		ioTable.SetString("flush", vm.NewNativeFunc(makeIoFlush(provider)))
+	}
 	ioTable.SetString("type", vm.NewNativeFunc(ioType))
 	ioTable.SetString("read", vm.NewNativeFunc(makeIoRead(provider)))
 	ioTable.SetString("write", vm.NewNativeFunc(makeIoWrite(provider)))
@@ -277,6 +280,29 @@ func ioType(v *vm.VM) int {
 	return 1
 }
 
+// makeIoFlush creates the io.flush() function that flushes default output.
+func makeIoFlush(provider vm.LuaIoProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		ioVal := v.GetGlobal("io")
+		if ioVal.IsNil() {
+			panic("io library not available")
+		}
+		ioTable := ioVal.AsTable()
+		outputVal := ioTable.Get(vm.NewString("__output"))
+		fh := getFileHandle(v, outputVal, "io.flush")
+		fh.checkOpen("flush")
+
+		if err := fh.file.Flush(); err != nil {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(err.Error()))
+			return 2
+		}
+
+		v.Set(0, vm.True)
+		return 1
+	}
+}
+
 // makeIoLines creates the io.lines(filename, ...) function.
 func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
@@ -316,7 +342,7 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			if closed {
 				panic("file is already closed")
 			}
-			
+
 			if len(formats) == 0 {
 				line, err := f.Read("l")
 				if err != nil {
@@ -552,7 +578,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 			}
 		} else {
 			// Invalid format type
-			v.Set(results, vm.Nil)
+			fileMethodArgError(v, results+1, "read", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
 		results++
 	}
@@ -644,7 +670,7 @@ func fileLines(v *vm.VM) int {
 
 	v.Set(0, vm.NewNativeFunc(func(v *vm.VM) int {
 		fh.checkOpen("lines iterator")
-		
+
 		if len(formats) == 0 {
 			line, err := f.Read("l")
 			if err != nil {
@@ -758,7 +784,7 @@ func fileFlush(v *vm.VM) int {
 		return 2
 	}
 
-	v.Set(0, self)
+	v.Set(0, vm.True)
 	return 1
 }
 
