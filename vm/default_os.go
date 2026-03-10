@@ -224,7 +224,7 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 	for i < len(format) {
 		if format[i] == '%' {
 			if i+1 >= len(format) {
-				return "", fmt.Errorf("invalid conversion specifier '%%\\0'")
+				return "", fmt.Errorf("invalid conversion specifier '%%'")
 			}
 			i++
 			switch format[i] {

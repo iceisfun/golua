@@ -267,7 +267,9 @@ func needsFullIo(filename string) bool {
 		"test_bug_userdata_eq_metamethod_dispatch.lua",
 		"test_loadfile_binary.lua",
 		"test_io_arg_validation.lua",
-		"test_read_n_0x_prefix.lua":
+		"test_read_n_0x_prefix.lua",
+		"test_os_fixes.lua",
+		"test_os_string_number_coercions.lua":
 		return true
 	}
 	return false

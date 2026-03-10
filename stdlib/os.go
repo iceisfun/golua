@@ -39,6 +39,34 @@ func formatPathError(name string, err error) (string, int) {
 	return fmt.Sprintf("%s: %s", name, errMsg), errno
 }
 
+// formatErrorNoPath formats an OS error without including any file path.
+// Lua 5.4 os.rename returns just the error description (e.g., "No such file or directory").
+func formatErrorNoPath(err error) (string, int) {
+	var errno int
+	var errMsg string
+
+	if pathErr, ok := err.(*os.PathError); ok {
+		if sysErr, ok := pathErr.Err.(syscall.Errno); ok {
+			errno = int(sysErr)
+		} else {
+			errno = extractErrnoFromError(err)
+		}
+		errMsg = capitalizeError(pathErr.Err.Error())
+	} else if linkErr, ok := err.(*os.LinkError); ok {
+		if sysErr, ok := linkErr.Err.(syscall.Errno); ok {
+			errno = int(sysErr)
+		} else {
+			errno = extractErrnoFromError(err)
+		}
+		errMsg = capitalizeError(linkErr.Err.Error())
+	} else {
+		errno = extractErrnoFromError(err)
+		errMsg = capitalizeError(err.Error())
+	}
+
+	return errMsg, errno
+}
+
 // capitalizeError capitalizes the first letter of an error string to match Lua format.
 func capitalizeError(s string) string {
 	if len(s) == 0 {
@@ -163,8 +191,8 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			return 1
 		}
 
-		if !arg.IsTable() && v.GetMetafield(arg, "__index").IsNil() {
-			panic("bad argument #1 to 'os.time' (table expected)")
+		if !arg.IsTable() {
+			callerArgError(v, 1, "os.time", fmt.Sprintf("table expected, got %s", arg.Type()))
 		}
 
 		dateTable := &vm.LuaTimeInput{}
@@ -259,12 +287,9 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 
 // osDifftime implements os.difftime(t2, t1).
 func osDifftime(v *vm.VM) int {
-	t2, ok2 := v.Get(1).ToNumber()
-	t1, ok1 := v.Get(2).ToNumber()
-	if !ok1 || !ok2 {
-		panic("bad argument to 'os.difftime' (number expected)")
-	}
-	v.Set(0, vm.NewFloat(t2-t1))
+	t2 := getInt(v, 1, "os.difftime")
+	t1 := getInt(v, 2, "os.difftime")
+	v.Set(0, vm.NewFloat(float64(t2-t1)))
 	return 1
 }
 
@@ -429,9 +454,9 @@ func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 		newname := valueToString(arg2)
 		err := ioProvider.Rename(oldname, newname)
 		if err != nil {
-			msg, errno := formatPathError(oldname, err)
+			errMsg, errno := formatErrorNoPath(err)
 			v.Set(0, vm.Nil)
-			v.Set(1, vm.NewString(msg))
+			v.Set(1, vm.NewString(errMsg))
 			v.Set(2, vm.NewInt(int64(errno)))
 			return 3
 		}

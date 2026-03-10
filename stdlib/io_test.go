@@ -238,8 +238,8 @@ func TestIoLinesErrorMessageFormat(t *testing.T) {
 
 // --- Bug 15: os.date with trailing % error ---
 func TestOsDateTrailingPercent(t *testing.T) {
-	// Lua 5.4 says: invalid conversion specifier '%\0'
-	runLuaExpectError(t, `os.date("%")`, `'%\0'`)
+	// Lua 5.4 says: invalid conversion specifier '%'
+	runLuaExpectError(t, `os.date("%")`, `'%'`)
 }
 
 // --- Bug 16: io.tmpfile ---
