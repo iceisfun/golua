@@ -436,8 +436,15 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 
 	// Find the longest prefix that parses as a valid number.
 	// Try longest first for efficiency.
+	// If the buffer starts with 0x/0X, it's a hex literal attempt;
+	// do not fall back to just "0" since the 0x signals hex intent.
+	isHexPrefix := len(buf) >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')
+	minEnd := 1
+	if isHexPrefix {
+		minEnd = 3 // must have at least one hex digit after "0x"
+	}
 	bestEnd := 0
-	for end := len(buf); end > 0; end-- {
+	for end := len(buf); end >= minEnd; end-- {
 		s := string(buf[:end])
 		if _, err := strconv.ParseInt(s, 0, 64); err == nil {
 			bestEnd = end

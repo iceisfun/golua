@@ -398,8 +398,15 @@ func readNumberFromReader(reader *bufio.Reader) (string, error) {
 	if len(buf) == 0 {
 		return "", fmt.Errorf("not a number")
 	}
+	// Detect hex prefix: if buffer starts with 0x/0X, only accept hex parses.
+	// Do not allow falling back to just "0" since the 0x signals hex intent.
+	isHexPrefix := len(buf) >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')
+	minEnd := 1
+	if isHexPrefix {
+		minEnd = 3 // must have at least one hex digit after "0x"
+	}
 	bestEnd := 0
-	for end := len(buf); end > 0; end-- {
+	for end := len(buf); end >= minEnd; end-- {
 		s := string(buf[:end])
 		if _, err := strconv.ParseInt(s, 0, 64); err == nil {
 			bestEnd = end
@@ -438,7 +445,14 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 		if name.IsNil() {
 			callerArgError(v, 1, "io.open", "string expected, got nil")
 		}
-		nameStr := name.AsString()
+		var nameStr string
+		if name.IsString() {
+			nameStr = name.AsString()
+		} else if name.IsNumber() {
+			nameStr = vm.ValueToString(name)
+		} else {
+			callerArgError(v, 1, "io.open", fmt.Sprintf("string expected, got %s", name.Type()))
+		}
 		mode := "r"
 		if !v.Get(2).IsNil() {
 			mode = v.Get(2).AsString()
@@ -684,12 +698,16 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 			return 1
 		}
 
-		if arg.IsString() {
-			// Open file as default input
-			f, err := provider.Open(arg.AsString(), "r")
+		if arg.IsString() || arg.IsNumber() {
+			// Open file as default input (coerce numbers to strings)
+			fname := vm.ValueToString(arg)
+			if arg.IsString() {
+				fname = arg.AsString()
+			}
+			f, err := provider.Open(fname, "r")
 			if err != nil {
 				_, errDesc := extractLuaFileError(err)
-				panic(fmt.Sprintf("cannot open file '%s' (%s)", arg.AsString(), errDesc))
+				panic(fmt.Sprintf("cannot open file '%s' (%s)", fname, errDesc))
 			}
 			handle := makeFileHandle(f)
 			ioTable.SetString("__input", handle)
@@ -715,12 +733,16 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 			return 1
 		}
 
-		if arg.IsString() {
-			// Open file as default output
-			f, err := provider.Open(arg.AsString(), "w")
+		if arg.IsString() || arg.IsNumber() {
+			// Open file as default output (coerce numbers to strings)
+			fname := vm.ValueToString(arg)
+			if arg.IsString() {
+				fname = arg.AsString()
+			}
+			f, err := provider.Open(fname, "w")
 			if err != nil {
 				_, errDesc := extractLuaFileError(err)
-				panic(fmt.Sprintf("cannot open file '%s' (%s)", arg.AsString(), errDesc))
+				panic(fmt.Sprintf("cannot open file '%s' (%s)", fname, errDesc))
 			}
 			handle := makeFileHandle(f)
 			ioTable.SetString("__output", handle)
