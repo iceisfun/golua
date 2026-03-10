@@ -63,9 +63,8 @@ func makeFileHandleWithClose(f vm.LuaFile, closeFn func(*vm.VM, *fileHandle) int
 }
 
 // fileMethodArgError raises a "bad argument" error for file methods.
-// Unlike callerArgError, this does not adjust the arg index for method calls
-// and uses '?' as the function name, matching Lua 5.4 behavior for file methods
-// dispatched via __index.
+// idx is the user-visible argument number (1 for the first arg after self).
+// This does not perform method detection; callers must pass already-adjusted indices.
 func fileMethodArgError(v *vm.VM, idx int, fallback, msg string) {
 	name, _ := v.CallerFuncName()
 	if name == "" {
@@ -841,7 +840,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 			// Read N bytes
 			count, ok := arg.ToInt()
 			if !ok {
-				callerArgError(v, results+1, "read", "number has no integer representation")
+				fileMethodArgError(v, results+1, "read", "number has no integer representation")
 			}
 			if count < 0 {
 				panic("not enough memory")
@@ -867,8 +866,8 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 			// Validate format before calling provider
 			cleanFmt := strings.TrimPrefix(format, "*")
 			if len(cleanFmt) == 0 || (cleanFmt[0] != 'a' && cleanFmt[0] != 'l' && cleanFmt[0] != 'L' && cleanFmt[0] != 'n') {
-				// Use results+1 as the argument index (1-based, for the format arg)
-				callerArgError(v, results+1, "read", "invalid format")
+				// Use results+1 as the user-visible argument index (1-based, for the format arg)
+				fileMethodArgError(v, results+1, "read", "invalid format")
 			}
 			data, err := f.Read(format)
 			if err != nil {
@@ -933,7 +932,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 				}
 			}
 		} else {
-			callerArgError(v, i-firstArg+1, "io.write", fmt.Sprintf("string expected, got %s", arg.Type()))
+			fileMethodArgError(v, i-firstArg+1, "write", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
 		err := f.Write(s)
 		if err != nil {
@@ -1029,7 +1028,7 @@ func fileSeek(v *vm.VM) int {
 	case "set", "cur", "end":
 		// valid
 	default:
-		fileMethodArgError(v, 2, "seek", fmt.Sprintf("invalid option '%s'", whence))
+		fileMethodArgError(v, 1, "seek", fmt.Sprintf("invalid option '%s'", whence))
 	}
 
 	var offset int64
@@ -1037,7 +1036,7 @@ func fileSeek(v *vm.VM) int {
 		var ok bool
 		offset, ok = v.Get(3).ToInt()
 		if !ok {
-			fileMethodArgError(v, 3, "seek", "number expected")
+			fileMethodArgError(v, 2, "seek", "number expected")
 		}
 	}
 
@@ -1068,7 +1067,7 @@ func fileSetVBuf(v *vm.VM) int {
 	if !v.Get(3).IsNil() {
 		sz, ok := v.Get(3).ToInt()
 		if !ok {
-			fileMethodArgError(v, 3, "setvbuf", "number expected")
+			fileMethodArgError(v, 2, "setvbuf", "number expected")
 		}
 		size = int(sz)
 	}
@@ -1078,7 +1077,7 @@ func fileSetVBuf(v *vm.VM) int {
 	case "no", "full", "line":
 		// valid
 	default:
-		fileMethodArgError(v, 2, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
+		fileMethodArgError(v, 1, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
 	}
 
 	err := fh.file.SetVBuf(modeStr, size)

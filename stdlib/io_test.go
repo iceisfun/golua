@@ -306,7 +306,7 @@ func TestFileSeekInvalidWhenceArgNum(t *testing.T) {
 	writeFile(t, dir, "test.txt", "hello")
 	runLuaWithDirExpectError(t, dir, `local f = io.open("test.txt", "r")
 f:seek("invalid")
-f:close()`, "bad argument #2")
+f:close()`, "bad argument #1")
 }
 
 // --- Bug 20: file:setvbuf invalid mode arg number ---
@@ -315,7 +315,7 @@ func TestFileSetvbufInvalidModeArgNum(t *testing.T) {
 	writeFile(t, dir, "test.txt", "hello")
 	runLuaWithDirExpectError(t, dir, `local f = io.open("test.txt", "r")
 f:setvbuf("invalid")
-f:close()`, "bad argument #2")
+f:close()`, "bad argument #1")
 }
 
 // --- Bug 21: io.lines(filename) should return 4 values ---
