@@ -844,9 +844,9 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 		return "", Nil, false
 	}
 	if name == "?" {
-		if !active || !vm.inHook {
-			return "", Nil, false
-		}
+		// Lua 5.4 exposes unnamed registers within the frame as "(temporary)"
+		// for both the current frame and non-current frames, not just hooks.
+		// The limit check above already ensures we're within the valid range.
 		name = "(temporary)"
 	}
 	val := Nil
@@ -858,18 +858,45 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 }
 
 func (vm *VM) frameStackLimit(stack []callFrame, idx, maxStack int, active bool) int {
-	limit := vm.top
-	if !active {
-		limit = stack[idx].base + maxStack
+	frame := &stack[idx]
+
+	// Current frame (topmost): limit = vm.top, matching C Lua's L->top.p.
+	if idx+1 >= len(stack) {
+		if active {
+			limit := vm.top
+			// Ensure at least maxStack registers are accessible
+			frameLimit := frame.base + maxStack
+			if frameLimit > limit {
+				limit = frameLimit
+			}
+			return limit
+		}
+		return frame.base + maxStack
 	}
-	if idx+1 < len(stack) {
-		limit = stack[idx+1].base
+
+	// Non-current frame: match C Lua's ci->next->func.p.
+	// For native next frames, stack[idx+1].base is already the CALL
+	// register (frame.base + A), which is correct.
+	// For Lua next frames, base = caller.base + MaxStack (frames don't
+	// overlap in GoLua), which is too large. Derive the correct limit
+	// from the CALL instruction in the current frame's bytecode.
+	nextFrame := &stack[idx+1]
+	if nextFrame.closure != nil && frame.closure != nil {
+		proto := frame.closure.Proto
+		pc := frame.pc - 1
+		if pc >= 0 && pc < len(proto.Code) {
+			inst := proto.Code[pc]
+			op := inst.OpCode()
+			if op == compiler.OP_CALL || op == compiler.OP_TAILCALL {
+				return frame.base + inst.A()
+			}
+		}
+		// Fallback: use maxStack for Lua next frames if we can't find
+		// the CALL instruction (e.g., TFORCALL or other dispatchers).
+		return frame.base + maxStack
 	}
-	frameLimit := stack[idx].base + maxStack
-	if frameLimit > limit {
-		limit = frameLimit
-	}
-	return limit
+
+	return nextFrame.base
 }
 
 func activeLines(proto *compiler.Proto) map[int]bool {
@@ -1028,9 +1055,8 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 		return "", false
 	}
 	if name == "?" {
-		if !active || !vm.inHook {
-			return "", false
-		}
+		// Lua 5.4 exposes unnamed registers within the frame as "(temporary)"
+		// for both the current frame and non-current frames, not just hooks.
 		name = "(temporary)"
 	}
 	if stackIdx >= 0 && stackIdx < len(vm.stack) {
