@@ -589,6 +589,7 @@ func formatSubnormalHexFloat(f float64, mantissa uint64, prec int, forceDecimal 
 		for i, c := range hexDigits {
 			digits[i] = hexCharToInt(byte(c))
 		}
+		overflow := false
 		for len(digits) <= prec {
 			digits = append(digits, 0)
 		}
@@ -629,10 +630,24 @@ func formatSubnormalHexFloat(f float64, mantissa uint64, prec int, forceDecimal 
 						carry = 0
 					}
 				}
+				if carry > 0 {
+					overflow = true
+				}
 			}
 		}
-		for _, d := range digits[:prec] {
-			b.WriteByte(intToHexChar(d))
+		if overflow {
+			b.Reset()
+			if neg {
+				b.WriteByte('-')
+			}
+			b.WriteString("0x1.")
+			for i := 0; i < prec; i++ {
+				b.WriteByte('0')
+			}
+		} else {
+			for _, d := range digits[:prec] {
+				b.WriteByte(intToHexChar(d))
+			}
 		}
 	}
 	b.WriteString("p-1022")

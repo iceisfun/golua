@@ -164,6 +164,8 @@ do
     local p = string.format("%p", id)
     assert(p:match("^0x[0-9a-f]+$"), "userdata %p should be a pointer, got: " .. tostring(p))
 end
+assert(string.format("%.1a", 0x0.fffffffffffffp-1022) == "0x1.0p-1022",
+  "subnormal %a rounding should carry into leading digit")
 
 -- Integer specs must reject non-integer numbers
 do
