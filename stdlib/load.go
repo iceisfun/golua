@@ -386,6 +386,7 @@ func luaLoadfile(v *vm.VM) int {
 
 	// Get filename
 	filename := ""
+	useStdin := v.ArgCount() < 1 || v.Get(1).IsNil()
 	if !v.Get(1).IsNil() {
 		arg1 := v.Get(1)
 		if arg1.IsString() || arg1.IsNumber() {
@@ -410,7 +411,7 @@ func luaLoadfile(v *vm.VM) int {
 	var source []byte
 	var chunkName string
 	var err error
-	if filename == "" {
+	if useStdin {
 		source, chunkName, err = readChunkFromStdin()
 	} else {
 		ctx := v.CallerContext()
@@ -478,6 +479,7 @@ func luaDofile(v *vm.VM) int {
 
 	// Get filename
 	filename := ""
+	useStdin := v.ArgCount() < 1 || v.Get(1).IsNil()
 	if !v.Get(1).IsNil() {
 		arg1 := v.Get(1)
 		if arg1.IsString() || arg1.IsNumber() {
@@ -490,7 +492,7 @@ func luaDofile(v *vm.VM) int {
 	var source []byte
 	var chunkName string
 	var err error
-	if filename == "" {
+	if useStdin {
 		source, chunkName, err = readChunkFromStdin()
 	} else {
 		ctx := v.CallerContext()
