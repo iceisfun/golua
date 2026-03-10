@@ -114,7 +114,7 @@ func readChunkFromStdin() ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return data, "stdin", nil
+	return data, "=stdin", nil
 }
 
 // load(chunk [, chunkname [, mode [, env]]])
