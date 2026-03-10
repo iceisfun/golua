@@ -2,6 +2,7 @@ package golua_test
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,6 +82,27 @@ func runLuaSourceWithProvider(t *testing.T, source, name string, provider vm.Lua
 	if err != nil {
 		t.Fatalf("runtime error: %v", err)
 	}
+}
+
+func withStdin(t *testing.T, data string, fn func()) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdin := os.Stdin
+	os.Stdin = r
+	defer func() {
+		os.Stdin = oldStdin
+		_ = r.Close()
+	}()
+
+	go func() {
+		_, _ = io.WriteString(w, data)
+		_ = w.Close()
+	}()
+
+	fn()
 }
 
 // Test load() with a string
@@ -464,6 +486,18 @@ func TestLoadfile_NumberFilenameCoercion(t *testing.T) {
 	runLuaSourceWithProvider(t, source, "test", provider)
 }
 
+func TestLoadfile_UsesStdinWhenFilenameOmitted(t *testing.T) {
+	provider := vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{AllowDofile: true, AllowLoadfile: true})
+	withStdin(t, "return 42\n", func() {
+		runLuaSourceWithProvider(t, `
+			local f, err = loadfile()
+			assert(type(f) == "function", tostring(err))
+			assert(err == nil)
+			assert(f() == 42)
+		`, "test_loadfile_stdin", provider)
+	})
+}
+
 func TestLoadfile_BadFilenameType(t *testing.T) {
 	provider := newMockProvider(map[string]string{})
 	source := `
@@ -485,6 +519,15 @@ func TestDofile_NumberFilenameCoercion(t *testing.T) {
 		assert(got == "num-ok", "expected num-ok, got " .. tostring(got))
 	`
 	runLuaSourceWithProvider(t, source, "test", provider)
+}
+
+func TestDofile_UsesStdinWhenFilenameOmitted(t *testing.T) {
+	provider := vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{AllowDofile: true, AllowLoadfile: true})
+	withStdin(t, "return 42\n", func() {
+		runLuaSourceWithProvider(t, `
+			assert(dofile() == 42)
+		`, "test_dofile_stdin", provider)
+	})
 }
 
 func TestDofile_BadFilenameType(t *testing.T) {
@@ -610,23 +653,27 @@ func TestLoadfile_MissingChunkProviderError(t *testing.T) {
 	runLuaSourceWithProvider(t, source, "test", provider)
 }
 
-func TestLoadfile_EmptyFilenamePassesToProvider(t *testing.T) {
-	provider := newMockProvider(map[string]string{"": `return "empty"`})
-	source := `
-		local f, err = loadfile()
-		assert(f, err)
-		assert(f() == "empty", "expected provider-backed empty-name chunk")
-	`
-	runLuaSourceWithProvider(t, source, "test", provider)
+func TestLoadfile_EmptyFilenameReadsStdin(t *testing.T) {
+	provider := newMockProvider(map[string]string{})
+	withStdin(t, "return 42\n", func() {
+		source := `
+			local f, err = loadfile()
+			assert(f, err)
+			assert(f() == 42, "expected stdin-backed chunk")
+		`
+		runLuaSourceWithProvider(t, source, "test", provider)
+	})
 }
 
-func TestDofile_EmptyFilenamePassesToProvider(t *testing.T) {
-	provider := newMockProvider(map[string]string{"": `return "empty"`})
-	source := `
-		local r = dofile()
-		assert(r == "empty", "expected provider-backed empty-name chunk")
-	`
-	runLuaSourceWithProvider(t, source, "test", provider)
+func TestDofile_EmptyFilenameReadsStdin(t *testing.T) {
+	provider := newMockProvider(map[string]string{})
+	withStdin(t, "return 42\n", func() {
+		source := `
+			local r = dofile()
+			assert(r == 42, "expected stdin-backed chunk")
+		`
+		runLuaSourceWithProvider(t, source, "test", provider)
+	})
 }
 
 func TestDofile_CompileErrorMessageIncludesChunkName(t *testing.T) {

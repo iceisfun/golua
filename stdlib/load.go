@@ -2,6 +2,8 @@ package stdlib
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/iceisfun/golua/compiler"
@@ -105,6 +107,14 @@ func openLoad(v *vm.VM) {
 			v.SetGlobal("dofile", vm.NewNativeFunc(luaDofile))
 		}
 	}
+}
+
+func readChunkFromStdin() ([]byte, string, error) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return nil, "", err
+	}
+	return data, "stdin", nil
 }
 
 // load(chunk [, chunkname [, mode [, env]]])
@@ -397,9 +407,15 @@ func luaLoadfile(v *vm.VM) int {
 	env := v.Get(3)
 	hasEnv := v.ArgCount() >= 3
 
-	// Load the source via the code provider
-	ctx := v.CallerContext()
-	source, chunkName, err := provider.LoadChunk(filename, ctx)
+	var source []byte
+	var chunkName string
+	var err error
+	if filename == "" {
+		source, chunkName, err = readChunkFromStdin()
+	} else {
+		ctx := v.CallerContext()
+		source, chunkName, err = provider.LoadChunk(filename, ctx)
+	}
 	if err != nil {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(err.Error()))
@@ -471,9 +487,15 @@ func luaDofile(v *vm.VM) int {
 		}
 	}
 
-	// Load the source via the code provider
-	ctx := v.CallerContext()
-	source, chunkName, err := provider.LoadChunk(filename, ctx)
+	var source []byte
+	var chunkName string
+	var err error
+	if filename == "" {
+		source, chunkName, err = readChunkFromStdin()
+	} else {
+		ctx := v.CallerContext()
+		source, chunkName, err = provider.LoadChunk(filename, ctx)
+	}
 	if err != nil {
 		panic(err.Error())
 	}
