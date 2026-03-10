@@ -515,7 +515,7 @@ func (v Value) String() string {
 	case typeFunction:
 		return fmt.Sprintf("function: %p", v.ptr)
 	case typeNativeFunc:
-		return fmt.Sprintf("function: 0x%x", v.ptr.(*nativeFuncBox).ptr)
+		return fmt.Sprintf("function: %p", v.ptr)
 	case typeUpvalue:
 		return fmt.Sprintf("userdata: %p", v.ptr)
 	default:
@@ -542,7 +542,7 @@ func (v Value) PointerString() string {
 	case typeFunction:
 		return fmt.Sprintf("%p", v.ptr)
 	case typeNativeFunc:
-		return fmt.Sprintf("0x%x", v.ptr.(*nativeFuncBox).ptr)
+		return fmt.Sprintf("%p", v.ptr)
 	default:
 		return "(null)"
 	}

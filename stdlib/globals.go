@@ -886,7 +886,7 @@ func valueToString(val vm.Value) string {
 	case val.IsFunction():
 		return fmt.Sprintf("function: %p", val.AsClosure())
 	case val.IsNativeFunc():
-		return "function: (native)"
+		return "function: " + val.PointerString()
 	case val.IsUserdata():
 		ud := val.AsUserdata()
 		if mt := ud.Metatable(); mt != nil {
