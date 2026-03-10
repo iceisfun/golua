@@ -279,6 +279,9 @@ func luaUtf8Codes(v *vm.VM) int {
 
 	// Lax mode (arg 2): when true, accept extended codepoints (> U+10FFFF)
 	lax := v.Get(2).ToBool()
+	if !lax && len(s) > 0 && !utf8.RuneStart(s[0]) {
+		callerArgError(v, 1, "utf8.codes", "invalid UTF-8 code")
+	}
 
 	// Return iterator, string, initial state (0)
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
@@ -330,10 +333,9 @@ func luaUtf8Codes(v *vm.VM) int {
 			return 2
 		}
 
-		// In strict mode, a stray continuation byte stops iteration.
+		// In strict mode, stray continuation bytes are invalid.
 		if !utf8.RuneStart(str[n]) {
-			v.Set(0, vm.Nil)
-			return 1
+			panic("invalid UTF-8 code")
 		}
 
 		r, size := utf8.DecodeRuneInString(str[n:])
