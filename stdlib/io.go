@@ -101,7 +101,7 @@ func openIo(v *vm.VM) {
 		ioTable.SetString("lines", vm.NewNativeFunc(makeIoLines(v, provider)))
 	}
 
-	ioTable.SetString("close", vm.NewNativeFunc(makeIoClose(provider)))
+	ioTable.SetString("close", vm.NewNativeFunc(makeIoClose(ioTable)))
 	if caps.AllowWrite {
 		ioTable.SetString("flush", vm.NewNativeFunc(makeIoFlush(provider)))
 	}
@@ -220,14 +220,16 @@ func makeIoTmpfile(provider vm.LuaIoProvider) vm.NativeFunc {
 }
 
 // makeIoClose creates the io.close([file]) function.
-func makeIoClose(provider vm.LuaIoProvider) vm.NativeFunc {
+func makeIoClose(ioTable *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		val := v.Get(1)
 		if val.IsNil() {
-			// Close default output - standard files cannot be closed
-			v.Set(0, vm.Nil)
-			v.Set(1, vm.NewString("cannot close standard file"))
-			return 2
+			val = ioTable.Get(vm.NewString("__output"))
+			if val.IsNil() {
+				v.Set(0, vm.Nil)
+				v.Set(1, vm.NewString("cannot close standard file"))
+				return 2
+			}
 		}
 
 		fh := getFileHandle(v, val, "io.close")
@@ -526,7 +528,13 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 	for _, arg := range formats {
 		if arg.IsNumber() {
 			// Read N bytes
-			count, _ := arg.ToInt()
+			count, ok := arg.ToInt()
+			if !ok {
+				callerArgError(v, results+1, "read", "number has no integer representation")
+			}
+			if count < 0 {
+				panic("not enough memory")
+			}
 			if count == 0 {
 				// Read 0 bytes: test if at EOF
 				data, err := f.ReadBytes(0)

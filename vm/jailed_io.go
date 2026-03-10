@@ -137,6 +137,9 @@ func (f *jailedFile) ReadBytes(n int) (string, error) {
 		}
 		return "", nil
 	}
+	if n < 0 {
+		return "", fmt.Errorf("not enough memory")
+	}
 
 	buf := make([]byte, n)
 	nRead, err := io.ReadFull(f.reader, buf)

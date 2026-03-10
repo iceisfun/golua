@@ -201,6 +201,9 @@ func (f *fullFile) ReadBytes(n int) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to use a closed file")
 	}
+	if n < 0 {
+		return "", fmt.Errorf("not enough memory")
+	}
 	if n == 0 {
 		// EOF test: peek 1 byte to check if data remains
 		_, err := f.reader.Peek(1)

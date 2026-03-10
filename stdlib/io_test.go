@@ -273,6 +273,33 @@ assert(msg == "cannot close standard file", "expected 'cannot close standard fil
 `)
 }
 
+func TestIoCloseNoArgClosesCurrentDefaultOutput(t *testing.T) {
+	dir := t.TempDir()
+	runLuaWithDir(t, dir, `
+local f = assert(io.open("out.txt", "w"))
+assert(io.output(f) == f)
+assert(io.close() == true)
+assert(io.output() == f)
+assert(io.type(f) == "closed file")
+`)
+}
+
+func TestIoReadNegativeCount(t *testing.T) {
+	runLuaExpectError(t, `io.read(-1)`, "not enough memory")
+}
+
+func TestFileReadNegativeCount(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test.txt", "hello")
+	runLuaWithDirExpectError(t, dir, `local f = assert(io.open("test.txt", "r")); f:read(-1)`, "not enough memory")
+}
+
+func TestFileReadNonIntegralCount(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "test.txt", "hello")
+	runLuaWithDirExpectError(t, dir, `local f = assert(io.open("test.txt", "r")); f:read(-1.5)`, "number has no integer representation")
+}
+
 // --- Bug 19: file:seek invalid whence arg number ---
 func TestFileSeekInvalidWhenceArgNum(t *testing.T) {
 	dir := t.TempDir()
