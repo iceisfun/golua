@@ -81,7 +81,7 @@ do
   end
 
   assert(math.type(0) == "integer" and math.type(0.0) == "float"
-         and math.type("10") == false)
+         and math.type("10") == nil)
 end
 
 -- --------------------------------------------------------------------------

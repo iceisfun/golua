@@ -5,12 +5,12 @@ do
     assert(math.type(123) == "integer", "math.type(123)")
     assert(math.type(123.0) == "float", "math.type(123.0)")
 
-    -- non-number types return false per Lua 5.4
-    assert(math.type("123") == false, "math.type('123') should be false")
-    assert(math.type("x") == false, "math.type on string should be false")
-    assert(math.type(nil) == false, "math.type(nil) should be false")
-    assert(math.type(true) == false, "math.type on boolean should be false")
-    assert(math.type({}) == false, "math.type on table should be false")
+    -- non-number types return nil per Lua 5.4 (luaL_pushfail is nil)
+    assert(math.type("123") == nil, "math.type('123') should be nil")
+    assert(math.type("x") == nil, "math.type on string should be nil")
+    assert(math.type(nil) == nil, "math.type(nil) should be nil")
+    assert(math.type(true) == nil, "math.type on boolean should be nil")
+    assert(math.type({}) == nil, "math.type on table should be nil")
 end
 
 -- math.tointeger
