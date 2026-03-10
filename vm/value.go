@@ -42,6 +42,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -56,6 +57,27 @@ type nativeFuncBox struct {
 }
 
 var emptyStringSentinel byte
+
+var (
+	stringPointerMu  sync.Mutex
+	stringPointerIDs = map[string]*stringPointerToken{}
+)
+
+type stringPointerToken struct{ _ byte }
+
+func stringPointerID(s string) any {
+	if s == "" {
+		return &emptyStringSentinel
+	}
+	stringPointerMu.Lock()
+	defer stringPointerMu.Unlock()
+	if id, ok := stringPointerIDs[s]; ok {
+		return id
+	}
+	id := &stringPointerToken{}
+	stringPointerIDs[s] = id
+	return id
+}
 
 // Value represents a Lua runtime value using a tagged union for efficiency.
 // The zero value is nil. Values are compared by value for primitive types
@@ -531,6 +553,9 @@ func (v Value) PointerString() string {
 		return fmt.Sprintf("%p", v.ptr)
 	case typeString:
 		s := v.ptr.(string)
+		if len(s) <= 40 {
+			return fmt.Sprintf("%p", stringPointerID(s))
+		}
 		if len(s) == 0 {
 			return fmt.Sprintf("%p", &emptyStringSentinel)
 		}
@@ -542,6 +567,8 @@ func (v Value) PointerString() string {
 	case typeFunction:
 		return fmt.Sprintf("%p", v.ptr)
 	case typeNativeFunc:
+		return fmt.Sprintf("%p", v.ptr)
+	case typeUpvalue:
 		return fmt.Sprintf("%p", v.ptr)
 	default:
 		return "(null)"

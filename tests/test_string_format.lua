@@ -148,6 +148,22 @@ do
     local r = string.format("=%p=", t)
     assert(r:match("^=0x[0-9a-f]+="), "format %p table should give hex pointer")
 end
+do
+    local a = "ab"
+    local b = table.concat({"a", "b"})
+    assert(a == b)
+    assert(string.format("%p", a) == string.format("%p", b),
+      "equal strings should share %p identity")
+end
+do
+    local x = 1
+    local function f()
+        return x
+    end
+    local id = debug.upvalueid(f, 1)
+    local p = string.format("%p", id)
+    assert(p:match("^0x[0-9a-f]+$"), "userdata %p should be a pointer, got: " .. tostring(p))
+end
 
 -- Integer specs must reject non-integer numbers
 do

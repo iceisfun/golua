@@ -40,7 +40,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				callerArgError(v, argIdx+2, "string.format", "no value")
 			}
 			argIdx++
-			panic("invalid conversion '%\x00' to 'format'")
+			panic("invalid conversion '%' to 'format'")
 		}
 
 		i++

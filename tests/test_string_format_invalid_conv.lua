@@ -38,3 +38,8 @@ assert(not ok)
 assert(err:find("invalid conversion specification:", 1, true),
   "expected 'invalid conversion specification:', got: " .. err)
 
+-- Test 6: trailing % should not mention a NUL byte
+ok, err = pcall(string.format, "%", 1)
+assert(not ok)
+assert(err == "invalid conversion '%' to 'format'",
+  "unexpected trailing percent error: " .. tostring(err))
