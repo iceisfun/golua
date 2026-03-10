@@ -1,6 +1,8 @@
 package stdlib
 
 import (
+	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -43,13 +45,20 @@ func init() {
 
 // fileHandle is the Go data stored inside a file userdata value.
 type fileHandle struct {
-	file   vm.LuaFile
-	closed bool
+	file      vm.LuaFile
+	closed    bool
+	closeFn   func(*vm.VM, *fileHandle) int
+	gcCloseFn func(*fileHandle)
 }
 
 // makeFileHandle creates a file handle userdata wrapping a LuaFile.
 func makeFileHandle(f vm.LuaFile) vm.Value {
 	fh := &fileHandle{file: f}
+	return vm.NewUserdataValue(fh, fileHandleMeta)
+}
+
+func makeFileHandleWithClose(f vm.LuaFile, closeFn func(*vm.VM, *fileHandle) int, gcCloseFn func(*fileHandle)) vm.Value {
+	fh := &fileHandle{file: f, closeFn: closeFn, gcCloseFn: gcCloseFn}
 	return vm.NewUserdataValue(fh, fileHandleMeta)
 }
 
@@ -100,6 +109,9 @@ func openIo(v *vm.VM) {
 		ioTable.SetString("open", vm.NewNativeFunc(makeIoOpen(v, provider)))
 		ioTable.SetString("lines", vm.NewNativeFunc(makeIoLines(v, provider)))
 	}
+	if v.ProcessProvider() != nil {
+		ioTable.SetString("popen", vm.NewNativeFunc(makeIoPopen(v.ProcessProvider())))
+	}
 
 	ioTable.SetString("close", vm.NewNativeFunc(makeIoClose(ioTable)))
 	if caps.AllowWrite {
@@ -143,6 +155,280 @@ func openIo(v *vm.VM) {
 	ioTable.SetString("output", vm.NewNativeFunc(makeIoOutput(v, provider, ioTable)))
 
 	v.SetGlobal("io", ioVal)
+}
+
+type processReadCloser struct{ proc vm.LuaProcess }
+
+func (p processReadCloser) Read(buf []byte) (int, error) { return p.proc.Read(buf) }
+
+type popenFile struct {
+	proc        vm.LuaProcess
+	mode        string
+	reader      *bufio.Reader
+	closed      bool
+	stdinClosed bool
+	result      vm.ProcessResult
+	waited      bool
+}
+
+func makeIoPopen(provider vm.LuaProcessProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		cmd := getString(v, 1, "io.popen")
+		mode := "r"
+		if !v.Get(2).IsNil() {
+			mode = getString(v, 2, "io.popen")
+		}
+		if mode != "r" && mode != "w" && mode != "rb" && mode != "wb" {
+			callerArgError(v, 2, "io.popen", "invalid mode")
+		}
+
+		ctx := v.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		opts := vm.ProcessOptions{}
+		if mode[0] == 'r' {
+			opts.Stdout = true
+		} else {
+			opts.Stdin = true
+		}
+		proc, err := provider.Spawn(ctx, "sh", []string{"-c", cmd}, opts)
+		if err != nil {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString(err.Error()))
+			return 2
+		}
+		pf := &popenFile{proc: proc, mode: string(mode[0])}
+		if pf.mode == "r" {
+			pf.reader = bufio.NewReader(processReadCloser{proc: proc})
+		}
+		v.Set(0, makeFileHandleWithClose(pf, popenClose, popenCloseGC))
+		return 1
+	}
+}
+
+func (f *popenFile) Read(format string) (string, error) {
+	if f.closed {
+		return "", fmt.Errorf("attempt to use a closed file")
+	}
+	if f.mode != "r" {
+		return "", fmt.Errorf("file not opened for reading")
+	}
+	if f.reader == nil {
+		f.reader = bufio.NewReader(processReadCloser{proc: f.proc})
+	}
+	clean := strings.TrimPrefix(format, "*")
+	switch clean {
+	case "a":
+		data, err := io.ReadAll(f.reader)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	case "l":
+		return popenReadLine(f.reader, false)
+	case "L":
+		return popenReadLine(f.reader, true)
+	case "n":
+		return readNumberFromReader(f.reader)
+	default:
+		return "", fmt.Errorf("invalid read format: %s", format)
+	}
+}
+
+func (f *popenFile) ReadBytes(n int) (string, error) {
+	if f.closed {
+		return "", fmt.Errorf("attempt to use a closed file")
+	}
+	if f.mode != "r" {
+		return "", fmt.Errorf("file not opened for reading")
+	}
+	if n < 0 {
+		return "", fmt.Errorf("not enough memory")
+	}
+	if f.reader == nil {
+		f.reader = bufio.NewReader(processReadCloser{proc: f.proc})
+	}
+	if n == 0 {
+		_, err := f.reader.Peek(1)
+		if err != nil {
+			return "", io.EOF
+		}
+		return "", nil
+	}
+	buf := make([]byte, n)
+	read, err := io.ReadFull(f.reader, buf)
+	if read == 0 && err != nil {
+		return "", err
+	}
+	return string(buf[:read]), nil
+}
+
+func (f *popenFile) Write(data string) error {
+	if f.closed {
+		return fmt.Errorf("attempt to use a closed file")
+	}
+	if f.mode != "w" {
+		return fmt.Errorf("file not opened for writing")
+	}
+	_, err := f.proc.Write([]byte(data))
+	return err
+}
+
+func (f *popenFile) Seek(whence string, offset int64) (int64, error) {
+	return 0, fmt.Errorf("seek not supported on popen file")
+}
+
+func (f *popenFile) Flush() error { return nil }
+
+func (f *popenFile) SetVBuf(mode string, size int) error { return nil }
+
+func (f *popenFile) Close() error {
+	if f.closed {
+		return fmt.Errorf("attempt to use a closed file")
+	}
+	if f.mode == "w" && !f.stdinClosed {
+		_ = f.proc.CloseStdin()
+		f.stdinClosed = true
+	}
+	if !f.waited {
+		f.result = f.proc.Wait()
+		f.waited = true
+	}
+	f.closed = true
+	return nil
+}
+
+func (f *popenFile) IsClosed() bool { return f.closed }
+
+func (f *popenFile) IsStd() bool { return false }
+
+func popenClose(v *vm.VM, fh *fileHandle) int {
+	if fh.closed || fh.file.IsClosed() {
+		panic("attempt to use a closed file")
+	}
+	pf, ok := fh.file.(*popenFile)
+	if !ok {
+		panic("invalid popen file")
+	}
+	if err := pf.Close(); err != nil {
+		v.Set(0, vm.Nil)
+		v.Set(1, vm.NewString(err.Error()))
+		return 2
+	}
+	fh.closed = true
+	setExecResult(v, pf.result)
+	return 3
+}
+
+func popenCloseGC(fh *fileHandle) {
+	if fh.closed || fh.file.IsClosed() {
+		return
+	}
+	_ = fh.file.Close()
+	fh.closed = true
+}
+
+func setExecResult(v *vm.VM, result vm.ProcessResult) {
+	if result.Signal != 0 {
+		v.Set(0, vm.Nil)
+		v.Set(1, vm.NewString("signal"))
+		v.Set(2, vm.NewInt(int64(result.Signal)))
+		return
+	}
+	if result.Success {
+		v.Set(0, vm.True)
+	} else {
+		v.Set(0, vm.Nil)
+	}
+	v.Set(1, vm.NewString("exit"))
+	v.Set(2, vm.NewInt(int64(result.Code)))
+}
+
+func popenReadLine(reader *bufio.Reader, keepNewline bool) (string, error) {
+	var line strings.Builder
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			if err == io.EOF {
+				if line.Len() > 0 {
+					return line.String(), nil
+				}
+				return "", io.EOF
+			}
+			return "", err
+		}
+		if b == '\n' {
+			if keepNewline {
+				line.WriteByte('\n')
+			}
+			return line.String(), nil
+		}
+		line.WriteByte(b)
+	}
+}
+
+func readNumberFromReader(reader *bufio.Reader) (string, error) {
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+			_ = reader.UnreadByte()
+			break
+		}
+	}
+
+	var buf []byte
+	offset := 0
+	for {
+		peeked, _ := reader.Peek(offset + 1)
+		if len(peeked) <= offset {
+			break
+		}
+		b := peeked[offset]
+		if isNumberChar(b) {
+			buf = append(buf, b)
+			offset++
+		} else {
+			break
+		}
+	}
+	if len(buf) == 0 {
+		return "", fmt.Errorf("not a number")
+	}
+	bestEnd := 0
+	for end := len(buf); end > 0; end-- {
+		s := string(buf[:end])
+		if _, err := strconv.ParseInt(s, 0, 64); err == nil {
+			bestEnd = end
+			break
+		}
+		if _, err := strconv.ParseFloat(s, 64); err == nil {
+			bestEnd = end
+			break
+		}
+	}
+	if bestEnd == 0 {
+		return "", fmt.Errorf("not a number")
+	}
+	_, _ = reader.Discard(bestEnd)
+	return string(buf[:bestEnd]), nil
+}
+
+func isNumberChar(b byte) bool {
+	if b >= '0' && b <= '9' {
+		return true
+	}
+	if b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F' {
+		return true
+	}
+	switch b {
+	case '.', '-', '+', 'e', 'E', 'x', 'X', 'p', 'P':
+		return true
+	}
+	return false
 }
 
 // makeIoOpen creates the io.open function.
@@ -233,6 +519,9 @@ func makeIoClose(ioTable *vm.Table) vm.NativeFunc {
 		}
 
 		fh := getFileHandle(v, val, "io.close")
+		if fh.closeFn != nil {
+			return fh.closeFn(v, fh)
+		}
 		if fh.file.IsStd() {
 			// Cannot close standard files - return nil, error
 			v.Set(0, vm.Nil)
@@ -641,6 +930,9 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 func fileClose(v *vm.VM) int {
 	self := v.Get(1)
 	fh := getFileHandle(v, self, "close")
+	if fh.closeFn != nil {
+		return fh.closeFn(v, fh)
+	}
 
 	if fh.file.IsStd() {
 		// Cannot close standard files
@@ -827,6 +1119,10 @@ func fileCloseGC(v *vm.VM) int {
 	}
 	fh, ok := ud.Data.(*fileHandle)
 	if !ok {
+		return 0
+	}
+	if fh.gcCloseFn != nil {
+		fh.gcCloseFn(fh)
 		return 0
 	}
 	if fh.closed || fh.file.IsClosed() || fh.file.IsStd() {
