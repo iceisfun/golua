@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // DirCodeProvider is a filesystem-based code provider that loads Lua files
@@ -67,7 +68,23 @@ func (p *DirCodeProvider) Capabilities() LuaLoaderCaps {
 func unwrapFileError(err error) error {
 	var pe *fs.PathError
 	if errors.As(err, &pe) {
-		return pe.Err
+		return capitalizeError(pe.Err)
 	}
-	return err
+	return capitalizeError(err)
+}
+
+// capitalizeError returns an error whose message has its first letter
+// capitalized. Go's syscall errors use lowercase ("no such file or directory")
+// but C's strerror uses title case ("No such file or directory").
+func capitalizeError(err error) error {
+	msg := err.Error()
+	if len(msg) == 0 {
+		return err
+	}
+	r := []rune(msg)
+	if unicode.IsUpper(r[0]) {
+		return err
+	}
+	r[0] = unicode.ToUpper(r[0])
+	return errors.New(string(r))
 }

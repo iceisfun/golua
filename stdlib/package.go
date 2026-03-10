@@ -16,7 +16,7 @@ func openPackage(v *vm.VM) {
 	loaded := vm.NewEmptyTable()
 	for _, name := range []string{
 		"string", "math", "table", "io", "os", "coroutine",
-		"debug", "utf8", "bit32", "package",
+		"debug", "utf8", "bit32", "package", "_G",
 	} {
 		val := v.GetGlobal(name)
 		if !val.IsNil() {
@@ -37,7 +37,7 @@ func openPackage(v *vm.VM) {
 	pkg.SetString("cpath", vm.NewString("?.so;?/init"))
 
 	// package.config (POSIX defaults)
-	pkg.SetString("config", vm.NewString("/\n;\n?\n!\n-"))
+	pkg.SetString("config", vm.NewString("/\n;\n?\n!\n-\n"))
 
 	// package.searchpath
 	pkg.SetString("searchpath", vm.NewNativeFunc(luaSearchPath))

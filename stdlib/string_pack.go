@@ -19,7 +19,7 @@ func getPackInt(v *vm.VM, idx int) int64 {
 		return i
 	}
 	if val.IsNumber() {
-		callerArgError(v, idx, "string.pack", "number has no integer representation")
+		callerArgError(v, idx, "pack", "number has no integer representation")
 	}
 	// Coerce strings to numbers (Lua 5.4 does this for pack)
 	if val.IsString() {
@@ -29,10 +29,10 @@ func getPackInt(v *vm.VM, idx int) int64 {
 			if float64(i) == n {
 				return i
 			}
-			callerArgError(v, idx, "string.pack", "number has no integer representation")
+			callerArgError(v, idx, "pack", "number has no integer representation")
 		}
 	}
-	callerArgError(v, idx, "string.pack", fmt.Sprintf("number expected, got %s", val.Type()))
+	callerArgError(v, idx, "pack", fmt.Sprintf("number expected, got %s", val.Type()))
 	return 0 // unreachable
 }
 
@@ -65,7 +65,7 @@ func parsePackSize(fmt string, pos int, dflt int) (int, int) {
 const maxPackSize = 0x7fffffff
 
 func luaFmtErr(msg string) string {
-	return fmt.Sprintf("bad argument #1 to 'string.pack' (string expected): %s", msg)
+	return fmt.Sprintf("bad argument #1 to 'pack' (string expected): %s", msg)
 }
 
 // getNatAlign returns the natural alignment for a data directive.
@@ -134,7 +134,7 @@ func isPow2(n int) bool {
 type formatState struct {
 	byteOrder binary.ByteOrder
 	maxAlign  int
-	funcName  string // e.g. "string.pack" for error messages
+	funcName  string // e.g. "pack" for error messages
 }
 
 func newFormatState(funcName string) *formatState {
@@ -162,10 +162,10 @@ func (fs *formatState) effectiveAlign(natAlign int) int {
 
 // stringPack implements string.pack(fmt, v1, v2, ...)
 func stringPack(v *vm.VM) int {
-	format := getString(v, 1, "string.pack")
+	format := getString(v, 1, "pack")
 	argIdx := 2
 	var buf bytes.Buffer
-	fs := newFormatState("string.pack")
+	fs := newFormatState("pack")
 
 	i := 0
 	for i < len(format) {
@@ -257,7 +257,7 @@ func stringPack(v *vm.VM) int {
 // getXAlign parses the directive after X and returns its natural alignment.
 func getXAlign(format string, i *int) int {
 	if *i >= len(format) {
-		panic("bad argument #1 to 'string.pack' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'pack' (invalid next option for option 'X')")
 	}
 	ch := format[*i]
 	*i++
@@ -289,14 +289,14 @@ func getXAlign(format string, i *int) int {
 		}
 		return size
 	case 'c', 'z', '<', '>', '=', '!', 'X':
-		panic("bad argument #1 to 'string.pack' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'pack' (invalid next option for option 'X')")
 	case ' ':
 		// skip spaces and try next
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
 		}
 		// but space is not a valid option after X
-		panic("bad argument #1 to 'string.pack' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'pack' (invalid next option for option 'X')")
 	default:
 		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}
@@ -319,12 +319,12 @@ func packInt(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, size int, 
 			lo := -(int64(1) << (uint(size)*8 - 1))
 			hi := (int64(1) << (uint(size)*8 - 1)) - 1
 			if val < lo || val > hi {
-				panic(fmt.Sprintf("bad argument #%d to 'string.pack' (integer overflow)", *argIdx-1))
+				panic(fmt.Sprintf("bad argument #%d to 'pack' (integer overflow)", *argIdx-1))
 			}
 		} else {
 			umax := uint64(1)<<(uint(size)*8) - 1
 			if val < 0 || uint64(val) > umax {
-				panic(fmt.Sprintf("bad argument #%d to 'string.pack' (unsigned overflow)", *argIdx-1))
+				panic(fmt.Sprintf("bad argument #%d to 'pack' (unsigned overflow)", *argIdx-1))
 			}
 		}
 	} else if size == 8 && !signed {
@@ -374,7 +374,7 @@ func packFloat32(v *vm.VM, buf *bytes.Buffer, fs *formatState, argIdx *int) {
 		buf.WriteByte(0)
 	}
 
-	val := getNumber(v, *argIdx, "string.pack")
+	val := getNumber(v, *argIdx, "pack")
 	*argIdx++
 
 	bits := math.Float32bits(float32(val))
@@ -395,7 +395,7 @@ func packFloat64(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, argIdx
 		buf.WriteByte(0)
 	}
 
-	val := getNumber(v, *argIdx, "string.pack")
+	val := getNumber(v, *argIdx, "pack")
 	*argIdx++
 
 	bits := math.Float64bits(val)
@@ -409,11 +409,11 @@ func packFloat64(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, argIdx
 }
 
 func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int, argIdx *int) {
-	s := getString(v, *argIdx, "string.pack")
+	s := getString(v, *argIdx, "pack")
 	*argIdx++
 
 	if len(s) > size {
-		panic(fmt.Sprintf("bad argument #%d to 'string.pack' (string longer than given size)", *argIdx-1))
+		panic(fmt.Sprintf("bad argument #%d to 'pack' (string longer than given size)", *argIdx-1))
 	}
 	buf.WriteString(s)
 	// pad with zeros
@@ -423,18 +423,18 @@ func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int, arg
 }
 
 func packZeroTermString(v *vm.VM, buf *bytes.Buffer, argIdx *int) {
-	s := getString(v, *argIdx, "string.pack")
+	s := getString(v, *argIdx, "pack")
 	*argIdx++
 
 	if strings.ContainsRune(s, '\x00') {
-		panic(fmt.Sprintf("bad argument #%d to 'string.pack' (string contains zeros)", *argIdx-1))
+		panic(fmt.Sprintf("bad argument #%d to 'pack' (string contains zeros)", *argIdx-1))
 	}
 	buf.WriteString(s)
 	buf.WriteByte(0)
 }
 
 func packSizedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, prefixSize int, argIdx *int) {
-	s := getString(v, *argIdx, "string.pack")
+	s := getString(v, *argIdx, "pack")
 	*argIdx++
 
 	// Alignment for the prefix
@@ -449,7 +449,7 @@ func packSizedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, prefixSize in
 	if prefixSize < 8 {
 		maxLen := uint64(1)<<(uint(prefixSize)*8) - 1
 		if slen > maxLen {
-			panic(fmt.Sprintf("bad argument #%d to 'string.pack' (string length does not fit in given size)", *argIdx-1))
+			panic(fmt.Sprintf("bad argument #%d to 'pack' (string length does not fit in given size)", *argIdx-1))
 		}
 	}
 
@@ -486,11 +486,11 @@ func packSizedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, prefixSize in
 
 // stringUnpack implements string.unpack(fmt, s [, pos])
 func stringUnpack(v *vm.VM) int {
-	format := getString(v, 1, "string.unpack")
-	data := getString(v, 2, "string.unpack")
+	format := getString(v, 1, "unpack")
+	data := getString(v, 2, "unpack")
 	pos := int64(1)
 	if v.ArgCount() >= 3 && !v.Get(3).IsNil() {
-		pos = getInt(v, 3, "string.unpack")
+		pos = getInt(v, 3, "unpack")
 	}
 
 	// Resolve negative position
@@ -503,10 +503,10 @@ func stringUnpack(v *vm.VM) int {
 
 	offset := int(pos) - 1 // 0-based byte offset
 	if offset > len(data) {
-		panic("bad argument #3 to 'string.unpack' (initial position out of string)")
+		panic("bad argument #3 to 'unpack' (initial position out of string)")
 	}
 
-	fs := newFormatState("string.unpack")
+	fs := newFormatState("unpack")
 	nret := 0
 
 	i := 0
@@ -599,7 +599,7 @@ func stringUnpack(v *vm.VM) int {
 		case 'x':
 			applyAlignPad(&offset, fs, 1)
 			if offset+1 > len(data) {
-				panic("bad argument #2 to 'string.unpack' (data string too short)")
+				panic("bad argument #2 to 'unpack' (data string too short)")
 			}
 			offset++
 		case 'X':
@@ -620,7 +620,7 @@ func stringUnpack(v *vm.VM) int {
 // getXAlignUnpack parses X directive for unpack (same logic, different error source).
 func getXAlignUnpack(format string, i *int) int {
 	if *i >= len(format) {
-		panic("bad argument #1 to 'string.unpack' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'unpack' (invalid next option for option 'X')")
 	}
 	ch := format[*i]
 	*i++
@@ -652,12 +652,12 @@ func getXAlignUnpack(format string, i *int) int {
 		}
 		return size
 	case 'c', 'z', '<', '>', '=', '!', 'X':
-		panic("bad argument #1 to 'string.unpack' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'unpack' (invalid next option for option 'X')")
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
 		}
-		panic("bad argument #1 to 'string.unpack' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'unpack' (invalid next option for option 'X')")
 	default:
 		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}
@@ -676,7 +676,7 @@ func unpackInt(data string, offset *int, fs *formatState, kind byte, size int, s
 	*offset += pad
 
 	if *offset+size > len(data) {
-		panic("bad argument #2 to 'string.unpack' (data string too short)")
+		panic("bad argument #2 to 'unpack' (data string too short)")
 	}
 
 	raw := []byte(data[*offset : *offset+size])
@@ -760,7 +760,7 @@ func unpackFloat32(data string, offset *int, fs *formatState) vm.Value {
 	*offset += pad
 
 	if *offset+4 > len(data) {
-		panic("bad argument #2 to 'string.unpack' (data string too short)")
+		panic("bad argument #2 to 'unpack' (data string too short)")
 	}
 
 	raw := []byte(data[*offset : *offset+4])
@@ -783,7 +783,7 @@ func unpackFloat64(data string, offset *int, fs *formatState, kind byte) vm.Valu
 	*offset += pad
 
 	if *offset+8 > len(data) {
-		panic("bad argument #2 to 'string.unpack' (data string too short)")
+		panic("bad argument #2 to 'unpack' (data string too short)")
 	}
 
 	raw := []byte(data[*offset : *offset+8])
@@ -801,7 +801,7 @@ func unpackFloat64(data string, offset *int, fs *formatState, kind byte) vm.Valu
 
 func unpackFixedString(data string, offset *int, size int) vm.Value {
 	if *offset+size > len(data) {
-		panic("bad argument #2 to 'string.unpack' (data string too short)")
+		panic("bad argument #2 to 'unpack' (data string too short)")
 	}
 	s := data[*offset : *offset+size]
 	*offset += size
@@ -811,7 +811,7 @@ func unpackFixedString(data string, offset *int, size int) vm.Value {
 func unpackZeroTermString(data string, offset *int) vm.Value {
 	idx := strings.IndexByte(data[*offset:], 0)
 	if idx < 0 {
-		panic("bad argument #2 to 'string.unpack' (unfinished string for format 'z')")
+		panic("bad argument #2 to 'unpack' (unfinished string for format 'z')")
 	}
 	s := data[*offset : *offset+idx]
 	*offset += idx + 1 // skip the null terminator
@@ -824,7 +824,7 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 	*offset += pad
 
 	if *offset+prefixSize > len(data) {
-		panic("bad argument #2 to 'string.unpack' (data string too short)")
+		panic("bad argument #2 to 'unpack' (data string too short)")
 	}
 
 	// Read length
@@ -847,13 +847,13 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 			slen = binary.LittleEndian.Uint64(raw[:8])
 			for j := 8; j < prefixSize; j++ {
 				if raw[j] != 0 {
-					panic("bad argument #2 to 'string.unpack' (data string too short)")
+					panic("bad argument #2 to 'unpack' (data string too short)")
 				}
 			}
 		} else {
 			for j := 0; j < prefixSize-8; j++ {
 				if raw[j] != 0 {
-					panic("bad argument #2 to 'string.unpack' (data string too short)")
+					panic("bad argument #2 to 'unpack' (data string too short)")
 				}
 			}
 			slen = binary.BigEndian.Uint64(raw[prefixSize-8:])
@@ -861,7 +861,7 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 	}
 
 	if *offset+int(slen) > len(data) {
-		panic("bad argument #2 to 'string.unpack' (data string too short)")
+		panic("bad argument #2 to 'unpack' (data string too short)")
 	}
 
 	s := data[*offset : *offset+int(slen)]
@@ -871,8 +871,8 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 
 // stringPacksize implements string.packsize(fmt)
 func stringPacksize(v *vm.VM) int {
-	format := getString(v, 1, "string.packsize")
-	fs := newFormatState("string.packsize")
+	format := getString(v, 1, "packsize")
+	fs := newFormatState("packsize")
 	totalSize := 0
 
 	i := 0
@@ -934,13 +934,13 @@ func stringPacksize(v *vm.VM) int {
 			align := fs.effectiveAlign(natAlign)
 			totalSize += addPadding(totalSize, align)
 		case 'z', 's':
-			panic("bad argument #1 to 'string.packsize' (variable-length format)")
+			panic("bad argument #1 to 'packsize' (variable-length format)")
 		default:
 			panic(fmt.Sprintf("invalid format option '%c'", ch))
 		}
 
 		if totalSize > maxPackSize {
-			panic("bad argument #1 to 'string.packsize' (format result too large)")
+			panic("bad argument #1 to 'packsize' (format result too large)")
 		}
 	}
 
@@ -951,7 +951,7 @@ func stringPacksize(v *vm.VM) int {
 // getXAlignPacksize parses X directive for packsize.
 func getXAlignPacksize(format string, i *int) int {
 	if *i >= len(format) {
-		panic("bad argument #1 to 'string.packsize' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'packsize' (invalid next option for option 'X')")
 	}
 	ch := format[*i]
 	*i++
@@ -983,12 +983,12 @@ func getXAlignPacksize(format string, i *int) int {
 		}
 		return size
 	case 'c', 'z', '<', '>', '=', '!', 'X':
-		panic("bad argument #1 to 'string.packsize' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'packsize' (invalid next option for option 'X')")
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
 		}
-		panic("bad argument #1 to 'string.packsize' (invalid next option for option 'X')")
+		panic("bad argument #1 to 'packsize' (invalid next option for option 'X')")
 	default:
 		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}
