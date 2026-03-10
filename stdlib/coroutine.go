@@ -25,6 +25,18 @@ func ctxDone(v *vm.VM) <-chan struct{} {
 	return nil
 }
 
+func getThreadTable(v *vm.VM, idx int, funcName string) *vm.Table {
+	arg := v.Get(idx)
+	if !arg.IsTable() {
+		callerArgError(v, idx, funcName, fmt.Sprintf("thread expected, got %s", coArgType(v, idx)))
+	}
+	tbl, _ := arg.AsTable().(*vm.Table)
+	if tbl == nil || !tbl.IsThread() {
+		callerArgError(v, idx, funcName, fmt.Sprintf("thread expected, got %s", coArgType(v, idx)))
+	}
+	return tbl
+}
+
 // coroutineStatus represents the lifecycle state of a coroutine.
 type coroutineStatus string
 
@@ -128,12 +140,7 @@ func coCreate(v *vm.VM) int {
 
 // coroutine.resume(co [, val1, ...]) -> ok, results...
 func coResume(v *vm.VM) int {
-	coVal := v.Get(1)
-	if !coVal.IsTable() {
-		callerArgError(v, 1, "coroutine.resume", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
-	}
-
-	coTable := coVal.AsTable()
+	coTable := getThreadTable(v, 1, "coroutine.resume")
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.resume", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
@@ -407,12 +414,7 @@ func coYield(v *vm.VM) int {
 
 // coroutine.status(co) -> string
 func coStatus(v *vm.VM) int {
-	coVal := v.Get(1)
-	if !coVal.IsTable() {
-		callerArgError(v, 1, "coroutine.status", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
-	}
-
-	coTable := coVal.AsTable()
+	coTable := getThreadTable(v, 1, "coroutine.status")
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.status", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
@@ -626,16 +628,8 @@ func coWrap(v *vm.VM) int {
 
 // coroutine.close(co) -> ok [, errmsg]
 func coClose(v *vm.VM) int {
-	coVal := v.Get(1)
-	if coVal.IsNil() {
-		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
-	}
-	if !coVal.IsTable() {
-		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
-	}
-
-	coTable := coVal.AsTable()
-	threadTable, _ := coTable.(*vm.Table)
+	coTable := getThreadTable(v, 1, "coroutine.close")
+	threadTable := coTable
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
@@ -798,7 +792,7 @@ func coIsYieldable(v *vm.VM) int {
 				return 1
 			}
 			// Dead/collected coroutine
-			v.Set(0, vm.False)
+			v.Set(0, vm.True)
 			return 1
 		}
 		// Thread table without coroutine ID — not yieldable
