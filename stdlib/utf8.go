@@ -84,6 +84,9 @@ func decodeExtendedUTF8(s string) (int64, int) {
 			return -1, 1
 		}
 		cp := int64(b&0x1F)<<6 | int64(s[1]&0x3F)
+		if cp < 0x80 {
+			return -1, 1
+		}
 		return cp, 2
 	case b <= 0xEF:
 		if len(s) < 3 {
@@ -95,6 +98,9 @@ func decodeExtendedUTF8(s string) (int64, int) {
 			}
 		}
 		cp := int64(b&0x0F)<<12 | int64(s[1]&0x3F)<<6 | int64(s[2]&0x3F)
+		if cp < 0x800 {
+			return -1, 1
+		}
 		return cp, 3
 	case b <= 0xF7:
 		if len(s) < 4 {
@@ -106,6 +112,9 @@ func decodeExtendedUTF8(s string) (int64, int) {
 			}
 		}
 		cp := int64(b&0x07)<<18 | int64(s[1]&0x3F)<<12 | int64(s[2]&0x3F)<<6 | int64(s[3]&0x3F)
+		if cp < 0x10000 {
+			return -1, 1
+		}
 		return cp, 4
 	case b <= 0xFB:
 		if len(s) < 5 {
@@ -117,6 +126,9 @@ func decodeExtendedUTF8(s string) (int64, int) {
 			}
 		}
 		cp := int64(b&0x03)<<24 | int64(s[1]&0x3F)<<18 | int64(s[2]&0x3F)<<12 | int64(s[3]&0x3F)<<6 | int64(s[4]&0x3F)
+		if cp < 0x200000 {
+			return -1, 1
+		}
 		return cp, 5
 	case b <= 0xFD:
 		if len(s) < 6 {
@@ -128,6 +140,9 @@ func decodeExtendedUTF8(s string) (int64, int) {
 			}
 		}
 		cp := int64(b&0x01)<<30 | int64(s[1]&0x3F)<<24 | int64(s[2]&0x3F)<<18 | int64(s[3]&0x3F)<<12 | int64(s[4]&0x3F)<<6 | int64(s[5]&0x3F)
+		if cp < 0x4000000 {
+			return -1, 1
+		}
 		return cp, 6
 	default:
 		return -1, 1
