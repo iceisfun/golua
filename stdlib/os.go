@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"syscall"
@@ -331,6 +332,10 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 
 		if checkFmt == "*t" {
 			dt := provider.DateTable(timestamp, utc)
+			// Match Lua 5.4: reject timestamps that C's gmtime/localtime can't represent.
+			if dt.Year > math.MaxInt32+1900 || dt.Year < math.MinInt32+1900 {
+				panic("date result cannot be represented in this installation")
+			}
 			t := vm.NewEmptyTable()
 			t.SetString("year", vm.NewInt(int64(dt.Year)))
 			t.SetString("month", vm.NewInt(int64(dt.Month)))
@@ -347,7 +352,13 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 
 		result, err := provider.Date(format, timestamp)
 		if err != nil {
-			panic(fmt.Sprintf("bad argument #1 to 'os.date' (%s)", err.Error()))
+			errMsg := err.Error()
+			if strings.HasPrefix(errMsg, "date result") {
+				// Range error: Lua 5.4 uses luaL_error (no "bad argument" prefix)
+				panic(errMsg)
+			}
+			// Format specifier error: Lua 5.4 uses luaL_argerror
+			panic(fmt.Sprintf("bad argument #1 to 'os.date' (%s)", errMsg))
 		}
 		v.Set(0, vm.NewString(result))
 		return 1

@@ -59,6 +59,14 @@ func (p *DefaultOsProvider) Date(format string, timestamp int64) (string, error)
 		format = format[1:]
 	}
 
+	// Lua 5.4 returns an error when C's gmtime/localtime returns NULL for
+	// out-of-range timestamps. C's struct tm uses a 32-bit int for tm_year,
+	// so years outside roughly [-2147483648+1900, 2147483647+1900] fail.
+	// Go's time.Time has no such limit, so we check explicitly.
+	if y := t.Year(); y > math.MaxInt32+1900 || y < math.MinInt32+1900 {
+		return "", fmt.Errorf("date result cannot be represented in this installation")
+	}
+
 	return strftimeFormat(format, t)
 }
 

@@ -31,4 +31,17 @@ do
     assert(err:find("invalid conversion specifier '%%'"), "wrong error: " .. tostring(err))
 end
 
+-- Fix 5: os.date should reject out-of-range timestamps
+do
+    local ok, err = pcall(os.date, "%Y", 1<<62)
+    assert(not ok, "os.date should reject huge timestamp")
+    assert(err:find("date result cannot be represented"), "wrong error: " .. tostring(err))
+    -- Should NOT have "bad argument" prefix
+    assert(not err:find("bad argument"), "range error should not have bad argument prefix: " .. tostring(err))
+
+    local ok2, err2 = pcall(os.date, "*t", 1<<62)
+    assert(not ok2, "os.date *t should reject huge timestamp")
+    assert(err2:find("date result cannot be represented"), "wrong error: " .. tostring(err2))
+end
+
 print("PASS")
