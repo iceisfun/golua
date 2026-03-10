@@ -311,14 +311,17 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				panic(r)
 			}
 			// Preserve LuaError so pcall/xpcall can return the original Lua value
+			// locatedMsg stores the file:line-prefixed error for non-LuaError panics,
+			// used later by the xpcall message handler.
+			var locatedMsg string
 			if le, ok := r.(*LuaError); ok {
 				err = le
 			} else {
 				// For string panics from native functions, add the calling
 				// Lua frame's source:line: prefix (like Lua 5.4's luaG_addinfo).
 				msg := fmt.Sprintf("%v", r)
-				msg = vm.AddCallerLocation(msg)
-				err = fmt.Errorf("%s", msg)
+				locatedMsg = vm.AddCallerLocation(msg)
+				err = fmt.Errorf("%s", locatedMsg)
 			}
 			results = nil
 
@@ -353,7 +356,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				if le, ok := r.(*LuaError); ok {
 					errVal = le.Value
 				} else {
-					errVal = NewString(fmt.Sprintf("%v", r))
+					errVal = NewString(locatedMsg)
 				}
 				vm.callMsgHandler(msgh, errVal, errorCallStack)
 			} else if !vm.MsgHandler.IsNil() && vm.lastErrorCallStack != nil {
@@ -364,7 +367,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				if le, ok := r.(*LuaError); ok {
 					errVal = le.Value
 				} else {
-					errVal = NewString(fmt.Sprintf("%v", r))
+					errVal = NewString(locatedMsg)
 				}
 				closeErrStack := vm.lastErrorCallStack
 				vm.lastErrorCallStack = nil

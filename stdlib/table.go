@@ -20,9 +20,6 @@ func openTable(v *vm.VM) {
 	t.SetString("move", vm.NewNativeFunc(tableMove))
 
 	v.SetGlobal("table", vm.NewTable(t))
-
-	// Also register unpack as a global (for compatibility)
-	v.SetGlobal("unpack", vm.NewNativeFunc(tableUnpack))
 }
 
 // tableGetTable extracts a table from argument idx, panicking with a standard error if not a table.

@@ -125,7 +125,7 @@ end
 -- ============================================================
 -- 7. TABLE.UNPACK EDGE CASES
 -- ============================================================
-local unpack = table.unpack or unpack
+local unpack = table.unpack
 local a, b, c = unpack({10, 20, 30})
 check("unpack_basic", a == 10 and b == 20 and c == 30)
 
