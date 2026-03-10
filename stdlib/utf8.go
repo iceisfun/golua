@@ -274,7 +274,12 @@ func luaUtf8Codes(v *vm.VM) int {
 		// Convert to 0-indexed byte offset for next codepoint to decode.
 		n := int(state)
 
-		if n <= 0 {
+		if n < 0 {
+			v.Set(0, vm.Nil)
+			return 1
+		}
+
+		if n == 0 {
 			// Initial call: decode at byte 0
 			n = 0
 		} else {
@@ -310,9 +315,10 @@ func luaUtf8Codes(v *vm.VM) int {
 			return 2
 		}
 
-		// In strict mode, error if current byte is not a valid start
+		// In strict mode, a stray continuation byte stops iteration.
 		if !utf8.RuneStart(str[n]) {
-			panic("invalid UTF-8 code")
+			v.Set(0, vm.Nil)
+			return 1
 		}
 
 		r, size := utf8.DecodeRuneInString(str[n:])
