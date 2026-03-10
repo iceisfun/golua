@@ -102,7 +102,7 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | -------------------- | --------------------------------------------- | ------------------------------------ |
 | `LuaCodeProvider`    | `dofile`, `loadfile`, `require` file searcher | `DirCodeProvider`                    |
 | `LuaIoProvider`      | `io.*` file operations                        | `JailedIoProvider`, `FullIoProvider` |
-| `LuaOsProvider`      | `os.*` (clock, time, date, getenv, setlocale) | `DefaultOsProvider`                  |
+| `LuaOsProvider`      | `os.*` core (`clock`, `time`, `date`, `getenv`, `setlocale`) | `DefaultOsProvider`                  |
 | `LuaExecProvider`    | `os.execute` command execution                | `DefaultExecProvider`                |
 | `LuaExitHandler`     | `os.exit` VM termination                      | `DefaultExitHandler`                 |
 | `LuaDebugProvider`   | `debug.*` capability gating                   | `DefaultDebugProvider`               |
@@ -466,7 +466,7 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 | `bit32`     | No                   | Lua 5.2 bitwise compat library                                                                |
 | `glob`      | No                   | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`)            |
 | `io`        | `LuaIoProvider`      | File I/O (absent by default)                                                                  |
-| `os`        | `LuaOsProvider`      | OS functions: clock, time, date, getenv, execute, exit, rename, setlocale (absent by default) |
+| `os`        | `LuaOsProvider`      | OS core: `clock`, `time`, `date`, `difftime`, `getenv`, `setlocale` (`execute`/`exit`/`rename` also require their own providers) |
 | `package`   | No*                  | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers`, `searchpath` |
 | `debug`     | `LuaDebugProvider`   | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)              |
 | `chan`      | `LuaChanProvider`    | Go↔Lua message passing channels (absent by default)                                           |

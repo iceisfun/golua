@@ -896,6 +896,9 @@ func valueToString(val vm.Value) string {
 		}
 		return fmt.Sprintf("userdata: %p", ud)
 	default:
+		if val.Type() == "userdata" {
+			return val.String()
+		}
 		return "?"
 	}
 }

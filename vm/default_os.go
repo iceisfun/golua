@@ -100,6 +100,51 @@ func (p *DefaultOsProvider) Getenv(name string) (string, bool) {
 	return os.LookupEnv(name)
 }
 
+// SetLocale implements os.setlocale semantics for the default provider.
+// Go has no process-wide locale API, so we support:
+//   - query/set to "C"
+//   - set "" (use environment locale variables)
+//
+// Any other locale is treated as unsupported.
+func (p *DefaultOsProvider) SetLocale(locale, category string) (string, bool) {
+	if locale == "C" {
+		return "C", true
+	}
+	if locale == "" {
+		if envLocale := localeFromEnv(category); envLocale != "" {
+			return envLocale, true
+		}
+		return "C", true
+	}
+	return "", false
+}
+
+func localeFromEnv(category string) string {
+	// POSIX precedence: LC_ALL > LC_<category> > LANG
+	var keys []string
+	switch category {
+	case "collate":
+		keys = []string{"LC_ALL", "LC_COLLATE", "LANG"}
+	case "ctype":
+		keys = []string{"LC_ALL", "LC_CTYPE", "LANG"}
+	case "monetary":
+		keys = []string{"LC_ALL", "LC_MONETARY", "LANG"}
+	case "numeric":
+		keys = []string{"LC_ALL", "LC_NUMERIC", "LANG"}
+	case "time":
+		keys = []string{"LC_ALL", "LC_TIME", "LANG"}
+	default:
+		keys = []string{"LC_ALL", "LANG"}
+	}
+
+	for _, key := range keys {
+		if v, ok := os.LookupEnv(key); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // Capabilities returns caps with all OS operations enabled.
 func (p *DefaultOsProvider) Capabilities() LuaOsCaps {
 	return LuaOsCaps{

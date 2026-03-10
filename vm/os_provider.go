@@ -38,6 +38,10 @@ type LuaOsProvider interface {
 	// Getenv returns the value of an environment variable.
 	Getenv(name string) (string, bool)
 
+	// SetLocale applies/query locale state for os.setlocale.
+	// Returns (locale, true) on success, or (_, false) when unsupported.
+	SetLocale(locale, category string) (string, bool)
+
 	// Capabilities declares which OS behaviors are allowed.
 	Capabilities() LuaOsCaps
 }

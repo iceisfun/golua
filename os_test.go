@@ -142,3 +142,29 @@ func TestOs_FilteredGetenv(t *testing.T) {
 	`
 	runLuaWithOs(t, source, "test_os_filtered_getenv", provider)
 }
+
+func TestOs_Setlocale_EmptyUsesCategoryEnv(t *testing.T) {
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_TIME", "en_US.UTF-8")
+	t.Setenv("LANG", "C")
+
+	provider := vm.NewDefaultOsProvider()
+	source := `
+		local loc = os.setlocale("", "time")
+		assert(loc == "en_US.UTF-8", "expected LC_TIME locale, got " .. tostring(loc))
+	`
+	runLuaWithOs(t, source, "test_os_setlocale_empty_uses_category_env", provider)
+}
+
+func TestOs_Setlocale_EmptyFallsBackToC(t *testing.T) {
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_TIME", "")
+	t.Setenv("LANG", "")
+
+	provider := vm.NewDefaultOsProvider()
+	source := `
+		local loc = os.setlocale("", "time")
+		assert(loc == "C", "expected C fallback, got " .. tostring(loc))
+	`
+	runLuaWithOs(t, source, "test_os_setlocale_empty_fallback_c", provider)
+}

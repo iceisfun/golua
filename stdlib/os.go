@@ -101,8 +101,8 @@ func openOs(v *vm.VM) {
 		}
 	}
 
-	// setlocale is always available (stub, returns "C" only)
-	osTable.SetString("setlocale", vm.NewNativeFunc(osSetlocale))
+	// setlocale routes through the OS provider
+	osTable.SetString("setlocale", vm.NewNativeFunc(makeOsSetlocale(provider)))
 
 	// execute routes through the exec provider
 	execProvider := v.ExecProvider()
@@ -333,24 +333,41 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 	}
 }
 
-// osSetlocale implements os.setlocale([locale [, category]]).
-// This is a stub that only supports the "C" locale (Go has no locale support).
-// Returns "C" for nil/empty/"C" queries, nil for anything else.
-func osSetlocale(v *vm.VM) int {
-	locale := ""
-	if v.ArgCount() >= 1 && !v.Get(1).IsNil() {
-		locale = v.Get(1).AsString()
-	}
+// makeOsSetlocale creates os.setlocale([locale [, category]]).
+func makeOsSetlocale(provider vm.LuaOsProvider) vm.NativeFunc {
+	return func(v *vm.VM) int {
+		locale := ""
+		if v.ArgCount() >= 1 && !v.Get(1).IsNil() {
+			arg1 := v.Get(1)
+			if !arg1.IsString() && !arg1.IsNumber() {
+				callerArgError(v, 1, "os.setlocale", fmt.Sprintf("string expected, got %s", arg1.Type()))
+			}
+			locale = valueToString(arg1)
+		}
 
-	// Query (nil or empty string) or set to "C" — always succeeds
-	if locale == "" || locale == "C" {
-		v.Set(0, vm.NewString("C"))
+		category := "all"
+		if v.ArgCount() >= 2 && !v.Get(2).IsNil() {
+			arg2 := v.Get(2)
+			if !arg2.IsString() && !arg2.IsNumber() {
+				callerArgError(v, 2, "os.setlocale", fmt.Sprintf("string expected, got %s", arg2.Type()))
+			}
+			category = valueToString(arg2)
+			switch category {
+			case "all", "collate", "ctype", "monetary", "numeric", "time":
+				// valid
+			default:
+				callerArgError(v, 2, "os.setlocale", fmt.Sprintf("invalid option '%s'", category))
+			}
+		}
+
+		if result, ok := provider.SetLocale(locale, category); ok {
+			v.Set(0, vm.NewString(result))
+			return 1
+		}
+
+		v.Set(0, vm.Nil)
 		return 1
 	}
-
-	// Any other locale is not supported
-	v.Set(0, vm.Nil)
-	return 1
 }
 
 // makeOsRename creates the os.rename(oldname, newname) function.
@@ -400,10 +417,7 @@ func makeOsExit(vmRef *vm.VM, handler vm.LuaExitHandler) vm.NativeFunc {
 					code = 1
 				}
 			} else {
-				i, ok := arg1.ToInt()
-				if !ok {
-					callerArgError(v, 1, "os.exit", fmt.Sprintf("number expected, got %s", arg1.Type()))
-				}
+				i := getInt(v, 1, "os.exit")
 				code = int(i)
 			}
 		}

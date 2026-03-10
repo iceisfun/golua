@@ -5,7 +5,7 @@ Demonstrates sandboxed file IO and OS operations using GoLua's capability-based 
 ## What it shows
 
 - **JailedIoProvider**: Read-only file access restricted to a specific directory
-- **DefaultOsProvider**: Safe OS operations (clock, time, date, getenv)
+- **DefaultOsProvider**: Safe OS operations (clock, time, date, getenv, setlocale)
 - **Filtered environment**: Restricting which environment variables Lua can access
 - **Write rejection**: Write modes are denied by the jailed provider
 
@@ -48,22 +48,28 @@ Examples: real filesystem, in-memory virtual filesystem, archive-backed assets, 
 
 ### LuaOsProvider
 
-Controls what system information Lua can access. Implement this to back `os.clock`, `os.time`, `os.date`, `os.difftime`, and `os.getenv`.
+Controls what system information Lua can access. Implement this to back `os.clock`, `os.time`, `os.date`, `os.difftime`, `os.getenv`, and `os.setlocale`.
 
 ```go
 type LuaOsProvider interface {
     Clock() float64
     Time(dateTable map[string]int) (int64, error)
     Date(format string, timestamp int64) (string, error)
-    DateTable(timestamp int64) map[string]int
+    DateTable(timestamp int64, utc bool) map[string]int
     Getenv(name string) (string, bool)
+    SetLocale(locale, category string) (string, bool)
     Capabilities() LuaOsCaps
 }
 
 type LuaOsCaps struct {
-    AllowTime   bool
-    AllowDate   bool
-    AllowGetenv bool
+    AllowTime    bool
+    AllowDate    bool
+    AllowGetenv  bool
+    AllowTmpName bool
+    AllowRemove  bool
+    AllowExecute bool
+    AllowExit    bool
+    AllowRename  bool
 }
 ```
 
