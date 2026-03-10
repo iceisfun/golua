@@ -39,10 +39,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
-	"unsafe"
 )
 
 // nativeFuncBox wraps a NativeFunc in a heap-allocated struct so that it
@@ -549,17 +549,14 @@ func (v Value) PointerString() string {
 		return fmt.Sprintf("%p", v.ptr)
 	case typeString:
 		s := v.ptr.(string)
+		// Short strings (≤40 chars) are interned in Lua 5.4: equal strings
+		// share the same %p address. Use stringPointerID for value-based identity.
+		// Long strings use reflect to get the underlying data pointer, matching
+		// Lua 5.4's behavior where long strings are not interned.
 		if len(s) <= 40 {
 			return fmt.Sprintf("%p", stringPointerID(s))
 		}
-		if len(s) == 0 {
-			return fmt.Sprintf("%p", &emptyStringSentinel)
-		}
-		ptr := unsafe.StringData(s)
-		if ptr == nil {
-			return "(null)"
-		}
-		return fmt.Sprintf("%p", ptr)
+		return fmt.Sprintf("0x%x", reflect.ValueOf(s).Pointer())
 	case typeFunction:
 		return fmt.Sprintf("%p", v.ptr)
 	case typeNativeFunc:
