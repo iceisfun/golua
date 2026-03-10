@@ -39,7 +39,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,8 +51,7 @@ import (
 // allocates a distinct box, giving each Value reference identity.
 type nativeFuncBox struct {
 	fn   NativeFunc
-	ptr  uintptr // cached reflect pointer for fmt %p output
-	nups int     // number of upvalues (for debug.getinfo "u" flag)
+	nups int // number of upvalues (for debug.getinfo "u" flag)
 }
 
 var emptyStringSentinel byte
@@ -156,8 +154,7 @@ func NewFunction(f *Closure) Value {
 // can be used as a table key (Go function types are not comparable).
 func NewNativeFunc(f NativeFunc) Value {
 	return Value{typ: typeNativeFunc, ptr: &nativeFuncBox{
-		fn:  f,
-		ptr: reflect.ValueOf(f).Pointer(),
+		fn: f,
 	}}
 }
 
@@ -167,7 +164,6 @@ func NewNativeFunc(f NativeFunc) Value {
 func NewNativeFuncWithNups(f NativeFunc, nups int) Value {
 	return Value{typ: typeNativeFunc, ptr: &nativeFuncBox{
 		fn:   f,
-		ptr:  reflect.ValueOf(f).Pointer(),
 		nups: nups,
 	}}
 }

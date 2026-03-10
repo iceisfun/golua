@@ -538,7 +538,7 @@ func mathType(v *vm.VM) int {
 	}
 	val := v.Get(1)
 	if !val.IsNumber() {
-		v.Set(0, vm.Nil)
+		v.Set(0, vm.False)
 	} else if val.IsInt() {
 		v.Set(0, vm.NewString("integer"))
 	} else {

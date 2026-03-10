@@ -1223,11 +1223,11 @@ func TestProbe_MathType(t *testing.T) {
 	if results[1].AsString() != "float" {
 		t.Errorf("math.type(3.14): got %q", results[1].AsString())
 	}
-	if !results[2].IsNil() {
-		t.Errorf("math.type('42'): should be nil, got %v", results[2])
+	if !results[2].IsBool() || results[2].AsBool() != false {
+		t.Errorf("math.type('42'): should be false, got %v", results[2])
 	}
-	if !results[3].IsNil() {
-		t.Errorf("math.type(nil): should be nil, got %v", results[3])
+	if !results[3].IsBool() || results[3].AsBool() != false {
+		t.Errorf("math.type(nil): should be false, got %v", results[3])
 	}
 }
 
