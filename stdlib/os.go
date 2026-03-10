@@ -127,10 +127,10 @@ func makeOsExecute(provider vm.LuaExecProvider) vm.NativeFunc {
 			return 1
 		}
 		cmd := v.Get(1)
-		if !cmd.IsString() {
+		if !cmd.IsString() && !cmd.IsNumber() {
 			callerArgError(v, 1, "os.execute", fmt.Sprintf("string expected, got %s", cmd.Type()))
 		}
-		ok, exitType, exitCode := provider.Execute(cmd.AsString())
+		ok, exitType, exitCode := provider.Execute(valueToString(cmd))
 		if ok {
 			v.Set(0, vm.True)
 		} else {
@@ -357,7 +357,7 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 		if !name.IsString() && !name.IsNumber() {
 			callerArgError(v, 1, "os.remove", fmt.Sprintf("string expected, got %s", name.Type()))
 		}
-		nameStr := name.AsString()
+		nameStr := valueToString(name)
 		err := ioProvider.Remove(nameStr)
 		if err != nil {
 			msg, errno := formatPathError(nameStr, err)
@@ -425,8 +425,8 @@ func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 		if !arg2.IsString() && !arg2.IsNumber() {
 			callerArgError(v, 2, "os.rename", fmt.Sprintf("string expected, got %s", arg2.Type()))
 		}
-		oldname := arg1.AsString()
-		newname := arg2.AsString()
+		oldname := valueToString(arg1)
+		newname := valueToString(arg2)
 		err := ioProvider.Rename(oldname, newname)
 		if err != nil {
 			msg, errno := formatPathError(oldname, err)
@@ -487,7 +487,7 @@ func makeOsGetenv(provider vm.LuaOsProvider) vm.NativeFunc {
 			callerArgError(v, 1, "os.getenv", fmt.Sprintf("string expected, got %s", name.Type()))
 		}
 
-		val, ok := provider.Getenv(name.AsString())
+		val, ok := provider.Getenv(valueToString(name))
 		if !ok {
 			v.Set(0, vm.Nil)
 			return 1
