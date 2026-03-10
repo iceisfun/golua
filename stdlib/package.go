@@ -42,10 +42,8 @@ func openPackage(v *vm.VM) {
 	// package.searchpath
 	pkg.SetString("searchpath", vm.NewNativeFunc(luaSearchPath))
 
-	// package.loadlib (only if provider is set)
-	if provider := v.LoadLibProvider(); provider != nil {
-		pkg.SetString("loadlib", vm.NewNativeFunc(makePackageLoadlib(provider)))
-	}
+	// package.loadlib
+	pkg.SetString("loadlib", vm.NewNativeFunc(makePackageLoadlib(v.LoadLibProvider())))
 
 	// package.searchers
 	searchers := vm.NewEmptyTable()
@@ -74,20 +72,28 @@ func makePackageLoadlib(provider vm.LuaLoadLibProvider) vm.NativeFunc {
 			callerArgError(v, 2, "package.loadlib", "string expected, got no value")
 		}
 
-		pathVal := v.Get(1)
-		if !pathVal.IsString() {
-			callerArgError(v, 1, "package.loadlib", fmt.Sprintf("string expected, got %s", pathVal.Type()))
-		}
-		initVal := v.Get(2)
-		if !initVal.IsString() {
-			callerArgError(v, 2, "package.loadlib", fmt.Sprintf("string expected, got %s", initVal.Type()))
+		path := getString(v, 1, "package.loadlib")
+		init := getString(v, 2, "package.loadlib")
+
+		if provider == nil {
+			v.Set(0, vm.Nil)
+			v.Set(1, vm.NewString("dynamic libraries not enabled; check your Lua installation"))
+			v.Set(2, vm.NewString("absent"))
+			return 3
 		}
 
-		loader, err := provider.LoadLib(pathVal.AsString(), initVal.AsString(), v.CallerContext())
-		if err != nil {
+		loader, errmsg, where := provider.LoadLib(path, init, v.CallerContext())
+		if loader == nil {
+			if errmsg == "" {
+				errmsg = "dynamic library loader returned no loader"
+			}
+			if where == "" {
+				where = "open"
+			}
 			v.Set(0, vm.Nil)
-			v.Set(1, vm.NewString(err.Error()))
-			return 2
+			v.Set(1, vm.NewString(errmsg))
+			v.Set(2, vm.NewString(where))
+			return 3
 		}
 
 		v.Set(0, vm.NewNativeFunc(loader))

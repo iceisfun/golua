@@ -8,5 +8,5 @@ do
   assert(type(package.loaded) == "table")
   assert(type(package.preload) == "table")
   assert(type(package.config) == "string")
-  assert(type(package.loadlib) == "nil")
+  assert(type(package.loadlib) == "function")
 end

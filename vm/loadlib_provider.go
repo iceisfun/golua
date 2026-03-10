@@ -9,7 +9,8 @@ package vm
 // Go-implemented bindings, using cgo to bridge platform-specific libraries,
 // or mapping module names to pre-registered native functions.
 //
-// When unset, stdlib.Open leaves package.loadlib as nil.
+// When unset, stdlib.Open still exposes package.loadlib but it returns
+// Lua's standard "absent" failure triple.
 type LuaLoadLibProvider interface {
 	// LoadLib resolves (path, init) and returns a callable loader function.
 	//
@@ -18,7 +19,8 @@ type LuaLoadLibProvider interface {
 	// need not refer to actual shared-object files.
 	//
 	// caller provides context about the Lua call site (source, line).
-	// Return a NativeFunc to succeed, or an error to make package.loadlib
-	// return (nil, errmsg).
-	LoadLib(path, init string, caller *LuaCallerContext) (NativeFunc, error)
+	// On success, return a NativeFunc with empty errmsg/where. On failure,
+	// return a nil loader plus an error message and one of Lua's failure tags:
+	// "open", "init", or "absent".
+	LoadLib(path, init string, caller *LuaCallerContext) (loader NativeFunc, errmsg string, where string)
 }
