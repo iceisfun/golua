@@ -53,7 +53,7 @@ func main() {
 	fmt.Printf("\nLast line: %q\n", v.LastOutput())
 	fmt.Printf("Total lines: %d\n", len(v.OutputLines()))
 
-	// Clear and run again
+	// Clear the capture buffer when you want to reuse the VM.
 	v.ClearOutput()
 	fmt.Printf("After clear: %d lines\n", len(v.OutputLines()))
 }

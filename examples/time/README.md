@@ -9,6 +9,7 @@ Non-standard extension for millisecond-precision timing.
 | `time.now()` | Returns current time in milliseconds (integer) |
 | `time.since(t)` | Returns milliseconds elapsed since `t` |
 | `time.tick([name,] ms)` | Returns `true` once per `ms` interval, `false` otherwise |
+| `time.once([name])` | Returns `true` the first time a key is seen, then `false` |
 
 ### time.tick
 
@@ -28,6 +29,22 @@ if time.tick("heartbeat", 1000) then send_heartbeat() end
 
 When `name` is omitted, each callsite gets its own independent timer
 automatically via the source location.
+
+### time.once
+
+`time.once` is useful for one-time initialization inside hot loops or update callbacks.
+
+```lua
+for i = 1, 5 do
+    if time.once() then
+        print("run setup exactly once")
+    end
+end
+
+if time.once("cache:init") then
+    warm_cache()
+end
+```
 
 ## Security
 

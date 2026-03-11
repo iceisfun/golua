@@ -71,11 +71,13 @@ gohttp.Open(v)
 
 ## Running
 
-These examples require network access to external services:
+These examples require network access to external services. They also require a
+Go host that enables the optional HTTP module, so use the example runner instead
+of `cmd/lua`:
 
 ```bash
-go run ./cmd/lua examples/http/simple_get.lua
-go run ./cmd/lua examples/http/simple_post.lua
-go run ./cmd/lua examples/http/headers.lua
-go run ./cmd/lua examples/http/timeout.lua
+go run ./examples/http ./examples/http/simple_get.lua
+go run ./examples/http ./examples/http/simple_post.lua
+go run ./examples/http ./examples/http/headers.lua
+go run ./examples/http ./examples/http/timeout.lua
 ```

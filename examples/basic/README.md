@@ -5,7 +5,7 @@ Demonstrates the simplest way to run Lua code from Go.
 ## Run
 
 ```bash
-go run main.go
+go run ./examples/basic
 ```
 
 ## Output

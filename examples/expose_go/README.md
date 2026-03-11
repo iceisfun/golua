@@ -10,7 +10,7 @@ Demonstrates how to:
 ## Run
 
 ```bash
-go run main.go
+go run ./examples/expose_go
 ```
 
 ## Output

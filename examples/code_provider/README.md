@@ -13,7 +13,7 @@ Demonstrates how to control what Lua code can be loaded at runtime using `LuaCod
 ## Run
 
 ```bash
-go run main.go
+go run ./examples/code_provider
 ```
 
 ## Output
