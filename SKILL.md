@@ -1,3 +1,13 @@
+---
+name: golua
+description: Embed Lua in Go applications using github.com/iceisfun/golua. Covers VM setup, native function binding, table manipulation, metatables, sandboxing, and provider-based capability control.
+license: MIT
+compatibility: claude-code, opencode
+metadata:
+  language: go
+  domain: lua-embedding
+---
+
 # GoLua Skill
 
 Use this when helping someone who imported `github.com/iceisfun/golua` and wants to embed Lua in a Go application.
