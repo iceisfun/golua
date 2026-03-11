@@ -4,7 +4,9 @@
 
 # GoLua
 
-A Lua 5.4 interpreter written in Go, with experimental 5.5 features. Pure Go, zero dependencies, no cgo.
+An embeddable, sandbox-first Lua 5.4 runtime for Go applications, with a small set of experimental 5.5 features. Pure Go, zero dependencies, no cgo.
+
+Good fits include plugin systems, user scripting, game logic, automation, and controlled configuration runtimes.
 
 ## Features
 
@@ -37,9 +39,20 @@ A Lua 5.4 interpreter written in Go, with experimental 5.5 features. Pure Go, ze
 
 ## Installation
 
+### Library
+
 ```bash
 go get github.com/iceisfun/golua
 ```
+
+### CLI
+
+```bash
+go install github.com/iceisfun/golua/cmd/lua@latest
+go install github.com/iceisfun/golua/cmd/luac@latest
+```
+
+GoLua is pure Go and does not require cgo.
 
 ## Quick Start
 
@@ -48,6 +61,8 @@ package main
 
 import (
     "fmt"
+    "log"
+
     "github.com/iceisfun/golua/compiler"
     "github.com/iceisfun/golua/parser"
     "github.com/iceisfun/golua/stdlib"
@@ -55,21 +70,39 @@ import (
 )
 
 func main() {
-    // Parse Lua source
     source := `return 1 + 2`
-    block, _ := parser.Parse("example", source)
+    block, err := parser.Parse("example", source)
+    if err != nil {
+        log.Fatal(err)
+    }
 
-    // Compile to bytecode
-    proto, _ := compiler.Compile("example", block)
+    proto, err := compiler.Compile("example", block)
+    if err != nil {
+        log.Fatal(err)
+    }
 
-    // Create VM and load standard library
     v := vm.New()
     stdlib.Open(v)
 
-    // Run and get results
-    results, _ := v.Run(proto)
-    fmt.Println(results[0].AsInt()) // Output: 3
+    results, err := v.Run(proto)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Println(results[0].AsInt())
 }
+```
+
+Core embedding flow: `parser.Parse` -> `compiler.Compile` -> `vm.New` -> `stdlib.Open` -> `v.Run`.
+
+## Develop Locally
+
+```bash
+go run ./cmd/lua script.lua
+go run ./cmd/lua -e "print(1 + 1)"
+go run ./examples/basic
+go test ./...
+go test ./tests/...
 ```
 
 ## Architecture
@@ -116,24 +149,31 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 
 See the `examples/` directory for complete examples:
 
-- **[basic](examples/basic/)** - Simple Lua execution
-- **[call_lua](examples/call_lua/)** - Calling Lua functions from Go
-- **[expose_go](examples/expose_go/)** - Exposing Go functions to Lua
-- **[expose_object](examples/expose_object/)** - Go-backed objects with explicit adapter layer and Lua companion module
-- **[capture_output](examples/capture_output/)** - Intercept print() output with WithCaptureOutput for testing or processing
-- **[print_provider](examples/print_provider/)** - Redirect print/warn output with LuaPrintProvider
-- **[code_provider](examples/code_provider/)** - Sandboxed file loading with LuaCodeProvider
-- **[jailed_io](examples/jailed_io/)** - Sandboxed IO and OS with JailedIoProvider and DefaultOsProvider
-- **[debug](examples/debug/)** - Diagnostic debug with DefaultDebugProvider (not the standard Lua debug library)
-- **[table](examples/table/)** - LuaTable interface and deterministic iteration
-- **[chan](examples/chan/)** - Go↔Lua channels with chan.select ([go_to_lua](examples/chan/go_to_lua/), [lua_to_go](examples/chan/lua_to_go/), [multi_go_to_lua](examples/chan/multi_go_to_lua/))
-- **[glob](examples/glob/)** - Go-style case-insensitive pattern matching from Go and Lua
-- **[exec](examples/exec/)** - Process execution: run, spawn, streaming, stdin interaction, timeouts ([simple_run](examples/exec/simple_run/), [streaming](examples/exec/streaming/), [interactive](examples/exec/interactive/), [timeout](examples/exec/timeout/))
-- **[time](examples/time/)** - Millisecond timing: now, since, tick, and once
-- **[http](examples/http/)** - HTTP requests: GET, POST, custom headers, timeouts
-- **[check](examples/check/)** - Parse Lua source and emit diagnostics as JSON (for editor integration)
-- **[editor](examples/editor/)** - Browser-based Monaco editor with live diagnostics and sandboxed execution
-- **[editor_advanced](examples/editor_advanced/)** - Full IDE with JSON-RPC 2.0 language services (completion, hover, diagnostics)
+### Start Here
+
+- **[basic](examples/basic/)** - minimal Lua execution from Go
+- **[expose_go](examples/expose_go/)** - expose Go functions and tables to Lua
+- **[call_lua](examples/call_lua/)** - call Lua functions from Go and read results back
+- **[capture_output](examples/capture_output/)** - capture `print()` output in-memory
+- **[print_provider](examples/print_provider/)** - route `print()` and `warn()` through host logging
+
+### Sandboxing And Host Integration
+
+- **[code_provider](examples/code_provider/)** - sandboxed file/module loading with `LuaCodeProvider`
+- **[jailed_io](examples/jailed_io/)** - confined filesystem and OS access
+- **[table](examples/table/)** - `LuaTable` interop and deterministic iteration
+- **[chan](examples/chan/)** - Go<->Lua channels with `chan.select`
+- **[glob](examples/glob/)** - Go-style pattern matching from Go and Lua
+
+### Advanced And Optional Modules
+
+- **[exec](examples/exec/)** - process execution, streaming I/O, stdin, and timeouts
+- **[time](examples/time/)** - millisecond timing with `time.now`, `time.since`, `time.tick`, and `time.once`
+- **[http](examples/http/)** - optional HTTP client module with a dedicated example runner
+- **[check](examples/check/)** - diagnostics as JSON for editor integrations
+- **[editor](examples/editor/)** - Monaco editor with live diagnostics and sandboxed execution
+- **[editor_advanced](examples/editor_advanced/)** - browser IDE with completion, hover, diagnostics, and execution
+- **[expose_object](examples/expose_object/)** - Go-backed objects with an explicit adapter layer
 
 ## Go Interop
 
@@ -456,6 +496,8 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 
 `stdlib.Open(v)` registers all standard modules. Capability-gated modules only appear when their provider is set.
 
+Standard Lua modules are available by default. GoLua-specific extensions and host-facing capabilities include `glob`, `chan`, `time`, `exec`, and the separate `stdlib/http` module.
+
 | Module      | Requires Provider    | Description                                                                                   |
 | ----------- | -------------------- | --------------------------------------------------------------------------------------------- |
 | `string`    | No                   | Pattern matching, formatting, byte manipulation, `pack`/`unpack`, `dump`                      |
@@ -479,6 +521,8 @@ The default `*Table` implementation uses an ordered keys slice for the hash part
 ## Security Model
 
 GoLua is sandboxed by default. The VM starts with no access to the host system. Capabilities are granted explicitly by the host via providers.
+
+A fresh `vm.New()` instance has no file, network, process, or debug access unless the host opts in.
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
@@ -567,12 +611,15 @@ go run ./cmd/luac script.lua
 
 ## Limitations
 
+Current compatibility notes and intentional boundaries:
+
 - No C module loading — standard C Lua modules (.so/.dll) are compiled against the PUC-Rio C API and are not compatible with GoLua's VM. `package.loadlib` is nil by default; setting a `LuaLoadLibProvider` lets the host provide Go-native bindings or cgo-bridged libraries under the same API surface. `require` loads Lua modules via `LuaCodeProvider`.
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design; use `FullIoProvider` for read-write access)
 - Binary chunk format is compatible with Lua 5.4.8 — `load(string.dump(f))` round-tripping works, and chunks dumped by GoLua can be loaded by reference Lua 5.4.8 and vice versa. However, bytecode details may differ between compilers.
 - `os.setlocale` only supports the `"C"` locale — Go has no native locale support. Queries return `"C"` and setting any other locale returns `nil`.
 - GC behavior differs from C Lua — GoLua delegates garbage collection entirely to Go's runtime GC. `collectgarbage("collect")` triggers `runtime.GC()` but Go's GC timing is non-deterministic, so tests that depend on exact finalization order or count may not pass.
+- VM instances are isolated but not safe for concurrent mutation from multiple goroutines without external synchronization.
 
 ## Contributing
 
