@@ -26,6 +26,9 @@ SKILLS:
   - use v.ArgCount() for variadic functions
 - Prefer explicit type checks like IsString, IsNumber, IsTable before calling AsString, AsInt, AsTable.
 - If Go owns mutable state, expose closures that capture the Go pointer. If Lua just needs data, return a plain table snapshot.
+- Value constructors: vm.NewInt(int64), vm.NewFloat(float64), vm.NewString(string), vm.NewBool(bool), vm.NewTable(*Table), vm.NewNativeFunc(NativeFunc). Pre-built: vm.Nil, vm.True, vm.False.
+- vm.ValueToString(val) converts any Value to a printable string.
+- Tables support metatables: tbl.SetMetatable(mt) / tbl.Metatable(). Set __add, __tostring, __index, __newindex, __len, __eq, __lt, __le, __call, __concat etc. as table fields.
 ```
 
 ## What You Usually Need To Know
@@ -79,6 +82,22 @@ func main() {
     fmt.Println(results[0].AsInt())
 }
 ```
+
+## Value Constructors
+
+| Constructor | Go type | Lua type |
+|------------|---------|----------|
+| `vm.NewInt(i int64)` | `int64` | integer |
+| `vm.NewFloat(f float64)` | `float64` | float |
+| `vm.NewString(s string)` | `string` | string |
+| `vm.NewBool(b bool)` | `bool` | boolean |
+| `vm.NewTable(t *vm.Table)` | `*vm.Table` | table |
+| `vm.NewNativeFunc(f NativeFunc)` | `func(*vm.VM) int` | function |
+| `vm.NewFunction(c *Closure)` | `*vm.Closure` | function |
+| `vm.Nil` | — | nil |
+| `vm.True` / `vm.False` | — | boolean |
+
+Use `vm.ValueToString(val)` to convert any Value to a printable string (useful in REPLs, logging, debugging).
 
 ## One-Shot Run Vs Reuse
 
@@ -384,6 +403,8 @@ for {
 }
 ```
 
+`vm.ValueToString` is the standard way to get a human-readable representation of any Lua value from Go. It handles nil, bool, int, float, and string directly; other types produce a type-and-pointer format like Lua's `tostring()`.
+
 ## Return A Table To Lua
 
 ```go
@@ -446,6 +467,126 @@ end
 ```
 
 Use this for user-facing validation failures. Do not use plain Go panics for normal Lua argument errors.
+
+## Metatables
+
+GoLua supports full Lua 5.4 metatables. Set a metatable on any table to define
+operator overloads, custom indexing, and string conversion.
+
+### Basic metatable with __tostring and __add
+
+```go
+func NewVec2(x, y float64) *vm.Table {
+    t := vm.NewEmptyTable()
+    t.SetString("x", vm.NewFloat(x))
+    t.SetString("y", vm.NewFloat(y))
+    return t
+}
+
+func Vec2Meta() *vm.Table {
+    mt := vm.NewEmptyTable()
+
+    mt.SetString("__tostring", vm.NewNativeFunc(func(v *vm.VM) int {
+        self := v.Get(1).AsTable()
+        x := self.Get(vm.NewString("x")).AsFloat()
+        y := self.Get(vm.NewString("y")).AsFloat()
+        v.Set(0, vm.NewString(fmt.Sprintf("vec2(%g, %g)", x, y)))
+        return 1
+    }))
+
+    mt.SetString("__add", vm.NewNativeFunc(func(v *vm.VM) int {
+        a := v.Get(1).AsTable()
+        b := v.Get(2).AsTable()
+        ax := a.Get(vm.NewString("x")).AsFloat()
+        ay := a.Get(vm.NewString("y")).AsFloat()
+        bx := b.Get(vm.NewString("x")).AsFloat()
+        by := b.Get(vm.NewString("y")).AsFloat()
+        result := NewVec2(ax+bx, ay+by)
+        result.SetMetatable(a.Metatable()) // propagate metatable
+        v.Set(0, vm.NewTable(result))
+        return 1
+    }))
+
+    return mt
+}
+```
+
+Wire it up:
+
+```go
+meta := Vec2Meta()
+a := NewVec2(1, 2)
+a.SetMetatable(meta)
+b := NewVec2(3, 4)
+b.SetMetatable(meta)
+
+v.SetGlobal("a", vm.NewTable(a))
+v.SetGlobal("b", vm.NewTable(b))
+```
+
+Lua usage:
+
+```lua
+print(a)         --> vec2(1, 2)
+local c = a + b
+print(c)         --> vec2(4, 6)
+```
+
+### Supported metamethods
+
+All standard Lua 5.4 metamethods work: `__add`, `__sub`, `__mul`, `__div`,
+`__mod`, `__pow`, `__unm`, `__idiv`, `__band`, `__bor`, `__bxor`, `__bnot`,
+`__shl`, `__shr`, `__eq`, `__lt`, `__le`, `__concat`, `__len`, `__index`,
+`__newindex`, `__call`, `__tostring`, `__close`.
+
+### __index for default fields or method dispatch
+
+```go
+mt.SetString("__index", vm.NewNativeFunc(func(v *vm.VM) int {
+    key := v.Get(2).AsString()
+    switch key {
+    case "length":
+        self := v.Get(1).AsTable()
+        x := self.Get(vm.NewString("x")).AsFloat()
+        y := self.Get(vm.NewString("y")).AsFloat()
+        v.Set(0, vm.NewFloat(math.Sqrt(x*x + y*y)))
+    default:
+        v.Set(0, vm.Nil)
+    }
+    return 1
+}))
+```
+
+You can also set `__index` to a table for prototype-style inheritance:
+
+```go
+methods := vm.NewEmptyTable()
+methods.SetString("length", vm.NewNativeFunc(func(v *vm.VM) int {
+    self := v.Get(1).AsTable()
+    x := self.Get(vm.NewString("x")).AsFloat()
+    y := self.Get(vm.NewString("y")).AsFloat()
+    v.Set(0, vm.NewFloat(math.Sqrt(x*x + y*y)))
+    return 1
+}))
+mt.SetString("__index", vm.NewTable(methods))
+```
+
+Lua:
+
+```lua
+print(a:length())  --> 2.2360679774998
+```
+
+Note: `a:length()` is sugar for `a.length(a)` — the colon passes the table as the first arg, so `v.Get(1)` is `self` and real arguments start at `v.Get(2)`. Dot-calls like `a.length()` do not pass `self`.
+
+### Setting metatables from Go
+
+```go
+tbl.SetMetatable(mt)         // set metatable on a table instance
+tbl.Metatable()              // get current metatable (nil if none)
+v.SetStringMeta(mt)          // set type metatable for all strings
+v.GetMetafield(val, "__len") // look up a specific metamethod
+```
 
 ## Output Capture
 
