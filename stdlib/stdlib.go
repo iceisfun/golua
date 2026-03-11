@@ -11,10 +11,12 @@
 //   - debug: requires [vm.LuaDebugProvider] (e.g. [vm.DefaultDebugProvider])
 //   - chan: requires [vm.LuaChanProvider] (e.g. [vm.DefaultChanProvider])
 //   - time: requires [vm.LuaTimeProvider] (e.g. [vm.DefaultTimeProvider])
+//   - exec: requires [vm.LuaProcessProvider] (e.g. [vm.DefaultProcessProvider])
 //   - package.loadlib: requires [vm.LuaLoadLibProvider] (host-defined native module hook)
 //
 // GoLua extensions beyond Lua 5.4: bit32 (from Lua 5.2), chan (Go channels),
-// time (millisecond timing), glob (Go-style pattern matching).
+// time (millisecond timing), exec (process control), and glob (Go-style
+// pattern matching). The optional HTTP module lives in [stdlib/http].
 //
 // # Panic convention
 //
@@ -37,7 +39,7 @@ import (
 )
 
 // Open registers all standard library functions and modules in the VM.
-// Conditional modules (io, os, debug, chan, time) are only registered if
+// Conditional modules (io, os, debug, chan, time, exec) are only registered if
 // their corresponding provider has been set on the VM. Open also sets
 // _G and _VERSION ("Lua 5.4") as globals.
 func Open(v *vm.VM) {
@@ -63,7 +65,7 @@ func Open(v *vm.VM) {
 	v.SetGlobal("collectgarbage", vm.NewNativeFunc(luaCollectgarbage))
 	v.SetGlobal("warn", vm.NewNativeFunc(luaWarn))
 
-	// Output inspection (for testing)
+	// Output inspection helpers for hosts that capture print and warn output.
 	v.SetGlobal("_lastoutput", vm.NewNativeFunc(luaLastOutput))
 	v.SetGlobal("_outputlines", vm.NewNativeFunc(luaOutputLines))
 
