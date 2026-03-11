@@ -1,16 +1,21 @@
 package vm
 
-// LuaCallerContext provides context about who is requesting a chunk load.
+// LuaCallerContext describes the Lua frame that requested a chunk load.
 type LuaCallerContext struct {
-	ScriptName string // current executing chunk
-	VMID       string // optional VM identifier
-	CallDepth  int    // how deep the call stack is
+	// ScriptName is the display name of the currently executing chunk.
+	ScriptName string
+	// VMID is an optional host-defined VM identifier for audit or policy checks.
+	VMID string
+	// CallDepth is the current Lua call depth when the load request is made.
+	CallDepth int
 }
 
-// LuaLoaderCaps declares which optional loading behaviors are allowed.
+// LuaLoaderCaps declares which optional loading helpers are exposed to Lua.
 type LuaLoaderCaps struct {
-	AllowDofile   bool // execute immediately helper
-	AllowLoadfile bool // filesystem-style semantics (still routed!)
+	// AllowDofile enables the global dofile helper.
+	AllowDofile bool
+	// AllowLoadfile enables the global loadfile helper.
+	AllowLoadfile bool
 }
 
 // LuaCodeProvider is a capability interface for sandboxed code loading.

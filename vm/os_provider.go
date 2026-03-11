@@ -1,39 +1,67 @@
 package vm
 
-// LuaOsCaps declares which OS operations are allowed.
+// LuaOsCaps declares which os-library operations are exposed to Lua.
 type LuaOsCaps struct {
-	AllowTime    bool
-	AllowDate    bool
-	AllowGetenv  bool
+	// AllowTime enables os.time.
+	AllowTime bool
+	// AllowDate enables os.date.
+	AllowDate bool
+	// AllowGetenv enables os.getenv.
+	AllowGetenv bool
+	// AllowTmpName enables os.tmpname.
 	AllowTmpName bool
-	AllowRemove  bool
+	// AllowRemove enables os.remove.
+	AllowRemove bool
+	// AllowExecute enables os.execute when an exec provider is also present.
 	AllowExecute bool
-	AllowExit    bool
-	AllowRename  bool
+	// AllowExit enables os.exit when an exit handler is also present.
+	AllowExit bool
+	// AllowRename enables os.rename.
+	AllowRename bool
 }
 
+// LuaDateTime is the structured date/time table shape used by os.date and os.time.
 type LuaDateTime struct {
-	Year   int
-	Month  int
-	Day    int
-	Hour   int
-	Min    int
-	Sec    int
-	Wday   int
-	Yday   int
-	IsDST  bool
+	// Year is the full year, such as 2026.
+	Year int
+	// Month is 1-12.
+	Month int
+	// Day is 1-31.
+	Day int
+	// Hour is 0-23.
+	Hour int
+	// Min is 0-59.
+	Min int
+	// Sec is 0-60, matching Lua's leap-second-friendly contract.
+	Sec int
+	// Wday is 1-7 with Sunday == 1, matching Lua.
+	Wday int
+	// Yday is 1-366.
+	Yday int
+	// IsDST reports whether daylight saving time is in effect.
+	IsDST bool
+	// HasDST reports whether IsDST is known for this timestamp.
 	HasDST bool
 }
 
+// LuaTimeInput is the input table shape accepted by os.time.
 type LuaTimeInput struct {
-	Year     int
-	Month    int
-	Day      int
-	Hour     int
-	Min      int
-	Sec      int
+	// Year is required.
+	Year int
+	// Month is required and uses 1-12.
+	Month int
+	// Day is required and uses 1-31.
+	Day int
+	// Hour defaults to 12 when omitted, matching Lua.
+	Hour int
+	// Min defaults to 0 when omitted.
+	Min int
+	// Sec defaults to 0 when omitted.
+	Sec int
+	// HasIsDST reports whether IsDST was provided by the caller.
 	HasIsDST bool
-	IsDST    bool
+	// IsDST requests daylight-saving interpretation when HasIsDST is true.
+	IsDST bool
 }
 
 // LuaOsProvider is a capability interface for sandboxed OS operations.

@@ -1,8 +1,10 @@
 package vm
 
-// LuaIoCaps declares which IO operations are allowed.
+// LuaIoCaps declares which io-library file operations are exposed to Lua.
 type LuaIoCaps struct {
-	AllowRead  bool
+	// AllowRead enables read-oriented operations.
+	AllowRead bool
+	// AllowWrite enables write-oriented operations.
 	AllowWrite bool
 }
 
@@ -82,4 +84,3 @@ type LuaFile interface {
 	// that should not be closable by the user.
 	IsStd() bool
 }
-

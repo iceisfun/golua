@@ -1,31 +1,47 @@
 package vm
 
-// LuaDebugCaps declares which diagnostic debug operations are allowed.
+// LuaDebugCaps declares which debug-library operations are exposed to Lua.
 type LuaDebugCaps struct {
-	AllowTraceback      bool
-	AllowStackDepth     bool
-	AllowWhere          bool
-	AllowGetInfo        bool
-	AllowGetUpvalue     bool
-	AllowSetUpvalue     bool
-	AllowUpvalueID      bool
-	AllowGetLocal       bool
-	AllowSetLocal       bool
-	AllowGetRegistry    bool
-	AllowGetMetatable   bool
-	AllowSetMetatable   bool
-	AllowSetHook        bool
-	AllowGetHook        bool
-	AllowUpvalueJoin    bool
+	// AllowTraceback enables debug.traceback.
+	AllowTraceback bool
+	// AllowStackDepth enables debug.stackdepth.
+	AllowStackDepth bool
+	// AllowWhere enables debug.where.
+	AllowWhere bool
+	// AllowGetInfo enables debug.getinfo.
+	AllowGetInfo bool
+	// AllowGetUpvalue enables debug.getupvalue.
+	AllowGetUpvalue bool
+	// AllowSetUpvalue enables debug.setupvalue.
+	AllowSetUpvalue bool
+	// AllowUpvalueID enables debug.upvalueid.
+	AllowUpvalueID bool
+	// AllowGetLocal enables debug.getlocal.
+	AllowGetLocal bool
+	// AllowSetLocal enables debug.setlocal.
+	AllowSetLocal bool
+	// AllowGetRegistry enables debug.getregistry.
+	AllowGetRegistry bool
+	// AllowGetMetatable enables debug.getmetatable.
+	AllowGetMetatable bool
+	// AllowSetMetatable enables debug.setmetatable.
+	AllowSetMetatable bool
+	// AllowSetHook enables debug.sethook.
+	AllowSetHook bool
+	// AllowGetHook enables debug.gethook.
+	AllowGetHook bool
+	// AllowUpvalueJoin enables debug.upvaluejoin.
+	AllowUpvalueJoin bool
+	// AllowSetCStackLimit enables debug.setcstacklimit compatibility behavior.
 	AllowSetCStackLimit bool
-	AllowGetUserValue   bool
-	AllowSetUserValue   bool
+	// AllowGetUserValue enables debug.getuservalue.
+	AllowGetUserValue bool
+	// AllowSetUserValue enables debug.setuservalue.
+	AllowSetUserValue bool
 }
 
-// LuaDebugProvider is a capability interface for diagnostic debug operations.
-// This is NOT the standard Lua debug library. It exposes only read-only
-// diagnostic functions (traceback, stack depth, source location). No hooks,
-// no local/upvalue mutation, no bytecode inspection.
+// LuaDebugProvider is a capability interface for exposing the Lua debug library.
+// Without a provider, the debug table is absent from the VM.
 type LuaDebugProvider interface {
 	// Capabilities declares which diagnostic behaviors are allowed.
 	Capabilities() LuaDebugCaps

@@ -7,13 +7,19 @@ import (
 	"sync/atomic"
 )
 
-// LuaChanCaps declares which channel operations are allowed.
+// LuaChanCaps declares which channel operations are exposed to Lua.
 type LuaChanCaps struct {
-	AllowSend    bool
-	AllowRecv    bool
-	AllowClose   bool
-	AllowSelect  bool
+	// AllowSend enables blocking send operations.
+	AllowSend bool
+	// AllowRecv enables blocking receive operations.
+	AllowRecv bool
+	// AllowClose enables closing channels from Lua.
+	AllowClose bool
+	// AllowSelect enables chan.select.
+	AllowSelect bool
+	// AllowTrySend enables non-blocking send operations.
 	AllowTrySend bool
+	// AllowTryRecv enables non-blocking receive operations.
 	AllowTryRecv bool
 }
 

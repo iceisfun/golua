@@ -25,33 +25,52 @@ type LuaProcessProvider interface {
 
 // ProcessOptions configures how a process is spawned.
 type ProcessOptions struct {
-	Env         map[string]string // Environment variables (nil = inherit)
-	Dir         string            // Working directory (empty = inherit)
-	Stdin       bool              // Whether to create a stdin pipe
-	Stdout      bool              // Whether to capture stdout
-	Stderr      bool              // Whether to capture stderr
-	MergeStderr bool              // Merge stderr into stdout (like 2>&1)
+	// Env replaces the child environment when non-nil.
+	Env map[string]string
+	// Dir sets the child working directory when non-empty.
+	Dir string
+	// Stdin creates a writable stdin pipe for the child.
+	Stdin bool
+	// Stdout captures stdout for Read and ReadLine.
+	Stdout bool
+	// Stderr captures stderr for ReadStderr and ReadStderrLine.
+	Stderr bool
+	// MergeStderr routes stderr into stdout instead of exposing a separate stream.
+	MergeStderr bool
 }
 
 // LuaProcess represents a running or completed external process.
 type LuaProcess interface {
+	// Read reads from captured stdout.
 	Read([]byte) (int, error)
+	// ReadLine reads a single line from captured stdout.
 	ReadLine() (string, error)
+	// Write writes to the process stdin pipe.
 	Write([]byte) (int, error)
+	// CloseStdin closes the process stdin pipe.
 	CloseStdin() error
+	// Wait blocks until the process completes and returns its final result.
 	Wait() ProcessResult
+	// WaitTimeout waits up to timeout and reports whether the process completed.
 	WaitTimeout(timeout time.Duration) (ProcessResult, bool)
+	// IsComplete reports whether the process has already exited.
 	IsComplete() bool
+	// Kill terminates the process.
 	Kill() error
+	// ReadStderr reads from captured stderr when stderr was requested separately.
 	ReadStderr([]byte) (int, error)
+	// ReadStderrLine reads a single line from captured stderr.
 	ReadStderrLine() (string, error)
 }
 
 // ProcessResult holds the outcome of a completed process.
 type ProcessResult struct {
+	// Success reports whether the process exited with status code 0.
 	Success bool
-	Code    int
-	Signal  int
+	// Code is the exit status, or -1 when unavailable.
+	Code int
+	// Signal is the terminating signal number on signal-based exits.
+	Signal int
 }
 
 // DefaultProcessProvider implements LuaProcessProvider using os/exec.
@@ -300,16 +319,16 @@ func extractResult(err error) ProcessResult {
 
 // defaultProcess implements LuaProcess backed by os/exec.
 type defaultProcess struct {
-	cmd             *exec.Cmd
-	ctx             context.Context
-	stdin           io.WriteCloser
-	stdoutPipe      *pipeBuffer
-	stderrPipe      *pipeBuffer
+	cmd              *exec.Cmd
+	ctx              context.Context
+	stdin            io.WriteCloser
+	stdoutPipe       *pipeBuffer
+	stderrPipe       *pipeBuffer
 	mergedPipeWriter *os.File // write end of merged pipe, closed after Start()
-	doneCh          chan struct{}
-	mu              sync.Mutex
-	done            bool
-	result          ProcessResult
+	doneCh           chan struct{}
+	mu               sync.Mutex
+	done             bool
+	result           ProcessResult
 }
 
 func (p *defaultProcess) Read(buf []byte) (int, error) {
