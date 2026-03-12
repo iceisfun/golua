@@ -490,6 +490,8 @@ type LuaTable interface {
 }
 ```
 
+`LuaTable.Get()` performs **raw access** (equivalent to Lua's `rawget()`) — it does not invoke `__index` metamethods. To get Lua-style indexing that walks the `__index` chain, use `v.TableGet(tbl, key)` or `v.TableGetInt(tbl, n)` instead. Similarly, `v.SetIndexValue()` respects `__newindex`. This distinction matters when reading from class instances created via `setmetatable`.
+
 The default `*Table` implementation uses an ordered keys slice for the hash part, so `next()`/`pairs()` iteration is deterministic (insertion-ordered). This avoids the non-deterministic `range map` behavior in Go. Mutation during iteration is not safe; inserting or deleting keys may skip entries or produce duplicates. Tables have no implicit thread safety -- concurrent read+write requires external synchronization.
 
 ## Standard Library

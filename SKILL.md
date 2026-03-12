@@ -39,6 +39,7 @@ SKILLS:
 - Value constructors: vm.NewInt(int64), vm.NewFloat(float64), vm.NewString(string), vm.NewBool(bool), vm.NewTable(*Table), vm.NewNativeFunc(NativeFunc). Pre-built: vm.Nil, vm.True, vm.False.
 - vm.ValueToString(val) converts any Value to a printable string.
 - Tables support metatables: tbl.SetMetatable(mt) / tbl.Metatable(). Set __add, __tostring, __index, __newindex, __len, __eq, __lt, __le, __call, __concat etc. as table fields.
+- Table.Get(key) is raw access (like rawget). Use v.TableGet(tbl, key) for __index-aware access (like tbl[key] in Lua). This matters for class instances.
 ```
 
 ## What You Usually Need To Know
@@ -353,6 +354,48 @@ func ThingToLua(tg *Thing) *vm.Table {
 ```
 
 Now Lua gets both `thing.name` and `thing.rename("new name")`.
+
+## Raw Vs Metamethod-Aware Table Access
+
+`Table.Get()` is **raw access** — it does not walk the `__index` chain. This is
+equivalent to Lua's `rawget()` and is the correct behavior for direct table
+operations.
+
+When you need Lua-style indexing that respects `__index` (table or function),
+use the VM methods instead:
+
+```go
+// Raw access (no metamethods) — like rawget()
+val := tbl.Get(vm.NewString("key"))
+
+// Metamethod-aware access — like tbl["key"] in Lua
+val, err := v.TableGet(tbl, vm.NewString("key"))
+
+// Metamethod-aware integer access — like tbl[1] in Lua
+val, err := v.TableGetInt(tbl, 1)
+
+// Metamethod-aware write — like tbl["key"] = val in Lua
+err := v.SetIndexValue(vm.NewTable(tbl), vm.NewString("key"), val)
+```
+
+This matters when working with Lua OOP patterns. Instances created via
+`setmetatable({}, Class)` store methods on the class, not the instance.
+`Table.Get()` on the instance will return nil for inherited methods:
+
+```go
+results, _ := v.Run(proto) // Lua returns an instance with methods via __index
+instance := results[0].AsTable()
+
+// WRONG: raw access, misses inherited methods
+method := instance.Get(vm.NewString("greet")) // nil!
+
+// RIGHT: walks __index chain
+method, err := v.TableGet(instance, vm.NewString("greet")) // found
+```
+
+Rule of thumb:
+- Use `tbl.Get()` when you know the key is on the table itself (config tables, plain data)
+- Use `v.TableGet()` when the table might use metatables (class instances, proxies)
 
 ## Accept A Table Passed From Lua
 
