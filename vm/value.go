@@ -374,9 +374,56 @@ func StringToNumericValue(s string) (Value, bool) {
 		}
 		return Nil, false
 	}
-	// Handle signed hex (e.g. -0x1, +0xA.8)
+	// Handle signed hex (e.g. -0x1, +0xA.8, -0xff)
 	if len(s) > 3 && (s[0] == '+' || s[0] == '-') &&
 		s[1] == '0' && (s[2] == 'x' || s[2] == 'X') {
+		hex := s[3:]
+		sign := s[0]
+		// Check if it's a hex float (has '.' or 'p'/'P')
+		isHexFloat := false
+		for _, c := range hex {
+			if c == '.' || c == 'p' || c == 'P' {
+				isHexFloat = true
+				break
+			}
+		}
+		if !isHexFloat {
+			// Signed hex integer
+			if u, err := strconv.ParseUint(hex, 16, 64); err == nil {
+				i := int64(u)
+				if sign == '-' {
+					i = -i
+				}
+				return NewInt(i), true
+			}
+			// Overflows uint64: parse digit by digit with modular wrapping
+			var result uint64
+			valid := false
+			for _, c := range hex {
+				var d uint64
+				switch {
+				case c >= '0' && c <= '9':
+					d = uint64(c - '0')
+				case c >= 'a' && c <= 'f':
+					d = uint64(c-'a') + 10
+				case c >= 'A' && c <= 'F':
+					d = uint64(c-'A') + 10
+				default:
+					return Nil, false
+				}
+				result = result*16 + d
+				valid = true
+			}
+			if valid {
+				i := int64(result)
+				if sign == '-' {
+					i = -i
+				}
+				return NewInt(i), true
+			}
+			return Nil, false
+		}
+		// Signed hex float
 		if f, ok := ParseHexFloat(s); ok {
 			return NewFloat(f), true
 		}
@@ -418,9 +465,19 @@ func (v Value) ToNumber() (float64, bool) {
 		if f, err := strconv.ParseFloat(s, 64); err == nil || errors.Is(err, strconv.ErrRange) {
 			return f, true
 		}
-		// Try parsing hex (0x prefix)
+		// Try parsing hex (0x prefix, including signed +0x/-0x)
+		hexStart := 0
 		if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
-			if i, err := strconv.ParseInt(s[2:], 16, 64); err == nil {
+			hexStart = 2
+		} else if len(s) > 3 && (s[0] == '+' || s[0] == '-') &&
+			s[1] == '0' && (s[2] == 'x' || s[2] == 'X') {
+			hexStart = 3
+		}
+		if hexStart > 0 {
+			if i, err := strconv.ParseInt(s[hexStart:], 16, 64); err == nil {
+				if hexStart == 3 && s[0] == '-' {
+					return float64(-i), true
+				}
 				return float64(i), true
 			}
 			if f, ok := ParseHexFloat(s); ok {
@@ -452,14 +509,25 @@ func (v Value) ToInt() (int64, bool) {
 		if s == "" {
 			return 0, false
 		}
-		// Try hex integer first
+		// Try hex integer first (including signed +0x/-0x)
+		hexStart := 0
+		hexSign := int64(1)
 		if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
-			if i, err := strconv.ParseInt(s[2:], 16, 64); err == nil {
-				return i, true
+			hexStart = 2
+		} else if len(s) > 3 && (s[0] == '+' || s[0] == '-') &&
+			s[1] == '0' && (s[2] == 'x' || s[2] == 'X') {
+			hexStart = 3
+			if s[0] == '-' {
+				hexSign = -1
+			}
+		}
+		if hexStart > 0 {
+			if i, err := strconv.ParseInt(s[hexStart:], 16, 64); err == nil {
+				return i * hexSign, true
 			}
 			// Try unsigned hex for values like 0xFFFFFFFFFFFFFFFF
-			if u, err := strconv.ParseUint(s[2:], 16, 64); err == nil {
-				return int64(u), true
+			if u, err := strconv.ParseUint(s[hexStart:], 16, 64); err == nil {
+				return int64(u) * hexSign, true
 			}
 		}
 		// Try direct decimal integer parse (preserves precision for maxint)
