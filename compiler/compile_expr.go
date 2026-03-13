@@ -841,6 +841,16 @@ func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, 
 	// Function goes into base
 	c.compileExprToReg(e.Func, base)
 
+	// Reset freeReg after compiling function expression. If e.Func is a
+	// chained call (e.g. f(x)(y)), compileExprToReg inflates freeReg for
+	// the inner call's arguments. Without this reset, compileExprMultiRet
+	// for the last argument would start at the inflated freeReg, leaving a
+	// gap of stale register values that the outer B=0 CALL picks up.
+	fs.freeReg = base + 1
+	if fs.freeReg > fs.maxReg {
+		fs.maxReg = fs.freeReg
+	}
+
 	// Arguments into base+1, base+2, ...
 	nArgs := len(e.Args)
 	for i, arg := range e.Args {
@@ -882,12 +892,14 @@ func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults i
 	methodK := fs.stringConstant(e.Method)
 	fs.emitSelf(base, objReg, methodK, line)
 
-	// Make sure base+1 is allocated
-	if base+1 >= fs.freeReg {
-		fs.freeReg = base + 2
-		if fs.freeReg > fs.maxReg {
-			fs.maxReg = fs.freeReg
-		}
+	// Unconditionally reset freeReg after compiling object and emitting SELF.
+	// If e.Object is a chained call (e.g. a:m():n()), compileExprToReg inflates
+	// freeReg for the inner call's arguments. The conditional check would fail
+	// to reset it, causing compileExprMultiRet for the last argument to start
+	// at the inflated freeReg and leave a gap of stale register values.
+	fs.freeReg = base + 2
+	if fs.freeReg > fs.maxReg {
+		fs.maxReg = fs.freeReg
 	}
 
 	// Arguments start at base+2
