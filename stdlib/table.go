@@ -226,7 +226,7 @@ func tableSort(v *vm.VM) int {
 		auxSort(v, obj, 1, length, vm.Nil, &sortErr)
 	} else {
 		if !comp.IsFunction() && !comp.IsNativeFunc() {
-			callerArgError(v, 2, "table.sort", fmt.Sprintf("function expected, got %s", comp.Type()))
+			callerArgError(v, 2, "table.sort", fmt.Sprintf("function expected, got %s", v.ObjTypeName(comp)))
 		}
 		auxSort(v, obj, 1, length, comp, &sortErr)
 	}

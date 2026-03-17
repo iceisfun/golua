@@ -16,7 +16,7 @@ func gotDesc(v *vm.VM, argn int) string {
 	if v.ArgCount() < argn {
 		return ", got no value"
 	}
-	return fmt.Sprintf(", got %s", v.Get(argn).Type())
+	return fmt.Sprintf(", got %s", v.ObjTypeName(v.Get(argn)))
 }
 
 // print(...)
@@ -147,7 +147,7 @@ func luaToNumber(v *vm.VM) int {
 		// Lua 5.4 order: (1) arg2 integer type, (2) arg1 string type, (3) base range.
 		bi := getInt(v, 2, "tonumber")
 		if !val.IsString() {
-			callerArgError(v, 1, "tonumber", fmt.Sprintf("string expected, got %s", val.Type()))
+			callerArgError(v, 1, "tonumber", fmt.Sprintf("string expected, got %s", v.ObjTypeName(val)))
 		}
 		if bi < 2 || bi > 36 {
 			callerArgError(v, 2, "tonumber", "base out of range")
@@ -489,13 +489,13 @@ func luaWarn(v *vm.VM) int {
 	// Lua 5.4: all arguments must be strings or numbers (coerced to string)
 	first := v.Get(1)
 	if !first.IsString() && !first.IsInt() && !first.IsFloat() {
-		callerArgError(v, 1, "warn", fmt.Sprintf("string expected, got %s", first.Type()))
+		callerArgError(v, 1, "warn", fmt.Sprintf("string expected, got %s", v.ObjTypeName(first)))
 	}
 	s := valueToString(first)
 	for i := 2; i <= argc; i++ {
 		arg := v.Get(i)
 		if !arg.IsString() && !arg.IsInt() && !arg.IsFloat() {
-			callerArgError(v, i, "warn", fmt.Sprintf("string expected, got %s", arg.Type()))
+			callerArgError(v, i, "warn", fmt.Sprintf("string expected, got %s", v.ObjTypeName(arg)))
 		}
 	}
 	if len(s) > 0 && s[0] == '@' {
