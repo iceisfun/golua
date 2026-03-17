@@ -1031,6 +1031,7 @@ func (vm *VM) execute() ([]Value, error) {
 					closure := fn.AsClosure()
 					// Reuse the frame
 					frame.closure = closure
+					frame.funcValue = fn
 					frame.pc = 0
 					frame.isTailCall = true
 					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount

@@ -130,6 +130,12 @@ func (vm *VM) Traceback(msg string, level int) string {
 				name = ""
 				nameWhat = ""
 			}
+			// If no name yet, try reverse lookup in globals for Lua functions
+			if name == "" && frame.closure != nil {
+				if resolved, ok := vm.lookupNativeFuncName(frame.funcValue); ok {
+					name = resolved
+				}
+			}
 			if name == "" {
 				name = vm.frameFuncName(frame)
 			}
@@ -1084,9 +1090,17 @@ func (vm *VM) IsValidLevel(level int) bool {
 }
 
 // GetRegistry returns the VM's registry table, creating it on first access.
+// Per Lua 5.4, registry[1] is the main thread and registry[2] is the global table.
 func (vm *VM) GetRegistry() LuaTable {
 	if vm.registry == nil {
 		vm.registry = NewEmptyTable()
+	}
+	// Ensure standard entries are populated when available.
+	if !vm.threadObj.IsNil() {
+		_ = vm.registry.Set(NewInt(1), vm.threadObj)
+	}
+	if vm.globals != nil {
+		_ = vm.registry.Set(NewInt(2), NewTable(vm.globals))
 	}
 	return vm.registry
 }

@@ -292,6 +292,9 @@ buildResult:
 	// Validate the what string ('>' is C API only, not valid at Lua level)
 	for _, ch := range what {
 		if !strings.ContainsRune("flnStuLr", ch) {
+			if ch == '>' {
+				callerArgError(v, whatIdx, "debug.getinfo", "invalid option '>'")
+			}
 			callerArgError(v, whatIdx, "debug.getinfo", "invalid option")
 		}
 	}
