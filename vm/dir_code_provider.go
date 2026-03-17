@@ -36,12 +36,12 @@ func (p *DirCodeProvider) LoadChunk(name string, caller *LuaCallerContext) ([]by
 		// Allow absolute paths within root or temp directory
 		absName, err := filepath.Abs(name)
 		if err != nil {
-			return nil, "", fmt.Errorf("cannot open %s: %v", name, unwrapFileError(err))
+			return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
 		}
 		if strings.HasPrefix(absName, p.root) || strings.HasPrefix(absName, os.TempDir()) {
 			data, err := os.ReadFile(absName)
 			if err != nil {
-				return nil, "", fmt.Errorf("cannot open %s: %v", name, unwrapFileError(err))
+				return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
 			}
 			return data, "@" + name, nil
 		}
@@ -50,7 +50,7 @@ func (p *DirCodeProvider) LoadChunk(name string, caller *LuaCallerContext) ([]by
 
 	data, err := fs.ReadFile(p.fs, name)
 	if err != nil {
-		return nil, "", fmt.Errorf("cannot open %s: %v", name, unwrapFileError(err))
+		return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
 	}
 	return data, "@" + name, nil
 }
@@ -71,6 +71,17 @@ func unwrapFileError(err error) error {
 		return capitalizeError(pe.Err)
 	}
 	return capitalizeError(err)
+}
+
+// fileErrorVerb returns the appropriate verb ("open" or "read") for a file
+// error, matching Lua 5.4 which distinguishes between open failures (e.g.
+// file not found) and read failures (e.g. path is a directory).
+func fileErrorVerb(err error) string {
+	var pe *fs.PathError
+	if errors.As(err, &pe) && pe.Op == "read" {
+		return "read"
+	}
+	return "open"
 }
 
 // capitalizeError returns an error whose message has its first letter

@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/parser"
+	"github.com/iceisfun/golua/stdlib"
+	"github.com/iceisfun/golua/vm"
 )
 
 func writeTempLua(t *testing.T, dir, name, source string) string {
@@ -15,6 +20,25 @@ func writeTempLua(t *testing.T, dir, name, source string) string {
 		t.Fatalf("write temp lua: %v", err)
 	}
 	return path
+}
+
+func runLuaWithCLIProviders(t *testing.T, testMode bool, scriptDir, source string) ([]vm.Value, error) {
+	t.Helper()
+
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	proto, err := compiler.Compile("=test", block)
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	v := vm.New()
+	v.SetOsProvider(vm.NewDefaultOsProvider())
+	configureCLIProviders(v, testMode, scriptDir)
+	stdlib.Open(v)
+	return v.Run(proto)
 }
 
 func TestRunCLI_TopLevelNativeErrorIncludesTraceback(t *testing.T) {
@@ -56,5 +80,41 @@ func TestRunCLI_HookErrorIncludesHookTraceback(t *testing.T) {
 	}
 	if !strings.Contains(msg, "[C]: in function 'error'") {
 		t.Fatalf("expected outer traceback for hook error, got: %s", msg)
+	}
+}
+
+func TestConfigureCLIProviders_TestModeUsesJailedIO(t *testing.T) {
+	dir := t.TempDir()
+	results, err := runLuaWithCLIProviders(t, true, dir, `
+		local f, openErr = io.open("probe.txt", "w")
+		return f == nil, type(openErr) == "string"
+	`)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(results) != 2 || !results[0].AsBool() || !results[1].AsBool() {
+		t.Fatalf("unexpected results: %#v", results)
+	}
+}
+
+func TestConfigureCLIProviders_DefaultModeAllowsWrite(t *testing.T) {
+	dir := t.TempDir()
+	results, err := runLuaWithCLIProviders(t, false, dir, `
+		local f, openErr = io.open("probe.txt", "w")
+		if not f then
+			return false, openErr
+		end
+		f:write("ok")
+		f:close()
+		return true, io.open("probe.txt", "r") ~= nil
+	`)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(results) != 2 || !results[0].AsBool() || !results[1].AsBool() {
+		t.Fatalf("unexpected results: %#v", results)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "probe.txt")); err != nil {
+		t.Fatalf("expected written file: %v", err)
 	}
 }

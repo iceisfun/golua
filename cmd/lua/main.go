@@ -21,9 +21,26 @@ func main() {
 	os.Exit(runCLI(os.Args, os.Stderr))
 }
 
+func configureCLIProviders(v *vm.VM, testMode bool, scriptDir string) {
+	v.SetCodeProvider(vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{
+		AllowLoadfile: true,
+		AllowDofile:   true,
+	}))
+	if testMode {
+		v.SetIoProvider(vm.NewJailedIoProvider(scriptDir))
+		v.SetDebugProvider(vm.NewDefaultDebugProvider())
+		return
+	}
+	v.SetIoProvider(vm.NewFullIoProvider(scriptDir))
+	v.SetExecProvider(vm.NewDefaultExecProvider())
+	v.SetExitHandler(vm.NewDefaultExitHandler())
+	v.SetDebugProvider(vm.NewDefaultDebugProvider())
+}
+
 func runCLI(argv []string, stderr io.Writer) int {
 	var timeoutMs int
 	var evalCode string
+	var testMode bool
 	args := argv[1:]
 
 	// Parse flags
@@ -49,7 +66,7 @@ func runCLI(argv []string, stderr io.Writer) int {
 			evalCode = args[1]
 			args = args[2:]
 		case "--test":
-			// kept for backward compatibility
+			testMode = true
 			args = args[1:]
 		default:
 			goto done
@@ -125,16 +142,7 @@ done:
 		}
 	}
 
-	// Always set core providers for CLI usage
-	v.SetCodeProvider(vm.NewDirCodeProvider(".", vm.LuaLoaderCaps{
-		AllowLoadfile: true,
-		AllowDofile:   true,
-	}))
-	v.SetIoProvider(vm.NewFullIoProvider(scriptDir))
-	v.SetExecProvider(vm.NewDefaultExecProvider())
-	v.SetExitHandler(vm.NewDefaultExitHandler())
-
-	v.SetDebugProvider(vm.NewDefaultDebugProvider())
+	configureCLIProviders(v, testMode, scriptDir)
 	stdlib.Open(v)
 
 	// Set timeout context if requested
