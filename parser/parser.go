@@ -541,7 +541,10 @@ func (p *parser) parseLabelStmt() ast.Stmt {
 	p.advance() // skip '::'
 	name, _ := p.expect(token.NAME)
 	p.expect(token.DBCOLON)
-	return ast.NewLabelStmt(pos, name.Literal)
+	// Capture line after closing :: — Lua 5.4 stores the lexer's current
+	// line number at this point, which may have advanced past a newline.
+	endLine := p.pos().Line
+	return ast.NewLabelStmt(pos, name.Literal, endLine)
 }
 
 func (p *parser) parseExprStat() ast.Stmt {

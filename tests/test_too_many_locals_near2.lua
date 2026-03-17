@@ -31,7 +31,7 @@ do
 end
 
 -- Bug 3: function with 202+ parameters
--- Lua 5.4 says near ',' because the limit is checked incrementally at each comma
+-- Lua 5.4 says near ')' because the limit is checked after all params are parsed
 do
     local params = {}
     for i = 1, 202 do
@@ -40,7 +40,7 @@ do
     local code = "function f(" .. table.concat(params, ",") .. ") end"
     local ok, err = load(code)
     assert(not ok, "should fail with too many locals")
-    assert(err:find("near ','"), "Bug3: expected near ',' but got: " .. err)
+    assert(err:find("near '%)'"), "Bug3: expected near ')' but got: " .. err)
 end
 
 -- Bug 4: local x1,x2,...,x201 with no assignment

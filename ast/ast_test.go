@@ -158,7 +158,7 @@ func TestStatementConstructors(t *testing.T) {
 		{"ReturnStmt", ast.NewReturnStmt(pos(9, 1), nil), 9, 1},
 		{"BreakStmt", ast.NewBreakStmt(pos(10, 1)), 10, 1},
 		{"GotoStmt", ast.NewGotoStmt(pos(11, 1), "skip"), 11, 1},
-		{"LabelStmt", ast.NewLabelStmt(pos(12, 1), "skip"), 12, 1},
+		{"LabelStmt", ast.NewLabelStmt(pos(12, 1), "skip", 12), 12, 1},
 		{"ExprStmt", ast.NewExprStmt(pos(13, 1),
 			ast.NewFuncCallExpr(p(), ast.NewNameExpr(p(), "f"), nil)), 13, 1},
 		{"FuncStmt", ast.NewFuncStmt(pos(14, 1),
@@ -674,7 +674,7 @@ func TestDumpStmtGoto(t *testing.T) {
 }
 
 func TestDumpStmtLabel(t *testing.T) {
-	d := ast.DumpString(blockWith(ast.NewLabelStmt(p(), "start")))
+	d := ast.DumpString(blockWith(ast.NewLabelStmt(p(), "start", 0)))
 	mustContain(t, d, "(label start)")
 }
 
@@ -1896,7 +1896,7 @@ func TestGotoStmtFields(t *testing.T) {
 }
 
 func TestLabelStmtFields(t *testing.T) {
-	s := ast.NewLabelStmt(pos(1, 1), "target")
+	s := ast.NewLabelStmt(pos(1, 1), "target", 1)
 	if s.Name != "target" {
 		t.Errorf("Name = %q, want target", s.Name)
 	}

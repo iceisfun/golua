@@ -173,15 +173,16 @@ func NewGotoStmt(p token.Pos, label string) *GotoStmt {
 
 // LabelStmt: ::label::
 type LabelStmt struct {
-	P    token.Pos
-	Name string
+	P       token.Pos
+	Name    string
+	EndLine int // line number after closing ::, for duplicate-label error reporting
 }
 
 func (s *LabelStmt) Pos() token.Pos { return s.P }
 func (*LabelStmt) stmtTag()         {}
 
-func NewLabelStmt(p token.Pos, name string) *LabelStmt {
-	return &LabelStmt{P: p, Name: name}
+func NewLabelStmt(p token.Pos, name string, endLine int) *LabelStmt {
+	return &LabelStmt{P: p, Name: name, EndLine: endLine}
 }
 
 // ExprStmt wraps a function call used as a statement.
