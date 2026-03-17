@@ -4,6 +4,24 @@ import (
 	"github.com/iceisfun/golua/ast"
 )
 
+// preRegisterUpvalues walks an assignment target expression and pre-registers
+// any upvalue references in left-to-right order. This ensures that upvalue
+// indices match Lua 5.4's source order, where LHS targets are processed
+// before RHS values during compilation.
+func (c *compiler) preRegisterUpvalues(fs *funcState, expr ast.Expr) {
+	switch e := expr.(type) {
+	case *ast.NameExpr:
+		if _, isLocal := fs.lookupLocal(e.Name); !isLocal {
+			c.resolveUpvalue(fs, e.Name)
+		}
+	case *ast.IndexExpr:
+		c.preRegisterUpvalues(fs, e.Table)
+		c.preRegisterUpvalues(fs, e.Key)
+	case *ast.FieldExpr:
+		c.preRegisterUpvalues(fs, e.Table)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Chunk compilation
 // ---------------------------------------------------------------------------
@@ -375,7 +393,14 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	// evaluated before any assignment occurs, because a later assignment
 	// might overwrite a variable used in an earlier LHS index expression.
 	// Example: i, a[i], a = j, i, i  — a[i] must use the original a and i.
-	//
+
+	// Phase 0: Pre-register upvalues referenced by LHS targets in
+	// left-to-right order. This ensures upvalue indices match Lua 5.4's
+	// source order, where targets are processed before RHS values.
+	for i := 0; i < nTargets; i++ {
+		c.preRegisterUpvalues(fs, s.Targets[i])
+	}
+
 	// Phase 1: Pre-evaluate LHS indexed targets into temp registers.
 	type precomputedTarget struct {
 		tableReg int // temp reg holding table reference
@@ -451,18 +476,6 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 				if fs.freeReg > fs.maxReg {
 					fs.maxReg = fs.freeReg
 				}
-			}
-		}
-	}
-
-	// Phase 2.5: Pre-resolve upvalues in left-to-right order so that their
-	// registration indices match Lua 5.4's source order. The actual stores
-	// in Phase 3 run right-to-left, but by then the upvalues are already
-	// registered in the correct order.
-	for i := 0; i < nTargets; i++ {
-		if ne, ok := s.Targets[i].(*ast.NameExpr); ok {
-			if _, isLocal := fs.lookupLocal(ne.Name); !isLocal {
-				c.resolveUpvalue(fs, ne.Name)
 			}
 		}
 	}
@@ -1234,13 +1247,10 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 	scope := fs.scopes[len(fs.scopes)-1]
 	for _, lbl := range fs.labels {
 		if lbl.name == s.Name {
-			// Use afterLine (end of block/EOF) for the error prefix line,
-			// matching Lua 5.4 which detects duplicates at scope close.
-			errLine := afterLine
-			if errLine == 0 {
-				errLine = c.endLine
-			}
-			c.error(errLine, "label '%s' already defined on line %d", s.Name, lbl.line)
+			// Use the duplicate label's EndLine for the error prefix,
+			// matching Lua 5.4's checkrepeated() which uses ls->linenumber
+			// (the line after the closing :: of the duplicate label).
+			c.error(s.EndLine, "label '%s' already defined on line %d", s.Name, lbl.line)
 			return
 		}
 	}
@@ -1450,15 +1460,9 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	fs.enterScope(false)
 
 	// Parameters are local variables.
-	// Check the limit incrementally at each parameter to match Lua 5.4:
-	// the first parameter that exceeds the limit reports near ',' (the
-	// separator before it), except the first parameter which would use ')'.
-	for i, param := range fe.Params {
-		nearToken := ","
-		if i == 0 {
-			nearToken = ")"
-		}
-		fs.checkVarLimitAt(1, fe.P.Line, nearToken)
+	// Register all params first, then check the limit with near ')' to
+	// match Lua 5.4 which checks after consuming the closing parenthesis.
+	for _, param := range fe.Params {
 		reg := fs.freeReg
 		fs.locals = append(fs.locals, localVar{
 			name:    param.Name,
@@ -1471,6 +1475,7 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 			fs.maxReg = fs.freeReg
 		}
 	}
+	fs.checkVarLimitAt(0, fe.P.Line, ")")
 	fs.checkRegLimit()
 
 	// Vararg prep
