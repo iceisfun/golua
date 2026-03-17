@@ -3,7 +3,7 @@
 -- Unfinished string for 'z' should have proper prefix
 local ok, err = pcall(string.unpack, "z", "no null")
 assert(not ok)
-assert(string.find(err, "bad argument #2 to 'unpack'"),
+assert(string.find(err, "bad argument #2 to 'string.unpack'"),
     "expected 'bad argument #2' prefix, got: " .. tostring(err))
 assert(string.find(err, "unfinished string for format 'z'"),
     "expected 'unfinished string' message, got: " .. tostring(err))

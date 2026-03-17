@@ -14,6 +14,6 @@ do
     return f:read({})
   end)
   assert(not ok, "file:read should reject non-string/non-number formats")
-  assert(type(err) == "string" and string.find(err, "bad argument #1 to 'read'", 1, true), tostring(err))
+  assert(type(err) == "string" and string.find(err, "bad argument #2 to '?'", 1, true), tostring(err))
   assert(string.find(err, "string expected, got table", 1, true), tostring(err))
 end

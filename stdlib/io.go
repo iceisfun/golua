@@ -62,14 +62,19 @@ func makeFileHandleWithClose(f vm.LuaFile, closeFn func(*vm.VM, *fileHandle) int
 	return vm.NewUserdataValue(fh, fileHandleMeta)
 }
 
-// fileMethodArgError raises a "bad argument" error for file methods.
-// idx is the user-visible argument number (1 for the first arg after self).
-// This does not perform method detection; callers must pass already-adjusted indices.
-func fileMethodArgError(v *vm.VM, idx int, fallback, msg string) {
-	name, _ := v.CallerFuncName()
-	if name == "" {
-		name = fallback
+// fileArgError raises a "bad argument" error for file operations.
+// idx is the 1-based argument position among explicit args (not counting self).
+// firstArg is the stack position of the first explicit arg: 1 for io.* module
+// functions (no self), 2 for f:method() calls (self at position 1).
+// For method calls (firstArg==2), per Lua 5.4, self counts as arg #1
+// and the function name shows as '?' since C can't resolve method names.
+// For module calls (firstArg==1), the qualified name (e.g. "io.read") is used.
+func fileArgError(idx int, name string, msg string, firstArg int) {
+	if firstArg >= 2 {
+		// Method call: offset arg number by 1 (self is arg #1), name is '?'
+		panic(fmt.Sprintf("bad argument #%d to '?' (%s)", idx+1, msg))
 	}
+	// Module function call: use qualified name, no offset
 	panic(fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg))
 }
 
@@ -627,7 +632,11 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			f = fh.file
 			toClose = false
 		} else {
-			name := v.Get(1).AsString()
+			arg := v.Get(1)
+			if !arg.IsString() && !arg.IsNumber() {
+				callerArgError(v, 1, "io.lines", fmt.Sprintf("string expected, got %s", arg.Type()))
+			}
+			name := vm.ValueToString(arg)
 			var err error
 			f, err = provider.Open(name, "r")
 			if err != nil {
@@ -664,7 +673,7 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 				return 1
 			}
 
-			results := doFileReadFormats(v, f, formats)
+			results := doFileReadFormats(v, f, formats, 1)
 			if results > 0 && v.Get(0).IsNil() {
 				if toClose {
 					f.Close()
@@ -810,11 +819,12 @@ func doFileRead(v *vm.VM, f vm.LuaFile, firstArg int) int {
 			formats[i] = v.Get(firstArg + i)
 		}
 	}
-	return doFileReadFormats(v, f, formats)
+	return doFileReadFormats(v, f, formats, firstArg)
 }
 
 // doFileReadFormats performs the actual read operation using a slice of formats.
-func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
+// firstArg controls error reporting: 1 for io.read (module func), 2 for f:read (method).
+func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int) int {
 	if len(formats) == 0 {
 		// Default: read a line
 		line, err := f.Read("l")
@@ -840,7 +850,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 			// Read N bytes
 			count, ok := arg.ToInt()
 			if !ok {
-				fileMethodArgError(v, results+1, "read", "number has no integer representation")
+				fileArgError(results+1, "io.read", "number has no integer representation", firstArg)
 			}
 			if count < 0 {
 				panic("not enough memory")
@@ -867,7 +877,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 			cleanFmt := strings.TrimPrefix(format, "*")
 			if len(cleanFmt) == 0 || (cleanFmt[0] != 'a' && cleanFmt[0] != 'l' && cleanFmt[0] != 'L' && cleanFmt[0] != 'n') {
 				// Use results+1 as the user-visible argument index (1-based, for the format arg)
-				fileMethodArgError(v, results+1, "read", "invalid format")
+				fileArgError(results+1, "io.read", "invalid format", firstArg)
 			}
 			data, err := f.Read(format)
 			if err != nil {
@@ -896,7 +906,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value) int {
 			}
 		} else {
 			// Invalid format type
-			fileMethodArgError(v, results+1, "read", fmt.Sprintf("string expected, got %s", arg.Type()))
+			fileArgError(results+1, "io.read", fmt.Sprintf("string expected, got %s", arg.Type()), firstArg)
 		}
 		results++
 	}
@@ -932,7 +942,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 				}
 			}
 		} else {
-			fileMethodArgError(v, i-firstArg+1, "write", fmt.Sprintf("string expected, got %s", arg.Type()))
+			fileArgError(i-firstArg+1, "io.write", fmt.Sprintf("string expected, got %s", arg.Type()), firstArg)
 		}
 		err := f.Write(s)
 		if err != nil {
@@ -1004,7 +1014,7 @@ func fileLines(v *vm.VM) int {
 			return 1
 		}
 
-		results := doFileReadFormats(v, f, formats)
+		results := doFileReadFormats(v, f, formats, 2)
 		if results > 0 && v.Get(0).IsNil() {
 			return 0
 		}
@@ -1028,7 +1038,7 @@ func fileSeek(v *vm.VM) int {
 	case "set", "cur", "end":
 		// valid
 	default:
-		fileMethodArgError(v, 1, "seek", fmt.Sprintf("invalid option '%s'", whence))
+		fileArgError(1, "seek", fmt.Sprintf("invalid option '%s'", whence), 2)
 	}
 
 	var offset int64
@@ -1036,7 +1046,7 @@ func fileSeek(v *vm.VM) int {
 		var ok bool
 		offset, ok = v.Get(3).ToInt()
 		if !ok {
-			fileMethodArgError(v, 2, "seek", "number expected")
+			fileArgError(2, "seek", "number expected", 2)
 		}
 	}
 
@@ -1059,7 +1069,7 @@ func fileSetVBuf(v *vm.VM) int {
 
 	mode := v.Get(2)
 	if mode.IsNil() {
-		fileMethodArgError(v, 1, "setvbuf", "string expected, got nil")
+		fileArgError(1, "setvbuf", "string expected, got nil", 2)
 	}
 	modeStr := mode.AsString()
 
@@ -1067,7 +1077,7 @@ func fileSetVBuf(v *vm.VM) int {
 	if !v.Get(3).IsNil() {
 		sz, ok := v.Get(3).ToInt()
 		if !ok {
-			fileMethodArgError(v, 2, "setvbuf", "number expected")
+			fileArgError(2, "setvbuf", "number expected", 2)
 		}
 		size = int(sz)
 	}
@@ -1077,7 +1087,7 @@ func fileSetVBuf(v *vm.VM) int {
 	case "no", "full", "line":
 		// valid
 	default:
-		fileMethodArgError(v, 1, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
+		fileArgError(1, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr), 2)
 	}
 
 	err := fh.file.SetVBuf(modeStr, size)

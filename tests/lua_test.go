@@ -270,7 +270,10 @@ func needsFullIo(filename string) bool {
 		"test_read_n_0x_prefix.lua",
 		"test_os_fixes.lua",
 		"test_os_string_number_coercions.lua",
-		"test_io_method_argnums.lua":
+		"test_io_method_argnums.lua",
+		"test_io_method_arg_numbering.lua",
+		"test_io_qualified_func_names.lua",
+		"test_io_lines_type_check.lua":
 		return true
 	}
 	return false
