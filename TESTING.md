@@ -113,6 +113,13 @@ go run ./cmd/lua --test script.lua
 - `JailedIoProvider` rooted at the script's directory
 - `DirCodeProvider` rooted at the working directory (enables `require` and `dofile`)
 
+Without `--test`, the CLI uses its normal interactive environment instead:
+- `FullIoProvider` rooted at the script's directory
+- `DefaultExecProvider`
+- `DefaultExitHandler`
+- `DefaultDebugProvider`
+- `DirCodeProvider` rooted at the working directory
+
 ## Conformance Status
 
 All imported Lua 5.4 conformance tests pass. The `new/` directory was previously used as a staging area for conformance tests under development — it is now empty, as all tests have been resolved and promoted to `tests/stdlib/`.

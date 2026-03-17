@@ -615,6 +615,7 @@ go run ./cmd/luac script.lua
 
 Current compatibility notes and intentional boundaries:
 
+- The CLI enables a practical host-facing set of providers by default: `DefaultOsProvider`, `FullIoProvider`, `DirCodeProvider`, `DefaultExecProvider`, `DefaultExitHandler`, and `DefaultDebugProvider`. `--test` switches to a more test-like environment with `JailedIoProvider`, `DirCodeProvider`, and `DefaultDebugProvider`, without enabling `os.execute` or `os.exit`.
 - No C module loading — standard C Lua modules (.so/.dll) are compiled against the PUC-Rio C API and are not compatible with GoLua's VM. `package.loadlib` is nil by default; setting a `LuaLoadLibProvider` lets the host provide Go-native bindings or cgo-bridged libraries under the same API surface. `require` loads Lua modules via `LuaCodeProvider`.
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design; use `FullIoProvider` for read-write access)
