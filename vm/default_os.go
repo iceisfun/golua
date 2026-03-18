@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"sort"
 	"strings"
 	"time"
 )
@@ -13,12 +12,14 @@ import (
 type DefaultOsProvider struct {
 	startTime time.Time
 	envFilter func(string) bool // optional filter for getenv
+	locale    string            // current locale, starts as "C" per Lua 5.4
 }
 
 // NewDefaultOsProvider creates a new DefaultOsProvider.
 func NewDefaultOsProvider() *DefaultOsProvider {
 	return &DefaultOsProvider{
 		startTime: time.Now(),
+		locale:    "C",
 	}
 }
 
@@ -28,6 +29,7 @@ func NewFilteredOsProvider(filter func(string) bool) *DefaultOsProvider {
 	return &DefaultOsProvider{
 		startTime: time.Now(),
 		envFilter: filter,
+		locale:    "C",
 	}
 }
 
@@ -100,57 +102,51 @@ func resolveLocalTime(input LuaTimeInput) (time.Time, bool) {
 		return base, true
 	}
 
-	offsets := []int{}
+	// C's mktime uses tm_isdst as a hint: when isdst=1, it uses the DST
+	// offset; when isdst=0, it uses the standard offset. This matters even
+	// for dates that are unambiguously in one zone — mktime will use the
+	// requested offset and normalize the wall clock fields.
+	//
+	// To replicate this in Go, we find which offsets the timezone uses
+	// (standard vs DST) by sampling across the year, then pick the offset
+	// matching the isdst hint and compute the Unix timestamp directly.
+
+	type zoneInfo struct {
+		offset int
+		isDST  bool
+	}
+	var zones []zoneInfo
 	seen := map[int]bool{}
-	for _, delta := range []time.Duration{-48 * time.Hour, -24 * time.Hour, 0, 24 * time.Hour, 48 * time.Hour} {
-		_, off := base.Add(delta).Zone()
+	addOffset := func(t time.Time) {
+		_, off := t.Zone()
 		if !seen[off] {
 			seen[off] = true
-			offsets = append(offsets, off)
+			zones = append(zones, zoneInfo{off, t.IsDST()})
 		}
 	}
-	sort.Slice(offsets, func(i, j int) bool {
-		if input.IsDST {
-			return offsets[i] > offsets[j]
-		}
-		return offsets[i] < offsets[j]
-	})
+	// Sample each month to find both standard and DST offsets
+	for m := 1; m <= 12; m++ {
+		addOffset(time.Date(input.Year, time.Month(m), 15, 12, 0, 0, 0, time.Local))
+	}
+	// Also sample near the target date
+	for _, delta := range []time.Duration{-48 * time.Hour, -24 * time.Hour, 0, 24 * time.Hour, 48 * time.Hour} {
+		addOffset(base.Add(delta))
+	}
 
+	// Find the offset matching the requested DST state
 	localBase := time.Date(input.Year, time.Month(input.Month), input.Day, input.Hour, input.Min, input.Sec, 0, time.UTC)
-	for _, off := range offsets {
-		cand := time.Unix(localBase.Unix()-int64(off), 0).In(time.Local)
-		if cand.Year() == input.Year && int(cand.Month()) == input.Month && cand.Day() == input.Day && cand.Hour() == input.Hour && cand.Minute() == input.Min && cand.Second() == input.Sec && cand.IsDST() == input.IsDST {
+
+	// First try: find an offset where the zone's DST flag matches the request
+	for _, z := range zones {
+		if z.isDST == input.IsDST {
+			cand := time.Unix(localBase.Unix()-int64(z.offset), 0).In(time.Local)
 			return cand, true
 		}
 	}
 
-	best := base
-	bestScore := math.MaxInt32
-	for _, off := range offsets {
-		cand := time.Unix(localBase.Unix()-int64(off), 0).In(time.Local)
-		score := 0
-		if cand.IsDST() != input.IsDST {
-			score += 1000000
-		}
-		score += absInt(cand.Year()-input.Year) * 366 * 86400
-		score += absInt(int(cand.Month())-input.Month) * 31 * 86400
-		score += absInt(cand.Day()-input.Day) * 86400
-		score += absInt(cand.Hour()-input.Hour) * 3600
-		score += absInt(cand.Minute()-input.Min) * 60
-		score += absInt(cand.Second() - input.Sec)
-		if score < bestScore {
-			best = cand
-			bestScore = score
-		}
-	}
-	return best, true
-}
-
-func absInt(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
+	// If no zone matches the DST flag (e.g., timezone has no DST),
+	// fall back to the default resolution.
+	return base, true
 }
 
 // Getenv returns an environment variable, respecting the optional filter.
@@ -163,18 +159,26 @@ func (p *DefaultOsProvider) Getenv(name string) (string, bool) {
 
 // SetLocale implements os.setlocale semantics for the default provider.
 // Go has no process-wide locale API, so we support:
-//   - query/set to "C"
-//   - set "" (use environment locale variables)
+//   - query (nil/no arg → returns current locale)
+//   - set "C" → set and return "C"
+//   - set "" → set to system default from environment
 //
-// Any other locale is treated as unsupported.
+// Any other locale is treated as unsupported (returns nil).
 func (p *DefaultOsProvider) SetLocale(locale, category string) (string, bool) {
+	if locale == "\x00query" {
+		// Query current locale (nil arg in Lua maps to this sentinel)
+		return p.locale, true
+	}
 	if locale == "C" {
+		p.locale = "C"
 		return "C", true
 	}
 	if locale == "" {
 		if envLocale := localeFromEnv(category); envLocale != "" {
+			p.locale = envLocale
 			return envLocale, true
 		}
+		p.locale = "C"
 		return "C", true
 	}
 	return "", false
@@ -269,7 +273,12 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 			case 'x':
 				result.WriteString(t.Format("01/02/06"))
 			case 'Z':
-				result.WriteString(t.Format("MST"))
+				zone := t.Format("MST")
+				// C strftime uses "GMT" for UTC; Go uses "UTC". Match C behavior.
+				if zone == "UTC" {
+					zone = "GMT"
+				}
+				result.WriteString(zone)
 			case 'z':
 				result.WriteString(t.Format("-0700"))
 			case '%':
