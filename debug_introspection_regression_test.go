@@ -6,7 +6,7 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
-func TestDebugGetInfoRegression_ActiveLinesExcludeLoopHeaders(t *testing.T) {
+func TestDebugGetInfoRegression_ActiveLinesIncludeLoopHeaders(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	source := `local function loopy(n)
   local sum = 0
@@ -24,8 +24,8 @@ local lines = debug.getinfo(loopy, "L").activelines
 assert(lines[4], "while body line missing")
 assert(lines[5], "while update line missing")
 assert(lines[8], "for body line missing")
-assert(lines[3] == nil, "while header should not be active")
-assert(lines[7] == nil, "for header should not be active")
+assert(lines[3], "while header should be active (has TEST instruction)")
+assert(lines[7], "for header should be active (has FORPREP instruction)")
 `
 	runLuaWithDebug(t, source, "test_debug_activelines_loop_headers", provider)
 }

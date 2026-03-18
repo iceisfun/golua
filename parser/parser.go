@@ -68,8 +68,8 @@ func Parse(source, input string, stripShebang ...bool) (*ast.Block, error) {
 // ---------------------------------------------------------------------------
 
 // maxSyntaxLevels limits parser recursion depth to match Lua 5.4's
-// LUAI_MAXCCALLS. Deeply nested expressions or long assignment target
-// lists beyond this limit produce "too many syntax levels" errors.
+// LUAI_MAXCCALLS. Lua 5.4 hits a C stack overflow at ~196 levels of
+// nesting; we use a similar limit. The error message matches Lua 5.4.
 const maxSyntaxLevels = 200
 
 type parser struct {
@@ -136,7 +136,7 @@ func (p *parser) errorf(format string, args ...any) error {
 func (p *parser) incDepth() {
 	p.depth++
 	if p.depth > maxSyntaxLevels {
-		p.errorf("chunk has too many syntax levels")
+		p.errorf("C stack overflow")
 	}
 }
 

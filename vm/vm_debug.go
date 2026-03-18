@@ -919,27 +919,13 @@ func (vm *VM) frameStackLimit(stack []callFrame, idx, maxStack int, active bool)
 
 func activeLines(proto *compiler.Proto) map[int]bool {
 	lines := make(map[int]bool)
-	lineSeen := make(map[int]bool)
-	lineHasLoopControl := make(map[int]bool)
-	lineHasRealWork := make(map[int]bool)
+	// Lua 5.4 simply reports all lines that have at least one instruction.
+	// No filtering by opcode type — every instruction's line is active.
 	for pc, line := range proto.Lines {
 		if line <= 0 || pc >= len(proto.Code) {
 			continue
 		}
-		lineSeen[line] = true
-		inst := proto.Code[pc]
-		op := inst.OpCode()
-		if isDebugLoopControlOpcode(inst, pc) {
-			lineHasLoopControl[line] = true
-		}
-		if !isDebugSetupOpcode(op) {
-			lineHasRealWork[line] = true
-		}
-	}
-	for line := range lineSeen {
-		if lineHasRealWork[line] || !lineHasLoopControl[line] {
-			lines[line] = true
-		}
+		lines[line] = true
 	}
 	if proto.LastLine > 0 && len(proto.Lines) > 0 {
 		lines[proto.LastLine] = true
@@ -947,40 +933,6 @@ func activeLines(proto *compiler.Proto) map[int]bool {
 	return lines
 }
 
-func isDebugLoopControlOpcode(inst compiler.Instruction, pc int) bool {
-	switch inst.OpCode() {
-	case compiler.OP_FORPREP, compiler.OP_FORLOOP,
-		compiler.OP_TFORPREP, compiler.OP_TFORCALL, compiler.OP_TFORLOOP:
-		return true
-	case compiler.OP_JMP:
-		return pc+1+inst.SJ() <= pc
-	default:
-		return false
-	}
-}
-
-func isDebugSetupOpcode(op compiler.OpCode) bool {
-	switch op {
-	case compiler.OP_MOVE,
-		compiler.OP_LOADI, compiler.OP_LOADF,
-		compiler.OP_LOADK, compiler.OP_LOADKX,
-		compiler.OP_LOADFALSE, compiler.OP_LFALSESKIP, compiler.OP_LOADTRUE,
-		compiler.OP_LOADNIL,
-		compiler.OP_GETUPVAL, compiler.OP_GETTABUP, compiler.OP_GETTABLE,
-		compiler.OP_GETI, compiler.OP_GETFIELD,
-		compiler.OP_SELF,
-		compiler.OP_EQ, compiler.OP_EQK, compiler.OP_EQI,
-		compiler.OP_LT, compiler.OP_LE, compiler.OP_LTI, compiler.OP_LEI,
-		compiler.OP_GTI, compiler.OP_GEI,
-		compiler.OP_TEST, compiler.OP_TESTSET,
-		compiler.OP_FORPREP, compiler.OP_FORLOOP,
-		compiler.OP_TFORPREP, compiler.OP_TFORCALL, compiler.OP_TFORLOOP,
-		compiler.OP_JMP:
-		return true
-	default:
-		return false
-	}
-}
 
 // GetFuncLocal returns the name of local variable #index from a function's
 // prototype (without needing a live stack frame). Only parameter names are
