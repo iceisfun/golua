@@ -677,15 +677,14 @@ func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 // compileExprStmt compiles a bare expression statement (must be a function call).
 func (c *compiler) compileExprStmt(s *ast.ExprStmt) {
 	fs := c.fs
-	line := s.P.Line
 
 	switch e := s.Expr.(type) {
 	case *ast.FuncCallExpr:
 		base := fs.freeReg
-		c.compileFuncCall(e, base, 1, line) // 1 = discard results (C=1)
+		c.compileFuncCall(e, base, 1, e.P.Line) // 1 = discard results (C=1)
 	case *ast.MethodCallExpr:
 		base := fs.freeReg
-		c.compileMethodCall(e, base, 1, line) // 1 = discard results
+		c.compileMethodCall(e, base, 1, e.P.Line) // 1 = discard results
 	default:
 		c.error(s, "expression statement must be function call")
 	}
