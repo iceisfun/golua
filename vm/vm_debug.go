@@ -1085,6 +1085,15 @@ func (vm *VM) IsValidLevel(level int) bool {
 func (vm *VM) GetRegistry() LuaTable {
 	if vm.registry == nil {
 		vm.registry = NewEmptyTable()
+
+		// Create _HOOKKEY: a table with weak keys metatable (__mode = 'k').
+		// In C Lua this maps threads to their hook functions; GoLua stores
+		// hooks differently, but the entry must exist for conformance.
+		hookKey := NewEmptyTable()
+		hookMt := NewEmptyTable()
+		hookMt.SetString("__mode", NewString("k"))
+		hookKey.SetMetatable(hookMt)
+		_ = vm.registry.Set(NewString("_HOOKKEY"), NewTable(hookKey))
 	}
 	// Ensure standard entries are populated when available.
 	if !vm.threadObj.IsNil() {
