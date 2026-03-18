@@ -24,8 +24,8 @@ func callerFuncName(v *vm.VM, fallback string) (name, nameWhat string) {
 // implicit self parameter is not counted.
 // The fallback name is used when bytecode resolution fails.
 func callerArgError(v *vm.VM, idx int, fallback, msg string) {
-	name, nameWhat := v.CallerFuncName()
-	if name == "" {
+	name, nameWhat := v.ArgErrorFuncName()
+	if name == "?" {
 		name = fallback
 	}
 	if nameWhat == "method" {

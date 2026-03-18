@@ -81,6 +81,27 @@ func (vm *VM) CallerFuncName() (name, nameWhat string) {
 	return vm.funcNameFromCall(callerFrame)
 }
 
+// ArgErrorFuncName resolves the name of the current native function for use
+// in argument error messages, matching Lua 5.4's luaL_argerror behavior.
+// It first tries bytecode resolution (CallerFuncName). If that fails (e.g.,
+// when called via pcall), it falls back to searching globals for the function
+// value (pushglobalfuncname equivalent). Returns ("?", "") if neither works.
+func (vm *VM) ArgErrorFuncName() (name, nameWhat string) {
+	name, nameWhat = vm.CallerFuncName()
+	if name != "" {
+		return name, nameWhat
+	}
+	// Bytecode resolution failed — try global table lookup.
+	n := len(vm.callStack)
+	if n > 0 {
+		fn := vm.callStack[n-1].funcValue
+		if resolved, ok := vm.lookupNativeFuncName(fn); ok {
+			return resolved, ""
+		}
+	}
+	return "?", ""
+}
+
 // ObjTypeName returns the type name for a value, checking __name in
 // the metatable first (matching Lua 5.4's luaT_objtypename).
 func (vm *VM) ObjTypeName(v Value) string {
