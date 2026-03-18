@@ -1596,9 +1596,16 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	fs.checkVarLimitAt(0, fe.P.Line, ")")
 	fs.checkRegLimit()
 
-	// Vararg prep
+	// Vararg prep — use the first body line (not the definition line)
+	// to match Lua 5.4, which assigns VARARGPREP to the first line of
+	// the function body so it doesn't appear in activelines for the
+	// definition line.
 	if fe.VarArg {
-		fs.emit(ABC(OP_VARARGPREP, fs.proto.NumParams, 0, 0, 0), line)
+		varargLine := line
+		if fe.Body != nil && len(fe.Body.Stmts) > 0 {
+			varargLine = fe.Body.Stmts[0].Pos().Line
+		}
+		fs.emit(ABC(OP_VARARGPREP, fs.proto.NumParams, 0, 0, 0), varargLine)
 	}
 
 	c.compileBlockWith(fe.Body, true, fe.EndLine)
