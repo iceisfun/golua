@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // FullIoProvider is a full-capability IO provider that allows both reading
@@ -52,6 +53,12 @@ func (p *FullIoProvider) resolvePath(name string) (string, error) {
 
 // Open opens a file within the provider's root directory.
 func (p *FullIoProvider) Open(name string, mode string) (LuaFile, error) {
+	// Reject empty filenames — Go's os.Open("") opens cwd as a directory,
+	// but C's fopen("", ...) returns ENOENT which is what Lua expects.
+	if name == "" {
+		return nil, &os.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
+	}
+
 	path, err := p.resolvePath(name)
 	if err != nil {
 		return nil, err

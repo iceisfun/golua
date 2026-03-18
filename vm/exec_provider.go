@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -9,7 +10,7 @@ import (
 // When provided to a VM, os.execute becomes available.
 type LuaExecProvider interface {
 	// Execute runs a shell command and returns the result.
-	// If command is empty, returns (true, "", 0) to indicate a shell is available.
+	// If command is empty, returns (true, "exit", 0) to indicate a shell is available.
 	// Otherwise returns (ok, exitType, exitCode) where:
 	//   - ok is true if the command exited with code 0
 	//   - exitType is "exit" for normal termination or "signal" for signal termination
@@ -29,10 +30,12 @@ func NewDefaultExecProvider() *DefaultExecProvider {
 // Execute runs a command via sh -c.
 func (p *DefaultExecProvider) Execute(command string) (bool, string, int) {
 	if command == "" {
-		return true, "", 0
+		return true, "exit", 0
 	}
 
 	cmd := exec.Command("sh", "-c", command)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
