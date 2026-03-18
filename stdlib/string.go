@@ -537,7 +537,7 @@ func stringGmatch(v *vm.VM) int {
 	pos := init - 1     // 0-based
 	lastMatch := -1     // 0-based end of last match, -1 = none
 
-	iter := vm.NewNativeFunc(func(v *vm.VM) int {
+	iter := vm.NewNativeFuncWithNups(func(v *vm.VM) int {
 		for pos <= len(s) {
 			end, caps, ok := luaMatchAt(s, pattern, pos)
 			if ok && end != lastMatch {
@@ -570,7 +570,12 @@ func stringGmatch(v *vm.VM) int {
 			pos++
 		}
 		return 0
-	})
+	}, 3)
+
+	// Store upvalues for debug.getupvalue introspection (matches Lua 5.4 C closure)
+	iter.SetNativeFuncUpvalue(1, vm.NewString(s))
+	iter.SetNativeFuncUpvalue(2, vm.NewString(pattern))
+	// Upvalue 3 is internal position state (userdata in Lua 5.4)
 
 	v.Set(0, iter)
 	return 1

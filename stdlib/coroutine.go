@@ -621,6 +621,7 @@ func coWrap(v *vm.VM) int {
 			panic("execution interrupted: " + v.Context().Err().Error())
 		}
 	}, 1) // 1 upvalue: the wrapped coroutine thread
+	wrapper.SetNativeFuncUpvalue(1, vm.NewTable(coTable))
 
 	v.Set(0, wrapper)
 	return 1
