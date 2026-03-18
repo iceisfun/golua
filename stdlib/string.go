@@ -323,7 +323,8 @@ func stringGsub(v *vm.VM) int {
 
 	var result strings.Builder
 	count := 0
-	pos := 0          // 0-based current position
+	changed := false   // track whether any substitution modified text
+	pos := 0           // 0-based current position
 	lastMatch := -1   // 0-based end of last match, -1 = none
 
 	for pos <= len(s) && (maxRepl < 0 || count < maxRepl) {
@@ -340,18 +341,23 @@ func stringGsub(v *vm.VM) int {
 
 			// Get replacement
 			var replacement string
+			substituted := false // true if repl function/table produced a value
 			if repl.IsString() {
 				// For string replacements, unfinished captures are only
 				// an error if %N actually references them.
 				replacement = expandReplacement(repl.AsString(), s, pos, end, matchCaps)
+				substituted = replacement != s[pos:end]
 			} else if repl.IsFunction() || repl.IsNativeFunc() {
 				checkCaptures(matchCaps)
-				replacement = callGsubFunc(v, repl, matchCaps, s[pos:end])
+				replacement, substituted = callGsubFunc(v, repl, matchCaps, s[pos:end])
 			} else if repl.IsTable() {
 				checkCaptures(matchCaps)
-				replacement = lookupGsubTable(v, repl, matchCaps, s[pos:end])
+				replacement, substituted = lookupGsubTable(v, repl, matchCaps, s[pos:end])
 			}
 
+			if substituted {
+				changed = true
+			}
 			result.WriteString(replacement)
 			count++
 			lastMatch = end
@@ -383,7 +389,13 @@ func stringGsub(v *vm.VM) int {
 		result.WriteString(s[pos:])
 	}
 
-	v.Set(0, vm.NewString(result.String()))
+	// Optimization: when no substitution changed any text, return the
+	// original string object (same pointer identity, matching Lua 5.4).
+	if !changed {
+		v.Set(0, v.Get(1))
+	} else {
+		v.Set(0, vm.NewString(result.String()))
+	}
 	v.Set(1, vm.NewInt(int64(count)))
 	return 2
 }
@@ -429,7 +441,9 @@ func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureVa
 }
 
 // callGsubFunc calls a function for gsub replacement.
-func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch string) string {
+// Returns the replacement string and whether a substitution occurred
+// (true when the function returned a non-nil, non-false value).
+func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch string) (string, bool) {
 	args := make([]vm.Value, len(captures))
 	for i, cap := range captures {
 		if cap.isPos {
@@ -447,22 +461,23 @@ func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch str
 		panic(err)
 	}
 	if len(results) == 0 {
-		return wholeMatch
+		return wholeMatch, false
 	}
 
 	ret := results[0]
 	if ret.IsString() {
-		return ret.AsString()
+		return ret.AsString(), true
 	} else if ret.IsNumber() {
-		return valueToString(ret)
+		return valueToString(ret), true
 	} else if ret.IsNil() || (ret.IsBool() && !ret.AsBool()) {
-		return wholeMatch
+		return wholeMatch, false
 	}
 	panic(fmt.Sprintf("invalid replacement value (a %s)", ret.Type()))
 }
 
 // lookupGsubTable looks up a gsub replacement from a table.
-func lookupGsubTable(v *vm.VM, repl vm.Value, captures []captureValue, wholeMatch string) string {
+// Returns the replacement string and whether a substitution occurred.
+func lookupGsubTable(v *vm.VM, repl vm.Value, captures []captureValue, wholeMatch string) (string, bool) {
 	var key vm.Value
 	c := captures[0]
 	if c.isPos {
@@ -475,11 +490,11 @@ func lookupGsubTable(v *vm.VM, repl vm.Value, captures []captureValue, wholeMatc
 		panic(err)
 	}
 	if val.IsString() {
-		return val.AsString()
+		return val.AsString(), true
 	} else if val.IsNumber() {
-		return valueToString(val)
+		return valueToString(val), true
 	} else if val.IsNil() || (val.IsBool() && !val.AsBool()) {
-		return wholeMatch
+		return wholeMatch, false
 	}
 	panic(fmt.Sprintf("invalid replacement value (a %s)", val.Type()))
 }

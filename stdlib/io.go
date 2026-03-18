@@ -82,7 +82,13 @@ func fileArgError(v *vm.VM, idx int, _ string, msg string) {
 func getFileHandle(v *vm.VM, val vm.Value, funcName string) *fileHandle {
 	ud := val.AsUserdata()
 	if ud == nil {
-		callerArgError(v, 1, funcName, fmt.Sprintf("FILE* expected, got %s", v.ObjTypeName(val)))
+		var gotStr string
+		if v.ArgCount() < 1 {
+			gotStr = "got no value"
+		} else {
+			gotStr = fmt.Sprintf("got %s", v.ObjTypeName(val))
+		}
+		callerArgError(v, 1, funcName, fmt.Sprintf("FILE* expected, %s", gotStr))
 	}
 	fh, ok := ud.Data.(*fileHandle)
 	if !ok {
@@ -1329,9 +1335,13 @@ func fileToString(v *vm.VM) int {
 // Unlike fileClose, this silently handles already-closed and standard files.
 func fileCloseGC(v *vm.VM) int {
 	val := v.Get(1)
-	if v.ArgCount() < 1 || val.IsNil() {
+	if v.ArgCount() < 1 {
 		name, _ := v.ArgErrorFuncName()
 		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got no value)", name))
+	}
+	if val.IsNil() {
+		name, _ := v.ArgErrorFuncName()
+		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got nil)", name))
 	}
 	ud := val.AsUserdata()
 	if ud == nil {
