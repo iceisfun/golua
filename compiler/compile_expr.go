@@ -7,6 +7,39 @@ import (
 	"github.com/iceisfun/golua/ast"
 )
 
+// exprEndLine returns the line of the last token in an expression.
+// For binary expressions, this is the end line of the right operand.
+// For index/field expressions, this is the end line of the key/field.
+// For simple expressions (names, numbers), this is the expression's own line.
+// This is used to match Lua 5.4's parser line tracking where the "current
+// line" after parsing an expression reflects the last token parsed.
+func exprEndLine(e ast.Expr) int {
+	switch expr := e.(type) {
+	case *ast.BinopExpr:
+		return exprEndLine(expr.Right)
+	case *ast.UnopExpr:
+		return exprEndLine(expr.Operand)
+	case *ast.IndexExpr:
+		return exprEndLine(expr.Key)
+	case *ast.FieldExpr:
+		// field name is on the same line as the dot
+		return expr.P.Line
+	case *ast.FuncCallExpr:
+		if len(expr.Args) > 0 {
+			return exprEndLine(expr.Args[len(expr.Args)-1])
+		}
+		return expr.P.Line
+	case *ast.MethodCallExpr:
+		if len(expr.Args) > 0 {
+			return exprEndLine(expr.Args[len(expr.Args)-1])
+		}
+		return expr.P.Line
+	case *ast.ParenExpr:
+		return exprEndLine(expr.Inner)
+	}
+	return e.Pos().Line
+}
+
 // exprNear returns a short "near" token string from an AST expression,
 // for use in error messages. Returns "" if no meaningful token can be
 // extracted. Matches Lua 5.4's behavior of showing the current token.
@@ -507,6 +540,7 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 			// a + imm  →  ADDI reg, leftReg, imm; MMBINI leftReg, imm, TM_ADD, 0
 			leftReg := fs.reserveReg()
 			c.compileExprToReg(e.Left, leftReg)
+			c.fixDischargedLine(line)
 			fs.emit(ABC(OP_ADDI, reg, leftReg, imm+OffsetSC, 0), line)
 			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_ADD), 0), line)
 			fs.freeReg = leftReg
@@ -537,6 +571,7 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 		leftReg = reg
 	}
 	c.compileExprToReg(e.Left, leftReg)
+	c.fixDischargedLine(line)
 	rightReg := fs.reserveReg()
 	c.compileExprToReg(e.Right, rightReg)
 
@@ -633,6 +668,7 @@ func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 	leftReg := fs.freeReg
 	fs.reserveReg()
 	c.compileExprToReg(e.Left, leftReg)
+	c.fixDischargedLine(line)
 	rightReg := fs.reserveReg()
 	c.compileExprToReg(e.Right, rightReg)
 
@@ -698,6 +734,7 @@ func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int
 	leftReg := fs.freeReg
 	fs.reserveReg()
 	c.compileExprToReg(e.Left, leftReg)
+	c.fixDischargedLine(line)
 	rightReg := fs.reserveReg()
 	c.compileExprToReg(e.Right, rightReg)
 
@@ -1117,18 +1154,44 @@ func (c *compiler) emitSetList(tableReg, count, offset int, line int) {
 // compileFieldExpr compiles t.name into GETFIELD (or GETTABLE for large constant indices).
 func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 	fs := c.fs
-	tableReg := fs.reserveReg()
-	c.compileExprToReg(e.Table, tableReg)
+	// When the table is a local variable, use its register directly.
+	tableReg := -1
+	if name, ok := e.Table.(*ast.NameExpr); ok {
+		if localReg, found := fs.lookupLocal(name.Name); found {
+			tableReg = localReg
+		}
+	}
+	needFree := false
+	if tableReg < 0 {
+		tableReg = fs.reserveReg()
+		needFree = true
+		c.compileExprToReg(e.Table, tableReg)
+	}
 	fieldK := fs.stringConstant(e.Field)
 	fs.emitGetField(reg, tableReg, fieldK, e.P.Line)
-	fs.freeReg = tableReg
+	if needFree {
+		fs.freeReg = tableReg
+	}
 }
 
 // compileIndexExpr compiles t[key] into GETI (constant int 0-255) or GETTABLE.
 func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 	fs := c.fs
-	tableReg := fs.reserveReg()
-	c.compileExprToReg(e.Table, tableReg)
+	// When the table is a local variable, use its register directly to
+	// avoid emitting an unnecessary MOVE. This matches Lua 5.4's behavior
+	// where VINDEXED expressions reference the table register directly.
+	tableReg := -1
+	if name, ok := e.Table.(*ast.NameExpr); ok {
+		if localReg, found := fs.lookupLocal(name.Name); found {
+			tableReg = localReg
+		}
+	}
+	needFree := false
+	if tableReg < 0 {
+		tableReg = fs.reserveReg()
+		needFree = true
+		c.compileExprToReg(e.Table, tableReg)
+	}
 	if n, ok := e.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
 		fs.emit(ABC(OP_GETI, reg, tableReg, int(n.Value), 0), e.P.Line)
 	} else {
@@ -1136,5 +1199,7 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 		c.compileExprToReg(e.Key, keyReg)
 		fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), e.P.Line)
 	}
-	fs.freeReg = tableReg
+	if needFree {
+		fs.freeReg = tableReg
+	}
 }

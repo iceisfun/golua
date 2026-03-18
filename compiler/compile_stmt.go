@@ -688,11 +688,16 @@ func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 	nameK := fs.stringConstant(name)
 	tempReg := fs.reserveReg()
 	c.compileExprToReg(value, tempReg)
+	// In Lua 5.4's one-pass compiler, the store instruction (SETTABUP)
+	// gets the parser's current line after the full RHS is parsed. For
+	// multi-line expressions, this is the last line of the expression,
+	// not the assignment target's line.
+	storeLine := exprEndLine(value)
 	if envReg, ok := fs.lookupLocal("_ENV"); ok {
-		fs.emitSetField(envReg, nameK, tempReg, line)
+		fs.emitSetField(envReg, nameK, tempReg, storeLine)
 	} else {
 		envUV := c.resolveEnv()
-		fs.emitSetTabUp(envUV, nameK, tempReg, line)
+		fs.emitSetTabUp(envUV, nameK, tempReg, storeLine)
 	}
 	fs.freeReg = tempReg
 }

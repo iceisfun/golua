@@ -428,6 +428,29 @@ func (fs *funcState) pc() int {
 	return len(fs.proto.Code)
 }
 
+// fixLineAt changes the line number of the instruction at the given PC.
+func (fs *funcState) fixLineAt(pc int, line int) {
+	if pc >= 0 && pc < len(fs.proto.Lines) {
+		fs.proto.Lines[pc] = line
+	}
+}
+
+// isDischargeOp returns true if the opcode is a "discharge" instruction —
+// one that loads a value into a register from a table, upvalue, or constant.
+// In Lua 5.4's one-pass compiler, these instructions are emitted when an
+// expression is "discharged" to a register, and they receive the current
+// parser line (which may differ from the expression's source line).
+func isDischargeOp(op OpCode) bool {
+	switch op {
+	case OP_GETI, OP_GETTABLE, OP_GETFIELD, OP_GETTABUP, OP_GETUPVAL,
+		OP_LOADI, OP_LOADF, OP_LOADK, OP_LOADKX, OP_LOADNIL,
+		OP_LOADTRUE, OP_LOADFALSE, OP_LFALSESKIP,
+		OP_MOVE, OP_NEWTABLE:
+		return true
+	}
+	return false
+}
+
 // lastEmittedLine returns the line number of the most recently emitted instruction.
 func (c *compiler) lastEmittedLine() int {
 	lines := c.fs.proto.Lines
@@ -435,6 +458,25 @@ func (c *compiler) lastEmittedLine() int {
 		return lines[len(lines)-1]
 	}
 	return 0
+}
+
+// fixDischargedLine adjusts the line of the last emitted instruction to
+// match what Lua 5.4's one-pass compiler produces. In reference Lua,
+// "discharge" instructions (GETI, GETUPVAL, LOADK, etc.) are emitted
+// when an expression is materialized to a register, using the parser's
+// current line — which for the left operand of a binary operator is the
+// operator's line, not the operand's source line. This method replicates
+// that behavior for golua's AST-based compiler.
+func (c *compiler) fixDischargedLine(line int) {
+	fs := c.fs
+	pc := fs.pc() - 1
+	if pc < 0 {
+		return
+	}
+	op := OpCode(fs.proto.Code[pc] & 0x7F)
+	if isDischargeOp(op) {
+		fs.fixLineAt(pc, line)
+	}
 }
 
 // loadConstant emits OP_LOADK or OP_LOADKX depending on the constant index size.
