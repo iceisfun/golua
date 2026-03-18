@@ -1,6 +1,9 @@
 package vm
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Table represents a Lua table (§2.1). It has both an array part (for
 // sequential integer keys 1..n) and a hash part (for all other keys).
@@ -36,6 +39,8 @@ type Table struct {
 	metatable LuaTable         // per-table metatable for operator/event overrides
 	isThread  bool             // true if this table represents a coroutine thread
 	vmRef     *VM              // reference to coroutine VM (only set for thread tables)
+	weakMode  weakTableMode    // controls whether table has weak keys, values, or both
+	weak      *weakStore       // non-nil when weakMode != 0; replaces normal storage
 }
 
 // SetThread marks this table as a coroutine thread.
@@ -73,6 +78,9 @@ func NewTableWithSize(narray, nhash int) *Table {
 // slots with Nil. This allows subsequent SetInt calls to place values
 // directly into the array part even if some intermediate indices are nil.
 func (t *Table) EnsureArraySize(n int) {
+	if t.weak != nil {
+		return // weak tables don't use array part
+	}
 	if n > len(t.array) {
 		if n > cap(t.array) {
 			newArray := make([]Value, n)
@@ -283,6 +291,9 @@ func (t *Table) getKeyValue(k any) (Value, bool) {
 
 // Get retrieves a value from the table (raw access, no metamethods).
 func (t *Table) Get(key Value) Value {
+	if t.weak != nil {
+		return t.weak.get(key)
+	}
 	if key.IsNil() {
 		return Nil
 	}
@@ -325,6 +336,9 @@ func (t *Table) Get(key Value) Value {
 
 // GetInt retrieves by integer key (1-based like Lua).
 func (t *Table) GetInt(i int) Value {
+	if t.weak != nil {
+		return t.weak.get(NewInt(int64(i)))
+	}
 	if i >= 1 && i <= len(t.array) {
 		return t.array[i-1]
 	}
@@ -338,6 +352,9 @@ func (t *Table) GetInt(i int) Value {
 
 // GetString retrieves by string key.
 func (t *Table) GetString(s string) Value {
+	if t.weak != nil {
+		return t.weak.get(NewString(s))
+	}
 	if t.strHash != nil {
 		if v, ok := t.strHash[s]; ok {
 			return v
@@ -349,6 +366,9 @@ func (t *Table) GetString(s string) Value {
 // Set sets a value in the table (raw access, no metamethods).
 // Returns an error for invalid keys (nil, NaN).
 func (t *Table) Set(key, value Value) error {
+	if t.weak != nil {
+		return t.weak.set(key, value)
+	}
 	if key.IsNil() {
 		return fmt.Errorf("table index is nil")
 	}
@@ -411,6 +431,10 @@ func (t *Table) MustSet(key, value Value) {
 
 // SetInt sets by integer key (1-based).
 func (t *Table) SetInt(i int, value Value) {
+	if t.weak != nil {
+		t.weak.set(NewInt(int64(i)), value)
+		return
+	}
 	if i >= 1 && i <= len(t.array) {
 		if value.IsNil() {
 			t.array[i-1] = Nil
@@ -433,6 +457,10 @@ func (t *Table) SetInt(i int, value Value) {
 
 // SetString sets by string key.
 func (t *Table) SetString(s string, value Value) {
+	if t.weak != nil {
+		t.weak.set(NewString(s), value)
+		return
+	}
 	t.setStrHash(s, value)
 }
 
@@ -440,6 +468,10 @@ func (t *Table) SetString(s string, value Value) {
 // The index must be within the current array bounds (1 <= i <= len(array)).
 // This is used by table.pack to fill pre-sized arrays that may contain nils.
 func (t *Table) RawSetArray(i int, value Value) {
+	if t.weak != nil {
+		t.weak.set(NewInt(int64(i)), value)
+		return
+	}
 	t.array[i-1] = value
 }
 
@@ -485,6 +517,9 @@ func (t *Table) rehashToArray() {
 // It returns a "border": an index n where t[n] is non-nil and t[n+1] is nil,
 // or 0 when t[1] is nil. This matches Lua 5.4's luaH_getn.
 func (t *Table) Len() int {
+	if t.weak != nil {
+		return t.weak.length()
+	}
 	n := len(t.array)
 	if n == 0 {
 		return 0
@@ -540,16 +575,95 @@ func (t *Table) Metatable() LuaTable {
 }
 
 // SetMetatable sets the table's metatable.
+// If the metatable has a __mode field, the table enters weak mode.
 func (t *Table) SetMetatable(mt LuaTable) {
 	if mt == nil {
 		t.metatable = nil
+		t.updateWeakMode()
 		return
 	}
 	if tp, ok := mt.(*Table); ok && tp == nil {
 		t.metatable = nil
+		t.updateWeakMode()
 		return
 	}
 	t.metatable = mt
+	t.updateWeakMode()
+}
+
+// updateWeakMode parses __mode from the metatable and transitions the table
+// between strong and weak storage as needed.
+func (t *Table) updateWeakMode() {
+	newMode := weakNone
+	if t.metatable != nil {
+		mode := t.metatable.Get(metaMode)
+		if mode.IsString() {
+			s := mode.AsString()
+			hasK := strings.Contains(s, "k")
+			hasV := strings.Contains(s, "v")
+			if hasK && hasV {
+				newMode = weakKeysValues
+			} else if hasK {
+				newMode = weakKeys
+			} else if hasV {
+				newMode = weakValues
+			}
+		}
+	}
+
+	if newMode == t.weakMode {
+		return
+	}
+
+	// Transition: tear down old mode, set up new mode.
+	if t.weakMode != weakNone {
+		t.disableWeakMode()
+	}
+	if newMode != weakNone {
+		t.enableWeakMode(newMode)
+	}
+	t.weakMode = newMode
+}
+
+// enableWeakMode migrates all entries from normal storage to a weakStore.
+func (t *Table) enableWeakMode(mode weakTableMode) {
+	ws := newWeakStore(mode)
+
+	// Migrate array entries.
+	for i, v := range t.array {
+		if !v.IsNil() {
+			ws.set(NewInt(int64(i+1)), v)
+		}
+	}
+	t.array = nil
+
+	// Migrate hash entries (using the ordered keys slice for consistency).
+	for _, k := range t.keys {
+		if v, alive := t.getKeyValue(k); alive {
+			ws.set(keyToValue(k), v)
+		}
+	}
+	t.strHash = nil
+	t.intHash = nil
+	t.hash = nil
+	t.keys = nil
+	t.deadKeys = 0
+
+	t.weak = ws
+}
+
+// disableWeakMode migrates alive entries from weakStore back to normal storage.
+func (t *Table) disableWeakMode() {
+	if t.weak == nil {
+		return
+	}
+
+	pairs := t.weak.migrate()
+	t.weak = nil
+
+	for _, p := range pairs {
+		t.Set(p.k, p.v)
+	}
 }
 
 // Next implements the pairs() iterator.
@@ -561,6 +675,9 @@ func (t *Table) SetMetatable(mt LuaTable) {
 // deterministic as long as the table is not modified.
 // Array entries with nil values (holes) are skipped, matching Lua semantics.
 func (t *Table) Next(key Value) (Value, Value, error) {
+	if t.weak != nil {
+		return t.weak.next(key)
+	}
 	if key.IsNil() {
 		// Start iteration: snapshot the hash key count so that keys added
 		// during traversal don't extend iteration indefinitely.
@@ -740,6 +857,10 @@ func keyToValue(k any) Value {
 
 // ForEach calls fn for each key-value pair in the table.
 func (t *Table) ForEach(fn func(key, value Value) bool) {
+	if t.weak != nil {
+		t.weak.forEach(fn)
+		return
+	}
 	for i, v := range t.array {
 		if !v.IsNil() {
 			if !fn(NewInt(int64(i+1)), v) {
