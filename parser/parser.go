@@ -25,6 +25,7 @@ func ParsePartial(source, input string) (*ast.Block, error) {
 	p := &parser{
 		lex:    lexer.New(source, input, true),
 		source: source,
+		funcs:  []funcScope{{nLocals: 0, lineDef: 0}}, // main chunk
 	}
 	if err := p.advance(); err != nil {
 		return &ast.Block{Start: token.Pos{Source: source, Line: 1, Column: 1}}, err
@@ -46,9 +47,21 @@ func Parse(source, input string, stripShebang ...bool) (*ast.Block, error) {
 	if len(stripShebang) > 0 {
 		strip = stripShebang[0]
 	}
+	return parseImpl(source, input, strip, 0)
+}
+
+// ParseWithMaxVars is like Parse but overrides the per-function local variable
+// limit (Lua 5.4 MAXVARS). When maxVars is 0 the default (200) is used.
+func ParseWithMaxVars(source, input string, maxVars int) (*ast.Block, error) {
+	return parseImpl(source, input, true, maxVars)
+}
+
+func parseImpl(source, input string, strip bool, maxVars int) (*ast.Block, error) {
 	p := &parser{
-		lex:    lexer.New(source, input, strip),
-		source: source,
+		lex:     lexer.New(source, input, strip),
+		source:  source,
+		funcs:   []funcScope{{nLocals: 0, lineDef: 0}}, // main chunk
+		maxVars: maxVars,
 	}
 	if err := p.advance(); err != nil {
 		return nil, err
@@ -72,12 +85,31 @@ func Parse(source, input string, stripShebang ...bool) (*ast.Block, error) {
 // nesting; we use a similar limit. The error message matches Lua 5.4.
 const maxSyntaxLevels = 200
 
+// maxLocalVars matches Lua 5.4's MAXVARS limit (200 locals per function).
+const maxLocalVars = 200
+
+// funcScope tracks per-function local variable counts for MAXVARS checking.
+type funcScope struct {
+	nLocals    int   // current number of active locals in this function
+	lineDef    int   // line where the function was defined (0 for main chunk)
+	blockSaves []int // saved nLocals at block entry for scope restore
+}
+
 type parser struct {
-	lex    *lexer.Lexer
-	tok    token.Token // current (lookahead) token
-	source string
-	err    error
-	depth  int // recursion depth counter
+	lex     *lexer.Lexer
+	tok     token.Token // current (lookahead) token
+	source  string
+	err     error
+	depth   int         // recursion depth counter
+	funcs   []funcScope // stack of function scopes for local var limit checking
+	maxVars int         // maximum local variables per function (0 = maxLocalVars)
+}
+
+func (p *parser) maxVarsLimit() int {
+	if p.maxVars > 0 {
+		return p.maxVars
+	}
+	return maxLocalVars
 }
 
 // isLvalue returns true if the expression is a valid assignment target
@@ -142,6 +174,61 @@ func (p *parser) incDepth() {
 
 func (p *parser) decDepth() {
 	p.depth--
+}
+
+// pushFuncScope starts a new function scope for local variable tracking.
+func (p *parser) pushFuncScope(lineDef int) {
+	p.funcs = append(p.funcs, funcScope{nLocals: 0, lineDef: lineDef})
+}
+
+// popFuncScope removes the current function scope.
+func (p *parser) popFuncScope() {
+	if len(p.funcs) > 0 {
+		p.funcs = p.funcs[:len(p.funcs)-1]
+	}
+}
+
+// addLocals registers n new locals in the current function scope and
+// checks the MAXVARS limit, producing an error matching Lua 5.4's format.
+func (p *parser) addLocals(n int) {
+	if len(p.funcs) == 0 {
+		return
+	}
+	fs := &p.funcs[len(p.funcs)-1]
+	fs.nLocals += n
+	limit := p.maxVarsLimit()
+	if fs.nLocals > limit {
+		msg := fmt.Sprintf("too many local variables (limit is %d)", limit)
+		if fs.lineDef == 0 {
+			msg += " in main function"
+		} else {
+			msg += fmt.Sprintf(" in function at line %d", fs.lineDef)
+		}
+		msg += p.nearClause()
+		p.errorf("%s", msg)
+	}
+}
+
+// enterBlock saves the current local count for later restoration.
+func (p *parser) enterBlock() {
+	if len(p.funcs) == 0 {
+		return
+	}
+	fs := &p.funcs[len(p.funcs)-1]
+	fs.blockSaves = append(fs.blockSaves, fs.nLocals)
+}
+
+// leaveBlock restores the local count saved by the matching enterBlock.
+func (p *parser) leaveBlock() {
+	if len(p.funcs) == 0 {
+		return
+	}
+	fs := &p.funcs[len(p.funcs)-1]
+	n := len(fs.blockSaves)
+	if n > 0 {
+		fs.nLocals = fs.blockSaves[n-1]
+		fs.blockSaves = fs.blockSaves[:n-1]
+	}
 }
 
 func (p *parser) pos() token.Pos { return p.tok.Pos }
@@ -314,7 +401,9 @@ func (p *parser) parseIfStmt() ast.Stmt {
 	cond := p.parseExpr()
 	thenLine := p.tok.Pos.Line // line of 'then' keyword
 	p.expect(token.THEN)
+	p.enterBlock()
 	then := p.parseBlock()
+	p.leaveBlock()
 
 	var elseifs []*ast.ElseIf
 	for p.check(token.ELSEIF) {
@@ -323,13 +412,17 @@ func (p *parser) parseIfStmt() ast.Stmt {
 		eiCond := p.parseExpr()
 		eiThenLine := p.tok.Pos.Line // line of 'then' keyword
 		p.expect(token.THEN)
+		p.enterBlock()
 		eiThen := p.parseBlock()
+		p.leaveBlock()
 		elseifs = append(elseifs, ast.NewElseIf(eiPos, eiCond, eiThenLine, eiThen))
 	}
 
 	var elseb *ast.Block
 	if p.match(token.ELSE) {
+		p.enterBlock()
 		elseb = p.parseBlock()
+		p.leaveBlock()
 	}
 	endLine := p.tok.Pos.Line // line of 'end' keyword
 	p.checkMatch(token.END, "if", openLine)
@@ -344,7 +437,9 @@ func (p *parser) parseWhileStmt() ast.Stmt {
 	p.advance()
 	cond := p.parseExpr()
 	p.expect(token.DO)
+	p.enterBlock()
 	body := p.parseBlock()
+	p.leaveBlock()
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "while", openLine)
 	return ast.NewWhileStmt(pos, cond, body, endLine)
@@ -356,7 +451,9 @@ func (p *parser) parseDoStmt() ast.Stmt {
 	pos := p.pos()
 	openLine := p.tok.Pos.Line
 	p.advance()
+	p.enterBlock()
 	body := p.parseBlock()
+	p.leaveBlock()
 	endLine := p.tok.Pos.Line // line of 'end' keyword
 	p.checkMatch(token.END, "do", openLine)
 	return ast.NewDoStmt(pos, body, endLine)
@@ -391,7 +488,10 @@ func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr
 		step = p.parseExpr()
 	}
 	p.expect(token.DO)
+	p.enterBlock()
+	p.addLocals(4) // for-loop internal variables: (for index), (for limit), (for step), name
 	body := p.parseBlock()
+	p.leaveBlock()
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
 	return ast.NewForNumStmt(pos, name, start, stop, step, body, endLine)
@@ -405,7 +505,10 @@ func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.Name
 	p.expect(token.IN)
 	iters := p.parseExprList()
 	p.expect(token.DO)
+	p.enterBlock()
+	p.addLocals(4 + len(names)) // for-in internal variables: (for state), (for control), (for toclose), (for iterator) + user names
 	body := p.parseBlock()
+	p.leaveBlock()
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
 	return ast.NewForInStmt(pos, names, iters, body, endLine)
@@ -417,9 +520,11 @@ func (p *parser) parseRepeatStmt() ast.Stmt {
 	pos := p.pos()
 	openLine := p.tok.Pos.Line
 	p.advance()
+	p.enterBlock()
 	body := p.parseBlock()
 	p.checkMatch(token.UNTIL, "repeat", openLine)
 	cond := p.parseExpr()
+	p.leaveBlock()
 	return ast.NewRepeatStmt(pos, body, cond)
 }
 
@@ -453,15 +558,30 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 		funcLine := p.tok.Pos.Line
 		p.advance()
 		name := p.parseName()
+		p.addLocals(1) // local function name is a local in outer scope
 		fn := p.parseFuncBodyAt(false, funcLine)
 		return ast.NewLocalFuncStmt(pos, name, fn)
 	}
 
 	names := []*ast.NameExpr{p.parseName()}
+	p.addLocals(1)
+	if p.err != nil {
+		return nil
+	}
 	attribs := []string{p.parseAttrib()}
 	for p.match(token.Type(',')) {
 		names = append(names, p.parseName())
+		p.addLocals(1)
+		if p.err != nil {
+			return nil
+		}
 		attribs = append(attribs, p.parseAttrib())
+		if p.err != nil {
+			return nil
+		}
+	}
+	if p.err != nil {
+		return nil
 	}
 
 	// Lua 5.4: at most one <close> variable per local statement.

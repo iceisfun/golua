@@ -448,14 +448,11 @@ func TestLimits_MaxVars(t *testing.T) {
 
 func TestLimits_MaxVars_Exceeded(t *testing.T) {
 	// 201 locals — exceeds the default limit of 200.
+	// The parser now enforces this limit too, so the error comes from parsing.
 	source := genLocals(201)
-	block, err := parser.Parse("test", source)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	_, err = compiler.Compile("test", block)
+	_, err := parser.Parse("test", source)
 	if err == nil {
-		t.Fatal("expected compile error for 201 locals")
+		t.Fatal("expected parse error for 201 locals")
 	}
 	if !strings.Contains(err.Error(), "too many local variables") {
 		t.Fatalf("expected 'too many local variables', got: %v", err)
@@ -464,8 +461,9 @@ func TestLimits_MaxVars_Exceeded(t *testing.T) {
 
 func TestLimits_MaxVars_Override(t *testing.T) {
 	// 201 locals with MaxVars=210 — should compile fine.
+	// Parser must also use the elevated limit.
 	source := genLocals(201)
-	block, err := parser.Parse("test", source)
+	block, err := parser.ParseWithMaxVars("test", source, 210)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}

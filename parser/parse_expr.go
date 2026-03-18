@@ -303,6 +303,8 @@ func (p *parser) parseFuncBody(isMethod bool) *ast.FuncExpr {
 func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
 	p.incDepth()
 	defer p.decDepth()
+	p.pushFuncScope(funcLine)
+	defer p.popFuncScope()
 	pos := p.pos()
 	p.expect(token.Type('('))
 
@@ -336,6 +338,8 @@ func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
 			}
 		}
 	}
+	// Count parameters as locals in this function scope.
+	p.addLocals(len(params))
 	p.expect(token.Type(')'))
 	body := p.parseBlock()
 	endLine := p.tok.Pos.Line
