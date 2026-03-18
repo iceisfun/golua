@@ -311,6 +311,16 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			if _, isExit := r.(*LuaExitError); isExit {
 				panic(r)
 			}
+			// Hook errors are uncatchable by pcall/xpcall (Lua 5.4 semantics).
+			// Re-panic so they propagate to the outermost ProtectedCall (Run).
+			if he, isHook := r.(*luaHookError); isHook {
+				if vm.InUserProtected() {
+					// Inside Lua pcall/xpcall: re-panic to propagate through
+					panic(r)
+				}
+				// At top level (Run): unwrap and handle as a normal error
+				r = he.original
+			}
 			// Preserve LuaError so pcall/xpcall can return the original Lua value
 			// locatedMsg stores the file:line-prefixed error for non-LuaError panics,
 			// used later by the xpcall message handler.
@@ -480,8 +490,14 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		// allocate their frames AFTER these args, not overlapping them.
 		vm.top = base + 1 + len(args)
 
+		// Fire call hook after frame is pushed (matching doCall behavior)
+		vm.fireCallHook()
+
 		// Call native function
 		nResults := nf(vm)
+
+		// Fire return hook before popping the frame
+		vm.fireReturnHook()
 
 		// Pop the call frame
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]
