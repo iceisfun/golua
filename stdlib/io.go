@@ -1329,13 +1329,19 @@ func fileToString(v *vm.VM) int {
 // Unlike fileClose, this silently handles already-closed and standard files.
 func fileCloseGC(v *vm.VM) int {
 	val := v.Get(1)
+	if v.ArgCount() < 1 || val.IsNil() {
+		name, _ := v.ArgErrorFuncName()
+		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got no value)", name))
+	}
 	ud := val.AsUserdata()
 	if ud == nil {
-		return 0
+		name, _ := v.ArgErrorFuncName()
+		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", name, v.ObjTypeName(val)))
 	}
 	fh, ok := ud.Data.(*fileHandle)
 	if !ok {
-		return 0
+		name, _ := v.ArgErrorFuncName()
+		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", name, v.ObjTypeName(val)))
 	}
 	if fh.gcCloseFn != nil {
 		fh.gcCloseFn(fh)
