@@ -677,15 +677,14 @@ func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 // compileExprStmt compiles a bare expression statement (must be a function call).
 func (c *compiler) compileExprStmt(s *ast.ExprStmt) {
 	fs := c.fs
-	line := s.P.Line
 
 	switch e := s.Expr.(type) {
 	case *ast.FuncCallExpr:
 		base := fs.freeReg
-		c.compileFuncCall(e, base, 1, line) // 1 = discard results (C=1)
+		c.compileFuncCall(e, base, 1, e.P.Line) // 1 = discard results (C=1)
 	case *ast.MethodCallExpr:
 		base := fs.freeReg
-		c.compileMethodCall(e, base, 1, line) // 1 = discard results
+		c.compileMethodCall(e, base, 1, e.P.Line) // 1 = discard results
 	default:
 		c.error(s, "expression statement must be function call")
 	}
@@ -1248,8 +1247,13 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// This ensures each iteration gets its own closed upvalue copy.
 	fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), line)
 
-	// TFORCALL — calls the iterator
-	tforCallPC := fs.emit(ABC(OP_TFORCALL, base, 0, nVars, 0), line)
+	// TFORCALL — calls the iterator. Use the line of the last iterator
+	// expression (matching Lua 5.4 which uses the line after parsing iterators).
+	iterLine := line
+	if len(s.Iters) > 0 {
+		iterLine = s.Iters[len(s.Iters)-1].Pos().Line
+	}
+	tforCallPC := fs.emit(ABC(OP_TFORCALL, base, 0, nVars, 0), iterLine)
 	_ = tforCallPC
 
 	// TFORLOOP — checks if control variable is nil
