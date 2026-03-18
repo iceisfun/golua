@@ -1,6 +1,22 @@
 package vm
 
-import "github.com/iceisfun/golua/compiler"
+import (
+	"fmt"
+
+	"github.com/iceisfun/golua/compiler"
+)
+
+// luaHookError wraps a panic from a debug hook function. In Lua 5.4, hook
+// errors are uncatchable by pcall/xpcall — they propagate through all
+// protected frames (similar to os.exit). ProtectedCall detects this sentinel
+// and re-panics instead of recovering.
+type luaHookError struct {
+	original interface{} // the underlying panic value from the hook
+}
+
+func (e *luaHookError) Error() string {
+	return fmt.Sprintf("%v", e.original)
+}
 
 // Hook mask constants (bitmask for fast checking)
 const (
@@ -72,9 +88,19 @@ func (vm *VM) fireHook(event string, line int) {
 		vm.pendingCallNameWhat = savedCallNameWhat
 	}()
 
-	// Call the hook function directly (unprotected) so errors propagate
-	// to the enclosing pcall/xpcall, matching Lua 5.4 semantics.
-	vm.callUnprotected(vm.hookFunc, args)
+	// Call the hook function directly (unprotected) so errors propagate.
+	// In Lua 5.4, hook errors are uncatchable by pcall/xpcall — they
+	// propagate through all protected frames. We wrap any panic from the
+	// hook in a luaHookError sentinel so ProtectedCall re-panics it.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Wrap the original panic in a hook error sentinel
+				panic(&luaHookError{original: r})
+			}
+		}()
+		vm.callUnprotected(vm.hookFunc, args)
+	}()
 }
 
 // fireCallHook fires a "call" hook event.

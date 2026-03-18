@@ -333,9 +333,10 @@ func TestLocalEnvGlobalName(t *testing.T) {
 	}
 }
 
-// Bug: Errors thrown inside debug hooks were silently swallowed because
-// fireHook used ProtectedCall. In Lua 5.4, hook errors propagate normally.
-func TestHookErrorPropagates(t *testing.T) {
+// Bug: Hook errors should propagate through pcall (uncatchable), matching
+// Lua 5.4 where hook errors set LUA_ERRERR status. The error should reach
+// the top-level Run/ProtectedCall, not be caught by the inner pcall.
+func TestHookErrorPropagatesThroughPcall(t *testing.T) {
 	v := New()
 
 	// Provide pcall and error as native functions
@@ -346,6 +347,8 @@ func TestHookErrorPropagates(t *testing.T) {
 		for i := 2; i <= argc; i++ {
 			args[i-2] = vm.Get(i)
 		}
+		exitUserProtected := vm.EnterUserProtected()
+		defer exitUserProtected()
 		results, callErr := vm.ProtectedCall(fn, args)
 		if callErr != nil {
 			vm.Set(0, False)
@@ -368,8 +371,7 @@ func TestHookErrorPropagates(t *testing.T) {
 		panic(&LuaError{Value: msg})
 	}))
 
-	// Provide sethook as a native function so Lua code can install the hook
-	// inside a pcall'd function.
+	// Provide sethook as a native function
 	v.SetGlobal("sethook", NewNativeFunc(func(vm *VM) int {
 		fn := vm.Get(1)
 		mask := vm.Get(2).AsString()
@@ -393,7 +395,8 @@ func TestHookErrorPropagates(t *testing.T) {
 		return 0
 	}))
 
-	results, err := runWithVM(t, v, `
+	// The hook error should propagate through pcall and reach Run as a top-level error
+	_, err := runWithVM(t, v, `
 		local ok, msg = pcall(function()
 			sethook(function()
 				clearhook()
@@ -404,22 +407,12 @@ func TestHookErrorPropagates(t *testing.T) {
 		end)
 		return ok, msg
 	`)
-	if err != nil {
-		t.Fatalf("unexpected top-level error: %v", err)
+	if err == nil {
+		t.Fatal("expected hook error to propagate to top level, but got nil error")
 	}
-	if len(results) < 2 {
-		t.Fatalf("expected 2 results, got %d", len(results))
+	if !strings.Contains(err.Error(), "hook") {
+		t.Errorf("expected error containing 'hook', got: %s", err.Error())
 	}
-	// ok should be false (error was caught by pcall)
-	if results[0] != False {
-		t.Errorf("expected ok=false, got ok=%v", results[0])
-	}
-	// msg should contain "hook error"
-	msg := results[1].AsString()
-	if !strings.Contains(msg, "hook error") {
-		t.Errorf("expected error message containing 'hook error', got: %s", msg)
-	}
-
 }
 
 // TestProtectedCallArgSurvivesMetamethod verifies that native function
