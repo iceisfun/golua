@@ -839,13 +839,20 @@ func (vm *VM) GetLocal(level, index int) (string, Value, bool) {
 		if stackIdx < 0 || stackIdx >= len(vm.stack) {
 			return "", Nil, false
 		}
-		// Upper bound: next frame's base (if any) or vm.top
+		// Upper bound: next frame's base (if any) or vm.top.
+		// C Lua uses ci->top which extends to func+LUA_MINSTACK+1,
+		// so C frames always expose slots beyond argc.  For the top
+		// frame (e.g. yield in a suspended coroutine) use vm.top.
 		limit := frame.base + 1 + frame.argc
 		if vm.inHook {
 			limit += frame.ntransfer
 		}
-		if idx+1 < len(stack) && stack[idx+1].base < limit {
-			limit = stack[idx+1].base
+		if idx+1 < len(stack) {
+			if stack[idx+1].base < limit {
+				limit = stack[idx+1].base
+			}
+		} else if vm.top > limit {
+			limit = vm.top
 		}
 		if stackIdx >= limit {
 			return "", Nil, false
@@ -1012,14 +1019,13 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 		if stackIdx < 0 || stackIdx >= len(vm.stack) {
 			return "", false
 		}
-		limit := frame.base + 1 + frame.argc
-		if vm.inHook {
-			limit += frame.ntransfer
-		}
-		if idx+1 < len(stack) && stack[idx+1].base < limit {
-			limit = stack[idx+1].base
-		}
-		if stackIdx >= limit {
+		// C Lua's db_setlocal passes the calling thread (L) to
+		// lua_setlocal, so findlocal uses the caller's L->top for
+		// the bounds check — which is always large enough.  This
+		// means setlocal on C frames succeeds for any valid stack
+		// index, unlike getlocal which uses the coroutine's L1->top.
+		// Only clamp by the next frame's base for safety.
+		if idx+1 < len(stack) && stackIdx >= stack[idx+1].base {
 			return "", false
 		}
 		vm.stack[stackIdx] = val
