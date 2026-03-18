@@ -617,6 +617,13 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			continue
 		}
 
+		// If a forward jump can bypass this instruction and still reach the
+		// CALL, the name is path-dependent (e.g., from or/and expressions).
+		// Suppress annotation in that case, matching Lua 5.4's filterpc.
+		if hasForwardBypass(proto, i, pc) {
+			return "", ""
+		}
+
 		switch prevOp {
 		case compiler.OP_GETTABUP:
 			// R[A] := UpValue[B][K[C]:string]
@@ -1078,20 +1085,20 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 		if a != reg {
 			continue
 		}
+		// If a forward jump can bypass this instruction and still reach the
+		// use site, the assignment is path-dependent (e.g., or/and expressions).
+		// Suppress annotation, matching Lua 5.4's filterpc in findsetreg.
+		if hasForwardBypass(proto, i, pc) {
+			return "", ""
+		}
 		switch op {
 		case compiler.OP_LOADK:
-			if hasForwardBypass(proto, i, pc) {
-				continue
-			}
 			bx := inst.Bx()
 			if bx < len(proto.Constants) && proto.Constants[bx].Type == compiler.ValString {
 				return proto.Constants[bx].SVal, "constant"
 			}
 			return "", ""
 		case compiler.OP_LOADKX:
-			if hasForwardBypass(proto, i, pc) {
-				continue
-			}
 			if i+1 < len(proto.Code) {
 				ax := proto.Code[i+1].Ax()
 				if ax < len(proto.Constants) && proto.Constants[ax].Type == compiler.ValString {
