@@ -227,12 +227,24 @@ func reportLuaError(v *vm.VM, err error, progName string, w io.Writer) {
 	}
 	if mt != nil {
 		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+			// Save the outer traceback before ProtectedCall overwrites it.
+			// In C Lua, __tostring runs unprotected inside the message
+			// handler, so if it errors the combined traceback includes
+			// both the inner __tostring frames and the outer error() site.
+			outerTb := v.TracebackFromLastError("", 0)
 			results, callErr := v.ProtectedCall(ts, []vm.Value{val})
 			if callErr != nil {
-				// __tostring errored — recurse with the inner error
-				// (in C Lua this propagates out of msghandler unprotected,
-				// then msghandler is called again on the new error)
+				// __tostring errored — report the inner error first,
+				// then append the outer traceback frames to match
+				// C Lua's combined traceback.
 				reportLuaError(v, callErr, progName, w)
+				if outerTb != "" {
+					// Append outer frames (skip "stack traceback:" header).
+					if idx := strings.Index(outerTb, "\n"); idx >= 0 {
+						fmt.Fprint(w, outerTb[idx+1:])
+						fmt.Fprintln(w)
+					}
+				}
 				return
 			}
 			if len(results) > 0 && results[0].IsString() {
@@ -240,7 +252,10 @@ func reportLuaError(v *vm.VM, err error, progName string, w io.Writer) {
 				fmt.Fprintf(w, "%s: %s\n", progName, results[0].AsString())
 				return
 			}
-			// __tostring returned non-string — fall through
+			// __tostring returned non-string — fall through with outer traceback
+			fmt.Fprintf(w, "%s: (error object is a %s value)\n", progName, val.Type())
+			fmt.Fprintln(w, outerTb)
+			return
 		}
 	}
 

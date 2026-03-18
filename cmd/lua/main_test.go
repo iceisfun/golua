@@ -83,6 +83,42 @@ func TestRunCLI_HookErrorIncludesHookTraceback(t *testing.T) {
 	}
 }
 
+// TestRunCLI_TostringErrorShowsCombinedTraceback verifies that when
+// error(obj) is called with a table whose __tostring itself errors,
+// the output includes both the inner __tostring traceback AND the
+// outer error() site, matching C Lua's combined traceback.
+func TestRunCLI_TostringErrorShowsCombinedTraceback(t *testing.T) {
+	dir := t.TempDir()
+	source := `local mt = {
+  __tostring = function()
+    error("inner")
+  end
+}
+error(setmetatable({}, mt))
+`
+	script := writeTempLua(t, dir, "tostring_err.lua", source)
+
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"lua", script}, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+
+	msg := stderr.String()
+	// Inner error message should be present
+	if !strings.Contains(msg, "inner") {
+		t.Fatalf("expected 'inner' error message, got: %s", msg)
+	}
+	// Inner __tostring frame
+	if !strings.Contains(msg, "in function <") {
+		t.Fatalf("expected inner __tostring frame, got: %s", msg)
+	}
+	// Outer error() call site from main chunk
+	if !strings.Contains(msg, "in main chunk") {
+		t.Fatalf("expected outer 'in main chunk' frame, got: %s", msg)
+	}
+}
+
 func TestConfigureCLIProviders_TestModeUsesJailedIO(t *testing.T) {
 	dir := t.TempDir()
 	results, err := runLuaWithCLIProviders(t, true, dir, `
