@@ -61,7 +61,11 @@ func (vm *VM) fireHook(event string, line int) {
 	// Build args
 	args := []Value{NewString(event)}
 	if event == hookEventLine || event == hookEventCount {
-		args = append(args, NewInt(int64(line)))
+		if line >= 0 {
+			args = append(args, NewInt(int64(line)))
+		} else {
+			args = append(args, Nil)
+		}
 	}
 
 	// Call in non-yieldable context
@@ -177,6 +181,14 @@ func (vm *VM) checkLineCountHooks(proto *compiler.Proto, pc int) bool {
 				vm.fireHook(hookEventLine, line)
 				fired = true
 			}
+		} else if len(proto.Lines) == 0 && pc == 0 {
+			// Stripped function: fire line hook with -1 (nil in Lua)
+			// on the first instruction only. Lua 5.4 fires once per
+			// call because the jump-back check succeeds on entry but
+			// changedline returns 0 for subsequent instructions.
+			vm.lastHookLine = -1
+			vm.fireHook(hookEventLine, -1)
+			fired = true
 		}
 	}
 

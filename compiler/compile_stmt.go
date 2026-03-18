@@ -677,15 +677,14 @@ func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 // compileExprStmt compiles a bare expression statement (must be a function call).
 func (c *compiler) compileExprStmt(s *ast.ExprStmt) {
 	fs := c.fs
-	line := s.P.Line
 
 	switch e := s.Expr.(type) {
 	case *ast.FuncCallExpr:
 		base := fs.freeReg
-		c.compileFuncCall(e, base, 1, line) // 1 = discard results (C=1)
+		c.compileFuncCall(e, base, 1, e.P.Line) // 1 = discard results (C=1)
 	case *ast.MethodCallExpr:
 		base := fs.freeReg
-		c.compileMethodCall(e, base, 1, line) // 1 = discard results
+		c.compileMethodCall(e, base, 1, e.P.Line) // 1 = discard results
 	default:
 		c.error(s, "expression statement must be function call")
 	}
@@ -1597,9 +1596,16 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 	fs.checkVarLimitAt(0, fe.P.Line, ")")
 	fs.checkRegLimit()
 
-	// Vararg prep
+	// Vararg prep — use the first body line (not the definition line)
+	// to match Lua 5.4, which assigns VARARGPREP to the first line of
+	// the function body so it doesn't appear in activelines for the
+	// definition line.
 	if fe.VarArg {
-		fs.emit(ABC(OP_VARARGPREP, fs.proto.NumParams, 0, 0, 0), line)
+		varargLine := line
+		if fe.Body != nil && len(fe.Body.Stmts) > 0 {
+			varargLine = fe.Body.Stmts[0].Pos().Line
+		}
+		fs.emit(ABC(OP_VARARGPREP, fs.proto.NumParams, 0, 0, 0), varargLine)
 	}
 
 	c.compileBlockWith(fe.Body, true, fe.EndLine)
