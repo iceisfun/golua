@@ -94,7 +94,8 @@ type VM struct {
 	hookCount    int   // Instruction count interval for count hooks
 	hookCounter  int   // Current counter (counts down to 0)
 	inHook       bool  // Re-entrancy guard
-	lastHookLine int   // Last line reported by line hook (-1 = none)
+	lastHookLine int // Last line reported by line hook (-1 = none)
+	lastHookPC   int // Last pc checked by line hook (for backward jump detection)
 
 	// Pending call name hint for debug.getinfo name inference.
 	// Set before calling vm.call() and consumed by vm.call().

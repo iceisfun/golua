@@ -120,7 +120,7 @@ func TestTableFieldPos(t *testing.T) {
 }
 
 func TestElseIfPos(t *testing.T) {
-	ei := ast.NewElseIf(pos(10, 2), ast.NewTrueExpr(p()), emptyBlock())
+	ei := ast.NewElseIf(pos(10, 2), ast.NewTrueExpr(p()), 0, emptyBlock())
 	if ei.Pos().Line != 10 || ei.Pos().Column != 2 {
 		t.Errorf("ElseIf.Pos() = %v, want line=10 col=2", ei.Pos())
 	}
@@ -141,20 +141,20 @@ func TestStatementConstructors(t *testing.T) {
 			[]string{""}, []ast.Expr{ast.NewNumberExpr(p(), 1, "1")}), 2, 1},
 		{"DoStmt", ast.NewDoStmt(pos(3, 1), emptyBlock(), 3), 3, 1},
 		{"WhileStmt", ast.NewWhileStmt(pos(4, 1),
-			ast.NewTrueExpr(p()), emptyBlock()), 4, 1},
+			ast.NewTrueExpr(p()), emptyBlock(), 0), 4, 1},
 		{"RepeatStmt", ast.NewRepeatStmt(pos(5, 1),
 			emptyBlock(), ast.NewTrueExpr(p())), 5, 1},
 		{"IfStmt", ast.NewIfStmt(pos(6, 1),
-			ast.NewTrueExpr(p()), emptyBlock(), nil, nil), 6, 1},
+			ast.NewTrueExpr(p()), 0, emptyBlock(), nil, nil, 0), 6, 1},
 		{"ForNumStmt", ast.NewForNumStmt(pos(7, 1),
 			ast.NewNameExpr(p(), "i"),
 			ast.NewNumberExpr(p(), 1, "1"),
 			ast.NewNumberExpr(p(), 10, "10"),
-			nil, emptyBlock()), 7, 1},
+			nil, emptyBlock(), 0), 7, 1},
 		{"ForInStmt", ast.NewForInStmt(pos(8, 1),
 			[]*ast.NameExpr{ast.NewNameExpr(p(), "k")},
 			[]ast.Expr{ast.NewNameExpr(p(), "pairs")},
-			emptyBlock()), 8, 1},
+			emptyBlock(), 0), 8, 1},
 		{"ReturnStmt", ast.NewReturnStmt(pos(9, 1), nil), 9, 1},
 		{"BreakStmt", ast.NewBreakStmt(pos(10, 1)), 10, 1},
 		{"GotoStmt", ast.NewGotoStmt(pos(11, 1), "skip"), 11, 1},
@@ -536,7 +536,7 @@ func TestDumpStmtDo(t *testing.T) {
 
 func TestDumpStmtWhile(t *testing.T) {
 	s := ast.NewWhileStmt(p(), ast.NewTrueExpr(p()),
-		blockWith(ast.NewBreakStmt(p())))
+		blockWith(ast.NewBreakStmt(p())), 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(while")
 	mustContain(t, d, "true")
@@ -555,9 +555,9 @@ func TestDumpStmtRepeat(t *testing.T) {
 
 func TestDumpStmtIf(t *testing.T) {
 	s := ast.NewIfStmt(p(),
-		ast.NewNameExpr(p(), "cond"),
+		ast.NewNameExpr(p(), "cond"), 0,
 		blockWith(ast.NewReturnStmt(p(), []ast.Expr{ast.NewNumberExpr(p(), 1, "1")})),
-		nil, nil)
+		nil, nil, 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(if")
 	mustContain(t, d, "(name cond)")
@@ -566,12 +566,12 @@ func TestDumpStmtIf(t *testing.T) {
 
 func TestDumpStmtIfElseIf(t *testing.T) {
 	s := ast.NewIfStmt(p(),
-		ast.NewNameExpr(p(), "a"),
+		ast.NewNameExpr(p(), "a"), 0,
 		emptyBlock(),
 		[]*ast.ElseIf{
-			ast.NewElseIf(p(), ast.NewNameExpr(p(), "b"), emptyBlock()),
+			ast.NewElseIf(p(), ast.NewNameExpr(p(), "b"), 0, emptyBlock()),
 		},
-		nil)
+		nil, 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(if")
 	mustContain(t, d, "(elseif")
@@ -580,9 +580,9 @@ func TestDumpStmtIfElseIf(t *testing.T) {
 
 func TestDumpStmtIfElse(t *testing.T) {
 	s := ast.NewIfStmt(p(),
-		ast.NewTrueExpr(p()),
+		ast.NewTrueExpr(p()), 0,
 		emptyBlock(), nil,
-		blockWith(ast.NewReturnStmt(p(), nil)))
+		blockWith(ast.NewReturnStmt(p(), nil)), 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(if")
 	mustContain(t, d, "(else")
@@ -590,13 +590,13 @@ func TestDumpStmtIfElse(t *testing.T) {
 
 func TestDumpStmtIfElseIfElse(t *testing.T) {
 	s := ast.NewIfStmt(p(),
-		ast.NewNameExpr(p(), "a"),
+		ast.NewNameExpr(p(), "a"), 0,
 		emptyBlock(),
 		[]*ast.ElseIf{
-			ast.NewElseIf(p(), ast.NewNameExpr(p(), "b"), emptyBlock()),
-			ast.NewElseIf(p(), ast.NewNameExpr(p(), "c"), emptyBlock()),
+			ast.NewElseIf(p(), ast.NewNameExpr(p(), "b"), 0, emptyBlock()),
+			ast.NewElseIf(p(), ast.NewNameExpr(p(), "c"), 0, emptyBlock()),
 		},
-		blockWith(ast.NewReturnStmt(p(), nil)))
+		blockWith(ast.NewReturnStmt(p(), nil)), 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(if")
 	mustContain(t, d, "(elseif")
@@ -610,7 +610,7 @@ func TestDumpStmtForNum(t *testing.T) {
 		ast.NewNameExpr(p(), "i"),
 		ast.NewNumberExpr(p(), 1, "1"),
 		ast.NewNumberExpr(p(), 10, "10"),
-		nil, emptyBlock())
+		nil, emptyBlock(), 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(for-num i")
 	mustContain(t, d, "(start")
@@ -624,7 +624,7 @@ func TestDumpStmtForNumWithStep(t *testing.T) {
 		ast.NewNumberExpr(p(), 1, "1"),
 		ast.NewNumberExpr(p(), 100, "100"),
 		ast.NewNumberExpr(p(), 2, "2"),
-		emptyBlock())
+		emptyBlock(), 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(for-num i")
 	mustContain(t, d, "(step")
@@ -642,7 +642,7 @@ func TestDumpStmtForIn(t *testing.T) {
 				ast.NewNameExpr(p(), "pairs"),
 				[]ast.Expr{ast.NewNameExpr(p(), "t")}),
 		},
-		emptyBlock())
+		emptyBlock(), 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(for-in [k, v]")
 	mustContain(t, d, "(iters")
@@ -1835,8 +1835,8 @@ func TestIfStmtFields(t *testing.T) {
 	cond := ast.NewTrueExpr(p())
 	thenBlock := emptyBlock()
 	elseBlock := emptyBlock()
-	elseifs := []*ast.ElseIf{ast.NewElseIf(p(), ast.NewFalseExpr(p()), emptyBlock())}
-	s := ast.NewIfStmt(pos(1, 1), cond, thenBlock, elseifs, elseBlock)
+	elseifs := []*ast.ElseIf{ast.NewElseIf(p(), ast.NewFalseExpr(p()), 0, emptyBlock())}
+	s := ast.NewIfStmt(pos(1, 1), cond, 0, thenBlock, elseifs, elseBlock, 0)
 	if s.Cond != cond {
 		t.Error("Cond mismatch")
 	}
@@ -1857,7 +1857,7 @@ func TestForNumStmtFields(t *testing.T) {
 	stop := ast.NewNumberExpr(p(), 10, "10")
 	step := ast.NewNumberExpr(p(), 2, "2")
 	body := emptyBlock()
-	s := ast.NewForNumStmt(pos(1, 1), name, start, stop, step, body)
+	s := ast.NewForNumStmt(pos(1, 1), name, start, stop, step, body, 0)
 	if s.Name != name {
 		t.Error("Name mismatch")
 	}
@@ -1879,7 +1879,7 @@ func TestForInStmtFields(t *testing.T) {
 	names := []*ast.NameExpr{ast.NewNameExpr(p(), "k"), ast.NewNameExpr(p(), "v")}
 	iters := []ast.Expr{ast.NewNameExpr(p(), "pairs")}
 	body := emptyBlock()
-	s := ast.NewForInStmt(pos(1, 1), names, iters, body)
+	s := ast.NewForInStmt(pos(1, 1), names, iters, body, 0)
 	if len(s.Names) != 2 {
 		t.Errorf("Names len = %d, want 2", len(s.Names))
 	}

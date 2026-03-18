@@ -312,6 +312,7 @@ func (p *parser) parseIfStmt() ast.Stmt {
 	openLine := p.tok.Pos.Line
 	p.advance() // skip 'if'
 	cond := p.parseExpr()
+	thenLine := p.tok.Pos.Line // line of 'then' keyword
 	p.expect(token.THEN)
 	then := p.parseBlock()
 
@@ -320,17 +321,19 @@ func (p *parser) parseIfStmt() ast.Stmt {
 		eiPos := p.pos()
 		p.advance()
 		eiCond := p.parseExpr()
+		eiThenLine := p.tok.Pos.Line // line of 'then' keyword
 		p.expect(token.THEN)
 		eiThen := p.parseBlock()
-		elseifs = append(elseifs, ast.NewElseIf(eiPos, eiCond, eiThen))
+		elseifs = append(elseifs, ast.NewElseIf(eiPos, eiCond, eiThenLine, eiThen))
 	}
 
 	var elseb *ast.Block
 	if p.match(token.ELSE) {
 		elseb = p.parseBlock()
 	}
+	endLine := p.tok.Pos.Line // line of 'end' keyword
 	p.checkMatch(token.END, "if", openLine)
-	return ast.NewIfStmt(pos, cond, then, elseifs, elseb)
+	return ast.NewIfStmt(pos, cond, thenLine, then, elseifs, elseb, endLine)
 }
 
 func (p *parser) parseWhileStmt() ast.Stmt {
@@ -342,8 +345,9 @@ func (p *parser) parseWhileStmt() ast.Stmt {
 	cond := p.parseExpr()
 	p.expect(token.DO)
 	body := p.parseBlock()
+	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "while", openLine)
-	return ast.NewWhileStmt(pos, cond, body)
+	return ast.NewWhileStmt(pos, cond, body, endLine)
 }
 
 func (p *parser) parseDoStmt() ast.Stmt {
@@ -388,8 +392,9 @@ func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr
 	}
 	p.expect(token.DO)
 	body := p.parseBlock()
+	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
-	return ast.NewForNumStmt(pos, name, start, stop, step, body)
+	return ast.NewForNumStmt(pos, name, start, stop, step, body, endLine)
 }
 
 func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.NameExpr) ast.Stmt {
@@ -401,8 +406,9 @@ func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.Name
 	iters := p.parseExprList()
 	p.expect(token.DO)
 	body := p.parseBlock()
+	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
-	return ast.NewForInStmt(pos, names, iters, body)
+	return ast.NewForInStmt(pos, names, iters, body, endLine)
 }
 
 func (p *parser) parseRepeatStmt() ast.Stmt {

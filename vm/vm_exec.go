@@ -79,14 +79,33 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 	// Fire call hook after frame is pushed
 	vm.fireCallHook()
 
+	// Save and restore lastHookLine/lastHookPC around the function call.
+	// In Lua 5.4, L->oldpc is per-function state (effectively restored when
+	// returning to the caller). Without this, the called function's line
+	// tracking would interfere with the caller's.
+	savedHookLine := vm.lastHookLine
+	savedHookPC := vm.lastHookPC
+	// Reset for the new function. VARARGPREP (pc=0) is handled specially
+	// in execute() to suppress its own line hook.
+	if vm.hookMask != 0 {
+		vm.lastHookLine = -1
+		vm.lastHookPC = 0
+	}
+
 	// Execute
 	results, err := vm.execute()
 	if err != nil {
+		vm.lastHookLine = savedHookLine
+		vm.lastHookPC = savedHookPC
 		if le, ok := err.(*LuaError); ok {
 			panic(le)
 		}
 		panic(&LuaError{Value: NewString(err.Error())})
 	}
+
+	// Restore lastHookLine/lastHookPC so the caller continues with its own line tracking
+	vm.lastHookLine = savedHookLine
+	vm.lastHookPC = savedHookPC
 
 	// Pop call frame and restore top
 	vm.callStack = vm.callStack[:len(vm.callStack)-1]
@@ -147,8 +166,26 @@ func (vm *VM) execute() ([]Value, error) {
 		frame.pc++
 
 		// Hook dispatch: line and count hooks (fast path: hookMask == 0 skips entirely)
+		// Skip line hook for VARARGPREP (pc=0) — in Lua 5.4, OP_VARARGPREP
+		// suppresses its own line hook and sets L->oldpc = 1 so the next
+		// instruction fires. Count hooks still fire for VARARGPREP.
 		if vm.hookMask != 0 && !vm.inHook {
-			if vm.checkLineCountHooks(proto, frame.pc-1) {
+			skipLine := frame.pc == 1 && inst.OpCode() == compiler.OP_VARARGPREP
+			if skipLine {
+				// Only fire count hook, not line hook, for VARARGPREP
+				if vm.hookMask&HookMaskCount != 0 {
+					vm.hookCounter--
+					if vm.hookCounter <= 0 {
+						vm.hookCounter = vm.hookCount
+						line := 0
+						if len(proto.Lines) > 0 {
+							line = proto.Lines[0]
+						}
+						vm.fireHook(hookEventCount, line)
+						frame = &vm.callStack[len(vm.callStack)-1]
+					}
+				}
+			} else if vm.checkLineCountHooks(proto, frame.pc-1) {
 				// Re-fetch after hook callback may have modified call stack
 				frame = &vm.callStack[len(vm.callStack)-1]
 			}
