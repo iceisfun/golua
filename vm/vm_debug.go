@@ -438,10 +438,19 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 
 	info.ActiveLines = activeLines(proto)
 
-	// Name inference: look at the caller frame's bytecode.
-	// For tail calls, the original caller frame is gone, so name resolution
-	// must fail (returning empty name/namewhat), matching Lua 5.4 behavior.
-	if !frame.isTailCall {
+	// When inside a hook, the hook function was called by the VM's hook
+	// mechanism, not by a CALL instruction. The caller frame's bytecode
+	// at the current PC is the hooked instruction, not a CALL that invoked
+	// the hook. Looking up a name from that bytecode would produce wrong
+	// results (e.g., "metamethod" for GETTABUP near an MMBIN).
+	// Check this FIRST, before attempting caller-based name resolution.
+	if active && vm.inHook && info.Func.RawEqual(vm.hookFunc) {
+		info.Name = "?"
+		info.NameWhat = "hook"
+	} else if !frame.isTailCall {
+		// Name inference: look at the caller frame's bytecode.
+		// For tail calls, the original caller frame is gone, so name resolution
+		// must fail (returning empty name/namewhat), matching Lua 5.4 behavior.
 		callerIdx := idx - 1
 		if callerIdx >= 0 {
 			info.Name, info.NameWhat = vm.funcNameFromCall(&stack[callerIdx])
@@ -462,13 +471,6 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 			info.Name = ""
 			info.NameWhat = ""
 		}
-	}
-
-	// When inside a hook and name couldn't be inferred from caller,
-	// mark as "hook". This happens because the hook function is called
-	// by fireHook/ProtectedCall, not by a CALL instruction in the caller.
-	if active && vm.inHook && info.NameWhat == "" && info.Func.RawEqual(vm.hookFunc) {
-		info.NameWhat = "hook"
 	}
 
 	return info
