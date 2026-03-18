@@ -301,6 +301,8 @@ func (p *parser) parseFuncBody(isMethod bool) *ast.FuncExpr {
 }
 
 func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
+	p.incDepth()
+	defer p.decDepth()
 	pos := p.pos()
 	p.expect(token.Type('('))
 

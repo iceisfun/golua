@@ -135,7 +135,7 @@ func (p *parser) errorf(format string, args ...any) error {
 // if it exceeds maxSyntaxLevels.
 func (p *parser) incDepth() {
 	p.depth++
-	if p.depth > maxSyntaxLevels {
+	if p.depth >= maxSyntaxLevels {
 		p.errorf("C stack overflow")
 	}
 }
@@ -306,6 +306,8 @@ func (p *parser) parseStatement() ast.Stmt {
 }
 
 func (p *parser) parseIfStmt() ast.Stmt {
+	p.incDepth()
+	defer p.decDepth()
 	pos := p.pos()
 	openLine := p.tok.Pos.Line
 	p.advance() // skip 'if'
@@ -332,6 +334,8 @@ func (p *parser) parseIfStmt() ast.Stmt {
 }
 
 func (p *parser) parseWhileStmt() ast.Stmt {
+	p.incDepth()
+	defer p.decDepth()
 	pos := p.pos()
 	openLine := p.tok.Pos.Line
 	p.advance()
@@ -343,6 +347,8 @@ func (p *parser) parseWhileStmt() ast.Stmt {
 }
 
 func (p *parser) parseDoStmt() ast.Stmt {
+	p.incDepth()
+	defer p.decDepth()
 	pos := p.pos()
 	openLine := p.tok.Pos.Line
 	p.advance()
@@ -353,6 +359,8 @@ func (p *parser) parseDoStmt() ast.Stmt {
 }
 
 func (p *parser) parseForStmt() ast.Stmt {
+	p.incDepth()
+	defer p.decDepth()
 	pos := p.pos()
 	openLine := p.tok.Pos.Line
 	p.advance() // skip 'for'
@@ -398,6 +406,8 @@ func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.Name
 }
 
 func (p *parser) parseRepeatStmt() ast.Stmt {
+	p.incDepth()
+	defer p.decDepth()
 	pos := p.pos()
 	openLine := p.tok.Pos.Line
 	p.advance()
