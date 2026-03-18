@@ -58,8 +58,9 @@ func dumpProto(p *compiler.Proto, strip bool) []byte {
 }
 
 type dumper struct {
-	w     *bytes.Buffer
-	strip bool
+	w            *bytes.Buffer
+	strip        bool
+	parentSource string // source of the enclosing function (for dedup)
 }
 
 func (d *dumper) writeByte(b byte) {
@@ -117,9 +118,12 @@ func (d *dumper) writeString(s string) {
 }
 
 func (d *dumper) dumpFunction(p *compiler.Proto) {
-	// Source name
+	// Source name: Lua 5.4 writes an empty string for child functions
+	// that share the same source as the parent, to avoid bloat.
 	if d.strip {
 		d.writeString("=?")
+	} else if p.Source == d.parentSource {
+		d.writeString("")
 	} else {
 		d.writeString(p.Source)
 	}
@@ -183,9 +187,12 @@ func (d *dumper) dumpFunction(p *compiler.Proto) {
 
 	// Nested protos
 	d.writeSize(len(p.Protos))
+	savedParent := d.parentSource
+	d.parentSource = p.Source
 	for _, sub := range p.Protos {
 		d.dumpFunction(sub)
 	}
+	d.parentSource = savedParent
 
 	// Debug info
 	if d.strip {
