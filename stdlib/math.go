@@ -339,6 +339,15 @@ func mathMin(v *vm.VM) int {
 }
 
 func mathModf(v *vm.VM) int {
+	val := v.Get(1)
+	// If the argument is already an integer, return it directly with 0.0 fraction.
+	// This avoids precision loss from converting large integers (e.g. maxinteger)
+	// to float64 and back.
+	if val.IsInt() {
+		v.Set(0, val)
+		v.Set(1, vm.NewFloat(0))
+		return 2
+	}
 	n := getNumber(v, 1, "math.modf")
 	if math.IsInf(n, 0) {
 		v.Set(0, vm.NewFloat(n))
