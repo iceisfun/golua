@@ -70,13 +70,10 @@ func makeFileHandleWithClose(f vm.LuaFile, closeFn func(*vm.VM, *fileHandle) int
 // idx is the 1-based argument position counting self (e.g. 2 for the first
 // explicit arg in a method call, 1 for a module function call).
 // fallback is used if the name cannot be resolved from bytecode.
-func fileArgError(v *vm.VM, idx int, fallback string, msg string) {
-	name, nameWhat := v.CallerFuncName()
+func fileArgError(v *vm.VM, idx int, _ string, msg string) {
+	name, nameWhat := v.ArgErrorFuncName()
 	if nameWhat == "method" {
 		idx-- // method call: self is implicit, decrement arg number
-	}
-	if name == "" {
-		name = fallback
 	}
 	panic(fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg))
 }
@@ -576,7 +573,8 @@ func makeIoTmpfile(provider vm.LuaIoProvider) vm.NativeFunc {
 func makeIoClose(ioTable *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		val := v.Get(1)
-		if val.IsNil() {
+		if v.ArgCount() == 0 {
+			// io.close() with no args: close default output
 			val = ioTable.Get(vm.NewString("__output"))
 			if val.IsNil() {
 				v.Set(0, vm.Nil)
@@ -1251,7 +1249,14 @@ func fileSetVBuf(v *vm.VM) int {
 	if mode.IsNil() {
 		fileArgError(v, 2, "setvbuf", "string expected, got nil")
 	}
-	modeStr := mode.AsString()
+	var modeStr string
+	if mode.IsString() {
+		modeStr = mode.AsString()
+	} else if mode.IsNumber() {
+		modeStr = mode.String()
+	} else {
+		fileArgError(v, 2, "setvbuf", fmt.Sprintf("string expected, got %s", mode.Type()))
+	}
 
 	var size int
 	if !v.Get(3).IsNil() {
