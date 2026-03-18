@@ -50,8 +50,9 @@ import (
 // key (Go function values are not comparable). Each call to NewNativeFunc
 // allocates a distinct box, giving each Value reference identity.
 type nativeFuncBox struct {
-	fn   NativeFunc
-	nups int // number of upvalues (for debug.getinfo "u" flag)
+	fn       NativeFunc
+	nups     int     // number of upvalues (for debug.getinfo "u" flag)
+	upvalues []Value // upvalue slots for C closure emulation
 }
 
 var emptyStringSentinel byte
@@ -161,11 +162,39 @@ func NewNativeFunc(f NativeFunc) Value {
 // NewNativeFuncWithNups creates a native function value that reports the
 // given number of upvalues via debug.getinfo. This is used for functions
 // like coroutine.wrap's iterator which conceptually closes over state.
+// Upvalue slots are allocated and initialized to nil.
 func NewNativeFuncWithNups(f NativeFunc, nups int) Value {
+	uvs := make([]Value, nups)
 	return Value{typ: typeNativeFunc, ptr: &nativeFuncBox{
-		fn:   f,
-		nups: nups,
+		fn:       f,
+		nups:     nups,
+		upvalues: uvs,
 	}}
+}
+
+// NativeFuncUpvalue returns the value of upvalue at 1-based index i for a
+// native function. Returns Nil and false if out of range or not a native func.
+func (v Value) NativeFuncUpvalue(i int) (Value, bool) {
+	if v.typ == typeNativeFunc {
+		box := v.ptr.(*nativeFuncBox)
+		if i >= 1 && i <= len(box.upvalues) {
+			return box.upvalues[i-1], true
+		}
+	}
+	return Nil, false
+}
+
+// SetNativeFuncUpvalue sets the value of upvalue at 1-based index i for a
+// native function. Returns false if out of range or not a native func.
+func (v Value) SetNativeFuncUpvalue(i int, val Value) bool {
+	if v.typ == typeNativeFunc {
+		box := v.ptr.(*nativeFuncBox)
+		if i >= 1 && i <= len(box.upvalues) {
+			box.upvalues[i-1] = val
+			return true
+		}
+	}
+	return false
 }
 
 // NewUpvalueID creates a lightuserdata value wrapping an upvalue pointer.

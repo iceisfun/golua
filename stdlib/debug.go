@@ -360,9 +360,16 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 		callerArgError(v, 1, "debug.getupvalue", fmt.Sprintf("function expected, got %s", got))
 	}
 
-	// Native functions have no inspectable upvalues
+	// Native functions: upvalues have empty-string names
 	if arg1.IsNativeFunc() {
-		return 0
+		nups := arg1.NativeFuncNups()
+		if idx < 1 || int(idx) > nups {
+			return 0
+		}
+		val, _ := arg1.NativeFuncUpvalue(int(idx))
+		v.Set(0, vm.NewString(""))
+		v.Set(1, val)
+		return 2
 	}
 
 	closure := arg1.AsClosure()
@@ -377,6 +384,9 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 
 	i := int(idx) - 1
 	name := closure.Proto.Upvalues[i].Name
+	if name == "" {
+		name = "(no name)"
+	}
 	val := closure.Upvalues[i].Get()
 
 	v.Set(0, vm.NewString(name))
@@ -406,7 +416,13 @@ func luaDebugSetUpvalue(v *vm.VM) int {
 	newVal := v.Get(3)
 
 	if arg1.IsNativeFunc() {
-		return 0
+		nups := arg1.NativeFuncNups()
+		if idx < 1 || int(idx) > nups {
+			return 0
+		}
+		arg1.SetNativeFuncUpvalue(int(idx), newVal)
+		v.Set(0, vm.NewString(""))
+		return 1
 	}
 
 	closure := arg1.AsClosure()
@@ -420,6 +436,9 @@ func luaDebugSetUpvalue(v *vm.VM) int {
 
 	i := int(idx) - 1
 	name := closure.Proto.Upvalues[i].Name
+	if name == "" {
+		name = "(no name)"
+	}
 	closure.Upvalues[i].Set(newVal)
 
 	v.Set(0, vm.NewString(name))
