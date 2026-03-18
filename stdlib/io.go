@@ -393,9 +393,16 @@ func readNumberFromReader(reader *bufio.Reader) (string, error) {
 		}
 	}
 
+	const maxNumLen = 200 // Lua 5.4's L_MAXLENNUM
+
 	offset := 0
+	tooLong := false
 
 	peekByte := func() (byte, bool) {
+		if offset >= maxNumLen {
+			tooLong = true
+			return 0, false
+		}
 		peeked, _ := reader.Peek(offset + 1)
 		if len(peeked) <= offset {
 			return 0, false
@@ -483,6 +490,11 @@ func readNumberFromReader(reader *bufio.Reader) (string, error) {
 		if !hasExpDigits {
 			return fail()
 		}
+	}
+
+	// If the number exceeded the maximum length, it's invalid.
+	if tooLong {
+		return fail()
 	}
 
 	peeked, _ := reader.Peek(offset)
@@ -978,7 +990,8 @@ func parseReadNumber(data string) vm.Value {
 		hexBody = data[digitStart+2:]
 	}
 	isHexFloat := isHex && strings.ContainsAny(hexBody, ".pP")
-	hasFloatIndicator := strings.ContainsAny(data, ".eE")
+	// For hex numbers, only '.', 'p', 'P' indicate float (not 'e'/'E' which are hex digits).
+	hasFloatIndicator := !isHex && strings.ContainsAny(data, ".eE")
 
 	// Hex floats always produce float type
 	if isHexFloat {

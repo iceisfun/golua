@@ -419,9 +419,16 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 
 	// State-machine scanner matching Lua 5.4's read_number (liolib.c).
 	// On failure, all scanned characters are consumed (not restored).
+	const maxNumLen = 200 // Lua 5.4's L_MAXLENNUM
+
 	offset := 0
+	tooLong := false
 
 	peekByte := func() (byte, bool) {
+		if offset >= maxNumLen {
+			tooLong = true
+			return 0, false
+		}
 		peeked, _ := reader.Peek(offset + 1)
 		if len(peeked) <= offset {
 			return 0, false
@@ -521,6 +528,11 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 			// Incomplete exponent is a hard failure in Lua 5.4
 			return fail()
 		}
+	}
+
+	// If the number exceeded the maximum length, it's invalid.
+	if tooLong {
+		return fail()
 	}
 
 	// Extract the scanned string and consume it
