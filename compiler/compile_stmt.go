@@ -1170,6 +1170,22 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	}
 	fs.proto.Code[tforLoopPC] = fs.proto.Code[tforLoopPC].SetBx(backLen)
 
+	// Fix loop variable visibility: they should NOT be visible during the
+	// TFORCALL iterator invocation (matching Lua 5.4 where loop vars start
+	// after TFORCALL). Emit separate debug entries for the body range only.
+	bodyEnd := tforCallPC // exclusive: body ends just before TFORCALL
+	loopVarStart := len(fs.locals) - nVars
+	for i := 0; i < nVars; i++ {
+		lv := &fs.locals[loopVarStart+i]
+		fs.proto.Locals = append(fs.proto.Locals, LocalVar{
+			Name:    lv.name,
+			StartPC: lv.startPC,
+			EndPC:   bodyEnd,
+		})
+		// Mark as already emitted so leaveScope doesn't emit again
+		lv.startPC = -1
+	}
+
 	c.leaveScope(line)
 }
 
