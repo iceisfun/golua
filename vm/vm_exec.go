@@ -150,7 +150,14 @@ func (vm *VM) CheckInterrupt() error {
 		vm.gcStepCounter++
 		if vm.gcStepCounter >= vm.limits.GCStepInterval {
 			vm.gcStepCounter = 0
+			// Clear dead stack slots above vm.top to help Go's GC
+			// collect objects that are only reachable from dead registers.
+			for ci := vm.top; ci < len(vm.stack); ci++ {
+				vm.stack[ci] = Nil
+			}
 			runtime.GC()
+			runtime.GC()
+			vm.processGcFinalizersOnly()
 		}
 	}
 	return nil
@@ -1891,6 +1898,20 @@ dispatch:
 			vm.stack[frame.base+a+i] = results[i]
 		} else {
 			vm.stack[frame.base+a+i] = Nil
+		}
+	}
+
+	// Clear registers above the result area up to frameTop.
+	// Function calls leave arguments and temporaries in registers above
+	// the result slots. These dead references can prevent Go's GC from
+	// collecting objects (e.g., __gc tables). In C Lua, the GC only
+	// traces up to L->top; we emulate this by nilling dead slots.
+	clearFrom := frame.base + a + nWanted
+	if clearFrom < frameTop {
+		for i := clearFrom; i < frameTop; i++ {
+			if i < len(vm.stack) {
+				vm.stack[i] = Nil
+			}
 		}
 	}
 

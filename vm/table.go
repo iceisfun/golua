@@ -650,6 +650,10 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 	t.deadKeys = 0
 
 	t.weak = ws
+
+	// Register for global sweep so ProcessGcFinalizers can implement
+	// ephemeron semantics via iterative GC+sweep cycles.
+	registerWeakTable(t)
 }
 
 // disableWeakMode migrates alive entries from weakStore back to normal storage.

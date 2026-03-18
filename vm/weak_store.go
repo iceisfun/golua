@@ -3,6 +3,8 @@ package vm
 import (
 	"fmt"
 	"reflect"
+	"sync"
+	"weak"
 )
 
 // weakTableMode controls the weakness semantics of a table.
@@ -365,4 +367,62 @@ func (ws *weakStore) migrate() []struct{ k, v Value } {
 		pairs = append(pairs, struct{ k, v Value }{k, v})
 	}
 	return pairs
+}
+
+// Global weak table registry — tracks all tables with weak stores so that
+// ProcessGcFinalizers can sweep them between GC cycles (ephemeron support).
+var (
+	weakTablesMu   sync.Mutex
+	weakTablePtrs  []weak.Pointer[Table]
+)
+
+// registerWeakTable adds a table to the global weak table registry.
+func registerWeakTable(t *Table) {
+	weakTablesMu.Lock()
+	defer weakTablesMu.Unlock()
+	weakTablePtrs = append(weakTablePtrs, weak.Make(t))
+}
+
+// sweepAllWeakTables sweeps all registered weak tables, removing entries with
+// collected keys or values. Returns the number of entries removed.
+func sweepAllWeakTables() int {
+	weakTablesMu.Lock()
+	defer weakTablesMu.Unlock()
+	removed := 0
+	j := 0
+	for i := range weakTablePtrs {
+		t := weakTablePtrs[i].Value()
+		if t == nil {
+			continue // table itself was collected
+		}
+		weakTablePtrs[j] = weakTablePtrs[i]
+		j++
+		ws := t.weak
+		if ws == nil {
+			continue
+		}
+		before := len(ws.entries) - ws.dead
+		ws.sweep()
+		after := len(ws.entries) - ws.dead
+		removed += before - after
+	}
+	for i := j; i < len(weakTablePtrs); i++ {
+		weakTablePtrs[i] = weak.Pointer[Table]{}
+	}
+	weakTablePtrs = weakTablePtrs[:j]
+	return removed
+}
+
+// hasEphemeronTables reports whether any registered weak tables use weak-key
+// (ephemeron) mode.
+func hasEphemeronTables() bool {
+	weakTablesMu.Lock()
+	defer weakTablesMu.Unlock()
+	for i := range weakTablePtrs {
+		t := weakTablePtrs[i].Value()
+		if t != nil && t.weak != nil && t.weak.mode == weakKeys {
+			return true
+		}
+	}
+	return false
 }
