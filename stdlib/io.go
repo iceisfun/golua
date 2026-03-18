@@ -1002,6 +1002,16 @@ func parseReadNumber(data string) vm.Value {
 			if iv, err := strconv.ParseInt(data, 0, 64); err == nil {
 				return vm.NewInt(iv)
 			}
+			// Fallback: try unsigned parse for values > max int64 (e.g. 0x8000000000000001)
+			// then wrap to int64, matching Lua 5.4's lua_stringtonumber behavior.
+			sign := int64(1)
+			hexStr := hexBody
+			if digitStart > 0 && data[0] == '-' {
+				sign = -1
+			}
+			if u, err := strconv.ParseUint(hexStr, 16, 64); err == nil {
+				return vm.NewInt(sign * int64(u))
+			}
 		} else {
 			if iv, err := strconv.ParseInt(data, 10, 64); err == nil {
 				return vm.NewInt(iv)
