@@ -704,7 +704,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if v.IsTable() {
 					vm.stack[frame.base+a] = NewInt(int64(v.AsTable().Len()))
 				} else {
-					return nil, vm.runtimeError("attempt to get length of a %s value%s", v.Type(), vm.varInfo(b))
+					return nil, vm.runtimeError("attempt to get length of a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 				}
 			}
 

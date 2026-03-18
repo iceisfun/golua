@@ -40,7 +40,7 @@ func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 		((need&tabL) == 0 || !v.GetMetafield(val, "__len").IsNil()) {
 		return val
 	}
-	got := val.Type()
+	got := v.ObjTypeName(val)
 	if v.ArgCount() < idx {
 		got = "no value"
 	}
@@ -52,9 +52,14 @@ func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 func tableObjLen(v *vm.VM, val vm.Value) int {
 	length, err := v.ObjLen(val)
 	if err != nil {
-		// Use LuaError to avoid AddCallerLocation adding a file:line prefix.
-		// These errors originate from native/C-level code, not Lua bytecode.
-		panic(&vm.LuaError{Value: vm.NewString(err.Error())})
+		msg := err.Error()
+		if strings.Contains(msg, "object length is not an integer") {
+			// This error should include file:line prefix (added by recovery).
+			panic(msg)
+		}
+		// Other length errors (e.g. "attempt to get length of a X value")
+		// should not get file:line prefix from native context.
+		panic(&vm.LuaError{Value: vm.NewString(msg)})
 	}
 	return length
 }
@@ -491,11 +496,13 @@ func tableMove(v *vm.VM) int {
 	e := getInt(v, 3, "table.move")
 	tt := getInt(v, 4, "table.move")
 
-	a1 := tableCheckLike(v, 1, "table.move", tabR)
-
-	a2 := a1
+	var a1, a2 vm.Value
 	if !v.Get(5).IsNil() {
+		a1 = tableCheckLike(v, 1, "table.move", tabR)
 		a2 = tableCheckLike(v, 5, "table.move", tabW)
+	} else {
+		a1 = tableCheckLike(v, 1, "table.move", tabRW)
+		a2 = a1
 	}
 
 	if f <= e {
