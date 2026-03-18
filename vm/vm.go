@@ -136,6 +136,7 @@ type VM struct {
 	gcCallCount   int       // Number of times runtime.GC() was actually invoked (for testing)
 	gcStepCounter int       // Instruction counter for GC stepping (counts up to GCStepInterval)
 	gcMode        string    // Current GC mode: "incremental" (default) or "generational"
+	gcRunning     bool      // Whether GC is "running" (tracked for collectgarbage("isrunning"))
 
 	// Output capture
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout
@@ -183,6 +184,7 @@ func New(opts ...VMOption) *VM {
 		warnEnabled: false,
 		closeDepth:  new(int32),
 		gcMode:      "incremental",
+		gcRunning:   true,
 	}
 	for _, opt := range opts {
 		opt(vm)

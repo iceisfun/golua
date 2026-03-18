@@ -461,8 +461,12 @@ func luaCollectgarbage(v *vm.VM) int {
 		runtime.ReadMemStats(&m)
 		v.Set(0, vm.NewFloat(float64(m.Alloc)/1024.0))
 		return 1
-	case "stop", "restart":
-		// No-op, return 0 to match Lua 5.4
+	case "stop":
+		v.SetGCRunning(false)
+		v.Set(0, vm.NewInt(0))
+		return 1
+	case "restart":
+		v.SetGCRunning(true)
 		v.Set(0, vm.NewInt(0))
 		return 1
 	case "generational", "incremental":
@@ -487,7 +491,7 @@ func luaCollectgarbage(v *vm.VM) int {
 		v.Set(0, vm.True)
 		return 1
 	case "isrunning":
-		v.Set(0, vm.True)
+		v.Set(0, vm.NewBool(v.GCRunning()))
 		return 1
 	default:
 		callerArgError(v, 1, "collectgarbage", fmt.Sprintf("invalid option '%s'", opt))

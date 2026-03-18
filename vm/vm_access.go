@@ -302,6 +302,16 @@ func (vm *VM) SetGCMode(mode string) string {
 	return prev
 }
 
+// GCRunning returns whether the GC is in "running" state.
+func (vm *VM) GCRunning() bool {
+	return vm.gcRunning
+}
+
+// SetGCRunning sets the GC running state.
+func (vm *VM) SetGCRunning(running bool) {
+	vm.gcRunning = running
+}
+
 // Context and limits
 
 // SetContext sets the context for cooperative cancellation.
