@@ -731,6 +731,8 @@ func keyToValue(k any) Value {
 		return Value{typ: typeNativeFunc, ptr: v}
 	case *Userdata:
 		return Value{typ: typeUpvalue, ptr: v}
+	case *Upvalue:
+		return Value{typ: typeUpvalue, ptr: v}
 	default:
 		return Nil
 	}

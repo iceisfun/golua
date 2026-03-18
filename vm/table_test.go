@@ -290,3 +290,37 @@ func TestTypedNilMetatableGuard(t *testing.T) {
 		t.Error("metatable should be nil after setting typed-nil *Table")
 	}
 }
+
+// TestNextLightUserdataKey verifies that lightuserdata values (e.g. from
+// debug.upvalueid) can be used as table keys and are visible via Next().
+func TestNextLightUserdataKey(t *testing.T) {
+	uv := NewOpenUpvalue(nil, 0)
+	key := NewUpvalueID(uv)
+
+	tbl := NewEmptyTable()
+	tbl.MustSet(key, NewString("ok"))
+
+	// Verify Get works
+	got := tbl.Get(key)
+	if got.AsString() != "ok" {
+		t.Fatalf("Get(upvalueID) = %v, want 'ok'", got)
+	}
+
+	// Verify Next finds the key
+	k, v, err := tbl.Next(Nil)
+	if err != nil {
+		t.Fatalf("Next(nil) error: %v", err)
+	}
+	if k.IsNil() {
+		t.Fatal("Next(nil) returned nil key; lightuserdata key should be visible")
+	}
+	if k.Type() != "userdata" {
+		t.Errorf("Next key type = %q, want 'userdata'", k.Type())
+	}
+	if !k.Equal(key) {
+		t.Errorf("Next key not equal to original upvalueID")
+	}
+	if v.AsString() != "ok" {
+		t.Errorf("Next value = %v, want 'ok'", v)
+	}
+}
