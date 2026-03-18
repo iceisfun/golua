@@ -446,13 +446,35 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 	bestEnd := 0
 	for end := len(buf); end >= minEnd; end-- {
 		s := string(buf[:end])
-		if _, err := strconv.ParseInt(s, 0, 64); err == nil {
-			bestEnd = end
-			break
+		// Use base 10 for non-hex to avoid treating leading zeros as octal.
+		// For hex strings with float indicators (., p, P), skip integer parsing
+		// to avoid matching a shorter hex prefix (e.g. "0x1" from "0x1.8").
+		isHexFloat := isHexPrefix && strings.ContainsAny(s[2:], ".pP")
+		if !isHexFloat {
+			intBase := 10
+			if isHexPrefix {
+				intBase = 0 // base 0 handles 0x prefix for hex
+			}
+			if _, err := strconv.ParseInt(s, intBase, 64); err == nil {
+				bestEnd = end
+				break
+			}
 		}
 		if _, err := strconv.ParseFloat(s, 64); err == nil {
 			bestEnd = end
 			break
+		} else if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+			// Overflow to ±Inf is a valid number (e.g. 1e1000)
+			bestEnd = end
+			break
+		}
+		// Go doesn't support hex floats without p exponent (e.g. "0x1.8").
+		// Try appending "p0" to validate.
+		if isHexFloat && !strings.ContainsAny(s, "pP") {
+			if _, err := strconv.ParseFloat(s+"p0", 64); err == nil {
+				bestEnd = end
+				break
+			}
 		}
 	}
 

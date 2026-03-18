@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -449,6 +450,9 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
 		if name.IsNil() {
+			if v.ArgCount() < 1 {
+				callerArgError(v, 1, "io.open", "string expected, got no value")
+			}
 			callerArgError(v, 1, "io.open", "string expected, got nil")
 		}
 		var nameStr string
@@ -726,7 +730,8 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 		}
 
 		// Assume it's a file handle - set as default input
-		_ = getFileHandle(v, arg, "io.input") // validate it's a file handle
+		fh := getFileHandle(v, arg, "io.input") // validate it's a file handle
+		fh.checkOpen("input")
 		ioTable.SetString("__input", arg)
 		v.Set(0, arg)
 		return 1
@@ -761,7 +766,8 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 		}
 
 		// Assume it's a file handle - set as default output
-		_ = getFileHandle(v, arg, "io.output") // validate it's a file handle
+		fh := getFileHandle(v, arg, "io.output") // validate it's a file handle
+		fh.checkOpen("output")
 		ioTable.SetString("__output", arg)
 		v.Set(0, arg)
 		return 1
@@ -888,20 +894,11 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 				// Check if format is "n" or "*n" for number parsing
 				cleanFmt := strings.TrimPrefix(format, "*")
 				if len(cleanFmt) > 0 && cleanFmt[0] == 'n' {
-					// Parse as number: try integer first, then float
-					if iv, err := strconv.ParseInt(data, 0, 64); err == nil {
-						v.Set(results, vm.NewInt(iv))
-					} else if fv, err := strconv.ParseFloat(data, 64); err == nil {
-						// Check if float has integer value
-						iv := int64(fv)
-						if fv == float64(iv) && !strings.ContainsAny(data, ".eE") {
-							v.Set(results, vm.NewInt(iv))
-						} else {
-							v.Set(results, vm.NewFloat(fv))
-						}
-					} else {
-						v.Set(results, vm.Nil)
-					}
+					// Parse as number matching Lua 5.4 semantics:
+					// - Leading zeros are decimal (not octal)
+					// - Hex floats (0x1.8, 0xABp0) produce floats
+					// - Overflow to ±Inf is valid
+					v.Set(results, parseReadNumber(data))
 				} else {
 					v.Set(results, vm.NewString(data))
 				}
@@ -913,6 +910,141 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 		results++
 	}
 	return results
+}
+
+// parseReadNumber converts a string read by read("n") to a Lua number value.
+// Matches Lua 5.4 semantics: leading zeros are decimal (not octal), hex floats
+// (0x1.8, 0xABp0) produce floats, and overflow to ±Inf is valid.
+func parseReadNumber(data string) vm.Value {
+	if len(data) == 0 {
+		return vm.Nil
+	}
+
+	isHex := len(data) > 2 && data[0] == '0' && (data[1] == 'x' || data[1] == 'X')
+	isHexFloat := isHex && strings.ContainsAny(data[2:], ".pP")
+	hasFloatIndicator := strings.ContainsAny(data, ".eE")
+
+	// Hex floats always produce float type
+	if isHexFloat {
+		fv, err := strconv.ParseFloat(data, 64)
+		if err != nil {
+			// Go doesn't support hex floats without p exponent (e.g. "0x1.8").
+			// Parse manually: integer part + fractional part.
+			fv, ok := parseHexFloat(data)
+			if !ok {
+				return vm.Nil
+			}
+			return vm.NewFloat(fv)
+		}
+		return vm.NewFloat(fv)
+	}
+
+	// Try integer first (base 10 for decimal, base 16 for hex)
+	if !hasFloatIndicator {
+		base := 10
+		s := data
+		if isHex {
+			base = 16
+			s = data[2:]
+			// Strip leading sign for hex
+			if len(data) > 0 && (data[0] == '+' || data[0] == '-') {
+				s = data[3:]
+			}
+		}
+		if iv, err := strconv.ParseInt(s, base, 64); err == nil {
+			if isHex && len(data) > 0 && data[0] == '-' {
+				iv = -iv
+			}
+			return vm.NewInt(iv)
+		}
+	}
+
+	// Try float
+	fv, err := strconv.ParseFloat(data, 64)
+	if err != nil {
+		// Accept overflow results (ErrRange) — produces ±Inf
+		if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+			if math.IsInf(fv, 0) {
+				return vm.NewFloat(fv)
+			}
+		}
+		return vm.Nil
+	}
+
+	return vm.NewFloat(fv)
+}
+
+// parseHexFloat parses hex floats without p exponent (e.g. "0x1.8" = 1.5).
+// Go's strconv.ParseFloat requires p exponent for hex floats.
+func parseHexFloat(data string) (float64, bool) {
+	s := data
+	neg := false
+	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
+		neg = s[0] == '-'
+		s = s[1:]
+	}
+	if len(s) < 3 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X') {
+		return 0, false
+	}
+	s = s[2:]
+
+	// Split at dot
+	parts := strings.SplitN(s, ".", 2)
+	intPart := parts[0]
+	fracPart := ""
+	if len(parts) > 1 {
+		fracPart = "" // will be set below
+		rest := parts[1]
+		// Check for p/P exponent
+		pIdx := strings.IndexAny(rest, "pP")
+		if pIdx >= 0 {
+			// Has exponent — let Go handle it by appending p0
+			withP := data
+			if !strings.ContainsAny(data, "pP") {
+				withP = data + "p0"
+			}
+			fv, err := strconv.ParseFloat(withP, 64)
+			return fv, err == nil
+		}
+		fracPart = rest
+	}
+
+	// Parse integer part
+	var result float64
+	if intPart != "" {
+		iv, err := strconv.ParseUint(intPart, 16, 64)
+		if err != nil {
+			return 0, false
+		}
+		result = float64(iv)
+	}
+
+	// Parse fractional part
+	if fracPart != "" {
+		frac := 0.0
+		scale := 1.0 / 16.0
+		for _, c := range fracPart {
+			var d int
+			switch {
+			case c >= '0' && c <= '9':
+				d = int(c - '0')
+			case c >= 'a' && c <= 'f':
+				d = int(c-'a') + 10
+			case c >= 'A' && c <= 'F':
+				d = int(c-'A') + 10
+			default:
+				return 0, false
+			}
+			frac += float64(d) * scale
+			scale /= 16.0
+		}
+		result += frac
+	}
+
+	if neg {
+		result = -result
+	}
+	return result, true
 }
 
 // fileWrite implements f:write(...) method.
