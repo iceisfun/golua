@@ -410,7 +410,7 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 // makeOsSetlocale creates os.setlocale([locale [, category]]).
 func makeOsSetlocale(provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		locale := ""
+		locale := "\x00query" // sentinel: nil arg means query current locale
 		if v.ArgCount() >= 1 && !v.Get(1).IsNil() {
 			arg1 := v.Get(1)
 			if !arg1.IsString() && !arg1.IsNumber() {
