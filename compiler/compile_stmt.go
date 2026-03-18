@@ -88,27 +88,46 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 		return
 	}
 	stmts := block.Stmts
-	for i, stmt := range stmts {
+	for i := 0; i < len(stmts); i++ {
+		stmt := stmts[i]
 		// When compiling a label, tell it whether it's at the end of
 		// the block (followed only by other labels). Lua 5.4 treats
 		// such labels as if locals declared before them are already
 		// out of scope, allowing goto to jump over those locals.
-		if lbl, ok := stmt.(*ast.LabelStmt); ok {
-			atEnd := labelEndOpt && labelAtBlockEnd(stmts, i)
-			// Compute the line of the next non-label statement after this
-			// label, matching Lua 5.4's lexer line for error messages.
-			// Falls back to blockAfterLine (or c.endLine) if nothing follows.
+		if _, ok := stmt.(*ast.LabelStmt); ok {
+			// Collect consecutive label statements. Lua 5.4's labelstat()
+			// recursively processes adjacent labels before registering the
+			// current one, effectively registering them in reverse order.
+			// This affects duplicate detection: for "::L::\n::L::", the
+			// second label is registered first, so the error says "already
+			// defined on line 2" (the second label's line).
+			runEnd := i + 1
+			for runEnd < len(stmts) {
+				if _, isLabel := stmts[runEnd].(*ast.LabelStmt); !isLabel {
+					break
+				}
+				runEnd++
+			}
+
+			// Compute afterLine for the entire label run.
 			afterLine := blockAfterLine
 			if afterLine == 0 {
 				afterLine = c.endLine
 			}
-			for j := i + 1; j < len(stmts); j++ {
-				if _, isLabel := stmts[j].(*ast.LabelStmt); !isLabel {
-					afterLine = stmts[j].Pos().Line
-					break
-				}
+			if runEnd < len(stmts) {
+				afterLine = stmts[runEnd].Pos().Line
 			}
-			c.compileLabelStmt(lbl, atEnd, afterLine)
+
+			// Process labels in reverse order to match lua5.4's recursive behavior.
+			for j := runEnd - 1; j >= i; j-- {
+				lbl := stmts[j].(*ast.LabelStmt)
+				atEnd := labelEndOpt && labelAtBlockEnd(stmts, j)
+				c.compileLabelStmt(lbl, atEnd, afterLine)
+			}
+
+			// Skip past the label run (loop will increment i).
+			i = runEnd - 1
+			continue
 		} else if ls, ok := stmt.(*ast.LocalStmt); ok {
 			// Pass next-statement info for accurate "too many locals" error messages.
 			nextLine, nextNear := c.nextStmtInfo(stmts, i, blockAfterLine)
@@ -762,7 +781,77 @@ func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 
 	var exitJumps []int
 
-	// if cond then ...
+	// Optimization: constant true condition — skip TEST+JMP, just compile body.
+	// Matches Lua 5.4's luaK_goiftrue which emits no code for constant true.
+	if isConstTrue(s.Cond) {
+		fs.enterScope(false)
+		c.compileBlock(s.Then)
+		c.leaveScope(line)
+
+		// Still need to jump past elseif/else blocks
+		if len(s.ElseIfs) > 0 || s.Else != nil {
+			exitJumps = append(exitJumps, fs.emitJump(line))
+		}
+
+		// Compile remaining branches (they're dead code but must be valid)
+		for _, elif := range s.ElseIfs {
+			eline := elif.P.Line
+			c.compileCondJump(elif.Cond, false, eline)
+			elifJump := fs.emitJump(eline)
+			fs.enterScope(false)
+			c.compileBlock(elif.Then)
+			c.leaveScope(eline)
+			exitJumps = append(exitJumps, fs.emitJump(eline))
+			c.patchJump(elifJump)
+		}
+		if s.Else != nil {
+			fs.enterScope(false)
+			c.compileBlock(s.Else)
+			c.leaveScope(line)
+		}
+
+		for _, jpc := range exitJumps {
+			c.patchJump(jpc)
+		}
+		return
+	}
+
+	// Optimization: constant false/nil condition — emit JMP over then-block.
+	// Matches Lua 5.4's luaK_goiffalse which emits only a JMP for constant false.
+	if isConstFalsy(s.Cond) {
+		thenJump := fs.emitJump(line) // unconditional jump past then-block
+		fs.enterScope(false)
+		c.compileBlock(s.Then)
+		c.leaveScope(line)
+
+		if len(s.ElseIfs) > 0 || s.Else != nil {
+			exitJumps = append(exitJumps, fs.emitJump(line))
+		}
+		c.patchJump(thenJump)
+
+		for _, elif := range s.ElseIfs {
+			eline := elif.P.Line
+			c.compileCondJump(elif.Cond, false, eline)
+			elifJump := fs.emitJump(eline)
+			fs.enterScope(false)
+			c.compileBlock(elif.Then)
+			c.leaveScope(eline)
+			exitJumps = append(exitJumps, fs.emitJump(eline))
+			c.patchJump(elifJump)
+		}
+		if s.Else != nil {
+			fs.enterScope(false)
+			c.compileBlock(s.Else)
+			c.leaveScope(line)
+		}
+
+		for _, jpc := range exitJumps {
+			c.patchJump(jpc)
+		}
+		return
+	}
+
+	// General case: emit TEST + JMP
 	c.compileCondJump(s.Cond, false, line)
 	thenJump := fs.emitJump(line) // jump past then-block if false
 	fs.enterScope(false)
@@ -830,6 +919,16 @@ func (c *compiler) compileCondJump(cond ast.Expr, jumpOnFalse bool, line int) {
 func isConstTrue(expr ast.Expr) bool {
 	_, ok := expr.(*ast.TrueExpr)
 	return ok
+}
+
+// isConstFalsy reports whether expr is the literal `false` or `nil`.
+// Used for constant-folding conditions in if/while statements.
+func isConstFalsy(expr ast.Expr) bool {
+	switch expr.(type) {
+	case *ast.FalseExpr, *ast.NilExpr:
+		return true
+	}
+	return false
 }
 
 // compileWhileStmt compiles "while cond do ... end".

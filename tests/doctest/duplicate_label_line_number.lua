@@ -1,19 +1,24 @@
--- Duplicate label error reports the line of the original label definition.
--- The label's line is recorded as the line of the opening "::" token.
---
--- Note: Lua 5.4 processes adjacent labels recursively (inside-out), which
--- can cause the inner label to be created first. This means for adjacent
--- duplicate labels, lua5.4 may report a different "defined on" line than
--- golua, which processes labels in order.
+-- Duplicate label error reports the line where the label was already defined.
+-- When labels are adjacent (no statements between them), Lua 5.4's recursive
+-- labelstat() processes inner labels first, so the "defined on" line refers
+-- to the later (already-registered) label. golua matches this behavior.
 
--- Two labels on consecutive lines: first on line 1, duplicate on line 2.
--- golua stores the first label's line as 1 (the opening :: line).
+-- Two adjacent labels: second is registered first (reverse order), so the
+-- error for the first says "already defined on line 2".
 local f1, e1 = load("::lbl::\n::lbl::")
 print(e1:match("on line (%d+)"))
---> =1
+--> =2
 
 -- Same-line labels with intervening label: "::a:: ::b::\n::a::".
--- golua processes in order, so the first ::a:: (line 1) is stored first.
+-- The three labels are adjacent (no real statements between them).
+-- Reverse order: ::a:: on line 2 is registered first, then ::b:: on line 1,
+-- then ::a:: on line 1 finds duplicate on line 2.
 local f2, e2 = load("::a:: ::b::\n::a::")
 print(e2:match("on line (%d+)"))
+--> =2
+
+-- Non-adjacent labels (real statement between them): first is registered,
+-- so the error for the second says "already defined on line 1".
+local f3, e3 = load("::lbl::\nlocal x = 1\n::lbl::")
+print(e3:match("on line (%d+)"))
 --> =1
