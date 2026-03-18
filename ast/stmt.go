@@ -51,16 +51,17 @@ func NewDoStmt(p token.Pos, body *Block, endLine int) *DoStmt {
 
 // WhileStmt: while cond do block end
 type WhileStmt struct {
-	P    token.Pos
-	Cond Expr
-	Body *Block
+	P       token.Pos
+	Cond    Expr
+	Body    *Block
+	EndLine int // line of 'end' keyword
 }
 
 func (s *WhileStmt) Pos() token.Pos { return s.P }
 func (*WhileStmt) stmtTag()         {}
 
-func NewWhileStmt(p token.Pos, cond Expr, body *Block) *WhileStmt {
-	return &WhileStmt{P: p, Cond: cond, Body: body}
+func NewWhileStmt(p token.Pos, cond Expr, body *Block, endLine int) *WhileStmt {
+	return &WhileStmt{P: p, Cond: cond, Body: body, EndLine: endLine}
 }
 
 // RepeatStmt: repeat block until cond
@@ -79,63 +80,68 @@ func NewRepeatStmt(p token.Pos, body *Block, cond Expr) *RepeatStmt {
 
 // IfStmt: if cond then block {elseif} [else] end
 type IfStmt struct {
-	P       token.Pos
-	Cond    Expr
-	Then    *Block
-	ElseIfs []*ElseIf
-	Else    *Block // nil if no else
+	P        token.Pos
+	Cond     Expr
+	ThenLine int // line of 'then' keyword
+	Then     *Block
+	ElseIfs  []*ElseIf
+	Else     *Block // nil if no else
+	EndLine  int    // line of 'end' keyword
 }
 
 func (s *IfStmt) Pos() token.Pos { return s.P }
 func (*IfStmt) stmtTag()         {}
 
-func NewIfStmt(p token.Pos, cond Expr, then *Block, elseifs []*ElseIf, els *Block) *IfStmt {
-	return &IfStmt{P: p, Cond: cond, Then: then, ElseIfs: elseifs, Else: els}
+func NewIfStmt(p token.Pos, cond Expr, thenLine int, then *Block, elseifs []*ElseIf, els *Block, endLine int) *IfStmt {
+	return &IfStmt{P: p, Cond: cond, ThenLine: thenLine, Then: then, ElseIfs: elseifs, Else: els, EndLine: endLine}
 }
 
 // ElseIf is an elseif branch.
 type ElseIf struct {
-	P    token.Pos
-	Cond Expr
-	Then *Block
+	P        token.Pos
+	Cond     Expr
+	ThenLine int // line of 'then' keyword
+	Then     *Block
 }
 
 func (e *ElseIf) Pos() token.Pos { return e.P }
 
-func NewElseIf(p token.Pos, cond Expr, then *Block) *ElseIf {
-	return &ElseIf{P: p, Cond: cond, Then: then}
+func NewElseIf(p token.Pos, cond Expr, thenLine int, then *Block) *ElseIf {
+	return &ElseIf{P: p, Cond: cond, ThenLine: thenLine, Then: then}
 }
 
 // ForNumStmt: for name = start, stop [, step] do block end
 type ForNumStmt struct {
-	P     token.Pos
-	Name  *NameExpr
-	Start Expr
-	Stop  Expr
-	Step  Expr // nil = default 1
-	Body  *Block
+	P       token.Pos
+	Name    *NameExpr
+	Start   Expr
+	Stop    Expr
+	Step    Expr // nil = default 1
+	Body    *Block
+	EndLine int // line of 'end' keyword
 }
 
 func (s *ForNumStmt) Pos() token.Pos { return s.P }
 func (*ForNumStmt) stmtTag()         {}
 
-func NewForNumStmt(p token.Pos, name *NameExpr, start, stop, step Expr, body *Block) *ForNumStmt {
-	return &ForNumStmt{P: p, Name: name, Start: start, Stop: stop, Step: step, Body: body}
+func NewForNumStmt(p token.Pos, name *NameExpr, start, stop, step Expr, body *Block, endLine int) *ForNumStmt {
+	return &ForNumStmt{P: p, Name: name, Start: start, Stop: stop, Step: step, Body: body, EndLine: endLine}
 }
 
 // ForInStmt: for names in exprs do block end
 type ForInStmt struct {
-	P     token.Pos
-	Names []*NameExpr
-	Iters []Expr
-	Body  *Block
+	P       token.Pos
+	Names   []*NameExpr
+	Iters   []Expr
+	Body    *Block
+	EndLine int // line of 'end' keyword
 }
 
 func (s *ForInStmt) Pos() token.Pos { return s.P }
 func (*ForInStmt) stmtTag()         {}
 
-func NewForInStmt(p token.Pos, names []*NameExpr, iters []Expr, body *Block) *ForInStmt {
-	return &ForInStmt{P: p, Names: names, Iters: iters, Body: body}
+func NewForInStmt(p token.Pos, names []*NameExpr, iters []Expr, body *Block, endLine int) *ForInStmt {
+	return &ForInStmt{P: p, Names: names, Iters: iters, Body: body, EndLine: endLine}
 }
 
 // ReturnStmt: return [exprs] [;]

@@ -41,7 +41,26 @@ func (vm *VM) SetHook(fn Value, mask byte, count int) {
 	vm.hookMask = mask
 	vm.hookCount = count
 	vm.hookCounter = count
-	vm.lastHookLine = -1
+	// Match Lua 5.4: when sethook is called, L->oldpc already tracks the
+	// current instruction's pc, so the line hook doesn't re-fire for the
+	// same line. We approximate this by setting lastHookLine to the current
+	// line of the calling Lua frame (if any), so the calling function's
+	// current line is not spuriously reported as "new".
+	if mask&HookMaskLine != 0 && len(vm.callStack) > 0 {
+		// Walk up the call stack to find the nearest Lua frame
+		for i := len(vm.callStack) - 1; i >= 0; i-- {
+			frame := &vm.callStack[i]
+			if frame.closure != nil && frame.pc > 0 {
+				proto := frame.closure.Proto
+				pc := frame.pc - 1
+				if pc >= 0 && pc < len(proto.Lines) {
+					vm.lastHookLine = proto.Lines[pc]
+					vm.lastHookPC = pc
+					return
+				}
+			}
+		}
+	}
 }
 
 // GetHook returns the current hook function, mask, and count.
@@ -172,11 +191,15 @@ func (vm *VM) checkLineCountHooks(proto *compiler.Proto, pc int) bool {
 		}
 	}
 
-	// Line hook
+	// Line hook — fire when the line changes OR on backward jumps (loops).
+	// Lua 5.4 fires when: newpc == 0 || newpc <= oldpc || changedline(p, oldpc, newpc)
+	// We approximate this with pc-based backward jump detection.
 	if vm.hookMask&HookMaskLine != 0 {
 		if pc >= 0 && pc < len(proto.Lines) {
 			line := proto.Lines[pc]
-			if line != vm.lastHookLine && line > 0 {
+			backwardJump := pc <= vm.lastHookPC
+			vm.lastHookPC = pc
+			if line > 0 && (line != vm.lastHookLine || backwardJump) {
 				vm.lastHookLine = line
 				vm.fireHook(hookEventLine, line)
 				fired = true

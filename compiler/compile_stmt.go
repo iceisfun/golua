@@ -4,6 +4,31 @@ import (
 	"github.com/iceisfun/golua/ast"
 )
 
+// stmtEndLine returns the "end line" of a statement — the line of the closing
+// 'end' keyword for block statements, or the start line for simple statements.
+// This matches Lua 5.4's ls->lastline which tracks the last consumed token.
+func stmtEndLine(s ast.Stmt) int {
+	switch s := s.(type) {
+	case *ast.IfStmt:
+		return s.EndLine
+	case *ast.WhileStmt:
+		return s.EndLine
+	case *ast.DoStmt:
+		return s.EndLine
+	case *ast.ForNumStmt:
+		return s.EndLine
+	case *ast.ForInStmt:
+		return s.EndLine
+	case *ast.RepeatStmt:
+		// repeat..until has no 'end'; use the condition's line
+		return s.Cond.Pos().Line
+	case *ast.ExprStmt:
+		return s.Expr.Pos().Line
+	default:
+		return s.Pos().Line
+	}
+}
+
 // preRegisterUpvalues walks an assignment target expression and pre-registers
 // any upvalue references in left-to-right order. This ensures that upvalue
 // indices match Lua 5.4's source order, where LHS targets are processed
@@ -52,10 +77,12 @@ func (c *compiler) compileChunk(source string, block *ast.Block) *Proto {
 
 	c.compileBlock(block)
 
-	// Emit final return
+	// Emit final return — use the end line of the last statement (e.g., the
+	// 'end' keyword line for if/while/do/for/repeat), matching Lua 5.4's
+	// close_func which uses ls->lastline (the last token consumed).
 	lastLine := line
 	if block != nil && len(block.Stmts) > 0 {
-		lastLine = block.Stmts[len(block.Stmts)-1].Pos().Line
+		lastLine = stmtEndLine(block.Stmts[len(block.Stmts)-1])
 	}
 	fs.emit(ABC(OP_RETURN0, 0, 0, 0, 0), lastLine)
 	// LastLine stays 0 for the main chunk (set at proto init).
@@ -851,28 +878,32 @@ func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 	}
 
 	// General case: emit TEST + JMP
-	c.compileCondJump(s.Cond, false, line)
-	thenJump := fs.emitJump(line) // jump past then-block if false
+	thenLine := s.ThenLine
+	c.compileCondJump(s.Cond, false, thenLine)
+	thenJump := fs.emitJump(thenLine) // jump past then-block if false
 	fs.enterScope(false)
 	c.compileBlock(s.Then)
-	c.leaveScope(line)
+	c.leaveScope(thenLine)
 
 	// Jump past all else/elseif blocks after then
 	if len(s.ElseIfs) > 0 || s.Else != nil {
-		exitJumps = append(exitJumps, fs.emitJump(line))
+		// Use the line of the last emitted instruction (end of then-block)
+		exitLine := c.lastEmittedLine()
+		exitJumps = append(exitJumps, fs.emitJump(exitLine))
 	}
 
 	c.patchJump(thenJump)
 
 	// elseif branches
 	for _, elif := range s.ElseIfs {
-		eline := elif.P.Line
-		c.compileCondJump(elif.Cond, false, eline)
-		elifJump := fs.emitJump(eline)
+		eiThenLine := elif.ThenLine
+		c.compileCondJump(elif.Cond, false, eiThenLine)
+		elifJump := fs.emitJump(eiThenLine)
 		fs.enterScope(false)
 		c.compileBlock(elif.Then)
-		c.leaveScope(eline)
-		exitJumps = append(exitJumps, fs.emitJump(eline))
+		c.leaveScope(eiThenLine)
+		exitLine := c.lastEmittedLine()
+		exitJumps = append(exitJumps, fs.emitJump(exitLine))
 		c.patchJump(elifJump)
 	}
 
@@ -951,8 +982,9 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
 		}
 
-		// Jump back to loop start (unconditional)
-		backJump := fs.emitJump(line)
+		// Jump back to loop start (unconditional) — use last emitted line
+		backLine := c.lastEmittedLine()
+		backJump := fs.emitJump(backLine)
 		offset := loopStart - (fs.pc()) // negative
 		if offset > MaxSJ || offset < MinSJ {
 			c.error(nil, "control structure too long")
@@ -981,8 +1013,11 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
 	}
 
-	// Jump back to condition
-	backJump := fs.emitJump(line)
+	// Jump back to condition — use the last emitted line (typically the
+	// last line of the loop body), matching Lua 5.4 which uses ls->lastline
+	// (the 'end' keyword line) for the backward JMP.
+	backLine := c.lastEmittedLine()
+	backJump := fs.emitJump(backLine)
 	offset := loopStart - (fs.pc()) // negative
 	if offset > MaxSJ || offset < MinSJ {
 		c.error(nil, "control structure too long")
@@ -1434,9 +1469,13 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 	// Compile the function body
 	protoIdx := c.compileFunc(s.Func, line)
 
-	// Create closure in a temp register
+	// Create closure in a temp register — emit CLOSURE on the 'end' line
+	closureLine := s.Func.EndLine
+	if closureLine == 0 {
+		closureLine = line
+	}
 	reg := fs.reserveReg()
-	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), line)
+	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), closureLine)
 
 	// Assign to the target
 	switch name := s.Name.(type) {
@@ -1503,7 +1542,13 @@ func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 	_ = localIdx
 
 	protoIdx := c.compileFunc(s.Func, line)
-	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), line)
+	// Emit CLOSURE on the 'end' line, matching Lua 5.4 which emits CLOSURE
+	// after parsing 'end', so ls->lastline is the end keyword's line.
+	closureLine := s.Func.EndLine
+	if closureLine == 0 {
+		closureLine = line
+	}
+	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), closureLine)
 }
 
 // compileGlobalStmt compiles "global name = expr" — assigns to _ENV[name].
@@ -1538,8 +1583,12 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	line := s.P.Line
 
 	protoIdx := c.compileFunc(s.Func, line)
+	closureLine := s.Func.EndLine
+	if closureLine == 0 {
+		closureLine = line
+	}
 	reg := fs.reserveReg()
-	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), line)
+	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), closureLine)
 
 	nameK := fs.stringConstant(s.Name.Name)
 	if envReg, ok := fs.lookupLocal("_ENV"); ok {

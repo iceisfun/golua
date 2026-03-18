@@ -428,6 +428,15 @@ func (fs *funcState) pc() int {
 	return len(fs.proto.Code)
 }
 
+// lastEmittedLine returns the line number of the most recently emitted instruction.
+func (c *compiler) lastEmittedLine() int {
+	lines := c.fs.proto.Lines
+	if len(lines) > 0 {
+		return lines[len(lines)-1]
+	}
+	return 0
+}
+
 // loadConstant emits OP_LOADK or OP_LOADKX depending on the constant index size.
 func (fs *funcState) loadConstant(reg int, kIdx int, line int) {
 	if kIdx <= MaxArgBx {

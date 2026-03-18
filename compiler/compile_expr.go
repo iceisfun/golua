@@ -138,7 +138,11 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 
 	case *ast.FuncExpr: // e.g. function(x) return x end
 		protoIdx := c.compileFunc(e, e.P.Line)
-		fs.emit(ABx(OP_CLOSURE, reg, protoIdx), e.P.Line)
+		closureLine := e.EndLine
+		if closureLine == 0 {
+			closureLine = e.P.Line
+		}
+		fs.emit(ABx(OP_CLOSURE, reg, protoIdx), closureLine)
 
 	case *ast.TableConstructor: // e.g. {1, 2, key="val"}
 		// Table constructors use reg+1, reg+2, ... as scratch space for
