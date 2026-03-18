@@ -523,11 +523,19 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 		}
 	}
 
-	// Arithmetic / bitwise — compile both sides into fresh registers so that
-	// we never clobber a local that is reused in the same expression.
-	// Example: b = a + b — if we compiled left into reg (b's register), it
-	// would overwrite b before the right side reads it.
-	leftReg := fs.reserveReg()
+	// Arithmetic / bitwise — when reg is a named local we must use a fresh
+	// temp for the left operand so the right side can still read the local.
+	// Example: b = a + b — compiling left into b's register would overwrite
+	// it before the right side reads it.
+	// When reg is NOT a local (it's a temp or the target of a parent binop),
+	// we reuse it for the left operand. This keeps left-associative chains
+	// like a+b+c+d in O(1) registers instead of O(n).
+	var leftReg int
+	if reg < fs.nActVar {
+		leftReg = fs.reserveReg()
+	} else {
+		leftReg = reg
+	}
 	c.compileExprToReg(e.Left, leftReg)
 	rightReg := fs.reserveReg()
 	c.compileExprToReg(e.Right, rightReg)
@@ -566,7 +574,11 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 
 	fs.emit(ABC(op, reg, leftReg, rightReg, 0), line)
 	fs.emit(ABC(OP_MMBIN, leftReg, rightReg, int(mmOp), 0), line)
-	fs.freeReg = leftReg
+	if leftReg == reg {
+		fs.freeReg = rightReg // only free the right temp; reg is caller-managed
+	} else {
+		fs.freeReg = leftReg // free both temps
+	}
 }
 
 // compileConcat flattens a chain of .. operators (e.g. a .. b .. c) into
