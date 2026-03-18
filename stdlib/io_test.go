@@ -301,23 +301,23 @@ func TestFileReadNonIntegralCount(t *testing.T) {
 }
 
 // --- Bug 19: file:seek invalid whence arg number ---
-// Lua 5.4 counts self as arg #1, so whence is arg #2.
+// Method syntax: name resolved from bytecode, arg decremented for self.
 func TestFileSeekInvalidWhenceArgNum(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "test.txt", "hello")
 	runLuaWithDirExpectError(t, dir, `local f = io.open("test.txt", "r")
 f:seek("invalid")
-f:close()`, "bad argument #2")
+f:close()`, "bad argument #1")
 }
 
 // --- Bug 20: file:setvbuf invalid mode arg number ---
-// Lua 5.4 counts self as arg #1, so mode is arg #2.
+// Method syntax: name resolved from bytecode, arg decremented for self.
 func TestFileSetvbufInvalidModeArgNum(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "test.txt", "hello")
 	runLuaWithDirExpectError(t, dir, `local f = io.open("test.txt", "r")
 f:setvbuf("invalid")
-f:close()`, "bad argument #2")
+f:close()`, "bad argument #1")
 }
 
 // --- Bug 21: io.lines(filename) should return 4 values ---

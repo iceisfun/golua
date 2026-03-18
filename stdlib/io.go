@@ -63,18 +63,20 @@ func makeFileHandleWithClose(f vm.LuaFile, closeFn func(*vm.VM, *fileHandle) int
 }
 
 // fileArgError raises a "bad argument" error for file operations.
-// idx is the 1-based argument position among explicit args (not counting self).
-// firstArg is the stack position of the first explicit arg: 1 for io.* module
-// functions (no self), 2 for f:method() calls (self at position 1).
-// For method calls (firstArg==2), per Lua 5.4, self counts as arg #1
-// and the function name shows as '?' since C can't resolve method names.
-// For module calls (firstArg==1), the qualified name (e.g. "io.read") is used.
-func fileArgError(idx int, name string, msg string, firstArg int) {
-	if firstArg >= 2 {
-		// Method call: offset arg number by 1 (self is arg #1), name is '?'
-		panic(fmt.Sprintf("bad argument #%d to '?' (%s)", idx+1, msg))
+// It mirrors Lua 5.4's luaL_argerror: resolves the function name from the
+// caller's bytecode, and if the call was via method syntax (OP_SELF),
+// decrements the arg number by 1 (since self is implicit).
+// idx is the 1-based argument position counting self (e.g. 2 for the first
+// explicit arg in a method call, 1 for a module function call).
+// fallback is used if the name cannot be resolved from bytecode.
+func fileArgError(v *vm.VM, idx int, fallback string, msg string) {
+	name, nameWhat := v.CallerFuncName()
+	if nameWhat == "method" {
+		idx-- // method call: self is implicit, decrement arg number
 	}
-	// Module function call: use qualified name, no offset
+	if name == "" {
+		name = fallback
+	}
 	panic(fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg))
 }
 
@@ -850,7 +852,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			// Read N bytes
 			count, ok := arg.ToInt()
 			if !ok {
-				fileArgError(results+1, "io.read", "number has no integer representation", firstArg)
+				fileArgError(v, firstArg+results, "read", "number has no integer representation")
 			}
 			if count < 0 {
 				panic("not enough memory")
@@ -877,7 +879,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			cleanFmt := strings.TrimPrefix(format, "*")
 			if len(cleanFmt) == 0 || (cleanFmt[0] != 'a' && cleanFmt[0] != 'l' && cleanFmt[0] != 'L' && cleanFmt[0] != 'n') {
 				// Use results+1 as the user-visible argument index (1-based, for the format arg)
-				fileArgError(results+1, "io.read", "invalid format", firstArg)
+				fileArgError(v, firstArg+results, "read", "invalid format")
 			}
 			data, err := f.Read(format)
 			if err != nil {
@@ -906,7 +908,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			}
 		} else {
 			// Invalid format type
-			fileArgError(results+1, "io.read", fmt.Sprintf("string expected, got %s", arg.Type()), firstArg)
+			fileArgError(v, firstArg+results, "read", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
 		results++
 	}
@@ -942,7 +944,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 				}
 			}
 		} else {
-			fileArgError(i-firstArg+1, "io.write", fmt.Sprintf("string expected, got %s", arg.Type()), firstArg)
+			fileArgError(v, i, "write", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
 		err := f.Write(s)
 		if err != nil {
@@ -1038,7 +1040,7 @@ func fileSeek(v *vm.VM) int {
 	case "set", "cur", "end":
 		// valid
 	default:
-		fileArgError(1, "seek", fmt.Sprintf("invalid option '%s'", whence), 2)
+		fileArgError(v, 2, "seek", fmt.Sprintf("invalid option '%s'", whence))
 	}
 
 	var offset int64
@@ -1046,7 +1048,7 @@ func fileSeek(v *vm.VM) int {
 		var ok bool
 		offset, ok = v.Get(3).ToInt()
 		if !ok {
-			fileArgError(2, "seek", "number expected", 2)
+			fileArgError(v, 3, "seek", "number expected")
 		}
 	}
 
@@ -1069,7 +1071,7 @@ func fileSetVBuf(v *vm.VM) int {
 
 	mode := v.Get(2)
 	if mode.IsNil() {
-		fileArgError(1, "setvbuf", "string expected, got nil", 2)
+		fileArgError(v, 2, "setvbuf", "string expected, got nil")
 	}
 	modeStr := mode.AsString()
 
@@ -1077,7 +1079,7 @@ func fileSetVBuf(v *vm.VM) int {
 	if !v.Get(3).IsNil() {
 		sz, ok := v.Get(3).ToInt()
 		if !ok {
-			fileArgError(2, "setvbuf", "number expected", 2)
+			fileArgError(v, 3, "setvbuf", "number expected")
 		}
 		size = int(sz)
 	}
@@ -1087,7 +1089,7 @@ func fileSetVBuf(v *vm.VM) int {
 	case "no", "full", "line":
 		// valid
 	default:
-		fileArgError(1, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr), 2)
+		fileArgError(v, 2, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
 	}
 
 	err := fh.file.SetVBuf(modeStr, size)

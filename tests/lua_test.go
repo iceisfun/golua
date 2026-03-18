@@ -273,7 +273,10 @@ func needsFullIo(filename string) bool {
 		"test_io_method_argnums.lua",
 		"test_io_method_arg_numbering.lua",
 		"test_io_qualified_func_names.lua",
-		"test_io_lines_type_check.lua":
+		"test_io_lines_type_check.lua",
+		"test_io_input_output_closed.lua",
+		"test_read_n_edge_cases.lua",
+		"test_io_open_no_args.lua":
 		return true
 	}
 	return false
