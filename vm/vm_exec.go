@@ -701,7 +701,7 @@ func (vm *VM) execute() ([]Value, error) {
 						return nil, err
 					}
 					vm.stack[frame.base+a] = res
-				} else if v.IsTable() {
+				} else if v.IsTable() && !v.isThread() {
 					vm.stack[frame.base+a] = NewInt(int64(v.AsTable().Len()))
 				} else {
 					return nil, vm.runtimeError("attempt to get length of a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))

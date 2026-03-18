@@ -1206,7 +1206,18 @@ func isUpvalEnv(proto *compiler.Proto, pc int, reg int) bool {
 		if inst.A() != reg {
 			continue
 		}
-		if inst.OpCode() == compiler.OP_GETUPVAL && isUpvalIdx_ENV(proto, inst.B()) {
+		op := inst.OpCode()
+		if op == compiler.OP_GETUPVAL && isUpvalIdx_ENV(proto, inst.B()) {
+			return true
+		}
+		// SETFIELD/SETTABLE/SETI use R[A] as the table being written to,
+		// not as a destination register. Skip these so we can keep scanning
+		// backward to find the GETUPVAL that loaded _ENV into this register.
+		if op == compiler.OP_SETFIELD || op == compiler.OP_SETTABLE || op == compiler.OP_SETI {
+			continue
+		}
+		// Also check if the register is a local named _ENV.
+		if localName(proto, reg, i) == "_ENV" {
 			return true
 		}
 		return false

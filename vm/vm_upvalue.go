@@ -234,6 +234,7 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 		return
 	}
 	// Value was registered as TBC but __close is now missing (removed at
-	// runtime or metatable changed). This matches Lua 5.4 behavior.
-	panic("attempt to call a nil value (metamethod 'close')")
+	// runtime or metatable changed). Generate a LuaError with source location
+	// to match Lua 5.4 behavior.
+	panic(&LuaError{Value: NewString(vm.runtimeError("attempt to call a nil value (metamethod 'close')").Error())})
 }
