@@ -426,16 +426,16 @@ func tableUnpack(v *vm.VM) int {
 		jArg = getInt(v, 3, "table.unpack")
 	}
 
-	length := tableObjLen(v, list)
-
 	i := int64(1)
 	if hasI {
 		i = iArg
 	}
 
-	j := int64(length)
+	var j int64
 	if hasJ {
 		j = jArg
+	} else {
+		j = int64(tableObjLen(v, list))
 	}
 
 	if j < i {
