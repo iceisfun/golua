@@ -460,8 +460,12 @@ func luaDebugUpvalueID(v *vm.VM) int {
 		callerArgError(v, 1, "debug.upvalueid", fmt.Sprintf("function expected, got %s", got))
 	}
 
-	// Native functions have 0 upvalues — return nil for any index
+	// Native functions with upvalue slots (created via NewNativeFuncWithNups)
 	if arg1.IsNativeFunc() {
+		if id := arg1.NativeFuncUpvalueID(int(idx)); id != nil {
+			v.Set(0, vm.NewUpvalueID(id))
+			return 1
+		}
 		v.Set(0, vm.Nil)
 		return 1
 	}
