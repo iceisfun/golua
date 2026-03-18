@@ -1247,8 +1247,13 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// This ensures each iteration gets its own closed upvalue copy.
 	fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), line)
 
-	// TFORCALL — calls the iterator
-	tforCallPC := fs.emit(ABC(OP_TFORCALL, base, 0, nVars, 0), line)
+	// TFORCALL — calls the iterator. Use the line of the last iterator
+	// expression (matching Lua 5.4 which uses the line after parsing iterators).
+	iterLine := line
+	if len(s.Iters) > 0 {
+		iterLine = s.Iters[len(s.Iters)-1].Pos().Line
+	}
+	tforCallPC := fs.emit(ABC(OP_TFORCALL, base, 0, nVars, 0), iterLine)
 	_ = tforCallPC
 
 	// TFORLOOP — checks if control variable is nil
