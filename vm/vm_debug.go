@@ -108,28 +108,35 @@ func (vm *VM) Traceback(msg string, level int) string {
 			// Try to get the function name from the caller's call site
 			name := ""
 			nameWhat := ""
-			suppressCallName := suppressLuaFrameCallName(frame, hasHigherLuaFrame(vm.callStack, i, start))
-			if i > 0 && !frame.isTailCall {
-				callerIdx := i - 1
-				for callerIdx > 0 && vm.callStack[callerIdx].isTailCall {
-					callerIdx--
+			// Hook functions are called by the VM, not by a CALL instruction.
+			// Skip caller-based name resolution and use "hook" directly.
+			if vm.inHook && frame.funcValue.RawEqual(vm.hookFunc) {
+				name = "?"
+				nameWhat = "hook"
+			} else {
+				suppressCallName := suppressLuaFrameCallName(frame, hasHigherLuaFrame(vm.callStack, i, start))
+				if i > 0 && !frame.isTailCall {
+					callerIdx := i - 1
+					for callerIdx > 0 && vm.callStack[callerIdx].isTailCall {
+						callerIdx--
+					}
+					if !vm.callStack[callerIdx].isTailCall {
+						name, nameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
+					}
 				}
-				if !vm.callStack[callerIdx].isTailCall {
-					name, nameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
+				if suppressCallName && nameWhat == "metamethod" && name == "close" {
+					name = ""
+					nameWhat = ""
 				}
-			}
-			if suppressCallName && nameWhat == "metamethod" && name == "close" {
-				name = ""
-				nameWhat = ""
-			}
-			// Check for override name (e.g., "close" for __close metamethod calls)
-			if name == "" && frame.callName != "" && !suppressCallName {
-				name = frame.callName
-				nameWhat = frame.callNameWhat
-			}
-			if suppressCallName {
-				name = ""
-				nameWhat = ""
+				// Check for override name (e.g., "close" for __close metamethod calls)
+				if name == "" && frame.callName != "" && !suppressCallName {
+					name = frame.callName
+					nameWhat = frame.callNameWhat
+				}
+				if suppressCallName {
+					name = ""
+					nameWhat = ""
+				}
 			}
 			// If no name yet, try reverse lookup in globals for Lua functions
 			if name == "" && frame.closure != nil {
