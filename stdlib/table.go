@@ -443,7 +443,7 @@ func tableUnpack(v *vm.VM) int {
 	}
 	// Compute result count carefully to avoid overflow.
 	n := uint64(j) - uint64(i) + 1
-	if n == 0 || n >= math.MaxInt32 {
+	if n == 0 || n > 1000000 {
 		panic("too many results to unpack")
 	}
 	nResults := int(n)
