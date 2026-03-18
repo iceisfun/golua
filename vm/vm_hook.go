@@ -88,6 +88,23 @@ func (vm *VM) fireHook(event string, line int) {
 		vm.pendingCallNameWhat = savedCallNameWhat
 	}()
 
+	// Ensure vm.top covers the current frame's full register space so the
+	// hook's call frame doesn't overlap with active registers. After a CALL
+	// with c=0 (variable results), vm.top may be lowered below
+	// frame.base + MaxStack; the hook function's vm.call cleanup would then
+	// clear slots within the caller's register range, clobbering live values.
+	savedTop := vm.top
+	if hasTopFrame {
+		top := &vm.callStack[len(vm.callStack)-1]
+		if top.closure != nil {
+			minTop := top.base + top.closure.Proto.MaxStack
+			if vm.top < minTop {
+				vm.top = minTop
+			}
+		}
+	}
+	defer func() { vm.top = savedTop }()
+
 	// Call the hook function directly (unprotected) so errors propagate.
 	// In Lua 5.4, hook errors are uncatchable by pcall/xpcall — they
 	// propagate through all protected frames. We wrap any panic from the
