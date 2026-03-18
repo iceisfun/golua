@@ -146,7 +146,6 @@ func (vm *VM) fireHook(event string, line int) {
 // fireCallHook fires a "call" hook event.
 func (vm *VM) fireCallHook() {
 	if vm.hookMask&HookMaskCall != 0 && !vm.inHook {
-		vm.lastHookLine = -1
 		vm.fireHook(hookEventCall, 0)
 	}
 }
@@ -154,7 +153,6 @@ func (vm *VM) fireCallHook() {
 // fireReturnHook fires a "return" hook event.
 func (vm *VM) fireReturnHook() {
 	if vm.hookMask&HookMaskReturn != 0 && !vm.inHook {
-		vm.lastHookLine = -1
 		vm.fireHook(hookEventReturn, 0)
 	}
 }
@@ -162,7 +160,6 @@ func (vm *VM) fireReturnHook() {
 // fireTailCallHook fires a "tail call" hook event.
 func (vm *VM) fireTailCallHook() {
 	if vm.hookMask&HookMaskCall != 0 && !vm.inHook {
-		vm.lastHookLine = -1
 		vm.fireHook(hookEventTailCall, 0)
 	}
 }
