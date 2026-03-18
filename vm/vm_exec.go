@@ -1352,7 +1352,7 @@ func (vm *VM) execute() ([]Value, error) {
 						limitIsInt = true
 					}
 				} else if !limitIsInt {
-					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", limit.Type())
+					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", vm.ObjTypeName(limit))
 				}
 
 				// Integer for loop: counter-based (Lua 5.4 semantics)
@@ -1395,13 +1395,13 @@ func (vm *VM) execute() ([]Value, error) {
 				stepF, ok3 := step.ToNumber()
 				initF, ok1 := init.ToNumber()
 				if !ok2 {
-					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", limit.Type())
+					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", vm.ObjTypeName(limit))
 				}
 				if !ok3 {
-					return nil, vm.runtimeError("bad 'for' step (number expected, got %s)", step.Type())
+					return nil, vm.runtimeError("bad 'for' step (number expected, got %s)", vm.ObjTypeName(step))
 				}
 				if !ok1 {
-					return nil, vm.runtimeError("bad 'for' initial value (number expected, got %s)", init.Type())
+					return nil, vm.runtimeError("bad 'for' initial value (number expected, got %s)", vm.ObjTypeName(init))
 				}
 				if stepF == 0 {
 					return nil, vm.runtimeError("'for' step is zero")
