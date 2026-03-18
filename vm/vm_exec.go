@@ -1637,6 +1637,11 @@ func (vm *VM) execute() ([]Value, error) {
 				vm.top = frame.base + a + numWanted
 			}
 
+			// Ensure the stack can hold all vararg values.
+			if needed := frame.base + a + numWanted; needed > len(vm.stack) {
+				vm.ensureStack(needed)
+			}
+
 			for i := 0; i < numWanted; i++ {
 				if i < frame.numVararg {
 					vm.stack[frame.base+a+i] = frame.varargs[i]
@@ -1859,6 +1864,11 @@ dispatch:
 		// Variable results - set top
 		nWanted = len(results)
 		vm.top = frame.base + a + nWanted
+	}
+
+	// Ensure the stack can hold all result slots before writing.
+	if needed := frame.base + a + nWanted; needed > len(vm.stack) {
+		vm.ensureStack(needed)
 	}
 
 	for i := 0; i < nWanted; i++ {
