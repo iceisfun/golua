@@ -382,7 +382,10 @@ func coYield(v *vm.VM) int {
 	// Wait for resume - mark as running when we get it
 	args, ok := <-resumeCh
 	if !ok {
-		// Channel closed by coClose — close TBC vars, then terminate
+		// Channel closed by coClose — close TBC vars, then terminate.
+		// Set closingCoroutine so __close errors propagate through any
+		// pcall/xpcall boundaries in the coroutine's call stack.
+		v.EnterClosingCoroutine()
 		v.CloseAllTBC()
 		runtime.Goexit()
 	}

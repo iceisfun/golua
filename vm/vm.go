@@ -34,6 +34,12 @@ type VM struct {
 	tbcVars        []int
 	skipTBCCleanup bool // when true, ProtectedCall error recovery skips TBC cleanup
 
+	// closingCoroutine is set when a coroutine is being force-closed via
+	// coroutine.close. When true, ProtectedCall re-panics all errors so
+	// that __close handler errors propagate through any pcall/xpcall
+	// boundaries in the coroutine's call stack.
+	closingCoroutine bool
+
 	// Type metatables (for string, number, bool, nil, function, thread)
 	stringMeta   LuaTable
 	numberMeta   LuaTable
@@ -125,9 +131,11 @@ type VM struct {
 	closeDepth    *int32          // shared counter tracking nested coroutine.close depth (atomic)
 	metaCallDepth int             // >0 when inside a metamethod call chain (for "C stack overflow" message)
 
-	// GC rate limiting
-	lastLuaGC   time.Time // Last time ProcessGcFinalizers invoked runtime.GC()
-	gcCallCount int       // Number of times runtime.GC() was actually invoked (for testing)
+	// GC rate limiting and mode tracking
+	lastLuaGC     time.Time // Last time ProcessGcFinalizers invoked runtime.GC()
+	gcCallCount   int       // Number of times runtime.GC() was actually invoked (for testing)
+	gcStepCounter int       // Instruction counter for GC stepping (counts up to GCStepInterval)
+	gcMode        string    // Current GC mode: "incremental" (default) or "generational"
 
 	// Output capture
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout
@@ -174,6 +182,7 @@ func New(opts ...VMOption) *VM {
 		globals:     NewEmptyTable(),
 		warnEnabled: false,
 		closeDepth:  new(int32),
+		gcMode:      "incremental",
 	}
 	for _, opt := range opts {
 		opt(vm)
@@ -323,6 +332,11 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		if r := recover(); r != nil {
 			// LuaExitError must propagate through all ProtectedCall boundaries
 			if _, isExit := r.(*LuaExitError); isExit {
+				panic(r)
+			}
+			// When force-closing a coroutine, __close errors must propagate
+			// through pcall/xpcall boundaries to reach coroutine.close.
+			if vm.closingCoroutine {
 				panic(r)
 			}
 			// Hook errors are uncatchable by pcall/xpcall (Lua 5.4 semantics).
@@ -765,6 +779,13 @@ func (vm *VM) SetTypeMeta(v Value, mt LuaTable) {
 // CoroutineID returns the coroutine ID for this VM (0 if main).
 func (vm *VM) CoroutineID() int {
 	return vm.coroutineID
+}
+
+// EnterClosingCoroutine sets the closingCoroutine flag so that ProtectedCall
+// re-panics all errors, allowing __close errors to propagate through
+// pcall/xpcall boundaries during coroutine.close.
+func (vm *VM) EnterClosingCoroutine() {
+	vm.closingCoroutine = true
 }
 
 // CallCoroutine calls a closure as a coroutine, with yield support.
