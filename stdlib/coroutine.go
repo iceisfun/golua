@@ -642,6 +642,12 @@ func coClose(v *vm.VM) int {
 		panic("cannot close a running coroutine")
 	}
 
+	// The main thread (id=0) is never in the coroutines map.
+	// When called from a coroutine, the main thread is in "normal" status.
+	if int(id) == 0 {
+		panic("cannot close a normal coroutine")
+	}
+
 	coroutinesMu.Lock()
 	co := coroutines[int(id)]
 	coroutinesMu.Unlock()
