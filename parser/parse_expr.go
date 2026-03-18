@@ -321,10 +321,8 @@ func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
 			if p.check(token.DOTS) {
 				vararg = true
 				p.advance()
-				// Lua 5.5: ... can optionally be followed by a name
 				if p.check(token.NAME) {
-					varargName = p.tok.Literal
-					p.advance()
+					p.errorf("')' expected%s", p.nearClause())
 				}
 				break
 			}

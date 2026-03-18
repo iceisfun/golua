@@ -485,3 +485,20 @@ func TestForStmtErrorMessage(t *testing.T) {
 		t.Errorf("expected error mentioning '=' or 'in', got: %s", errMsg)
 	}
 }
+
+// TestNamedVarargRejected verifies that Lua 5.5-style named varargs
+// (function(... name)) are rejected with a parse error matching Lua 5.4.
+func TestNamedVarargRejected(t *testing.T) {
+	expectError(t, `local function f(... x) end`, "')' expected")
+}
+
+func TestNamedVarargRejectedWithParams(t *testing.T) {
+	expectError(t, `local function f(a, b, ... rest) end`, "')' expected")
+}
+
+func TestPlainVarargStillAccepted(t *testing.T) {
+	_, err := Parse("test", `local function f(...) return ... end`)
+	if err != nil {
+		t.Fatalf("plain vararg should parse successfully: %v", err)
+	}
+}
