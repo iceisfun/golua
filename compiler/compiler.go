@@ -615,7 +615,7 @@ func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
 				msg += fmt.Sprintf(" near '%s'", near)
 			}
 		}
-		fs.c.error(line, msg)
+		fs.c.error(line, "%s", msg)
 	}
 }
 

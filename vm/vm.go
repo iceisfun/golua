@@ -859,7 +859,7 @@ func (vm *VM) checkCallDepth() {
 		if vm.hasCFrame() {
 			msg = "C stack overflow"
 		}
-		panic(&LuaError{Value: NewString(vm.runtimeError(msg).Error())})
+		panic(&LuaError{Value: NewString(vm.runtimeError("%s", msg).Error())})
 	}
 }
 
