@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -107,6 +108,13 @@ type VM struct {
 	MsgHandlerResult   Value
 	MsgHandlerUsed     bool
 	lastErrorCallStack []callFrame // saved call stack from the last error
+
+	// inMsgHandler tracks whether we're inside an xpcall message handler.
+	// When >0 and a stack overflow occurs inside a nested pcall, the pcall
+	// returns "error in error handling" instead of the stack overflow error.
+	// This matches Lua 5.4's luaE_checkcstack behavior where overflow inside
+	// error recovery triggers LUA_ERRERR.
+	inMsgHandler int
 
 	// Execution control
 	ctx           context.Context // nil = no cancellation checking
@@ -224,6 +232,11 @@ func (vm *VM) callMsgHandler(msgh Value, errVal Value, errorCallStack []callFram
 		}
 	}
 
+	// Track that we're inside a message handler so nested pcall can
+	// detect stack overflow as "error in error handling".
+	vm.inMsgHandler++
+	defer func() { vm.inMsgHandler-- }()
+
 	const maxRetries = 200
 	curErrVal := errVal
 	succeeded := false
@@ -335,6 +348,27 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				err = fmt.Errorf("%s", locatedMsg)
 			}
 			results = nil
+
+			// When inside an xpcall message handler, a stack overflow
+			// caught by a nested pcall becomes "error in error handling"
+			// (matching Lua 5.4's LUA_ERRERR from luaE_checkcstack).
+			if vm.inMsgHandler > 0 {
+				if isStackOverflow(r) {
+					err = fmt.Errorf("error in error handling")
+					// Skip message handler logic — just restore state
+					if len(vm.callStack) > savedCallStackLen {
+						vm.callStack = vm.callStack[:savedCallStackLen]
+					}
+					if !skipTBC {
+						vm.top = savedTop
+						for i := len(vm.openUpvalues) - 1; i >= savedOpenUpvaluesLen; i-- {
+							vm.openUpvalues[i].Close()
+						}
+						vm.openUpvalues = vm.openUpvalues[:savedOpenUpvaluesLen]
+					}
+					return
+				}
+			}
 
 			// Save the full call stack snapshot before truncation so the
 			// xpcall message handler can see the stack at the error point.
@@ -779,6 +813,20 @@ func (vm *VM) ThreadObj() Value {
 // SetThreadObj sets the thread object representing this VM.
 func (vm *VM) SetThreadObj(v Value) {
 	vm.threadObj = v
+}
+
+// isStackOverflow checks whether a recovered panic value is a stack overflow error.
+func isStackOverflow(r interface{}) bool {
+	if le, ok := r.(*LuaError); ok {
+		if le.Value.IsString() {
+			s := le.Value.AsString()
+			return strings.Contains(s, "stack overflow")
+		}
+	}
+	if s, ok := r.(string); ok {
+		return strings.Contains(s, "stack overflow")
+	}
+	return false
 }
 
 // GetCoroutineChannels returns the yield and resume channels if this VM is a coroutine.
