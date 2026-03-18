@@ -48,7 +48,15 @@ func (p *DirCodeProvider) LoadChunk(name string, caller *LuaCallerContext) ([]by
 		return nil, "", fmt.Errorf("cannot open %s: access denied", name)
 	}
 
-	data, err := fs.ReadFile(p.fs, name)
+	// Clean the path for fs.ReadFile since os.DirFS rejects paths with
+	// "." or ".." components (e.g. "libs/./C.lua" -> "libs/C.lua").
+	// Preserve the original name for error messages and source annotations.
+	// Only clean non-empty names to avoid turning "" into ".".
+	cleanName := name
+	if name != "" {
+		cleanName = filepath.Clean(name)
+	}
+	data, err := fs.ReadFile(p.fs, cleanName)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
 	}
