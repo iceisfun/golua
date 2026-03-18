@@ -46,6 +46,11 @@ func TestLuaFiles(t *testing.T) {
 			continue
 		}
 
+		// Skip helper files (used by other tests, not standalone)
+		if strings.HasPrefix(file, "helper_") {
+			continue
+		}
+
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			if strings.HasPrefix(file, "test_heavy_") && !*full {

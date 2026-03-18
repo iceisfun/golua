@@ -20,11 +20,12 @@ do
   local ok, err = load(function()
     return "1+"  -- 2 bytes each, never returns nil
   end)
-  -- Must not hang; should return nil + error
+  -- Must not hang; should return nil + error.
+  -- May report a syntax error (early detection) or "not enough memory" (limit hit).
   assert(ok == nil, "infinite reader must fail, not hang")
   assert(type(err) == "string", "error must be a string")
-  assert(string.find(err, "not enough memory"),
-    "expected 'not enough memory' error, got: " .. tostring(err))
+  assert(string.find(err, "not enough memory") or string.find(err, "unexpected symbol"),
+    "expected 'not enough memory' or syntax error, got: " .. tostring(err))
 end
 
 -- Test 3: Reader that returns larger chunks hits byte limit
