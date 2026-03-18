@@ -688,7 +688,7 @@ func (fs *funcState) addUpvalue(name string, inStack bool, index int) int {
 	}
 	idx := len(fs.upvalues)
 	if idx >= fs.c.limits.MaxUpvals {
-		fs.c.error(nil, "too many upvalues (limit is %d)", fs.c.limits.MaxUpvals)
+		fs.c.error(nil, "too many upvalues (limit is %d) in function at line %d", fs.c.limits.MaxUpvals, fs.proto.LineDef)
 		return 0
 	}
 	fs.upvalues = append(fs.upvalues, UpvalDesc{
