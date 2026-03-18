@@ -118,7 +118,12 @@ func luaToString(v *vm.VM) int {
 			defer exitNonYieldable()
 			results, err := v.ProtectedCall(ts, []vm.Value{val})
 			if err != nil {
-				panic(err)
+				// Re-raise as LuaError to preserve the original file:line
+				// prefix and prevent the outer pcall from adding a second one.
+				if le, ok := err.(*vm.LuaError); ok {
+					panic(le)
+				}
+				panic(&vm.LuaError{Value: vm.NewString(err.Error())})
 			}
 			if len(results) == 0 {
 				panic("'__tostring' must return a string")
@@ -824,7 +829,10 @@ func tolstring(v *vm.VM, val vm.Value) string {
 			results, err := v.ProtectedCall(ts, []vm.Value{val})
 			exitNonYieldable()
 			if err != nil {
-				panic(err)
+				if le, ok := err.(*vm.LuaError); ok {
+					panic(le)
+				}
+				panic(&vm.LuaError{Value: vm.NewString(err.Error())})
 			}
 			if len(results) == 0 {
 				panic("'__tostring' must return a string")
