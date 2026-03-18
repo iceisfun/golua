@@ -370,7 +370,7 @@ func (ws *weakStore) migrate() []struct{ k, v Value } {
 }
 
 // Global weak table registry — tracks all tables with weak stores so that
-// ProcessGcFinalizers can sweep them between GC cycles (ephemeron support).
+// ProcessGcFinalizers can sweep them after GC cycles.
 var (
 	weakTablesMu   sync.Mutex
 	weakTablePtrs  []weak.Pointer[Table]
@@ -411,18 +411,4 @@ func sweepAllWeakTables() int {
 	}
 	weakTablePtrs = weakTablePtrs[:j]
 	return removed
-}
-
-// hasEphemeronTables reports whether any registered weak tables use weak-key
-// (ephemeron) mode.
-func hasEphemeronTables() bool {
-	weakTablesMu.Lock()
-	defer weakTablesMu.Unlock()
-	for i := range weakTablePtrs {
-		t := weakTablePtrs[i].Value()
-		if t != nil && t.weak != nil && t.weak.mode == weakKeys {
-			return true
-		}
-	}
-	return false
 }

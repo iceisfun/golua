@@ -1901,19 +1901,15 @@ dispatch:
 		}
 	}
 
-	// Clear registers above the result area up to frameTop.
-	// Function calls leave arguments and temporaries in registers above
-	// the result slots. These dead references can prevent Go's GC from
-	// collecting objects (e.g., __gc tables). In C Lua, the GC only
-	// traces up to L->top; we emulate this by nilling dead slots.
-	clearFrom := frame.base + a + nWanted
-	if clearFrom < frameTop {
-		for i := clearFrom; i < frameTop; i++ {
-			if i < len(vm.stack) {
-				vm.stack[i] = Nil
-			}
-		}
+	// Clear dead registers above the result area up to the caller frame's
+	// max stack. Function calls leave arguments and temporaries in registers
+	// that Go's GC still traces (unlike C Lua where the GC only traces up
+	// to L->top). Without this, weak table values and __gc tables referenced
+	// only by dead temporaries are never collected.
+	for i := frame.base + a + nWanted; i < frameTop && i < len(vm.stack); i++ {
+		vm.stack[i] = Nil
 	}
+
 
 	return results, nil
 }
