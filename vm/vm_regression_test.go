@@ -920,3 +920,69 @@ func TestProtectedCallNativeReadsArgAfterMultipleMetamethods(t *testing.T) {
 		t.Errorf("expected 10 < 20 = true, got %v", results[2])
 	}
 }
+
+// Bug: Count hook during table constructor with function call clobbers R0
+func TestCountHookTableConstructorClobber(t *testing.T) {
+	v := New()
+
+	// Register a minimal "debug" table with sethook
+	debugTbl := NewEmptyTable()
+	debugTbl.Set(NewString("sethook"), NewNativeFunc(func(vm *VM) int {
+		fn := vm.Get(1)
+		if fn.IsNil() || vm.ArgCount() == 0 {
+			vm.SetHook(Nil, 0, 0)
+			return 0
+		}
+		maskStr := ""
+		if vm.ArgCount() >= 2 {
+			maskStr = vm.Get(2).AsString()
+		}
+		count := 0
+		if vm.ArgCount() >= 3 {
+			count = int(vm.Get(3).AsInt())
+		}
+		var mask byte
+		for _, ch := range maskStr {
+			switch ch {
+			case 'c':
+				mask |= HookMaskCall
+			case 'r':
+				mask |= HookMaskReturn
+			case 'l':
+				mask |= HookMaskLine
+			}
+		}
+		if count > 0 {
+			mask |= HookMaskCount
+		}
+		vm.SetHook(fn, mask, count)
+		return 0
+	}))
+	v.SetGlobal("debug", NewTable(debugTbl))
+	v.SetGlobal("print", NewNativeFunc(func(vm *VM) int { return 0 }))
+	v.SetGlobal("type", NewNativeFunc(func(vm *VM) int {
+		vm.Set(0, NewString(vm.Get(1).Type()))
+		return 1
+	}))
+
+	src := `local debug = debug
+local function f() return 1 end
+debug.sethook(function() end, "", 1)
+local t = {f()}
+debug.sethook()
+return type(debug), t[1]`
+
+	results, err := runWithVM(t, v, src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].AsString() != "table" {
+		t.Errorf("expected type(debug) = 'table', got %q", results[0].AsString())
+	}
+	if results[1].AsInt() != 1 {
+		t.Errorf("expected t[1] = 1, got %v", results[1])
+	}
+}
