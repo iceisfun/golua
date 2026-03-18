@@ -3,6 +3,7 @@ package vm
 import (
 	"fmt"
 	"math"
+	"runtime"
 	"strings"
 
 	"github.com/iceisfun/golua/compiler"
@@ -143,6 +144,13 @@ func (vm *VM) CheckInterrupt() error {
 		if vm.instrCount > vm.limits.MaxInstructions {
 			return fmt.Errorf("instruction limit exceeded: %d instructions",
 				vm.limits.MaxInstructions)
+		}
+	}
+	if vm.limits.GCStepInterval > 0 {
+		vm.gcStepCounter++
+		if vm.gcStepCounter >= vm.limits.GCStepInterval {
+			vm.gcStepCounter = 0
+			runtime.GC()
 		}
 	}
 	return nil

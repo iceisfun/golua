@@ -290,6 +290,18 @@ func (vm *VM) WarnEnabled() bool {
 	return vm.warnEnabled
 }
 
+// GCMode returns the current GC mode name ("incremental" or "generational").
+func (vm *VM) GCMode() string {
+	return vm.gcMode
+}
+
+// SetGCMode sets the GC mode name and returns the previous mode.
+func (vm *VM) SetGCMode(mode string) string {
+	prev := vm.gcMode
+	vm.gcMode = mode
+	return prev
+}
+
 // Context and limits
 
 // SetContext sets the context for cooperative cancellation.

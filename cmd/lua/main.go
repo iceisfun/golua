@@ -41,6 +41,7 @@ func runCLI(argv []string, stderr io.Writer) int {
 	var timeoutMs int
 	var evalCode string
 	var testMode bool
+	var gcStepInterval int
 	args := argv[1:]
 
 	// Parse flags
@@ -68,6 +69,18 @@ func runCLI(argv []string, stderr io.Writer) int {
 		case "--test":
 			testMode = true
 			args = args[1:]
+		case "--gc-step":
+			if len(args) < 2 {
+				fmt.Fprintln(stderr, "--gc-step requires a value (instruction interval)")
+				return 1
+			}
+			var err error
+			gcStepInterval, err = strconv.Atoi(args[1])
+			if err != nil || gcStepInterval <= 0 {
+				fmt.Fprintln(stderr, "--gc-step value must be a positive integer")
+				return 1
+			}
+			args = args[2:]
 		default:
 			goto done
 		}
@@ -126,7 +139,11 @@ done:
 	}
 
 	// Create VM and register standard library
-	v := vm.New()
+	var vmOpts []vm.VMOption
+	if gcStepInterval > 0 {
+		vmOpts = append(vmOpts, vm.WithLimits(vm.Limits{GCStepInterval: gcStepInterval}))
+	}
+	v := vm.New(vmOpts...)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 
 	// Determine script directory for IO provider

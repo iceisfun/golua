@@ -144,8 +144,12 @@ func runLuaTest(t *testing.T, filename string) {
 	ctx, cancel := context.WithTimeout(context.Background(), luaTestTimeout)
 	defer cancel()
 
-	// Run
-	v := vm.New(vm.WithContext(ctx))
+	// Run with GC stepping enabled so Go's concurrent GC collects weak table
+	// entries during tight Lua loops (needed for weak-table tests).
+	v := vm.New(
+		vm.WithContext(ctx),
+		vm.WithLimits(vm.Limits{GCStepInterval: 10000}),
+	)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 	v.SetIoProvider(vm.NewJailedIoProvider("."))
@@ -208,7 +212,10 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 	ctx, cancel := context.WithTimeout(context.Background(), luaTestTimeout)
 	defer cancel()
 
-	v := vm.New(vm.WithContext(ctx))
+	v := vm.New(
+		vm.WithContext(ctx),
+		vm.WithLimits(vm.Limits{GCStepInterval: 10000}),
+	)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 	v.SetIoProvider(vm.NewFullIoProvider("."))
