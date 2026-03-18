@@ -55,7 +55,8 @@ func (vm *VM) Traceback(msg string, level int) string {
 			}
 			remaining := i + 1 // frames from index i down to 0
 			if remaining > tailSlots {
-				b.WriteString("\n\t...")
+				skipped := remaining - tailSlots
+				fmt.Fprintf(&b, "\n\t...\t(skipping %d levels)", skipped)
 				i = tailSlots // after i-- in for loop, becomes tailSlots-1
 				continue
 			}
