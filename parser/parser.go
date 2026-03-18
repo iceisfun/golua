@@ -347,8 +347,9 @@ func (p *parser) parseDoStmt() ast.Stmt {
 	openLine := p.tok.Pos.Line
 	p.advance()
 	body := p.parseBlock()
+	endLine := p.tok.Pos.Line // line of 'end' keyword
 	p.checkMatch(token.END, "do", openLine)
-	return ast.NewDoStmt(pos, body)
+	return ast.NewDoStmt(pos, body, endLine)
 }
 
 func (p *parser) parseForStmt() ast.Stmt {

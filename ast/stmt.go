@@ -37,15 +37,16 @@ func NewLocalStmt(p token.Pos, names []*NameExpr, attribs []string, values []Exp
 
 // DoStmt: do block end
 type DoStmt struct {
-	P    token.Pos
-	Body *Block
+	P       token.Pos
+	Body    *Block
+	EndLine int // line of the 'end' keyword
 }
 
 func (s *DoStmt) Pos() token.Pos { return s.P }
 func (*DoStmt) stmtTag()         {}
 
-func NewDoStmt(p token.Pos, body *Block) *DoStmt {
-	return &DoStmt{P: p, Body: body}
+func NewDoStmt(p token.Pos, body *Block, endLine int) *DoStmt {
+	return &DoStmt{P: p, Body: body, EndLine: endLine}
 }
 
 // WhileStmt: while cond do block end

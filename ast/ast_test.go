@@ -139,7 +139,7 @@ func TestStatementConstructors(t *testing.T) {
 		{"LocalStmt", ast.NewLocalStmt(pos(2, 1),
 			[]*ast.NameExpr{ast.NewNameExpr(p(), "x")},
 			[]string{""}, []ast.Expr{ast.NewNumberExpr(p(), 1, "1")}), 2, 1},
-		{"DoStmt", ast.NewDoStmt(pos(3, 1), emptyBlock()), 3, 1},
+		{"DoStmt", ast.NewDoStmt(pos(3, 1), emptyBlock(), 3), 3, 1},
 		{"WhileStmt", ast.NewWhileStmt(pos(4, 1),
 			ast.NewTrueExpr(p()), emptyBlock()), 4, 1},
 		{"RepeatStmt", ast.NewRepeatStmt(pos(5, 1),
@@ -528,7 +528,7 @@ func TestDumpStmtLocalClose(t *testing.T) {
 
 func TestDumpStmtDo(t *testing.T) {
 	inner := blockWith(ast.NewReturnStmt(p(), nil))
-	s := ast.NewDoStmt(p(), inner)
+	s := ast.NewDoStmt(p(), inner, 0)
 	d := ast.DumpString(blockWith(s))
 	mustContain(t, d, "(do")
 	mustContain(t, d, "(return)")

@@ -947,7 +947,11 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 func (c *compiler) compileDoStmt(s *ast.DoStmt) {
 	c.fs.enterScope(false)
 	c.compileBlock(s.Body)
-	c.leaveScope(s.P.Line)
+	endLine := s.EndLine
+	if endLine == 0 {
+		endLine = s.P.Line
+	}
+	c.leaveScope(endLine)
 }
 
 // ---------------------------------------------------------------------------
