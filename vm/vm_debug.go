@@ -924,18 +924,26 @@ func (vm *VM) frameStackLimit(stack []callFrame, idx, maxStack int, active bool)
 	// from the CALL instruction in the current frame's bytecode.
 	nextFrame := &stack[idx+1]
 	if nextFrame.closure != nil && frame.closure != nil {
+		limit := frame.base + maxStack
 		proto := frame.closure.Proto
 		pc := frame.pc - 1
 		if pc >= 0 && pc < len(proto.Code) {
 			inst := proto.Code[pc]
 			op := inst.OpCode()
 			if op == compiler.OP_CALL || op == compiler.OP_TAILCALL {
-				return frame.base + inst.A()
+				limit = frame.base + inst.A()
 			}
 		}
-		// Fallback: use maxStack for Lua next frames if we can't find
-		// the CALL instruction (e.g., TFORCALL or other dispatchers).
-		return frame.base + maxStack
+		// During return hooks, the transfer info indicates how many
+		// return values are visible on the stack. Extend the limit
+		// to cover them, matching Lua 5.4's L->top during return.
+		if frame.ftransfer > 0 {
+			transferEnd := frame.base + frame.ftransfer - 1 + frame.ntransfer
+			if transferEnd > limit {
+				limit = transferEnd
+			}
+		}
+		return limit
 	}
 
 	return nextFrame.base

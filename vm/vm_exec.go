@@ -64,7 +64,7 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		varargs:      varargSlice,
 		argc:         UseVMTop, // Lua frames use vm.top for ArgCount
 		ftransfer:    1,
-		ntransfer:    numArgs,
+		ntransfer:    min(numArgs, numParams),
 		callName:     vm.pendingCallName,
 		callNameWhat: vm.pendingCallNameWhat,
 	}
@@ -1074,13 +1074,10 @@ func (vm *VM) execute() ([]Value, error) {
 					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
 
-					// Fire tail call hook AFTER frame is updated with new closure,
-					// so debug.getinfo sees the target function (not the caller).
-					vm.fireTailCallHook()
-
 					// Set up parameters
 					numParams := proto.NumParams
 					numArgs := len(args)
+
 
 					if proto.IsVarArg {
 						for i := 0; i < numParams && i < numArgs; i++ {
@@ -1106,6 +1103,16 @@ func (vm *VM) execute() ([]Value, error) {
 							vm.stack[frame.base+i] = Nil
 						}
 					}
+
+					// Set transfer info for the tail call target so call hooks
+					// see the correct arguments via ftransfer/ntransfer.
+					frame.ftransfer = 1
+					frame.ntransfer = min(numArgs, numParams)
+
+					// Fire tail call hook AFTER frame is updated with new closure
+					// and parameters are on the stack, so debug.getinfo and
+					// debug.getlocal see the target function and its arguments.
+					vm.fireTailCallHook()
 					break // Continue outer loop (instruction loop)
 				} else if fn.IsNativeFunc() {
 					// Native function tail call - can't truly optimize, just call.
