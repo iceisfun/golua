@@ -870,6 +870,12 @@ func (vm *VM) hasCFrame() bool {
 	if vm.metaCallDepth > 0 {
 		return true
 	}
+	// If callDepthBase > 0, this VM inherited call depth from a parent VM
+	// through a native function (e.g., coroutine.resume), so there are
+	// native frames in the overflow chain even if this VM's stack is pure Lua.
+	if vm.callDepthBase > 0 {
+		return true
+	}
 	n := len(vm.callStack)
 	limit := 10
 	if limit > n {
