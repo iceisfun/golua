@@ -534,9 +534,8 @@ func (v Value) ToInt() (int64, bool) {
 		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
 			return i, true
 		}
-		// Try as float, then check if it's a whole number
-		// Accept ErrRange (overflow → ±Inf) but Inf won't pass the int check below
-		if f, err := strconv.ParseFloat(s, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+		// Try as float (including hex floats via ToNumber), then check if it's a whole number
+		if f, ok := v.ToNumber(); ok {
 			i := int64(f)
 			if float64(i) == f {
 				return i, true
