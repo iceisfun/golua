@@ -684,29 +684,54 @@ func luaDebugSetCStackLimit(v *vm.VM) int {
 // debug.getuservalue(u [, n])
 func luaDebugGetUserValue(v *vm.VM) int {
 	val := v.Get(1)
+	n := int64(1)
 	if v.ArgCount() >= 2 {
-		_ = getInt(v, 2, "debug.getuservalue")
+		n = getInt(v, 2, "debug.getuservalue")
 	}
-	if ud := val.AsUserdata(); ud != nil {
-		v.Set(0, ud.UserValue())
+	ud := val.AsUserdata()
+	if ud == nil {
+		// Non-userdata: return nil (1 value)
+		v.Set(0, vm.Nil)
 		return 1
 	}
-	v.Set(0, vm.Nil)
-	return 1
+	uv, ok := ud.GetUserValue(int(n))
+	if !ok {
+		// Out of range: return nil (1 value)
+		v.Set(0, vm.Nil)
+		return 1
+	}
+	// Valid slot: return value, true
+	v.Set(0, uv)
+	v.Set(1, vm.NewBool(true))
+	return 2
 }
 
-// debug.setuservalue(ud, value)
+// debug.setuservalue(ud, value [, n])
 func luaDebugSetUserValue(v *vm.VM) int {
-	ud := v.Get(1).AsUserdata()
+	arg1 := v.Get(1)
+	ud := arg1.AsUserdata()
 	if ud == nil {
-		callerArgError(v, 1, "debug.setuservalue", fmt.Sprintf("userdata expected, got %s", v.Get(1).Type()))
+		// Distinguish light userdata from other types
+		typeName := arg1.Type()
+		if arg1.IsLightUserdata() {
+			typeName = "light userdata"
+		}
+		callerArgError(v, 1, "debug.setuservalue", fmt.Sprintf("full userdata expected, got %s", typeName))
 	}
 	if v.ArgCount() < 2 {
 		callerArgError(v, 2, "debug.setuservalue", "value expected")
 	}
-	old := ud.UserValue()
-	ud.SetUserValue(v.Get(2))
-	v.Set(0, old)
+	n := int64(1)
+	if v.ArgCount() >= 3 {
+		n = getInt(v, 3, "debug.setuservalue")
+	}
+	if !ud.SetUserValue(int(n), v.Get(2)) {
+		// Out of range: return nil
+		v.Set(0, vm.Nil)
+		return 1
+	}
+	// Success: return the userdata itself
+	v.Set(0, arg1)
 	return 1
 }
 

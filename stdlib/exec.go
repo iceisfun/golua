@@ -50,7 +50,7 @@ func makeProcessHandle(proc vm.LuaProcess, opts vm.ProcessOptions) vm.Value {
 		stdoutOk: opts.Stdout,
 		stderrOk: opts.Stderr,
 	}
-	return vm.NewUserdataValue(ph, processHandleMeta)
+	return vm.NewUserdataValueUV(ph, processHandleMeta, 0)
 }
 
 func getProcessHandle(v *vm.VM, val vm.Value, funcName string) *processHandle {
