@@ -30,6 +30,12 @@ const maxLoadLines = 1 << 26 // ~67 million lines
 // alone would require tens of millions of calls to trigger.
 const maxLoadReaderCalls = 1 << 22 // ~4 million calls
 
+// earlySyntaxCheckCalls is the number of reader calls after which we try
+// to compile the accumulated source to detect syntax errors early. Lua 5.4
+// parses incrementally and catches syntax errors immediately; we approximate
+// this by compiling after a small number of non-nil reader returns.
+const earlySyntaxCheckCalls = 100
+
 func setLoadReaderError(v *vm.VM, err error) {
 	preserveRaw := v.InDirectProtectedLoad() || v.InUserProtected()
 	if le, ok := err.(*vm.LuaError); ok {
@@ -265,6 +271,22 @@ func luaLoad(v *vm.VM) int {
 				return 2
 			}
 			builder = append(builder, s...)
+			// Early syntax check: after a modest number of non-nil reader
+			// returns, try to compile what we have. If there's a definitive
+			// syntax error (not just incomplete code), report it immediately
+			// rather than accumulating more data. This approximates Lua 5.4's
+			// incremental parsing behavior.
+			if readerCalls == earlySyntaxCheckCalls && len(builder) > 0 {
+				displayName := chunkNameForDisplay(rawChunkName)
+				_, syntaxErr := compileChunk(v, string(builder), displayName, env, hasEnv, compileChunkOpts{rawSource: rawChunkName, hasRawSource: true})
+				// Only report if it's a definitive syntax error, not
+				// an incomplete-code error (which mentions "near <eof>").
+				if syntaxErr != "" && !strings.HasSuffix(syntaxErr, "near <eof>") {
+					v.Set(0, vm.Nil)
+					v.Set(1, vm.NewString(syntaxErr))
+					return 2
+				}
+			}
 		}
 		source = string(builder)
 	} else if chunk.IsNumber() {

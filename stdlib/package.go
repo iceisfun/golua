@@ -180,10 +180,25 @@ func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 				args := []vm.Value{vm.NewString(name), extra}
 				loadResults, loadErr := v.ProtectedCall(loader, args)
 				if loadErr != nil {
+					// Extract error message string
+					var errStr string
 					if luaErr, ok := loadErr.(*vm.LuaError); ok {
-						panic(luaErr)
+						errStr = vm.ValueToString(luaErr.Value)
+					} else {
+						errStr = loadErr.Error()
 					}
-					panic(fmt.Sprintf("error loading module '%s':\n\t%s", name, loadErr.Error()))
+					// Wrap with "error loading module" context.
+					// Include "from file" when extra is a file path string.
+					// Don't re-wrap if the error already has "error loading module"
+					// wrapping (from a nested require call).
+					if !strings.HasPrefix(errStr, "error loading module") {
+						if extra.IsString() && extra.AsString() != ":preload:" {
+							errStr = fmt.Sprintf("error loading module '%s' from file '%s':\n\t%s", name, extra.AsString(), errStr)
+						} else {
+							errStr = fmt.Sprintf("error loading module '%s':\n\t%s", name, errStr)
+						}
+					}
+					panic(&vm.LuaError{Value: vm.NewString(errStr)})
 				}
 
 				// If loader returns non-nil, set package.loaded[name]
@@ -252,7 +267,8 @@ func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 			}
 
 			// Compile and return loader
-			fn, errMsg := compileChunk(v, string(source), chunkName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName})
+			displayName := chunkNameForDisplay(chunkName)
+			fn, errMsg := compileChunk(v, string(source), displayName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
 			if errMsg != "" {
 				panic(fmt.Sprintf("error loading module '%s' from file '%s':\n\t%s", name, path, errMsg))
 			}
