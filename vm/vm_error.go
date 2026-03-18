@@ -17,7 +17,8 @@ func (vm *VM) runtimeError(format string, args ...any) error {
 				return fmt.Errorf("%s:%d: %s", shortSrc(proto.Source), proto.Lines[pc], msg)
 			}
 			if proto.Source != "" {
-				return fmt.Errorf("%s: %s", shortSrc(proto.Source), msg)
+				// Stripped functions have no line info; use -1 like Lua 5.4.
+				return fmt.Errorf("%s:-1: %s", shortSrc(proto.Source), msg)
 			}
 		}
 	}
@@ -54,7 +55,8 @@ func (vm *VM) AddCallerLocation(msg string) string {
 		return prefix + msg
 	}
 	if proto.Source != "" {
-		prefix := shortSrc(proto.Source) + ": "
+		// Stripped functions have no line info; use -1 like Lua 5.4.
+		prefix := fmt.Sprintf("%s:-1: ", shortSrc(proto.Source))
 		if strings.HasPrefix(msg, prefix) {
 			return msg
 		}
