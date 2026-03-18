@@ -375,7 +375,10 @@ func popenReadLine(reader *bufio.Reader, keepNewline bool) (string, error) {
 	}
 }
 
+// readNumberFromReader uses a state-machine scanner matching Lua 5.4's
+// read_number (liolib.c). On failure, all scanned characters are consumed.
 func readNumberFromReader(reader *bufio.Reader) (string, error) {
+	// Skip leading whitespace
 	for {
 		b, err := reader.ReadByte()
 		if err != nil {
@@ -387,62 +390,102 @@ func readNumberFromReader(reader *bufio.Reader) (string, error) {
 		}
 	}
 
-	var buf []byte
 	offset := 0
-	for {
+
+	peekByte := func() (byte, bool) {
 		peeked, _ := reader.Peek(offset + 1)
 		if len(peeked) <= offset {
-			break
+			return 0, false
 		}
-		b := peeked[offset]
-		if isNumberChar(b) {
-			buf = append(buf, b)
-			offset++
-		} else {
-			break
-		}
+		return peeked[offset], true
 	}
-	if len(buf) == 0 {
+	accept := func() { offset++ }
+	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
+	isHexDigit := func(b byte) bool {
+		return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+	}
+	fail := func() (string, error) {
+		if offset > 0 {
+			reader.Discard(offset)
+		}
 		return "", fmt.Errorf("not a number")
 	}
-	// Detect hex prefix: if buffer starts with 0x/0X, only accept hex parses.
-	// Do not allow falling back to just "0" since the 0x signals hex intent.
-	isHexPrefix := len(buf) >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')
-	minEnd := 1
-	if isHexPrefix {
-		minEnd = 3 // must have at least one hex digit after "0x"
-	}
-	bestEnd := 0
-	for end := len(buf); end >= minEnd; end-- {
-		s := string(buf[:end])
-		if _, err := strconv.ParseInt(s, 0, 64); err == nil {
-			bestEnd = end
-			break
-		}
-		if _, err := strconv.ParseFloat(s, 64); err == nil {
-			bestEnd = end
-			break
-		}
-	}
-	if bestEnd == 0 {
-		return "", fmt.Errorf("not a number")
-	}
-	_, _ = reader.Discard(bestEnd)
-	return string(buf[:bestEnd]), nil
-}
 
-func isNumberChar(b byte) bool {
-	if b >= '0' && b <= '9' {
-		return true
+	// Optional sign
+	if b, ok := peekByte(); ok && (b == '+' || b == '-') {
+		accept()
 	}
-	if b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F' {
-		return true
+
+	// Determine if hex (0x/0X prefix)
+	isHex := false
+	hasDigits := false
+	if b, ok := peekByte(); ok && b == '0' {
+		accept()
+		hasDigits = true // the '0' itself is a valid digit
+		if b2, ok2 := peekByte(); ok2 && (b2 == 'x' || b2 == 'X') {
+			accept()
+			isHex = true
+			hasDigits = false // need at least one hex digit after 0x
+		}
 	}
-	switch b {
-	case '.', '-', '+', 'e', 'E', 'x', 'X', 'p', 'P':
-		return true
+
+	digitCheck := isDigit
+	if isHex {
+		digitCheck = isHexDigit
 	}
-	return false
+
+	for {
+		b, ok := peekByte()
+		if !ok || !digitCheck(b) {
+			break
+		}
+		accept()
+		hasDigits = true
+	}
+
+	if b, ok := peekByte(); ok && b == '.' {
+		accept()
+		for {
+			b, ok := peekByte()
+			if !ok || !digitCheck(b) {
+				break
+			}
+			accept()
+			hasDigits = true
+		}
+	}
+
+	if !hasDigits {
+		return fail()
+	}
+
+	expChar, expCharU := byte('e'), byte('E')
+	if isHex {
+		expChar, expCharU = 'p', 'P'
+	}
+	if b, ok := peekByte(); ok && (b == expChar || b == expCharU) {
+		accept()
+		if b2, ok2 := peekByte(); ok2 && (b2 == '+' || b2 == '-') {
+			accept()
+		}
+		hasExpDigits := false
+		for {
+			b, ok := peekByte()
+			if !ok || !isDigit(b) {
+				break
+			}
+			accept()
+			hasExpDigits = true
+		}
+		if !hasExpDigits {
+			return fail()
+		}
+	}
+
+	peeked, _ := reader.Peek(offset)
+	result := string(peeked[:offset])
+	reader.Discard(offset)
+	return result, nil
 }
 
 // makeIoOpen creates the io.open function.
@@ -920,8 +963,17 @@ func parseReadNumber(data string) vm.Value {
 		return vm.Nil
 	}
 
-	isHex := len(data) > 2 && data[0] == '0' && (data[1] == 'x' || data[1] == 'X')
-	isHexFloat := isHex && strings.ContainsAny(data[2:], ".pP")
+	// Determine sign and hex prefix, accounting for optional leading sign.
+	digitStart := 0
+	if len(data) > 0 && (data[0] == '+' || data[0] == '-') {
+		digitStart = 1
+	}
+	isHex := len(data) > digitStart+2 && data[digitStart] == '0' && (data[digitStart+1] == 'x' || data[digitStart+1] == 'X')
+	hexBody := ""
+	if isHex && len(data) > digitStart+2 {
+		hexBody = data[digitStart+2:]
+	}
+	isHexFloat := isHex && strings.ContainsAny(hexBody, ".pP")
 	hasFloatIndicator := strings.ContainsAny(data, ".eE")
 
 	// Hex floats always produce float type
@@ -939,23 +991,17 @@ func parseReadNumber(data string) vm.Value {
 		return vm.NewFloat(fv)
 	}
 
-	// Try integer first (base 10 for decimal, base 16 for hex)
+	// Try integer first (base 10 for decimal, base 0 for hex with prefix)
 	if !hasFloatIndicator {
-		base := 10
-		s := data
 		if isHex {
-			base = 16
-			s = data[2:]
-			// Strip leading sign for hex
-			if len(data) > 0 && (data[0] == '+' || data[0] == '-') {
-				s = data[3:]
+			// Use base 0 which handles [+-]0x prefix natively
+			if iv, err := strconv.ParseInt(data, 0, 64); err == nil {
+				return vm.NewInt(iv)
 			}
-		}
-		if iv, err := strconv.ParseInt(s, base, 64); err == nil {
-			if isHex && len(data) > 0 && data[0] == '-' {
-				iv = -iv
+		} else {
+			if iv, err := strconv.ParseInt(data, 10, 64); err == nil {
+				return vm.NewInt(iv)
 			}
-			return vm.NewInt(iv)
 		}
 	}
 

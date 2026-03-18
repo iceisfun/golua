@@ -276,7 +276,8 @@ func needsFullIo(filename string) bool {
 		"test_io_lines_type_check.lua",
 		"test_io_input_output_closed.lua",
 		"test_read_n_edge_cases.lua",
-		"test_io_open_no_args.lua":
+		"test_io_open_no_args.lua",
+		"test_read_number_edge.lua":
 		return true
 	}
 	return false

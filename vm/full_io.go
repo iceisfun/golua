@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -411,98 +410,117 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 		}
 	}
 
-	// Read number-like characters greedily using Peek to avoid
-	// consuming bytes we may need to put back.
-	var buf []byte
+	// State-machine scanner matching Lua 5.4's read_number (liolib.c).
+	// On failure, all scanned characters are consumed (not restored).
 	offset := 0
-	for {
+
+	peekByte := func() (byte, bool) {
 		peeked, _ := reader.Peek(offset + 1)
 		if len(peeked) <= offset {
-			// EOF or not enough data
-			break
+			return 0, false
 		}
-		b := peeked[offset]
-		if isNumberChar(b) {
-			buf = append(buf, b)
-			offset++
-		} else {
-			break
-		}
+		return peeked[offset], true
 	}
 
-	if len(buf) == 0 {
+	accept := func() { offset++ }
+
+	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
+	isHexDigit := func(b byte) bool {
+		return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+	}
+
+	fail := func() (string, error) {
+		if offset > 0 {
+			reader.Discard(offset)
+		}
 		return "", fmt.Errorf("not a number")
 	}
 
-	// Find the longest prefix that parses as a valid number.
-	// Try longest first for efficiency.
-	// If the buffer starts with 0x/0X, it's a hex literal attempt;
-	// do not fall back to just "0" since the 0x signals hex intent.
-	isHexPrefix := len(buf) >= 2 && buf[0] == '0' && (buf[1] == 'x' || buf[1] == 'X')
-	minEnd := 1
-	if isHexPrefix {
-		minEnd = 3 // must have at least one hex digit after "0x"
+	// Optional sign
+	if b, ok := peekByte(); ok && (b == '+' || b == '-') {
+		accept()
 	}
-	bestEnd := 0
-	for end := len(buf); end >= minEnd; end-- {
-		s := string(buf[:end])
-		// Use base 10 for non-hex to avoid treating leading zeros as octal.
-		// For hex strings with float indicators (., p, P), skip integer parsing
-		// to avoid matching a shorter hex prefix (e.g. "0x1" from "0x1.8").
-		isHexFloat := isHexPrefix && strings.ContainsAny(s[2:], ".pP")
-		if !isHexFloat {
-			intBase := 10
-			if isHexPrefix {
-				intBase = 0 // base 0 handles 0x prefix for hex
-			}
-			if _, err := strconv.ParseInt(s, intBase, 64); err == nil {
-				bestEnd = end
-				break
-			}
+
+	// Determine if hex (0x/0X prefix)
+	isHex := false
+	hasDigits := false
+	if b, ok := peekByte(); ok && b == '0' {
+		accept()
+		hasDigits = true // the '0' itself is a valid digit
+		if b2, ok2 := peekByte(); ok2 && (b2 == 'x' || b2 == 'X') {
+			accept()
+			isHex = true
+			hasDigits = false // need at least one hex digit after 0x
 		}
-		if _, err := strconv.ParseFloat(s, 64); err == nil {
-			bestEnd = end
-			break
-		} else if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
-			// Overflow to ±Inf is a valid number (e.g. 1e1000)
-			bestEnd = end
+	}
+
+	digitCheck := isDigit
+	if isHex {
+		digitCheck = isHexDigit
+	}
+
+	// Read integer part digits
+	for {
+		b, ok := peekByte()
+		if !ok || !digitCheck(b) {
 			break
 		}
-		// Go doesn't support hex floats without p exponent (e.g. "0x1.8").
-		// Try appending "p0" to validate.
-		if isHexFloat && !strings.ContainsAny(s, "pP") {
-			if _, err := strconv.ParseFloat(s+"p0", 64); err == nil {
-				bestEnd = end
+		accept()
+		hasDigits = true
+	}
+
+	// Optional fractional part
+	if b, ok := peekByte(); ok && b == '.' {
+		accept()
+		for {
+			b, ok := peekByte()
+			if !ok || !digitCheck(b) {
 				break
 			}
+			accept()
+			hasDigits = true
 		}
 	}
 
-	if bestEnd == 0 {
-		// No valid number found; don't consume any number chars
-		return "", fmt.Errorf("not a number")
+	// Must have at least some digits
+	if !hasDigits {
+		return fail()
 	}
 
-	// Consume exactly bestEnd bytes from the reader
-	reader.Discard(bestEnd)
+	// Optional exponent (e/E for decimal, p/P for hex)
+	expChar := byte('e')
+	expCharU := byte('E')
+	if isHex {
+		expChar = 'p'
+		expCharU = 'P'
+	}
+	if b, ok := peekByte(); ok && (b == expChar || b == expCharU) {
+		accept()
+		// Optional exponent sign
+		if b2, ok2 := peekByte(); ok2 && (b2 == '+' || b2 == '-') {
+			accept()
+		}
+		// Exponent digits (always decimal, even for hex floats)
+		hasExpDigits := false
+		for {
+			b, ok := peekByte()
+			if !ok || !isDigit(b) {
+				break
+			}
+			accept()
+			hasExpDigits = true
+		}
+		if !hasExpDigits {
+			// Incomplete exponent is a hard failure in Lua 5.4
+			return fail()
+		}
+	}
 
-	return string(buf[:bestEnd]), nil
-}
-
-// isNumberChar returns true if b can be part of a numeric literal
-// (decimal or hexadecimal, integer or float).
-func isNumberChar(b byte) bool {
-	if b >= '0' && b <= '9' {
-		return true
-	}
-	if b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F' {
-		return true
-	}
-	switch b {
-	case '.', '-', '+', 'e', 'E', 'x', 'X', 'p', 'P':
-		return true
-	}
-	return false
+	// Extract the scanned string and consume it
+	peeked, _ := reader.Peek(offset)
+	result := string(peeked[:offset])
+	reader.Discard(offset)
+	return result, nil
 }
 
 // stdFile wraps an os.File for standard input/output/error.
