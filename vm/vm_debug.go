@@ -631,16 +631,24 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 		case compiler.OP_GETI:
 			return "integer index", "field"
 		case compiler.OP_GETTABLE:
-			// R[A] = R[B][R[C]] — for regular tables, name is "?".
-			// But when the table is _ENV (global fallback for high constant
-			// indices), resolve the key name via kName.
+			// R[A] = R[B][R[C]] — resolve key name from register C.
 			b := prev.B()
+			c := prev.C()
+			kn := kName(proto, i, c)
+			// Check if table is _ENV (global access with high constant index).
 			if localName(proto, b, i) == "_ENV" || isUpvalEnv(proto, i, b) {
-				c := prev.C()
-				kn := kName(proto, i, c)
 				if kn != "" {
 					return kn, "global"
 				}
+				return "?", "global"
+			}
+			// Detect SELF fallback pattern: MOVE base+1,obj + LOADK + GETTABLE base,obj,key.
+			// If the previous instruction wrote obj to base+1 (self), this is a method call.
+			if kn != "" && isSelfFallback(proto, i, reg, b) {
+				return kn, "method"
+			}
+			if kn != "" {
+				return kn, "field"
 			}
 			return "?", "field"
 		case compiler.OP_GETFIELD:
@@ -1141,17 +1149,23 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 		case compiler.OP_GETI:
 			return "integer index", "field"
 		case compiler.OP_GETTABLE:
-			// R[A] = R[B][R[C]] — for regular tables, name is "?".
-			// When the table was loaded via GETUPVAL of _ENV (upvalue 0),
-			// resolve the key name (global fallback for high constant indices).
+			// R[A] = R[B][R[C]] — resolve key name from register C.
 			b := inst.B()
-			if isUpvalEnv(proto, i, b) {
-				c := inst.C()
-				kn := kName(proto, i, c)
+			c := inst.C()
+			kn := kName(proto, i, c)
+			// Check if table is _ENV (global access with high constant index).
+			if localName(proto, b, i) == "_ENV" || isUpvalEnv(proto, i, b) {
 				if kn != "" {
 					return kn, "global"
 				}
 				return "?", "global"
+			}
+			// Detect SELF fallback pattern (MOVE base+1,obj + LOADK + GETTABLE).
+			if kn != "" && isSelfFallback(proto, i, reg, b) {
+				return kn, "method"
+			}
+			if kn != "" {
+				return kn, "field"
 			}
 			return "?", "field"
 		default:
@@ -1254,4 +1268,34 @@ func kName(proto *compiler.Proto, pc int, reg int) string {
 		}
 	}
 	return ""
+}
+
+// isSelfFallback detects the SELF fallback pattern emitted by the compiler
+// when a method name's constant index exceeds MaxArgC. The pattern is:
+//
+//	MOVE base+1, objReg    // copy self
+//	LOADK/LOADKX tmp, "method_name"
+//	GETTABLE base, objReg, tmp
+//
+// Returns true if the instruction at gettablePC is part of this pattern.
+func isSelfFallback(proto *compiler.Proto, gettablePC int, base int, objReg int) bool {
+	// Look backward past LOADK/LOADKX to find a MOVE writing to base+1
+	for j := gettablePC - 1; j >= 0; j-- {
+		jInst := proto.Code[j]
+		jOp := jInst.OpCode()
+		switch jOp {
+		case compiler.OP_LOADK, compiler.OP_LOADKX:
+			// Skip LOADK that loaded the key into the temp register
+			continue
+		case compiler.OP_EXTRAARG:
+			// Part of LOADKX
+			continue
+		case compiler.OP_MOVE:
+			// Check: MOVE base+1, objReg
+			return jInst.A() == base+1 && jInst.B() == objReg
+		default:
+			return false
+		}
+	}
+	return false
 }
