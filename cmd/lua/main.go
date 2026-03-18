@@ -177,15 +177,13 @@ done:
 	}()
 
 	if err != nil {
-		// Format the error like Lua 5.4
-		var msg string
-		if le, ok := err.(*vm.LuaError); ok {
-			msg = formatLuaError(le.Value)
-		} else {
-			msg = err.Error()
-		}
-		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
-		fmt.Fprintln(stderr, v.TracebackFromLastError("", 0))
+		// Format error like Lua 5.4's msghandler + report in lua.c.
+		// msghandler logic:
+		//   1. If error is a string/number, append traceback
+		//   2. If error has __tostring returning string, use it (no traceback)
+		//   3. If __tostring errors, that error propagates (shown recursively)
+		//   4. Otherwise "(error object is a TYPE value)" with traceback
+		reportLuaError(v, err, progName, stderr)
 		return 1
 	}
 
@@ -195,10 +193,64 @@ done:
 	return 0
 }
 
-// formatLuaError formats a Lua error value for display, matching Lua 5.4.
-// Strings are printed as-is, numbers with .0 suffix for floats,
-// other types are wrapped in "(error object is a TYPE value)".
-func formatLuaError(val vm.Value) string {
+// reportLuaError formats and prints a Lua error matching lua.c's msghandler+report.
+// The logic mirrors C Lua 5.4:
+//   - String/number errors: print message + traceback
+//   - __tostring returning string: print that string, NO traceback
+//   - __tostring errors: recurse with the inner error
+//   - Otherwise: "(error object is a TYPE value)" + traceback
+func reportLuaError(v *vm.VM, err error, progName string, w io.Writer) {
+	le, ok := err.(*vm.LuaError)
+	if !ok {
+		fmt.Fprintf(w, "%s: %s\n", progName, err.Error())
+		fmt.Fprintln(w, v.TracebackFromLastError("", 0))
+		return
+	}
+	val := le.Value
+
+	// Step 1: string/number — like lua_tostring succeeding
+	if val.IsString() || val.IsNumber() {
+		fmt.Fprintf(w, "%s: %s\n", progName, formatLuaValue(val))
+		fmt.Fprintln(w, v.TracebackFromLastError("", 0))
+		return
+	}
+
+	// Step 2: try __tostring metamethod (like luaL_callmeta)
+	var mt vm.LuaTable
+	if val.IsTable() {
+		mt = val.AsTable().Metatable()
+	} else if ud := val.AsUserdata(); ud != nil {
+		mt = ud.Metatable()
+	}
+	if mt == nil {
+		mt = v.GetTypeMeta(val)
+	}
+	if mt != nil {
+		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+			results, callErr := v.ProtectedCall(ts, []vm.Value{val})
+			if callErr != nil {
+				// __tostring errored — recurse with the inner error
+				// (in C Lua this propagates out of msghandler unprotected,
+				// then msghandler is called again on the new error)
+				reportLuaError(v, callErr, progName, w)
+				return
+			}
+			if len(results) > 0 && results[0].IsString() {
+				// __tostring returned a string — print WITHOUT traceback
+				fmt.Fprintf(w, "%s: %s\n", progName, results[0].AsString())
+				return
+			}
+			// __tostring returned non-string — fall through
+		}
+	}
+
+	// Step 3: fallback — "(error object is a TYPE value)" + traceback
+	fmt.Fprintf(w, "%s: (error object is a %s value)\n", progName, val.Type())
+	fmt.Fprintln(w, v.TracebackFromLastError("", 0))
+}
+
+// formatLuaValue formats a Lua string/number value for display.
+func formatLuaValue(val vm.Value) string {
 	if val.IsString() {
 		return val.AsString()
 	}
@@ -208,11 +260,10 @@ func formatLuaError(val vm.Value) string {
 	if val.IsFloat() {
 		f := val.AsFloat()
 		s := fmt.Sprintf("%g", f)
-		// Ensure float has .0 suffix
 		if !math.IsInf(f, 0) && !math.IsNaN(f) && !strings.Contains(s, ".") && !strings.Contains(s, "e") {
 			s += ".0"
 		}
 		return s
 	}
-	return fmt.Sprintf("(error object is a %s value)", val.Type())
+	return val.String()
 }
