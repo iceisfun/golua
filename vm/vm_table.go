@@ -174,11 +174,11 @@ func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 		mt = vm.GetTypeMeta(val)
 	}
 	if mt == nil {
-		return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
+		return Nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 	}
 	index := mt.Get(metaIndex)
 	if index.IsNil() {
-		return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
+		return Nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 	}
 	if index.IsTable() {
 		return vm.tableGet(index.AsTable(), key)
@@ -186,7 +186,7 @@ func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 	if index.IsFunction() || index.IsNativeFunc() {
 		return vm.callMetamethod("index", index, val, key)
 	}
-	return Nil, vm.runtimeError("attempt to index a %s value", val.Type())
+	return Nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 }
 
 // resolveIndex resolves an __index metamethod for a non-table value.
@@ -198,7 +198,7 @@ func (vm *VM) resolveIndex(mm Value, obj Value, key Value) (Value, error) {
 	if mm.IsFunction() || mm.IsNativeFunc() {
 		return vm.callMetamethod("index", mm, obj, key)
 	}
-	return Nil, vm.runtimeError("attempt to index a %s value", obj.Type())
+	return Nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(obj))
 }
 
 // tableSet sets a value in a table, handling __newindex metamethod.
@@ -563,5 +563,5 @@ func (vm *VM) ObjLen(val Value) (int, error) {
 	if val.IsTable() {
 		return val.AsTable().Len(), nil
 	}
-	return 0, vm.runtimeError("attempt to get length of a %s value", val.Type())
+	return 0, vm.runtimeError("attempt to get length of a %s value", vm.ObjTypeName(val))
 }

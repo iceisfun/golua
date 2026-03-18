@@ -279,7 +279,8 @@ func needsFullIo(filename string) bool {
 		"test_io_open_no_args.lua",
 		"test_io_open_empty.lua",
 		"test_os_execute_stdout.lua",
-		"test_read_number_edge.lua":
+		"test_read_number_edge.lua",
+		"test_table_math_name_fixes.lua":
 		return true
 	}
 	return false
