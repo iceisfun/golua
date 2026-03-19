@@ -1020,13 +1020,28 @@ func (vm *VM) SetLocal(level, index int, val Value) (string, bool) {
 		if stackIdx < 0 || stackIdx >= len(vm.stack) {
 			return "", false
 		}
-		// C Lua's db_setlocal passes the calling thread (L) to
-		// lua_setlocal, so findlocal uses the caller's L->top for
-		// the bounds check — which is always large enough.  This
-		// means setlocal on C frames succeeds for any valid stack
-		// index, unlike getlocal which uses the coroutine's L1->top.
-		// Only clamp by the next frame's base for safety.
-		if idx+1 < len(stack) && stackIdx >= stack[idx+1].base {
+		// Determine the upper bound for accessible slots.
+		// During hooks on the active VM, the native frame's args + transfer
+		// area are accessible. For suspended coroutines, Lua 5.4's db_setlocal
+		// uses the caller's L->top which in practice allows exactly 1 slot
+		// (index 1 is always reachable for C frames).
+		argc := frame.argc
+		if argc < 1 {
+			argc = 1 // at least 1 slot accessible (Lua 5.4 uses caller's L->top)
+		}
+		limit := frame.base + 1 + argc
+		if active && vm.inHook {
+			limit += frame.ntransfer
+		}
+		if idx+1 < len(stack) {
+			nextBase := stack[idx+1].base
+			if nextBase > limit {
+				limit = nextBase
+			}
+		} else if active && vm.top > limit {
+			limit = vm.top
+		}
+		if stackIdx >= limit {
 			return "", false
 		}
 		vm.stack[stackIdx] = val

@@ -517,10 +517,6 @@ func luaDebugGetLocal(v *vm.VM) int {
 			if coVM == nil || !coVM.IsValidLevel(int(level)) {
 				callerArgError(v, 2, "debug.getlocal", "level out of range")
 			}
-			if level == 0 && coVM != v {
-				v.Set(0, vm.Nil)
-				return 1
-			}
 			// For suspended coroutines, level numbering matches the coroutine's
 			// own call stack: level 0 = yield, level 1 = function that called yield.
 			name, val, found := coVM.GetLocal(int(level), int(local))
