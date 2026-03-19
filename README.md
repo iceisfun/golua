@@ -178,6 +178,7 @@ See the `examples/` directory for complete examples:
 - **[editor](examples/editor/)** - Monaco editor with live diagnostics and sandboxed execution
 - **[editor_advanced](examples/editor_advanced/)** - browser IDE with completion, hover, diagnostics, and execution
 - **[expose_object](examples/expose_object/)** - Go-backed objects with an explicit adapter layer
+- **[context](examples/context/)** - context cancellation stops a runaway Lua script
 
 ## Go Interop
 
