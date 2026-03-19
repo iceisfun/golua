@@ -80,7 +80,9 @@ func (vm *VM) fireHook(event string, line int) {
 	// Build args
 	args := []Value{NewString(event)}
 	if event == hookEventLine || event == hookEventCount {
-		if line >= 0 {
+		if event == hookEventCount {
+			args = append(args, Nil)
+		} else if line >= 0 {
 			args = append(args, NewInt(int64(line)))
 		} else {
 			args = append(args, Nil)
@@ -179,11 +181,7 @@ func (vm *VM) checkLineCountHooks(proto *compiler.Proto, pc int) bool {
 		vm.hookCounter--
 		if vm.hookCounter <= 0 {
 			vm.hookCounter = vm.hookCount
-			line := 0
-			if pc >= 0 && pc < len(proto.Lines) {
-				line = proto.Lines[pc]
-			}
-			vm.fireHook(hookEventCount, line)
+			vm.fireHook(hookEventCount, -1)
 			fired = true
 		}
 	}

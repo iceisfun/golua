@@ -1026,10 +1026,10 @@ func TestDebug_StrippedDump_GetLocal(t *testing.T) {
 		local function f(a) local b = a + 1; return b end
 		local dumped = string.dump(f, true)
 		local f2 = load(dumped)
-		-- getlocal on a function object (not stack frame) should return "(temporary)"
-		-- for stripped functions where debug info is missing
+		-- getlocal on a stripped function object should return nil (no debug info)
+		-- matching Lua 5.4 behavior
 		local name = debug.getlocal(f2, 1)
-		assert(name ~= nil, "stripped getlocal should return name, got nil")
+		assert(name == nil, "stripped getlocal should return nil, got: " .. tostring(name))
 	`
 	runLuaWithDebug(t, src, "test_stripped_dump_getlocal", provider)
 }
@@ -1046,15 +1046,16 @@ func TestDebug_Traceback_BeyondStack(t *testing.T) {
 	runLuaWithDebug(t, src, "test_traceback_beyond_stack", provider)
 }
 
-// Bug 8: debug.upvaluejoin with native functions should error with "invalid upvalue index"
+// Bug 8: debug.upvaluejoin with native functions should error with "Lua function expected"
 func TestDebug_UpvalueJoin_NativeFunc(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	src := `
-		-- upvaluejoin should accept native functions but error on invalid upvalue index
+		-- upvaluejoin rejects native functions as "Lua function expected"
+		-- matching Lua 5.4 behavior
 		local ok, err = pcall(debug.upvaluejoin, print, 1, print, 1)
 		assert(not ok, "should error for native function")
-		assert(string.find(err, "invalid upvalue index"),
-			"should say 'invalid upvalue index', got: " .. tostring(err))
+		assert(string.find(err, "Lua function expected"),
+			"should say 'Lua function expected', got: " .. tostring(err))
 	`
 	runLuaWithDebug(t, src, "test_upvaluejoin_native", provider)
 }

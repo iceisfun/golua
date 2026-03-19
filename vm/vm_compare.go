@@ -92,9 +92,9 @@ func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
 	// Lua spec: if __le is not present, try __lt(b, a)
 	// a <= b  ===  not (b < a)
 	op = "__lt"
-	mm = vm.getMetafield(v1, op)
+	mm = vm.getMetafield(v2, op)
 	if mm.IsNil() {
-		mm = vm.getMetafield(v2, op)
+		mm = vm.getMetafield(v1, op)
 	}
 
 	if !mm.IsNil() {

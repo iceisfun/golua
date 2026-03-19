@@ -839,31 +839,30 @@ func luaDebugUpvalueJoin(v *vm.VM) int {
 	n1 := getInt(v, 2, "debug.upvaluejoin")
 
 	f1 := v.Get(1)
-	if !f1.IsCallable() {
+	if !f1.IsFunction() {
 		got := f1.Type()
 		if v.ArgCount() < 1 {
 			got = "no value"
 		}
-		callerArgError(v, 1, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
+		callerArgError(v, 1, "debug.upvaluejoin", fmt.Sprintf("Lua function expected, got %s", got))
 	}
 
-	// Native functions have 0 upvalues — any index is invalid
 	c1 := f1.AsClosure()
-	if c1 == nil || n1 < 1 || int(n1) > len(c1.Upvalues) {
+	if n1 < 1 || int(n1) > len(c1.Upvalues) {
 		callerArgError(v, 2, "debug.upvaluejoin", "invalid upvalue index")
 	}
 
 	n2 := getInt(v, 4, "debug.upvaluejoin")
 	f2 := v.Get(3)
-	if !f2.IsCallable() {
+	if !f2.IsFunction() {
 		got := f2.Type()
 		if v.ArgCount() < 3 {
 			got = "no value"
 		}
-		callerArgError(v, 3, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
+		callerArgError(v, 3, "debug.upvaluejoin", fmt.Sprintf("Lua function expected, got %s", got))
 	}
 	c2 := f2.AsClosure()
-	if c2 == nil || n2 < 1 || int(n2) > len(c2.Upvalues) {
+	if n2 < 1 || int(n2) > len(c2.Upvalues) {
 		callerArgError(v, 4, "debug.upvaluejoin", "invalid upvalue index")
 	}
 

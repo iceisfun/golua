@@ -1228,6 +1228,12 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 				if fs.freeReg > fs.maxReg {
 					fs.maxReg = fs.freeReg
 				}
+			} else {
+				// Lua 5.4 still evaluates extra explist expressions for side
+				// effects even though only the first four results seed the loop.
+				tmp := fs.freeReg
+				c.compileExprToReg(iter, tmp)
+				fs.freeReg = tmp
 			}
 		}
 		// Fill missing with nil

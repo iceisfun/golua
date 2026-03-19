@@ -980,7 +980,6 @@ func activeLines(proto *compiler.Proto) map[int]bool {
 	return lines
 }
 
-
 // GetFuncLocal returns the name of local variable #index from a function's
 // prototype (without needing a live stack frame). Only parameter names are
 // available. index is 1-based. Returns ("", false) if out of range.
@@ -998,12 +997,6 @@ func (vm *VM) GetFuncLocal(fn Value, index int) (string, bool) {
 	reg := index - 1
 	name := localName(proto, reg, 0)
 	if name == "?" {
-		// For stripped functions (no debug info), registers within the
-		// function's stack frame are reported as "(temporary)" — matching
-		// Lua 5.4 behavior for locals without names.
-		if len(proto.Locals) == 0 && index >= 1 && index <= proto.NumParams {
-			return "(temporary)", true
-		}
 		return "", false
 	}
 	return name, true
