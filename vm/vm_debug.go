@@ -290,6 +290,9 @@ func suppressLuaFrameCallName(frame *callFrame, hasHigherLuaFrame bool) bool {
 	if frame == nil || frame.closure == nil {
 		return false
 	}
+	if frame.suppressTracebackName {
+		return true
+	}
 	if frame.callNameWhat != "metamethod" || frame.callName != "close" {
 		return false
 	}
@@ -470,21 +473,14 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		if callerIdx >= 0 {
 			info.Name, info.NameWhat = vm.funcNameFromCall(&stack[callerIdx])
 		}
-		suppressCallName := frame.callNameWhat == "metamethod" && frame.callName == "close" && !vm.inHook
-		if suppressCallName && info.NameWhat == "metamethod" && info.Name == "close" {
-			info.Name = ""
-			info.NameWhat = ""
-		}
 
 		// If bytecode-based name inference failed, use the frame's override name
-		// (e.g., "close" for __close metamethod calls)
-		if info.NameWhat == "" && frame.callName != "" && !suppressCallName {
+		// (e.g., "close" for __close metamethod calls).
+		// Suppress the name for error-triggered __close (suppressTracebackName),
+		// matching Lua 5.4 where error-path closes report nil name.
+		if info.NameWhat == "" && frame.callName != "" && !frame.suppressTracebackName {
 			info.Name = frame.callName
 			info.NameWhat = frame.callNameWhat
-		}
-		if suppressCallName {
-			info.Name = ""
-			info.NameWhat = ""
 		}
 	}
 

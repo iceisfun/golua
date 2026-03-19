@@ -110,8 +110,9 @@ type VM struct {
 
 	// Pending call name hint for debug.getinfo name inference.
 	// Set before calling vm.call() and consumed by vm.call().
-	pendingCallName     string
-	pendingCallNameWhat string
+	pendingCallName              string
+	pendingCallNameWhat          string
+	pendingSuppressTracebackName bool
 
 	// Message handler for xpcall: called inside ProtectedCall's recovery
 	// BEFORE the call stack is truncated, so debug.traceback can see
@@ -162,21 +163,22 @@ const (
 
 // callFrame represents a function call on the call stack.
 type callFrame struct {
-	closure      *Closure // Function being executed
-	funcValue    Value    // Function value for debug info / native frames
-	pc           int      // Program counter (next instruction to execute)
-	base         int      // Base stack index for this frame's registers
-	nResults     int      // Expected number of results (MultiReturn = variable)
-	isVararg     bool     // True if function is vararg
-	varargPos    int      // Stack position where varargs start (legacy, used by debug)
-	numVararg    int      // Number of varargs
-	varargs      []Value  // Vararg values stored off-stack to prevent cross-frame overlap
-	isTailCall   bool     // True if this was a tail call
-	argc         int      // Argument count for native functions (UseVMTop = use vm.top)
-	callName     string   // Override name for debug.getinfo (e.g., "close" for __close)
-	callNameWhat string   // Override nameWhat (e.g., "metamethod")
-	ftransfer    int      // First "transfer" index for debug hooks (1-based, 0 = unavailable)
-	ntransfer    int      // Number of transfer values for debug hooks
+	closure               *Closure // Function being executed
+	funcValue             Value    // Function value for debug info / native frames
+	pc                    int      // Program counter (next instruction to execute)
+	base                  int      // Base stack index for this frame's registers
+	nResults              int      // Expected number of results (MultiReturn = variable)
+	isVararg              bool     // True if function is vararg
+	varargPos             int      // Stack position where varargs start (legacy, used by debug)
+	numVararg             int      // Number of varargs
+	varargs               []Value  // Vararg values stored off-stack to prevent cross-frame overlap
+	isTailCall            bool     // True if this was a tail call
+	argc                  int      // Argument count for native functions (UseVMTop = use vm.top)
+	callName              string   // Override name for debug.getinfo (e.g., "close" for __close)
+	callNameWhat          string   // Override nameWhat (e.g., "metamethod")
+	suppressTracebackName bool
+	ftransfer             int // First "transfer" index for debug hooks (1-based, 0 = unavailable)
+	ntransfer             int // Number of transfer values for debug hooks
 }
 
 // New creates a new VM with an empty global environment.
@@ -541,10 +543,12 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		// Push a call frame so Get/Set/ArgCount work correctly
 		// argc stored so ArgCount doesn't depend on vm.top
 		vm.callStack = append(vm.callStack, callFrame{
-			base:      base,
-			argc:      len(args),
-			funcValue: fn,
+			base:                  base,
+			argc:                  len(args),
+			funcValue:             fn,
+			suppressTracebackName: vm.pendingSuppressTracebackName,
 		})
+		vm.pendingSuppressTracebackName = false
 
 		// Advance vm.top past the arguments so that any metamethod
 		// calls from within the native function (e.g. __lt in math.max)
@@ -827,6 +831,14 @@ func (vm *VM) ClosePendingTBC(errVal Value) (finalErr error) {
 	if len(vm.tbcVars) == 0 {
 		return nil
 	}
+	// When a coroutine is already dead/errored and coroutine.close runs its
+	// pending __close handlers, Lua 5.4 does not expose the stale suspended
+	// frames through debug APIs during the close callbacks.
+	savedCallStack := vm.callStack
+	vm.callStack = vm.callStack[:0]
+	defer func() {
+		vm.callStack = savedCallStack
+	}()
 	tbcToClose := make([]int, len(vm.tbcVars))
 	copy(tbcToClose, vm.tbcVars)
 	vm.tbcVars = vm.tbcVars[:0]
@@ -959,6 +971,8 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 	if fn.IsFunction() {
 		vm.pendingCallName = name
 		vm.pendingCallNameWhat = "metamethod"
+		// Some __close contexts should retain getinfo() naming but suppress the
+		// synthetic "in metamethod 'close'" label in traceback output.
 		results, err := vm.call(fn.AsClosure(), []Value{arg1, arg2}, 1)
 		if err != nil {
 			return Nil, err
@@ -981,12 +995,14 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 		vm.stack[nativeBase+2] = arg2
 
 		nativeFrame := callFrame{
-			base:         nativeBase,
-			argc:         2,
-			funcValue:    fn,
-			callName:     name,
-			callNameWhat: "metamethod",
+			base:                  nativeBase,
+			argc:                  2,
+			funcValue:             fn,
+			callName:              name,
+			callNameWhat:          "metamethod",
+			suppressTracebackName: vm.pendingSuppressTracebackName,
 		}
+		vm.pendingSuppressTracebackName = false
 		vm.callStack = append(vm.callStack, nativeFrame)
 		vm.top = nativeBase + 3
 
@@ -1045,12 +1061,14 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 		vm.stack[nativeBase+3] = arg3
 
 		nativeFrame := callFrame{
-			base:         nativeBase,
-			argc:         3,
-			funcValue:    fn,
-			callName:     name,
-			callNameWhat: "metamethod",
+			base:                  nativeBase,
+			argc:                  3,
+			funcValue:             fn,
+			callName:              name,
+			callNameWhat:          "metamethod",
+			suppressTracebackName: vm.pendingSuppressTracebackName,
 		}
+		vm.pendingSuppressTracebackName = false
 		vm.callStack = append(vm.callStack, nativeFrame)
 		vm.top = nativeBase + 4
 

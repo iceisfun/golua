@@ -162,6 +162,17 @@ func (vm *VM) CloseAllTBC() {
 	if len(vm.tbcVars) == 0 {
 		return
 	}
+	// coroutine.close runs __close handlers against a dead/suspended coroutine.
+	// Lua 5.4 does not expose the coroutine's previously suspended frames to
+	// debug.getinfo/debug.traceback from inside those handlers, so temporarily
+	// detach the old call stack while the close handlers execute.
+	// Use an empty slice (not nil) so append in callMetamethod works correctly,
+	// and preserve vm.top so new frames start above the TBC variables.
+	savedCallStack := vm.callStack
+	vm.callStack = vm.callStack[:0]
+	defer func() {
+		vm.callStack = savedCallStack
+	}()
 	// Run __close handlers in a non-yieldable context (matches Lua 5.4).
 	// coroutine.close runs handlers where yield is not allowed.
 	exit := vm.EnterNonYieldable()
@@ -227,6 +238,7 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 		}
 	}
 	if !closeFunc.IsNil() {
+		vm.pendingSuppressTracebackName = !errVal.IsNil() || len(vm.callStack) == 0
 		_, err := vm.callMetamethod("close", closeFunc, val, errVal)
 		if err != nil {
 			panic(err.Error())

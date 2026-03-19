@@ -55,22 +55,24 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 
 	// Push call frame
 	frame := callFrame{
-		closure:      closure,
-		funcValue:    NewFunction(closure),
-		pc:           0,
-		base:         base,
-		nResults:     nResults,
-		isVararg:     proto.IsVarArg,
-		numVararg:    numVararg,
-		varargs:      varargSlice,
-		argc:         UseVMTop, // Lua frames use vm.top for ArgCount
-		ftransfer:    1,
-		ntransfer:    min(numArgs, numParams),
-		callName:     vm.pendingCallName,
-		callNameWhat: vm.pendingCallNameWhat,
+		closure:               closure,
+		funcValue:             NewFunction(closure),
+		pc:                    0,
+		base:                  base,
+		nResults:              nResults,
+		isVararg:              proto.IsVarArg,
+		numVararg:             numVararg,
+		varargs:               varargSlice,
+		argc:                  UseVMTop, // Lua frames use vm.top for ArgCount
+		ftransfer:             1,
+		ntransfer:             min(numArgs, numParams),
+		callName:              vm.pendingCallName,
+		callNameWhat:          vm.pendingCallNameWhat,
+		suppressTracebackName: vm.pendingSuppressTracebackName,
 	}
 	vm.pendingCallName = ""
 	vm.pendingCallNameWhat = ""
+	vm.pendingSuppressTracebackName = false
 	vm.callStack = append(vm.callStack, frame)
 
 	// Update vm.top to point past this frame's registers
