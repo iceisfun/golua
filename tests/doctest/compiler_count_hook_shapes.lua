@@ -26,7 +26,7 @@ do
     --> =15	1
 end
 
--- Generic for: GoLua emits more instructions than Lua 5.4 (45 vs 19),
+-- Generic for: GoLua emits more instructions than Lua 5.4 (43 vs 19),
 -- a known architectural difference in for-in loop compilation.
 do
     local function iter(_, i)
@@ -41,5 +41,5 @@ do
     end
     debug.sethook()
     print(n)
-    --> =45
+    --> =43
 end

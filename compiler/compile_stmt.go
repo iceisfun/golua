@@ -983,7 +983,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 
 		// Close upvalues for body locals before jumping back.
 		scope := fs.scopes[len(fs.scopes)-1]
-		if fs.nActVar > scope.nLocals {
+		if fs.needsClose(scope.nLocals) {
 			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
 		}
 
@@ -1014,7 +1014,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	// Close upvalues for body locals before jumping back.
 	// This ensures each iteration gets its own closed upvalue copy.
 	scope := fs.scopes[len(fs.scopes)-1]
-	if fs.nActVar > scope.nLocals {
+	if fs.needsClose(scope.nLocals) {
 		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
 	}
 
@@ -1059,7 +1059,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	// Close upvalues for body locals. OP_CLOSE captures values but does
 	// not clear stack slots, so the condition result in reg remains valid.
 	scope := fs.scopes[len(fs.scopes)-1]
-	if fs.nActVar > scope.nLocals {
+	if fs.needsClose(scope.nLocals) {
 		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), condLine)
 	}
 
@@ -1291,7 +1291,10 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 
 	// Close upvalues at the loop variables (base+4) and above before next iteration.
 	// This ensures each iteration gets its own closed upvalue copy.
-	fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), line)
+	scope := fs.scopes[len(fs.scopes)-1]
+	if fs.needsClose(scope.nLocals + 4) {
+		fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), line)
+	}
 
 	// TFORCALL — calls the iterator. Use the line of the last iterator
 	// expression (matching Lua 5.4 which uses the line after parsing iterators).
