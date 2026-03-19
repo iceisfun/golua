@@ -27,10 +27,15 @@ func main() {
 	// Without cancellation this would run forever.
 	npcScript := `
 		local tick = 0
+		local last = os.clock()
+
 		while true do
 			tick = tick + 1
-			if tick % 1000000 == 0 then
-				print("NPC thinking... tick " .. tick)
+
+			if tick % 100000 == 0 then
+				local now = os.clock()
+				print(string.format("tick=%d dt=%.3f", tick, now - last))
+				last = now
 			end
 		end
 	`
@@ -49,6 +54,7 @@ func main() {
 	defer cancel()
 
 	v := vm.New(vm.WithContext(ctx))
+	v.SetOsProvider(vm.NewDefaultOsProvider())
 	stdlib.Open(v)
 
 	fmt.Println("Game round started — NPC AI script running...")
