@@ -40,13 +40,15 @@ type VM struct {
 	// boundaries in the coroutine's call stack.
 	closingCoroutine bool
 
-	// Type metatables (for string, number, bool, nil, function, thread)
-	stringMeta   LuaTable
-	numberMeta   LuaTable
-	boolMeta     LuaTable
-	nilMeta      LuaTable
-	functionMeta LuaTable
-	threadMeta   LuaTable
+	// Type metatables (for string, number, bool, nil, function, thread,
+	// and lightuserdata values from debug.upvalueid).
+	stringMeta        LuaTable
+	numberMeta        LuaTable
+	boolMeta          LuaTable
+	nilMeta           LuaTable
+	functionMeta      LuaTable
+	threadMeta        LuaTable
+	lightUserdataMeta LuaTable
 
 	// Coroutine support
 	yieldCh     chan []Value // Channel to send yield values (nil if not in coroutine)
@@ -103,8 +105,8 @@ type VM struct {
 	hookCount    int   // Instruction count interval for count hooks
 	hookCounter  int   // Current counter (counts down to 0)
 	inHook       bool  // Re-entrancy guard
-	lastHookLine int // Last line reported by line hook (-1 = none)
-	lastHookPC   int // Last pc checked by line hook (for backward jump detection)
+	lastHookLine int   // Last line reported by line hook (-1 = none)
+	lastHookPC   int   // Last pc checked by line hook (for backward jump detection)
 
 	// Pending call name hint for debug.getinfo name inference.
 	// Set before calling vm.call() and consumed by vm.call().
@@ -394,7 +396,11 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			// Save the full call stack snapshot before truncation so the
 			// xpcall message handler can see the stack at the error point.
 			var errorCallStack []callFrame
-			if vm.MsgHandler.IsNil() {
+			// Preserve an existing snapshot from an inner ProtectedCall
+			// (e.g. __tostring → error("inner") re-raised by luaToString).
+			// The inner snapshot has the richer call stack; overwriting it
+			// with the current (unwound) stack would lose the inner frames.
+			if vm.MsgHandler.IsNil() && len(vm.lastErrorCallStack) == 0 {
 				vm.lastErrorCallStack = make([]callFrame, len(vm.callStack))
 				copy(vm.lastErrorCallStack, vm.callStack)
 			}
@@ -648,38 +654,39 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 // parent and child happens through the yieldCh and resumeCh channels.
 func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 	return &VM{
-		stack:           make([]Value, 256),
-		callStack:       make([]callFrame, 0, 16),
-		globals:         parent.globals,
-		stringMeta:      parent.stringMeta,
-		numberMeta:      parent.numberMeta,
-		boolMeta:        parent.boolMeta,
-		nilMeta:         parent.nilMeta,
-		functionMeta:    parent.functionMeta,
-		threadMeta:      parent.threadMeta,
-		yieldCh:         yieldCh,
-		resumeCh:        resumeCh,
-		coroutineID:     coID,
-		codeProvider:    parent.codeProvider,
-		vmID:            parent.vmID,
-		chunkName:       parent.chunkName,
-		ioProvider:      parent.ioProvider,
-		osProvider:      parent.osProvider,
-		execProvider:    parent.execProvider,
-		exitHandler:     parent.exitHandler,
-		debugProvider:   parent.debugProvider,
-		chanProvider:    parent.chanProvider,
-		timeProvider:    parent.timeProvider,
-		processProvider: parent.processProvider,
-		loadLibProvider: parent.loadLibProvider,
-		printProvider:   parent.printProvider,
-		warnEnabled:     parent.warnEnabled,
-		ctx:             parent.ctx,
-		limits:          parent.limits,
-		callDepthBase:   parent.callDepthBase + len(parent.callStack),
-		closeDepth:      parent.closeDepth,
-		captureOutput:   parent.captureOutput,
-		outputLines:     parent.outputLines,
+		stack:             make([]Value, 256),
+		callStack:         make([]callFrame, 0, 16),
+		globals:           parent.globals,
+		stringMeta:        parent.stringMeta,
+		numberMeta:        parent.numberMeta,
+		boolMeta:          parent.boolMeta,
+		nilMeta:           parent.nilMeta,
+		functionMeta:      parent.functionMeta,
+		threadMeta:        parent.threadMeta,
+		lightUserdataMeta: parent.lightUserdataMeta,
+		yieldCh:           yieldCh,
+		resumeCh:          resumeCh,
+		coroutineID:       coID,
+		codeProvider:      parent.codeProvider,
+		vmID:              parent.vmID,
+		chunkName:         parent.chunkName,
+		ioProvider:        parent.ioProvider,
+		osProvider:        parent.osProvider,
+		execProvider:      parent.execProvider,
+		exitHandler:       parent.exitHandler,
+		debugProvider:     parent.debugProvider,
+		chanProvider:      parent.chanProvider,
+		timeProvider:      parent.timeProvider,
+		processProvider:   parent.processProvider,
+		loadLibProvider:   parent.loadLibProvider,
+		printProvider:     parent.printProvider,
+		warnEnabled:       parent.warnEnabled,
+		ctx:               parent.ctx,
+		limits:            parent.limits,
+		callDepthBase:     parent.callDepthBase + len(parent.callStack),
+		closeDepth:        parent.closeDepth,
+		captureOutput:     parent.captureOutput,
+		outputLines:       parent.outputLines,
 	}
 }
 
@@ -751,6 +758,9 @@ func (vm *VM) GetTypeMeta(v Value) LuaTable {
 	if v.IsFunction() || v.IsNativeFunc() {
 		return vm.functionMeta
 	}
+	if v.IsLightUserdata() {
+		return vm.lightUserdataMeta
+	}
 	if v.IsTable() {
 		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
 			return vm.threadMeta
@@ -779,6 +789,8 @@ func (vm *VM) SetTypeMeta(v Value, mt LuaTable) {
 		vm.nilMeta = mt
 	} else if v.IsFunction() || v.IsNativeFunc() {
 		vm.functionMeta = mt
+	} else if v.IsLightUserdata() {
+		vm.lightUserdataMeta = mt
 	}
 }
 
@@ -831,6 +843,13 @@ func (vm *VM) ClosePendingTBC(errVal Value) (finalErr error) {
 		vm.callCloseHandlers(tbcToClose, errVal, false)
 	}()
 	return finalErr
+}
+
+// ClearCallStack empties the call stack so debug.getinfo level queries return
+// nil, while keeping the VM itself alive for hook queries and isyieldable.
+func (vm *VM) ClearCallStack() {
+	vm.callStack = vm.callStack[:0]
+	vm.top = 0
 }
 
 // ThreadObj returns the thread object representing this VM (for coroutine.running).

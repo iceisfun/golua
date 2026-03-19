@@ -633,7 +633,6 @@ func coWrap(v *vm.VM) int {
 // coroutine.close(co) -> ok [, errmsg]
 func coClose(v *vm.VM) int {
 	coTable := getThreadTable(v, 1, "coroutine.close")
-	threadTable := coTable
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
@@ -675,6 +674,10 @@ func coClose(v *vm.VM) int {
 	}
 
 	if status == statusDead {
+		coroutinesMu.Lock()
+		delete(coroutines, int(id))
+		coroutinesMu.Unlock()
+
 		// Close any pending TBC vars on the coroutine VM.
 		co.mu.Lock()
 		coVM := co.coVM
@@ -693,11 +696,11 @@ func coClose(v *vm.VM) int {
 			if closeErr := coVM.ClosePendingTBC(errVal); closeErr != nil {
 				coErr = closeErr
 			}
+			// Clear the call stack so debug.getinfo(co, level) returns nil,
+			// while keeping VMRef alive so gethook/isyieldable still work.
+			coVM.ClearCallStack()
 		}
 		if coErr != nil {
-			if threadTable != nil {
-				threadTable.SetVMRef(nil)
-			}
 			v.Set(0, vm.False)
 			if le, ok := coErr.(*vm.LuaError); ok {
 				v.Set(1, le.Value)
@@ -705,9 +708,6 @@ func coClose(v *vm.VM) int {
 				v.Set(1, vm.NewString(coErr.Error()))
 			}
 			return 2
-		}
-		if threadTable != nil {
-			threadTable.SetVMRef(nil)
 		}
 		v.Set(0, vm.True)
 		return 1
@@ -748,15 +748,16 @@ func coClose(v *vm.VM) int {
 	delete(coroutines, int(id))
 	coroutinesMu.Unlock()
 
-	// Check if __close handlers produced an error (e.g. from a nested
-	// coroutine.close chain exceeding the depth limit).
+	// Clear the call stack so debug.getinfo(co, level) returns nil,
+	// while keeping VMRef alive so gethook/isyieldable still work.
 	co.mu.Lock()
+	coVM := co.coVM
 	coErr := co.err
 	co.mu.Unlock()
+	if coVM != nil {
+		coVM.ClearCallStack()
+	}
 	if coErr != nil {
-		if threadTable != nil {
-			threadTable.SetVMRef(nil)
-		}
 		v.Set(0, vm.False)
 		if le, ok := coErr.(*vm.LuaError); ok {
 			v.Set(1, le.Value)
@@ -766,9 +767,6 @@ func coClose(v *vm.VM) int {
 		return 2
 	}
 
-	if threadTable != nil {
-		threadTable.SetVMRef(nil)
-	}
 	v.Set(0, vm.True)
 	return 1
 }

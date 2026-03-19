@@ -119,6 +119,46 @@ error(setmetatable({}, mt))
 	}
 }
 
+// TestRunCLI_TransformedErrorTostringPreservesInnerTraceback verifies that a
+// transformed error object returned from xpcall still carries the inner
+// __tostring failure traceback when later stringified at the CLI top level.
+func TestRunCLI_TransformedErrorTostringPreservesInnerTraceback(t *testing.T) {
+	dir := t.TempDir()
+	source := `local ok, err = xpcall(function()
+  error(setmetatable({}, {
+    __tostring = function()
+      error("inner")
+    end,
+  }))
+end, function(e)
+  return e
+end)
+print(ok)
+print(tostring(err))
+`
+	script := writeTempLua(t, dir, "transformed_tostring_err.lua", source)
+
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"lua", script}, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+
+	msg := stderr.String()
+	if !strings.Contains(msg, "inner") {
+		t.Fatalf("expected inner error message, got: %s", msg)
+	}
+	if !strings.Contains(msg, "[C]: in function 'error'") {
+		t.Fatalf("expected inner error frame, got: %s", msg)
+	}
+	if !strings.Contains(msg, "in function <") {
+		t.Fatalf("expected inner __tostring frame, got: %s", msg)
+	}
+	if !strings.Contains(msg, "[C]: in function 'tostring'") {
+		t.Fatalf("expected outer tostring frame, got: %s", msg)
+	}
+}
+
 func TestConfigureCLIProviders_TestModeUsesJailedIO(t *testing.T) {
 	dir := t.TempDir()
 	results, err := runLuaWithCLIProviders(t, true, dir, `

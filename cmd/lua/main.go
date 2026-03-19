@@ -252,6 +252,10 @@ func reportLuaError(v *vm.VM, err error, progName string, w io.Writer) {
 			// handler, so if it errors the combined traceback includes
 			// both the inner __tostring frames and the outer error() site.
 			outerTb := v.TracebackFromLastError("", 0)
+			// Explicitly clear the snapshot so the inner ProtectedCall
+			// can capture fresh inner frames (TracebackFromLastError
+			// doesn't consume when callStack is empty — our case after Run).
+			v.ClearLastErrorCallStack()
 			results, callErr := v.ProtectedCall(ts, []vm.Value{val})
 			if callErr != nil {
 				// __tostring errored — report the inner error first,

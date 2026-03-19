@@ -266,6 +266,14 @@ func (vm *VM) TracebackFromLastError(msg string, level int) string {
 	return out
 }
 
+// ClearLastErrorCallStack explicitly clears the saved error call stack snapshot,
+// allowing a subsequent ProtectedCall to capture a fresh snapshot. Used by the
+// CLI error reporter after consuming the outer traceback, before calling
+// __tostring which may trigger an inner error with its own traceback.
+func (vm *VM) ClearLastErrorCallStack() {
+	vm.lastErrorCallStack = nil
+}
+
 // HasLastErrorTraceback reports whether an error stack snapshot is available.
 func (vm *VM) HasLastErrorTraceback() bool {
 	return len(vm.lastErrorCallStack) > 0

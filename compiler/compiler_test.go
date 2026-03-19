@@ -676,11 +676,14 @@ func TestParenExpr(t *testing.T) {
 // extra OP_MOVE and wasting a register.
 //
 // PUC-Lua bytecode for "local x = 1; x = print(x)":
-//   VARARGPREP 0; LOADI 0 1; GETTABUP 1 0 0; MOVE 2 0; CALL 1 2 2; MOVE 0 1; RETURN 1 1 1
+//
+//	VARARGPREP 0; LOADI 0 1; GETTABUP 1 0 0; MOVE 2 0; CALL 1 2 2; MOVE 0 1; RETURN 1 1 1
+//
 // (7 instructions, 2 OP_MOVE: one for arg copy, one for final assignment)
 //
 // GoLua before fix (8 instructions, 3 OP_MOVE):
-//   VARARGPREP 0; LOADI 0 1; GETTABUP 2 0 0; MOVE 3 0; CALL 2 2 2; MOVE 1 2; MOVE 0 1; RETURN0
+//
+//	VARARGPREP 0; LOADI 0 1; GETTABUP 2 0 0; MOVE 3 0; CALL 2 2 2; MOVE 1 2; MOVE 0 1; RETURN0
 func TestAssignCallRegAlloc(t *testing.T) {
 	p := compile(t, `local x = 1; x = print(x)`)
 	moves := countOp(p, OP_MOVE)
@@ -792,7 +795,7 @@ func TestConstantFoldNegativeZero(t *testing.T) {
 	}{
 		{"mul_0_neg1", "return 0.0 * -1"},
 		{"add_neg0_neg0", "return -0.0 + -0.0"},
-		{"sub_0_0", "return 0.0 - 0.0"},     // positive zero, control case
+		{"sub_0_0", "return 0.0 - 0.0"}, // positive zero, control case
 		{"mul_neg0_1", "return -0.0 * 1"},
 	}
 	for _, tt := range tests {
