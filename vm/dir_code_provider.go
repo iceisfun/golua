@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -31,7 +32,7 @@ func NewDirCodeProvider(root string, caps LuaLoaderCaps) *DirCodeProvider {
 
 // LoadChunk reads a Lua source file from the jailed directory.
 // Absolute paths in the OS temp directory or within the root are also allowed.
-func (p *DirCodeProvider) LoadChunk(name string, caller *LuaCallerContext) ([]byte, string, error) {
+func (p *DirCodeProvider) LoadChunk(ctx context.Context, name string, caller *LuaCallerContext) ([]byte, string, error) {
 	if filepath.IsAbs(name) {
 		// Allow absolute paths within root or temp directory
 		absName, err := filepath.Abs(name)
@@ -64,7 +65,7 @@ func (p *DirCodeProvider) LoadChunk(name string, caller *LuaCallerContext) ([]by
 }
 
 // Capabilities returns the configured loader capabilities.
-func (p *DirCodeProvider) Capabilities() LuaLoaderCaps {
+func (p *DirCodeProvider) Capabilities(ctx context.Context) LuaLoaderCaps {
 	return p.caps
 }
 

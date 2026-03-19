@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestTableDeleteNilKeyReturnsError(t *testing.T) {
 
 func TestChannelDoubleCloseReturnsError(t *testing.T) {
 	provider := NewDefaultChanProvider()
-	ch := provider.NewChannel(0)
+	ch := provider.NewChannel(context.Background(), 0)
 	if err := ch.Close(); err != nil {
 		t.Fatalf("first close should succeed: %v", err)
 	}

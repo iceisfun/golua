@@ -26,7 +26,7 @@ func openChan(v *vm.VM) {
 		return
 	}
 
-	caps := provider.Capabilities()
+	caps := provider.Capabilities(v.Context())
 	chanTable := vm.NewEmptyTable()
 
 	chanTable.SetString("make", vm.NewNativeFunc(makeChanMake(v, provider)))
@@ -58,7 +58,7 @@ func makeChannelHandle(v *vm.VM, ch *vm.LuaChannel) vm.Value {
 	handle.SetString("__chan_id", vm.NewInt(ch.ID()))
 
 	provider := v.ChanProvider()
-	caps := provider.Capabilities()
+	caps := provider.Capabilities(v.Context())
 
 	if caps.AllowSend {
 		handle.SetString("send", vm.NewNativeFunc(makeChanSend(v, ch)))
@@ -107,7 +107,7 @@ func makeChanMake(v *vm.VM, provider vm.LuaChanProvider) vm.NativeFunc {
 			}
 			size = int(s)
 		}
-		ch := provider.NewChannel(size)
+		ch := provider.NewChannel(v.Context(), size)
 		v.Set(0, makeChannelHandle(v, ch))
 		return 1
 	}

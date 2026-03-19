@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -19,10 +20,10 @@ func main() {
 	fmt.Println()
 
 	provider := vm.NewDefaultChanProvider()
-	ch1 := provider.NewChannel(0) // unbuffered for synchronous handoff
-	ch2 := provider.NewChannel(0)
-	ch3 := provider.NewChannel(0)
-	done := provider.NewChannel(0)
+	ch1 := provider.NewChannel(context.Background(), 0) // unbuffered for synchronous handoff
+	ch2 := provider.NewChannel(context.Background(), 0)
+	ch3 := provider.NewChannel(context.Background(), 0)
+	done := provider.NewChannel(context.Background(), 0)
 
 	source := `
 		local names = {"alpha", "beta", "gamma"}

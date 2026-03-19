@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,20 +21,20 @@ func TestDirCodeProvider_DotPathComponent(t *testing.T) {
 	provider := NewDirCodeProvider(dir, LuaLoaderCaps{})
 
 	// "sub/test.lua" should work
-	_, _, err := provider.LoadChunk("sub/test.lua", nil)
+	_, _, err := provider.LoadChunk(context.Background(), "sub/test.lua", nil)
 	if err != nil {
 		t.Fatalf("LoadChunk sub/test.lua failed: %v", err)
 	}
 
 	// "sub/./test.lua" should also work (os.DirFS rejects "." components
 	// unless the path is cleaned first)
-	_, _, err = provider.LoadChunk("sub/./test.lua", nil)
+	_, _, err = provider.LoadChunk(context.Background(), "sub/./test.lua", nil)
 	if err != nil {
 		t.Fatalf("LoadChunk sub/./test.lua failed: %v", err)
 	}
 
 	// "./sub/test.lua" should also work
-	_, _, err = provider.LoadChunk("./sub/test.lua", nil)
+	_, _, err = provider.LoadChunk(context.Background(), "./sub/test.lua", nil)
 	if err != nil {
 		t.Fatalf("LoadChunk ./sub/test.lua failed: %v", err)
 	}

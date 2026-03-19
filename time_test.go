@@ -1,6 +1,7 @@
 package golua_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -89,16 +90,16 @@ func TestTimeTickKeyLimit(t *testing.T) {
 	// Fill up to the 10,000 key limit
 	for i := 0; i < 10000; i++ {
 		key := fmt.Sprintf("key_%d", i)
-		if !p.Tick(key, 999999999) {
+		if !p.Tick(context.Background(),key, 999999999) {
 			t.Fatalf("tick %d should have returned true", i)
 		}
 	}
 	// 10,001st key should be rejected
-	if p.Tick("overflow", 999999999) {
+	if p.Tick(context.Background(),"overflow", 999999999) {
 		t.Fatal("tick beyond limit should return false")
 	}
 	// Existing keys still work
-	if !p.Tick("key_0", 0) {
+	if !p.Tick(context.Background(),"key_0", 0) {
 		t.Fatal("existing key should still tick")
 	}
 }
@@ -107,12 +108,12 @@ func TestTimeTickKeyTruncation(t *testing.T) {
 	p := vm.NewDefaultTimeProvider()
 	long := string(make([]byte, 1000)) // 1000 zero bytes
 	// First call succeeds (truncated to 512)
-	if !p.Tick(long, 999999999) {
+	if !p.Tick(context.Background(),long, 999999999) {
 		t.Fatal("first tick with long key should return true")
 	}
 	// Same prefix matches (both truncate to the same 512 bytes)
 	long2 := string(make([]byte, 2000))
-	if p.Tick(long2, 999999999) {
+	if p.Tick(context.Background(),long2, 999999999) {
 		t.Fatal("same truncated key should return false")
 	}
 }
@@ -154,16 +155,16 @@ func TestTimeOnceKeyLimit(t *testing.T) {
 	// Fill up to the 10,000 key limit
 	for i := 0; i < 10000; i++ {
 		key := fmt.Sprintf("once_%d", i)
-		if !p.Once(key) {
+		if !p.Once(context.Background(),key) {
 			t.Fatalf("once %d should have returned true", i)
 		}
 	}
 	// 10,001st key should be rejected
-	if p.Once("overflow") {
+	if p.Once(context.Background(),"overflow") {
 		t.Fatal("once beyond limit should return false")
 	}
 	// Existing keys still return false (already fired)
-	if p.Once("once_0") {
+	if p.Once(context.Background(),"once_0") {
 		t.Fatal("existing key should return false on second call")
 	}
 }

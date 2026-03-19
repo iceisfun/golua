@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -24,7 +25,7 @@ type FileProvider struct {
 	dir string
 }
 
-func (p *FileProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (p *FileProvider) LoadChunk(ctx context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
 	path := filepath.Join(p.dir, name)
 	source, err := os.ReadFile(path)
 	if err != nil {
@@ -33,7 +34,7 @@ func (p *FileProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]by
 	return source, "@" + name, nil
 }
 
-func (p *FileProvider) Capabilities() vm.LuaLoaderCaps {
+func (p *FileProvider) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
 	return vm.LuaLoaderCaps{AllowDofile: true, AllowLoadfile: true}
 }
 

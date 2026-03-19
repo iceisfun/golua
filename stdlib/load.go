@@ -106,7 +106,7 @@ func openLoad(v *vm.VM) {
 	// loadfile and dofile depend on the code provider
 	provider := v.CodeProvider()
 	if provider != nil {
-		caps := provider.Capabilities()
+		caps := provider.Capabilities(v.Context())
 		if caps.AllowLoadfile {
 			v.SetGlobal("loadfile", vm.NewNativeFunc(luaLoadfile))
 		}
@@ -400,7 +400,7 @@ func luaLoadfile(v *vm.VM) int {
 		return 2
 	}
 
-	caps := provider.Capabilities()
+	caps := provider.Capabilities(v.Context())
 	if !caps.AllowLoadfile {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString("loadfile not permitted by code provider"))
@@ -438,7 +438,7 @@ func luaLoadfile(v *vm.VM) int {
 		source, chunkName, err = readChunkFromStdin()
 	} else {
 		ctx := v.CallerContext()
-		source, chunkName, err = provider.LoadChunk(filename, ctx)
+		source, chunkName, err = provider.LoadChunk(v.Context(), filename, ctx)
 	}
 	if err != nil {
 		v.Set(0, vm.Nil)
@@ -504,7 +504,7 @@ func luaDofile(v *vm.VM) int {
 		panic("dofile not available: no code provider configured")
 	}
 
-	caps := provider.Capabilities()
+	caps := provider.Capabilities(v.Context())
 	if !caps.AllowDofile {
 		panic("dofile not permitted by code provider")
 	}
@@ -528,7 +528,7 @@ func luaDofile(v *vm.VM) int {
 		source, chunkName, err = readChunkFromStdin()
 	} else {
 		ctx := v.CallerContext()
-		source, chunkName, err = provider.LoadChunk(filename, ctx)
+		source, chunkName, err = provider.LoadChunk(v.Context(), filename, ctx)
 	}
 	if err != nil {
 		panic(err.Error())

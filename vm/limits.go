@@ -84,7 +84,7 @@ func WithCaptureOutput(capture bool) VMOption {
 // Otherwise, falls back to the capture buffer (if enabled) or stdout.
 func (vm *VM) Print(line string) {
 	if vm.printProvider != nil {
-		vm.printProvider.Print(line)
+		vm.printProvider.Print(vm.ctx, line)
 		return
 	}
 	if vm.captureOutput && vm.outputLines != nil {
@@ -99,7 +99,7 @@ func (vm *VM) Print(line string) {
 // Otherwise, falls back to stderr.
 func (vm *VM) Warn(msg string) {
 	if vm.printProvider != nil {
-		vm.printProvider.Warn(msg)
+		vm.printProvider.Warn(vm.ctx, msg)
 		return
 	}
 	fmt.Fprintln(os.Stderr, msg)

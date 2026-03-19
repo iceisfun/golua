@@ -1,6 +1,7 @@
 package golua_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +23,7 @@ func NewTestFileProvider(basePath string) *TestFileProvider {
 	return &TestFileProvider{basePath: basePath}
 }
 
-func (p *TestFileProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (p *TestFileProvider) LoadChunk(ctx context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
 	// Resolve path relative to basePath
 	fullPath := filepath.Join(p.basePath, name)
 	source, err := os.ReadFile(fullPath)
@@ -32,7 +33,7 @@ func (p *TestFileProvider) LoadChunk(name string, caller *vm.LuaCallerContext) (
 	return source, "@" + name, nil
 }
 
-func (p *TestFileProvider) Capabilities() vm.LuaLoaderCaps {
+func (p *TestFileProvider) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
 	return vm.LuaLoaderCaps{
 		AllowDofile:   true,
 		AllowLoadfile: true,
@@ -329,7 +330,7 @@ type MockProvider struct {
 	caps  vm.LuaLoaderCaps
 }
 
-func (p *MockProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (p *MockProvider) LoadChunk(ctx context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
 	src, ok := p.files[name]
 	if !ok {
 		return nil, "", fmt.Errorf("cannot open '%s': no such file", name)
@@ -337,7 +338,7 @@ func (p *MockProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]by
 	return []byte(src), "@" + name, nil
 }
 
-func (p *MockProvider) Capabilities() vm.LuaLoaderCaps {
+func (p *MockProvider) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
 	return p.caps
 }
 
@@ -564,7 +565,7 @@ type providerCall struct {
 	caller vm.LuaCallerContext
 }
 
-func (p *contextRecordingProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (p *contextRecordingProvider) LoadChunk(ctx context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
 	if caller != nil {
 		p.calls = append(p.calls, providerCall{name: name, caller: *caller})
 	} else {
@@ -577,7 +578,7 @@ func (p *contextRecordingProvider) LoadChunk(name string, caller *vm.LuaCallerCo
 	return []byte(src), "@" + name, nil
 }
 
-func (p *contextRecordingProvider) Capabilities() vm.LuaLoaderCaps {
+func (p *contextRecordingProvider) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
 	return p.caps
 }
 

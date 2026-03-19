@@ -21,7 +21,7 @@ func openTime(v *vm.VM) {
 // Returns current time in milliseconds.
 func makeTimeNow(provider vm.LuaTimeProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		v.Set(0, vm.NewInt(provider.Now()))
+		v.Set(0, vm.NewInt(provider.Now(v.Context())))
 		return 1
 	}
 }
@@ -31,7 +31,7 @@ func makeTimeNow(provider vm.LuaTimeProvider) vm.NativeFunc {
 func makeTimeSince(provider vm.LuaTimeProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		t := getInt(v, 1, "time.since")
-		v.Set(0, vm.NewInt(provider.Now()-t))
+		v.Set(0, vm.NewInt(provider.Now(v.Context())-t))
 		return 1
 	}
 }
@@ -58,7 +58,7 @@ func makeTimeTick(provider vm.LuaTimeProvider) vm.NativeFunc {
 			}
 		}
 
-		v.Set(0, vm.NewBool(provider.Tick(key, ms)))
+		v.Set(0, vm.NewBool(provider.Tick(v.Context(), key, ms)))
 		return 1
 	}
 }
@@ -82,7 +82,7 @@ func makeTimeOnce(provider vm.LuaTimeProvider) vm.NativeFunc {
 			}
 		}
 
-		v.Set(0, vm.NewBool(provider.Once(key)))
+		v.Set(0, vm.NewBool(provider.Once(v.Context(), key)))
 		return 1
 	}
 }

@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -37,7 +38,7 @@ func (p *InMemoryProvider) Add(name, source string) {
 	p.scripts[name] = source
 }
 
-func (p *InMemoryProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (p *InMemoryProvider) LoadChunk(ctx context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
 	// Log who is requesting what (useful for debugging/auditing)
 	if caller != nil {
 		fmt.Printf("[Provider] Loading '%s' (requested by: %s)\n", name, caller.ScriptName)
@@ -55,7 +56,7 @@ func (p *InMemoryProvider) LoadChunk(name string, caller *vm.LuaCallerContext) (
 	return []byte(source), "@" + name, nil
 }
 
-func (p *InMemoryProvider) Capabilities() vm.LuaLoaderCaps {
+func (p *InMemoryProvider) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
 	return vm.LuaLoaderCaps{
 		AllowDofile:   true,
 		AllowLoadfile: true,
@@ -80,16 +81,16 @@ func NewRestrictedProvider(inner vm.LuaCodeProvider, allowed []string) *Restrict
 	}
 }
 
-func (p *RestrictedProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (p *RestrictedProvider) LoadChunk(ctx context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
 	// Check allowlist
 	if !p.allowlist[name] {
 		return nil, "", fmt.Errorf("access denied: %s", name)
 	}
-	return p.inner.LoadChunk(name, caller)
+	return p.inner.LoadChunk(ctx, name, caller)
 }
 
-func (p *RestrictedProvider) Capabilities() vm.LuaLoaderCaps {
-	return p.inner.Capabilities()
+func (p *RestrictedProvider) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
+	return p.inner.Capabilities(ctx)
 }
 
 func main() {

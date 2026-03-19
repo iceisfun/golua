@@ -728,6 +728,62 @@ v := vm.New(
 stdlib.Open(v)
 ```
 
+`vm.New()` defaults to `context.Background()`, so `v.Context()` is never nil.
+All provider interface methods receive this context, allowing them to respect
+cancellation, deadlines, and request-scoped values.
+
+## VM Lifecycle: Close, Initializable, Shutdownable
+
+Providers can optionally implement lifecycle interfaces for setup and teardown:
+
+```go
+// Initializable is called when a provider is set on a VM.
+type Initializable interface {
+    Initialize(ctx context.Context) error
+}
+
+// Shutdownable is called when VM.Close is invoked.
+type Shutdownable interface {
+    Shutdown(ctx context.Context) error
+}
+```
+
+Call `v.Close(ctx)` when you are done with a VM to let providers release
+resources (close connections, stop goroutines, flush buffers, etc.):
+
+```go
+v := vm.New(vm.WithContext(ctx))
+v.SetIoProvider(vm.NewFullIoProvider("/app/data"))
+stdlib.Open(v)
+
+_, err := v.Run(proto)
+// ... handle err ...
+
+if err := v.Close(ctx); err != nil {
+    log.Printf("cleanup error: %v", err)
+}
+```
+
+`Close` iterates all set providers and calls `Shutdown` on any that implement
+`Shutdownable`. It returns the first error encountered. Providers that do not
+implement `Shutdownable` are silently skipped.
+
+A custom provider using both interfaces:
+
+```go
+type DBProvider struct {
+    db *sql.DB
+}
+
+func (p *DBProvider) Initialize(ctx context.Context) error {
+    return p.db.PingContext(ctx)
+}
+
+func (p *DBProvider) Shutdown(ctx context.Context) error {
+    return p.db.Close()
+}
+```
+
 ## Custom File Systems And Code Loading
 
 You can implement your own providers to virtualize I/O and code loading.
@@ -741,18 +797,23 @@ Implement `vm.LuaIoProvider` and `vm.LuaFile` to back `io.*` with any storage
 ```go
 type EmbedIoProvider struct { fsys fs.FS }
 
-func (p *EmbedIoProvider) Open(name, mode string) (vm.LuaFile, error) { /* ... */ }
-func (p *EmbedIoProvider) Capabilities() vm.LuaIoCaps {
+func (p *EmbedIoProvider) Open(ctx context.Context, name, mode string) (vm.LuaFile, error) { /* ... */ }
+func (p *EmbedIoProvider) Capabilities(ctx context.Context) vm.LuaIoCaps {
     return vm.LuaIoCaps{AllowRead: true, AllowWrite: false}
 }
-func (p *EmbedIoProvider) Stdin() vm.LuaFile  { return nil }
-func (p *EmbedIoProvider) Stdout() vm.LuaFile { return nil }
-func (p *EmbedIoProvider) Stderr() vm.LuaFile { return nil }
-func (p *EmbedIoProvider) TmpName() (string, error) { return "", fmt.Errorf("unsupported") }
-func (p *EmbedIoProvider) TmpFile() (vm.LuaFile, error) { return nil, fmt.Errorf("unsupported") }
-func (p *EmbedIoProvider) Remove(string) error { return fmt.Errorf("unsupported") }
-func (p *EmbedIoProvider) Rename(string, string) error { return fmt.Errorf("unsupported") }
+func (p *EmbedIoProvider) Stdin(ctx context.Context) vm.LuaFile  { return nil }
+func (p *EmbedIoProvider) Stdout(ctx context.Context) vm.LuaFile { return nil }
+func (p *EmbedIoProvider) Stderr(ctx context.Context) vm.LuaFile { return nil }
+func (p *EmbedIoProvider) TmpName(ctx context.Context) (string, error) { return "", fmt.Errorf("unsupported") }
+func (p *EmbedIoProvider) TmpFile(ctx context.Context) (vm.LuaFile, error) { return nil, fmt.Errorf("unsupported") }
+func (p *EmbedIoProvider) Remove(ctx context.Context, _ string) error { return fmt.Errorf("unsupported") }
+func (p *EmbedIoProvider) Rename(ctx context.Context, _, _ string) error { return fmt.Errorf("unsupported") }
 ```
+
+All provider interface methods take `ctx context.Context` as their first
+parameter. The VM passes its own context (from `vm.WithContext(ctx)` or
+`context.Background()` by default) through to every provider call. This lets
+providers respect cancellation, deadlines, and request-scoped values.
 
 ### Custom code provider
 
@@ -765,7 +826,7 @@ type InMemoryLoader struct {
     files map[string]string
 }
 
-func (l *InMemoryLoader) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (l *InMemoryLoader) LoadChunk(ctx context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
     src, ok := l.files[name]
     if !ok {
         return nil, "", fmt.Errorf("module %q not found", name)
@@ -773,7 +834,7 @@ func (l *InMemoryLoader) LoadChunk(name string, caller *vm.LuaCallerContext) ([]
     return []byte(src), "@" + name, nil
 }
 
-func (l *InMemoryLoader) Capabilities() vm.LuaLoaderCaps {
+func (l *InMemoryLoader) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
     return vm.LuaLoaderCaps{AllowDofile: true, AllowLoadfile: true}
 }
 ```
@@ -795,5 +856,7 @@ Good defaults:
 - use `ProtectedCall` for Lua callbacks
 - use `LuaError` for Lua-facing errors
 - only bring in providers when the host actually wants those capabilities
+- all provider and LuaFile interface methods take ctx context.Context as first param; vm.New() defaults to context.Background()
+- call v.Close(ctx) to shut down providers that implement Shutdownable; providers may also implement Initializable
 
 The goal of this skill is not to explain the repo internals. It is to help an assistant build correct, practical host integrations quickly.

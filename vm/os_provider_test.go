@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -21,7 +22,7 @@ func TestIsDSTHint(t *testing.T) {
 	// With isdst=true (DST/EDT), mktime interprets as UTC-4 -> unix = wallclock + 4h
 	// With isdst=false (standard/EST), mktime interprets as UTC-5 -> unix = wallclock + 5h
 	// So t2 (isdst=false) should be 3600 seconds greater than t1 (isdst=true).
-	t1, _, err := p.Time(&LuaTimeInput{
+	t1, _, err := p.Time(context.Background(), &LuaTimeInput{
 		Year: 2000, Month: 7, Day: 1, Hour: 12, Min: 0, Sec: 0,
 		HasIsDST: true, IsDST: true,
 	})
@@ -29,7 +30,7 @@ func TestIsDSTHint(t *testing.T) {
 		t.Fatalf("Time with isdst=true failed: %v", err)
 	}
 
-	t2, _, err := p.Time(&LuaTimeInput{
+	t2, _, err := p.Time(context.Background(), &LuaTimeInput{
 		Year: 2000, Month: 7, Day: 1, Hour: 12, Min: 0, Sec: 0,
 		HasIsDST: true, IsDST: false,
 	})
@@ -43,7 +44,7 @@ func TestIsDSTHint(t *testing.T) {
 	}
 
 	// Without isdst hint, July is DST in New York -> should match isdst=true
-	t3, _, err := p.Time(&LuaTimeInput{
+	t3, _, err := p.Time(context.Background(), &LuaTimeInput{
 		Year: 2000, Month: 7, Day: 1, Hour: 12, Min: 0, Sec: 0,
 	})
 	if err != nil {
@@ -58,31 +59,32 @@ func TestSetLocaleTracking(t *testing.T) {
 	p := NewDefaultOsProvider()
 
 	// Initial state should be "C"
-	cur, ok := p.SetLocale("\x00query", "all")
+	ctx := context.Background()
+	cur, ok := p.SetLocale(ctx, "\x00query", "all")
 	if !ok || cur != "C" {
 		t.Errorf("initial locale should be 'C', got %q (ok=%v)", cur, ok)
 	}
 
 	// Set to "C" explicitly
-	r, ok := p.SetLocale("C", "all")
+	r, ok := p.SetLocale(ctx, "C", "all")
 	if !ok || r != "C" {
 		t.Errorf("setlocale('C') should return 'C', got %q", r)
 	}
 
 	// Query again
-	cur, ok = p.SetLocale("\x00query", "all")
+	cur, ok = p.SetLocale(ctx, "\x00query", "all")
 	if !ok || cur != "C" {
 		t.Errorf("locale after setlocale('C') should be 'C', got %q", cur)
 	}
 
 	// Unsupported locale returns false
-	_, ok = p.SetLocale("fr_FR", "all")
+	_, ok = p.SetLocale(ctx, "fr_FR", "all")
 	if ok {
 		t.Errorf("unsupported locale should return false")
 	}
 
 	// After failed set, locale should remain "C"
-	cur, ok = p.SetLocale("\x00query", "all")
+	cur, ok = p.SetLocale(ctx, "\x00query", "all")
 	if !ok || cur != "C" {
 		t.Errorf("locale should remain 'C' after failed set, got %q", cur)
 	}

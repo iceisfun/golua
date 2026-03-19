@@ -1,5 +1,7 @@
 package vm
 
+import "context"
+
 // LuaLoadLibProvider controls package.loadlib() behavior.
 //
 // Standard C Lua modules (.so/.dll) cannot be loaded directly — they are
@@ -22,5 +24,5 @@ type LuaLoadLibProvider interface {
 	// On success, return a NativeFunc with empty errmsg/where. On failure,
 	// return a nil loader plus an error message and one of Lua's failure tags:
 	// "open", "init", or "absent".
-	LoadLib(path, init string, caller *LuaCallerContext) (loader NativeFunc, errmsg string, where string)
+	LoadLib(ctx context.Context, path, init string, caller *LuaCallerContext) (loader NativeFunc, errmsg string, where string)
 }

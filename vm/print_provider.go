@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"fmt"
 	"os"
 )
@@ -11,11 +12,11 @@ import (
 type LuaPrintProvider interface {
 	// Print handles output from Lua's print() function.
 	// msg is the tab-joined, newline-free string that print() produces.
-	Print(msg string)
+	Print(ctx context.Context, msg string)
 
 	// Warn handles output from Lua's warn() function.
 	// msg already includes the "Lua warning: " prefix.
-	Warn(msg string)
+	Warn(ctx context.Context, msg string)
 }
 
 // DefaultPrintProvider writes print() to stdout and warn() to stderr,
@@ -28,11 +29,11 @@ func NewDefaultPrintProvider() *DefaultPrintProvider {
 }
 
 // Print writes msg to stdout with a trailing newline.
-func (p *DefaultPrintProvider) Print(msg string) {
+func (p *DefaultPrintProvider) Print(ctx context.Context, msg string) {
 	fmt.Println(msg)
 }
 
 // Warn writes msg to stderr with a trailing newline.
-func (p *DefaultPrintProvider) Warn(msg string) {
+func (p *DefaultPrintProvider) Warn(ctx context.Context, msg string) {
 	fmt.Fprintln(os.Stderr, msg)
 }

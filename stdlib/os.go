@@ -99,7 +99,7 @@ func openOs(v *vm.VM) {
 	}
 
 	osTable := vm.NewEmptyTable()
-	caps := provider.Capabilities()
+	caps := provider.Capabilities(v.Context())
 
 	if caps.AllowTime {
 		osTable.SetString("clock", vm.NewNativeFunc(makeOsClock(provider)))
@@ -159,7 +159,7 @@ func makeOsExecute(provider vm.LuaExecProvider) vm.NativeFunc {
 		if !cmd.IsString() && !cmd.IsNumber() {
 			callerArgError(v, 1, "os.execute", fmt.Sprintf("string expected, got %s", cmd.Type()))
 		}
-		ok, exitType, exitCode := provider.Execute(valueToString(cmd))
+		ok, exitType, exitCode := provider.Execute(v.Context(), valueToString(cmd))
 		if ok {
 			v.Set(0, vm.True)
 		} else {
@@ -174,7 +174,7 @@ func makeOsExecute(provider vm.LuaExecProvider) vm.NativeFunc {
 // makeOsClock creates the os.clock() function.
 func makeOsClock(provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		v.Set(0, vm.NewFloat(provider.Clock()))
+		v.Set(0, vm.NewFloat(provider.Clock(v.Context())))
 		return 1
 	}
 }
@@ -184,7 +184,8 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		arg := v.Get(1)
 		if arg.IsNil() {
-			ts, _, err := provider.Time(nil)
+			ctx := v.Context()
+			ts, _, err := provider.Time(ctx, nil)
 			if err != nil {
 				panic(err.Error())
 			}
@@ -268,7 +269,7 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			dateTable.IsDST = isdstVal.ToBool()
 		}
 
-		ts, norm, err := provider.Time(dateTable)
+		ts, norm, err := provider.Time(v.Context(), dateTable)
 		if err != nil {
 			panic(err.Error())
 		}
@@ -324,7 +325,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			}
 			timestamp = ts
 		} else {
-			ts, _, _ := provider.Time(nil)
+			ts, _, _ := provider.Time(v.Context(), nil)
 			timestamp = ts
 		}
 
@@ -337,7 +338,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		}
 
 		if checkFmt == "*t" {
-			dt := provider.DateTable(timestamp, utc)
+			dt := provider.DateTable(v.Context(), timestamp, utc)
 			// Match Lua 5.4: reject timestamps that C's gmtime/localtime can't represent.
 			if dt.Year > math.MaxInt32+1900 || dt.Year < math.MinInt32+1900 {
 				panic("date result cannot be represented in this installation")
@@ -356,7 +357,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			return 1
 		}
 
-		result, err := provider.Date(format, timestamp)
+		result, err := provider.Date(v.Context(), format, timestamp)
 		if err != nil {
 			errMsg := err.Error()
 			if strings.HasPrefix(errMsg, "date result") {
@@ -380,7 +381,7 @@ func setOSDateField(v *vm.VM, tableVal vm.Value, key string, value vm.Value) {
 // makeOsTmpname creates the os.tmpname() function.
 func makeOsTmpname(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		name, err := ioProvider.TmpName()
+		name, err := ioProvider.TmpName(v.Context())
 		if err != nil {
 			panic(fmt.Sprintf("unable to generate a unique filename: %s", err.Error()))
 		}
@@ -403,7 +404,7 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 			callerArgError(v, 1, "os.remove", fmt.Sprintf("string expected, got %s", name.Type()))
 		}
 		nameStr := valueToString(name)
-		err := ioProvider.Remove(nameStr)
+		err := ioProvider.Remove(v.Context(), nameStr)
 		if err != nil {
 			msg, errno := formatPathError(nameStr, err)
 			v.Set(0, vm.Nil)
@@ -443,7 +444,7 @@ func makeOsSetlocale(provider vm.LuaOsProvider) vm.NativeFunc {
 			}
 		}
 
-		if result, ok := provider.SetLocale(locale, category); ok {
+		if result, ok := provider.SetLocale(v.Context(), locale, category); ok {
 			v.Set(0, vm.NewString(result))
 			return 1
 		}
@@ -478,7 +479,7 @@ func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 		}
 		oldname := valueToString(arg1)
 		newname := valueToString(arg2)
-		err := ioProvider.Rename(oldname, newname)
+		err := ioProvider.Rename(v.Context(), oldname, newname)
 		if err != nil {
 			errMsg, errno := formatErrorNoPath(err)
 			v.Set(0, vm.Nil)
@@ -522,7 +523,7 @@ func makeOsExit(vmRef *vm.VM, handler vm.LuaExitHandler) vm.NativeFunc {
 			v.CloseAllTBC()
 		}
 
-		handler.Exit(code, closeFlag)
+		handler.Exit(v.Context(), code, closeFlag)
 		return 0 // unreachable
 	}
 }
@@ -541,7 +542,7 @@ func makeOsGetenv(provider vm.LuaOsProvider) vm.NativeFunc {
 			callerArgError(v, 1, "os.getenv", fmt.Sprintf("string expected, got %s", name.Type()))
 		}
 
-		val, ok := provider.Getenv(valueToString(name))
+		val, ok := provider.Getenv(v.Context(), valueToString(name))
 		if !ok {
 			v.Set(0, vm.Nil)
 			return 1

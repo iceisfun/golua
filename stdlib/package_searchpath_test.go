@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -13,14 +14,14 @@ type testCodeProvider struct {
 	caps  vm.LuaLoaderCaps
 }
 
-func (p *testCodeProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (p *testCodeProvider) LoadChunk(_ context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
 	if src, ok := p.files[name]; ok {
 		return []byte(src), "@" + name, nil
 	}
 	return nil, "", fmt.Errorf("not found: %s", name)
 }
 
-func (p *testCodeProvider) Capabilities() vm.LuaLoaderCaps {
+func (p *testCodeProvider) Capabilities(_ context.Context) vm.LuaLoaderCaps {
 	return p.caps
 }
 

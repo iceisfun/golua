@@ -366,7 +366,7 @@ func TestChan_DeadlineRecv(t *testing.T) {
 
 func TestChan_GoToLua(t *testing.T) {
 	provider := vm.NewDefaultChanProvider()
-	ch := provider.NewChannel(1)
+	ch := provider.NewChannel(context.Background(), 1)
 
 	// Go goroutine sends a value
 	go func() {
@@ -393,7 +393,7 @@ func TestChan_GoToLua(t *testing.T) {
 
 func TestChan_LuaToGo(t *testing.T) {
 	provider := vm.NewDefaultChanProvider()
-	ch := provider.NewChannel(1)
+	ch := provider.NewChannel(context.Background(), 1)
 
 	source := `
 		go_ch:send(123)
@@ -415,7 +415,7 @@ func TestChan_LuaToGo(t *testing.T) {
 
 func TestChan_WrapChannel(t *testing.T) {
 	provider := vm.NewDefaultChanProvider()
-	ch := provider.NewChannel(1)
+	ch := provider.NewChannel(context.Background(), 1)
 
 	source := `
 		assert(type(go_ch) == "table", "expected table for wrapped channel")
@@ -465,7 +465,7 @@ func TestChan_VMBoundary(t *testing.T) {
 	// Create two separate VMs with different providers
 	provider1 := vm.NewDefaultChanProvider()
 	provider2 := vm.NewDefaultChanProvider()
-	ch := provider1.NewChannel(1)
+	ch := provider1.NewChannel(context.Background(), 1)
 
 	source := `
 		local ok, err = pcall(function()

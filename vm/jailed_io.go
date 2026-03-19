@@ -2,6 +2,7 @@ package vm
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -25,7 +26,7 @@ func NewJailedIoProvider(root string) *JailedIoProvider {
 
 // Open opens a file within the jailed directory. Only read modes ("r", "rb")
 // are permitted; write attempts return an error.
-func (p *JailedIoProvider) Open(name string, mode string) (LuaFile, error) {
+func (p *JailedIoProvider) Open(ctx context.Context, name string, mode string) (LuaFile, error) {
 	// Only allow read modes
 	if mode != "r" && mode != "rb" {
 		return nil, fmt.Errorf("JailedIoProvider: write mode '%s' not permitted", mode)
@@ -43,7 +44,7 @@ func (p *JailedIoProvider) Open(name string, mode string) (LuaFile, error) {
 }
 
 // Capabilities returns caps with read-only access enabled.
-func (p *JailedIoProvider) Capabilities() LuaIoCaps {
+func (p *JailedIoProvider) Capabilities(ctx context.Context) LuaIoCaps {
 	return LuaIoCaps{
 		AllowRead:  true,
 		AllowWrite: false,
@@ -51,31 +52,31 @@ func (p *JailedIoProvider) Capabilities() LuaIoCaps {
 }
 
 // Stdin returns nil (not supported in jailed provider).
-func (p *JailedIoProvider) Stdin() LuaFile { return nil }
+func (p *JailedIoProvider) Stdin(ctx context.Context) LuaFile { return nil }
 
 // Stdout returns nil (not supported in jailed provider).
-func (p *JailedIoProvider) Stdout() LuaFile { return nil }
+func (p *JailedIoProvider) Stdout(ctx context.Context) LuaFile { return nil }
 
 // Stderr returns nil (not supported in jailed provider).
-func (p *JailedIoProvider) Stderr() LuaFile { return nil }
+func (p *JailedIoProvider) Stderr(ctx context.Context) LuaFile { return nil }
 
 // TmpName is not supported in jailed provider.
-func (p *JailedIoProvider) TmpName() (string, error) {
+func (p *JailedIoProvider) TmpName(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("os.tmpname not available in jailed IO provider")
 }
 
 // Remove is not supported in jailed provider.
-func (p *JailedIoProvider) Remove(name string) error {
+func (p *JailedIoProvider) Remove(ctx context.Context, name string) error {
 	return fmt.Errorf("os.remove not available in jailed IO provider")
 }
 
 // TmpFile is not supported in jailed provider.
-func (p *JailedIoProvider) TmpFile() (LuaFile, error) {
+func (p *JailedIoProvider) TmpFile(ctx context.Context) (LuaFile, error) {
 	return nil, fmt.Errorf("io.tmpfile not available in jailed IO provider")
 }
 
 // Rename is not supported in jailed provider.
-func (p *JailedIoProvider) Rename(oldname, newname string) error {
+func (p *JailedIoProvider) Rename(ctx context.Context, oldname, newname string) error {
 	return fmt.Errorf("os.rename not available in jailed IO provider")
 }
 
@@ -86,7 +87,7 @@ type jailedFile struct {
 	closed bool
 }
 
-func (f *jailedFile) Read(format string) (string, error) {
+func (f *jailedFile) Read(ctx context.Context, format string) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to read from a closed file")
 	}
@@ -125,7 +126,7 @@ func (f *jailedFile) Read(format string) (string, error) {
 	return "", fmt.Errorf("invalid read format: %s", format)
 }
 
-func (f *jailedFile) ReadBytes(n int) (string, error) {
+func (f *jailedFile) ReadBytes(ctx context.Context, n int) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to read from a closed file")
 	}
@@ -149,7 +150,7 @@ func (f *jailedFile) ReadBytes(n int) (string, error) {
 	return string(buf[:nRead]), nil
 }
 
-func (f *jailedFile) Close() error {
+func (f *jailedFile) Close(ctx context.Context) error {
 	if f.closed {
 		return fmt.Errorf("attempt to close a closed file")
 	}
@@ -157,27 +158,27 @@ func (f *jailedFile) Close() error {
 	return f.file.Close()
 }
 
-func (f *jailedFile) IsClosed() bool {
+func (f *jailedFile) IsClosed(ctx context.Context) bool {
 	return f.closed
 }
 
-func (f *jailedFile) Write(data string) error {
+func (f *jailedFile) Write(ctx context.Context, data string) error {
 	return fmt.Errorf("write not supported in jailed IO provider")
 }
 
-func (f *jailedFile) Seek(whence string, offset int64) (int64, error) {
+func (f *jailedFile) Seek(ctx context.Context, whence string, offset int64) (int64, error) {
 	return 0, fmt.Errorf("seek not supported in jailed IO provider")
 }
 
-func (f *jailedFile) Flush() error {
+func (f *jailedFile) Flush(ctx context.Context) error {
 	return fmt.Errorf("flush not supported in jailed IO provider")
 }
 
-func (f *jailedFile) SetVBuf(mode string, size int) error {
+func (f *jailedFile) SetVBuf(ctx context.Context, mode string, size int) error {
 	return fmt.Errorf("setvbuf not supported in jailed IO provider")
 }
 
-func (f *jailedFile) IsStd() bool {
+func (f *jailedFile) IsStd(ctx context.Context) bool {
 	return false
 }
 

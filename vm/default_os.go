@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -34,12 +35,12 @@ func NewFilteredOsProvider(filter func(string) bool) *DefaultOsProvider {
 }
 
 // Clock returns CPU time in seconds since the VM started.
-func (p *DefaultOsProvider) Clock() float64 {
+func (p *DefaultOsProvider) Clock(ctx context.Context) float64 {
 	return time.Since(p.startTime).Seconds()
 }
 
 // Time returns the current Unix timestamp, or constructs one from dateTable fields.
-func (p *DefaultOsProvider) Time(dateTable *LuaTimeInput) (int64, *LuaDateTime, error) {
+func (p *DefaultOsProvider) Time(ctx context.Context, dateTable *LuaTimeInput) (int64, *LuaDateTime, error) {
 	if dateTable == nil {
 		return time.Now().Unix(), nil, nil
 	}
@@ -52,7 +53,7 @@ func (p *DefaultOsProvider) Time(dateTable *LuaTimeInput) (int64, *LuaDateTime, 
 }
 
 // Date formats a timestamp using strftime-style format specifiers.
-func (p *DefaultOsProvider) Date(format string, timestamp int64) (string, error) {
+func (p *DefaultOsProvider) Date(ctx context.Context, format string, timestamp int64) (string, error) {
 	t := time.Unix(timestamp, 0)
 
 	// Check for ! prefix (UTC)
@@ -73,7 +74,7 @@ func (p *DefaultOsProvider) Date(format string, timestamp int64) (string, error)
 }
 
 // DateTable returns a map of date/time components for the given timestamp.
-func (p *DefaultOsProvider) DateTable(timestamp int64, utc bool) *LuaDateTime {
+func (p *DefaultOsProvider) DateTable(ctx context.Context, timestamp int64, utc bool) *LuaDateTime {
 	t := time.Unix(timestamp, 0)
 	if utc {
 		t = t.UTC()
@@ -150,7 +151,7 @@ func resolveLocalTime(input LuaTimeInput) (time.Time, bool) {
 }
 
 // Getenv returns an environment variable, respecting the optional filter.
-func (p *DefaultOsProvider) Getenv(name string) (string, bool) {
+func (p *DefaultOsProvider) Getenv(ctx context.Context, name string) (string, bool) {
 	if p.envFilter != nil && !p.envFilter(name) {
 		return "", false
 	}
@@ -164,7 +165,7 @@ func (p *DefaultOsProvider) Getenv(name string) (string, bool) {
 //   - set "" → set to system default from environment
 //
 // Any other locale is treated as unsupported (returns nil).
-func (p *DefaultOsProvider) SetLocale(locale, category string) (string, bool) {
+func (p *DefaultOsProvider) SetLocale(ctx context.Context, locale, category string) (string, bool) {
 	if locale == "\x00query" {
 		// Query current locale (nil arg in Lua maps to this sentinel)
 		return p.locale, true
@@ -211,7 +212,7 @@ func localeFromEnv(category string) string {
 }
 
 // Capabilities returns caps with all OS operations enabled.
-func (p *DefaultOsProvider) Capabilities() LuaOsCaps {
+func (p *DefaultOsProvider) Capabilities(ctx context.Context) LuaOsCaps {
 	return LuaOsCaps{
 		AllowTime:    true,
 		AllowDate:    true,

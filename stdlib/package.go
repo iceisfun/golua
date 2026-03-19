@@ -82,7 +82,7 @@ func makePackageLoadlib(provider vm.LuaLoadLibProvider) vm.NativeFunc {
 			return 3
 		}
 
-		loader, errmsg, where := provider.LoadLib(path, init, v.CallerContext())
+		loader, errmsg, where := provider.LoadLib(v.Context(), path, init, v.CallerContext())
 		if loader == nil {
 			if errmsg == "" {
 				errmsg = "dynamic library loader returned no loader"
@@ -260,7 +260,7 @@ func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 			}
 
 			ctx := v.CallerContext()
-			source, chunkName, err := provider.LoadChunk(path, ctx)
+			source, chunkName, err := provider.LoadChunk(v.Context(), path, ctx)
 			if err != nil {
 				appendNoFileErr(&errBuf, path)
 				continue
@@ -387,7 +387,7 @@ func luaSearchPath(v *vm.VM) int {
 	var errBuf strings.Builder
 	for _, p := range paths {
 		if provider != nil {
-			if _, _, err := provider.LoadChunk(p, caller); err == nil {
+			if _, _, err := provider.LoadChunk(v.Context(), p, caller); err == nil {
 				v.Set(0, vm.NewString(p))
 				return 1
 			}

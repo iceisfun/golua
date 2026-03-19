@@ -1,13 +1,16 @@
 package vm
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // LuaExitHandler is a capability interface for handling os.exit calls.
 // Implementations control what happens when Lua code calls os.exit.
 type LuaExitHandler interface {
 	// Exit handles an os.exit call with the given exit code.
 	// If close is true, to-be-closed variables should be closed first.
-	Exit(code int, close bool)
+	Exit(ctx context.Context, code int, close bool)
 }
 
 // LuaExitError is a sentinel error used by DefaultExitHandler to stop VM
@@ -32,6 +35,6 @@ func NewDefaultExitHandler() *DefaultExitHandler {
 
 // Exit panics with LuaExitError to stop VM execution.
 // The close parameter is handled by os.exit before calling this handler.
-func (h *DefaultExitHandler) Exit(code int, close bool) {
+func (h *DefaultExitHandler) Exit(ctx context.Context, code int, close bool) {
 	panic(&LuaExitError{Code: code})
 }

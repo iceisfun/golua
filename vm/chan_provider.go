@@ -27,8 +27,8 @@ type LuaChanCaps struct {
 // Channels are a GoLua extension (not part of standard Lua) that enable
 // safe communication between Lua coroutines and Go goroutines.
 type LuaChanProvider interface {
-	NewChannel(size int) *LuaChannel
-	Capabilities() LuaChanCaps
+	NewChannel(ctx context.Context, size int) *LuaChannel
+	Capabilities(ctx context.Context) LuaChanCaps
 }
 
 // LuaChannel wraps a Go channel for use in Lua.
@@ -136,7 +136,7 @@ func NewDefaultChanProvider() *DefaultChanProvider {
 }
 
 // NewChannel creates a new channel with the given buffer size.
-func (p *DefaultChanProvider) NewChannel(size int) *LuaChannel {
+func (p *DefaultChanProvider) NewChannel(ctx context.Context, size int) *LuaChannel {
 	id := p.nextID.Add(1)
 	return &LuaChannel{
 		id:       id,
@@ -146,7 +146,7 @@ func (p *DefaultChanProvider) NewChannel(size int) *LuaChannel {
 }
 
 // Capabilities returns caps with all channel operations enabled.
-func (p *DefaultChanProvider) Capabilities() LuaChanCaps {
+func (p *DefaultChanProvider) Capabilities(ctx context.Context) LuaChanCaps {
 	return LuaChanCaps{
 		AllowSend:    true,
 		AllowRecv:    true,

@@ -1,5 +1,7 @@
 package vm
 
+import "context"
+
 // LuaCallerContext describes the Lua frame that requested a chunk load.
 type LuaCallerContext struct {
 	// ScriptName is the display name of the currently executing chunk.
@@ -38,9 +40,9 @@ type LuaCodeProvider interface {
 	//   - a display name for stack traces / debug
 	//   - error if not permitted or not found
 	//
-	LoadChunk(name string, caller *LuaCallerContext) (source []byte, chunkName string, err error)
+	LoadChunk(ctx context.Context, name string, caller *LuaCallerContext) (source []byte, chunkName string, err error)
 
 	// Capabilities declares which optional behaviors are allowed.
 	// This lets Lua expose or hide helpers safely.
-	Capabilities() LuaLoaderCaps
+	Capabilities(ctx context.Context) LuaLoaderCaps
 }

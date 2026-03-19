@@ -2,6 +2,7 @@ package vm
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -52,7 +53,7 @@ func (p *FullIoProvider) resolvePath(name string) (string, error) {
 }
 
 // Open opens a file within the provider's root directory.
-func (p *FullIoProvider) Open(name string, mode string) (LuaFile, error) {
+func (p *FullIoProvider) Open(ctx context.Context, name string, mode string) (LuaFile, error) {
 	// Reject empty filenames — Go's os.Open("") opens cwd as a directory,
 	// but C's fopen("", ...) returns ENOENT which is what Lua expects.
 	if name == "" {
@@ -95,7 +96,7 @@ func (p *FullIoProvider) Open(name string, mode string) (LuaFile, error) {
 }
 
 // Capabilities returns caps with full read/write access.
-func (p *FullIoProvider) Capabilities() LuaIoCaps {
+func (p *FullIoProvider) Capabilities(ctx context.Context) LuaIoCaps {
 	return LuaIoCaps{
 		AllowRead:  true,
 		AllowWrite: true,
@@ -103,17 +104,17 @@ func (p *FullIoProvider) Capabilities() LuaIoCaps {
 }
 
 // Stdin returns the standard input file handle.
-func (p *FullIoProvider) Stdin() LuaFile { return p.stdin }
+func (p *FullIoProvider) Stdin(ctx context.Context) LuaFile { return p.stdin }
 
 // Stdout returns the standard output file handle.
-func (p *FullIoProvider) Stdout() LuaFile { return p.stdout }
+func (p *FullIoProvider) Stdout(ctx context.Context) LuaFile { return p.stdout }
 
 // Stderr returns the standard error file handle.
-func (p *FullIoProvider) Stderr() LuaFile { return p.stderr }
+func (p *FullIoProvider) Stderr(ctx context.Context) LuaFile { return p.stderr }
 
 // TmpName creates a temporary file name. It creates a temp file, closes it,
 // removes it, and returns the path -- matching Lua 5.4 os.tmpname behavior.
-func (p *FullIoProvider) TmpName() (string, error) {
+func (p *FullIoProvider) TmpName(ctx context.Context) (string, error) {
 	f, err := os.CreateTemp("", "lua_")
 	if err != nil {
 		return "", err
@@ -125,7 +126,7 @@ func (p *FullIoProvider) TmpName() (string, error) {
 }
 
 // Remove removes a file or empty directory.
-func (p *FullIoProvider) Remove(name string) error {
+func (p *FullIoProvider) Remove(ctx context.Context, name string) error {
 	path, err := p.resolvePath(name)
 	if err != nil {
 		return err
@@ -135,7 +136,7 @@ func (p *FullIoProvider) Remove(name string) error {
 
 // TmpFile creates and opens a temporary file for read/write.
 // The file is automatically removed when closed.
-func (p *FullIoProvider) TmpFile() (LuaFile, error) {
+func (p *FullIoProvider) TmpFile(ctx context.Context) (LuaFile, error) {
 	f, err := os.CreateTemp("", "lua_tmpfile_")
 	if err != nil {
 		return nil, err
@@ -150,7 +151,7 @@ func (p *FullIoProvider) TmpFile() (LuaFile, error) {
 }
 
 // Rename renames (moves) a file within the provider's root directory.
-func (p *FullIoProvider) Rename(oldname, newname string) error {
+func (p *FullIoProvider) Rename(ctx context.Context, oldname, newname string) error {
 	oldpath, err := p.resolvePath(oldname)
 	if err != nil {
 		return err
@@ -172,7 +173,7 @@ type fullFile struct {
 	bufSize int    // buffer size for "full" mode
 }
 
-func (f *fullFile) Read(format string) (string, error) {
+func (f *fullFile) Read(ctx context.Context, format string) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to use a closed file")
 	}
@@ -203,7 +204,7 @@ func (f *fullFile) Read(format string) (string, error) {
 	return "", fmt.Errorf("invalid read format: %s", format)
 }
 
-func (f *fullFile) ReadBytes(n int) (string, error) {
+func (f *fullFile) ReadBytes(ctx context.Context, n int) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to use a closed file")
 	}
@@ -226,7 +227,7 @@ func (f *fullFile) ReadBytes(n int) (string, error) {
 	return string(buf[:nRead]), nil
 }
 
-func (f *fullFile) Write(data string) error {
+func (f *fullFile) Write(ctx context.Context, data string) error {
 	if f.closed {
 		return fmt.Errorf("attempt to use a closed file")
 	}
@@ -252,7 +253,7 @@ func (f *fullFile) Write(data string) error {
 	return nil
 }
 
-func (f *fullFile) Seek(whence string, offset int64) (int64, error) {
+func (f *fullFile) Seek(ctx context.Context, whence string, offset int64) (int64, error) {
 	if f.closed {
 		return 0, fmt.Errorf("attempt to use a closed file")
 	}
@@ -295,7 +296,7 @@ func (f *fullFile) Seek(whence string, offset int64) (int64, error) {
 	return pos, nil
 }
 
-func (f *fullFile) Flush() error {
+func (f *fullFile) Flush(ctx context.Context) error {
 	if f.closed {
 		return fmt.Errorf("attempt to use a closed file")
 	}
@@ -305,7 +306,7 @@ func (f *fullFile) Flush() error {
 	return nil
 }
 
-func (f *fullFile) SetVBuf(mode string, size int) error {
+func (f *fullFile) SetVBuf(ctx context.Context, mode string, size int) error {
 	if f.closed {
 		return fmt.Errorf("attempt to use a closed file")
 	}
@@ -345,7 +346,7 @@ func (f *fullFile) SetVBuf(mode string, size int) error {
 	return nil
 }
 
-func (f *fullFile) Close() error {
+func (f *fullFile) Close(ctx context.Context) error {
 	if f.closed {
 		return fmt.Errorf("cannot close a closed file")
 	}
@@ -357,11 +358,11 @@ func (f *fullFile) Close() error {
 	return f.file.Close()
 }
 
-func (f *fullFile) IsClosed() bool {
+func (f *fullFile) IsClosed(ctx context.Context) bool {
 	return f.closed
 }
 
-func (f *fullFile) IsStd() bool {
+func (f *fullFile) IsStd(ctx context.Context) bool {
 	return false
 }
 
@@ -559,7 +560,7 @@ func (f *stdFile) ensureReader() *bufio.Reader {
 	return f.reader
 }
 
-func (f *stdFile) Read(format string) (string, error) {
+func (f *stdFile) Read(ctx context.Context, format string) (string, error) {
 	if !f.readable {
 		return "", fmt.Errorf("%s is not readable", f.name)
 	}
@@ -585,7 +586,7 @@ func (f *stdFile) Read(format string) (string, error) {
 	return "", fmt.Errorf("invalid read format: %s", format)
 }
 
-func (f *stdFile) ReadBytes(n int) (string, error) {
+func (f *stdFile) ReadBytes(ctx context.Context, n int) (string, error) {
 	if !f.readable {
 		return "", fmt.Errorf("%s is not readable", f.name)
 	}
@@ -606,7 +607,7 @@ func (f *stdFile) ReadBytes(n int) (string, error) {
 	return string(buf[:nRead]), nil
 }
 
-func (f *stdFile) Write(data string) error {
+func (f *stdFile) Write(ctx context.Context, data string) error {
 	if !f.writable {
 		return fmt.Errorf("%s is not writable", f.name)
 	}
@@ -614,30 +615,30 @@ func (f *stdFile) Write(data string) error {
 	return err
 }
 
-func (f *stdFile) Seek(whence string, offset int64) (int64, error) {
+func (f *stdFile) Seek(ctx context.Context, whence string, offset int64) (int64, error) {
 	return 0, fmt.Errorf("cannot seek on %s", f.name)
 }
 
-func (f *stdFile) Flush() error {
+func (f *stdFile) Flush(ctx context.Context) error {
 	if !f.writable {
 		return fmt.Errorf("%s is not writable", f.name)
 	}
 	return nil
 }
 
-func (f *stdFile) SetVBuf(mode string, size int) error {
+func (f *stdFile) SetVBuf(ctx context.Context, mode string, size int) error {
 	return nil // No-op for std files
 }
 
-func (f *stdFile) Close() error {
+func (f *stdFile) Close(ctx context.Context) error {
 	return fmt.Errorf("cannot close standard file")
 }
 
-func (f *stdFile) IsClosed() bool {
+func (f *stdFile) IsClosed(ctx context.Context) bool {
 	return false
 }
 
-func (f *stdFile) IsStd() bool {
+func (f *stdFile) IsStd(ctx context.Context) bool {
 	return true
 }
 

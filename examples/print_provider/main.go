@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -22,11 +23,11 @@ type LoggingPrintProvider struct {
 	ScriptName string
 }
 
-func (p *LoggingPrintProvider) Print(msg string) {
+func (p *LoggingPrintProvider) Print(ctx context.Context, msg string) {
 	log.Printf("[%s] %s", p.ScriptName, msg)
 }
 
-func (p *LoggingPrintProvider) Warn(msg string) {
+func (p *LoggingPrintProvider) Warn(ctx context.Context, msg string) {
 	log.Printf("[%s] WARN: %s", p.ScriptName, msg)
 }
 
@@ -36,11 +37,11 @@ type CollectingPrintProvider struct {
 	Warns  []string
 }
 
-func (p *CollectingPrintProvider) Print(msg string) {
+func (p *CollectingPrintProvider) Print(ctx context.Context, msg string) {
 	p.Prints = append(p.Prints, msg)
 }
 
-func (p *CollectingPrintProvider) Warn(msg string) {
+func (p *CollectingPrintProvider) Warn(ctx context.Context, msg string) {
 	p.Warns = append(p.Warns, msg)
 }
 

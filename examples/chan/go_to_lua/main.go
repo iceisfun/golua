@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -20,7 +21,7 @@ func main() {
 	fmt.Println()
 
 	provider := vm.NewDefaultChanProvider()
-	events := provider.NewChannel(0) // unbuffered for synchronous handoff
+	events := provider.NewChannel(context.Background(), 0) // unbuffered for synchronous handoff
 
 	// Go goroutine: send 5 events then close
 	go func() {

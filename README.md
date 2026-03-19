@@ -95,6 +95,8 @@ func main() {
 
 Core embedding flow: `parser.Parse` -> `compiler.Compile` -> `vm.New` -> `stdlib.Open` -> `v.Run`.
 
+`vm.New()` defaults to `context.Background()`. Use `vm.WithContext(ctx)` to pass a custom context. Call `v.Close(ctx)` when done to shut down any providers that implement `Shutdownable`.
+
 ## Develop Locally
 
 ```bash
@@ -144,6 +146,8 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | `LuaPrintProvider`   | `print()`/`warn()` output routing             | `DefaultPrintProvider`               |
 | `LuaProcessProvider` | `exec.*` process spawning and streaming       | `DefaultProcessProvider`             |
 | `LuaLoadLibProvider` | `package.loadlib` native module hook          | custom host implementation           |
+
+All provider interface methods receive `ctx context.Context` as their first parameter, carrying the VM's context for cancellation and deadline propagation. Providers may optionally implement `Initializable` (called when set on a VM) or `Shutdownable` (called by `vm.Close(ctx)`) for lifecycle management.
 
 ## Examples
 
@@ -207,12 +211,12 @@ results, err := v.ProtectedCall(fn, []vm.Value{
 
 ### Sandboxed Code Loading
 
-Implement `LuaCodeProvider` to control what Lua can load:
+Implement `LuaCodeProvider` to control what Lua can load. All provider interface methods take `ctx context.Context` as their first parameter:
 
 ```go
 type MyProvider struct{}
 
-func (p *MyProvider) LoadChunk(name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
+func (p *MyProvider) LoadChunk(ctx context.Context, name string, caller *vm.LuaCallerContext) ([]byte, string, error) {
     // Validate and load the requested chunk
     // Return source, display name, and error
 }
@@ -241,7 +245,7 @@ cgo to bridge platform-specific libraries.
 ```go
 type MyLoadLibProvider struct{}
 
-func (p *MyLoadLibProvider) LoadLib(path, init string, caller *vm.LuaCallerContext) (vm.NativeFunc, error) {
+func (p *MyLoadLibProvider) LoadLib(ctx context.Context, path, init string, caller *vm.LuaCallerContext) (vm.NativeFunc, error) {
     // The host decides how to interpret path and init — they need not
     // refer to actual .so/.dll files. Return an error to deny loading.
     if path == "mylib" && init == "luaopen_mylib" {
@@ -339,10 +343,10 @@ Route `print()` and `warn()` output through your logging infrastructure:
 ```go
 type LoggingProvider struct{ Name string }
 
-func (p *LoggingProvider) Print(msg string) {
+func (p *LoggingProvider) Print(ctx context.Context, msg string) {
     log.Printf("[%s] %s", p.Name, msg)
 }
-func (p *LoggingProvider) Warn(msg string) {
+func (p *LoggingProvider) Warn(ctx context.Context, msg string) {
     log.Printf("[%s] WARN: %s", p.Name, msg)
 }
 

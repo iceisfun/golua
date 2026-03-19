@@ -185,6 +185,7 @@ func New(opts ...VMOption) *VM {
 		closeDepth:  new(int32),
 		gcMode:      "incremental",
 		gcRunning:   true,
+		ctx:         context.Background(),
 	}
 	for _, opt := range opts {
 		opt(vm)

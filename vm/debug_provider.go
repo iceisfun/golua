@@ -1,5 +1,7 @@
 package vm
 
+import "context"
+
 // LuaDebugCaps declares which debug-library operations are exposed to Lua.
 type LuaDebugCaps struct {
 	// AllowTraceback enables debug.traceback.
@@ -44,7 +46,7 @@ type LuaDebugCaps struct {
 // Without a provider, the debug table is absent from the VM.
 type LuaDebugProvider interface {
 	// Capabilities declares which diagnostic behaviors are allowed.
-	Capabilities() LuaDebugCaps
+	Capabilities(ctx context.Context) LuaDebugCaps
 }
 
 // DefaultDebugProvider enables all diagnostic functions.
@@ -56,7 +58,7 @@ func NewDefaultDebugProvider() *DefaultDebugProvider {
 }
 
 // Capabilities returns caps with all diagnostic functions enabled.
-func (p *DefaultDebugProvider) Capabilities() LuaDebugCaps {
+func (p *DefaultDebugProvider) Capabilities(ctx context.Context) LuaDebugCaps {
 	return LuaDebugCaps{
 		AllowTraceback:      true,
 		AllowStackDepth:     true,

@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"context"
 	"testing"
 
 	"github.com/iceisfun/golua/vm"
@@ -15,7 +16,7 @@ type testLoadLibProvider struct {
 	calls    int
 }
 
-func (p *testLoadLibProvider) LoadLib(path, init string, caller *vm.LuaCallerContext) (vm.NativeFunc, string, string) {
+func (p *testLoadLibProvider) LoadLib(_ context.Context, path, init string, caller *vm.LuaCallerContext) (vm.NativeFunc, string, string) {
 	p.calls++
 	p.callPath = path
 	p.callInit = init

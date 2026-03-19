@@ -1,5 +1,7 @@
 package vm
 
+import "context"
+
 // LuaOsCaps declares which os-library operations are exposed to Lua.
 type LuaOsCaps struct {
 	// AllowTime enables os.time.
@@ -71,30 +73,30 @@ type LuaTimeInput struct {
 // Lua 5.4 Reference: §6.9 (operating system facilities).
 type LuaOsProvider interface {
 	// Clock returns CPU time used by the program in seconds.
-	Clock() float64
+	Clock(ctx context.Context) float64
 
 	// Time returns the current time as a Unix timestamp,
 	// or constructs a timestamp from the given date table fields.
 	// If dateTable is nil, returns current time. When constructing from a
 	// table, it also returns normalized local-time fields like Lua's mktime.
-	Time(dateTable *LuaTimeInput) (int64, *LuaDateTime, error)
+	Time(ctx context.Context, dateTable *LuaTimeInput) (int64, *LuaDateTime, error)
 
 	// Date formats a timestamp according to a format string.
 	// Returns the formatted date string.
-	Date(format string, timestamp int64) (string, error)
+	Date(ctx context.Context, format string, timestamp int64) (string, error)
 
 	// DateTable returns a table of date/time components for the given timestamp.
 	// Keys: "year", "month", "day", "hour", "min", "sec", "wday", "yday", "isdst"
 	// If utc is true, the components are in UTC; otherwise local time.
-	DateTable(timestamp int64, utc bool) *LuaDateTime
+	DateTable(ctx context.Context, timestamp int64, utc bool) *LuaDateTime
 
 	// Getenv returns the value of an environment variable.
-	Getenv(name string) (string, bool)
+	Getenv(ctx context.Context, name string) (string, bool)
 
 	// SetLocale applies/query locale state for os.setlocale.
 	// Returns (locale, true) on success, or (_, false) when unsupported.
-	SetLocale(locale, category string) (string, bool)
+	SetLocale(ctx context.Context, locale, category string) (string, bool)
 
 	// Capabilities declares which OS behaviors are allowed.
-	Capabilities() LuaOsCaps
+	Capabilities(ctx context.Context) LuaOsCaps
 }

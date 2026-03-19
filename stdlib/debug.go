@@ -14,7 +14,7 @@ func openDebug(v *vm.VM) {
 		return
 	}
 
-	caps := provider.Capabilities()
+	caps := provider.Capabilities(v.Context())
 	debug := vm.NewEmptyTable()
 
 	if caps.AllowTraceback {

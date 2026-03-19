@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -359,23 +360,24 @@ func TestIoInputErrorFormat(t *testing.T) {
 // --- Provider interface tests ---
 
 func TestFullIoProvider_TmpFile(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
-	f, err := p.TmpFile()
+	f, err := p.TmpFile(ctx)
 	if err != nil {
 		t.Fatalf("TmpFile failed: %v", err)
 	}
-	defer f.Close()
+	defer f.Close(ctx)
 
-	err = f.Write("test data")
+	err = f.Write(ctx, "test data")
 	if err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
-	_, err = f.Seek("set", 0)
+	_, err = f.Seek(ctx, "set", 0)
 	if err != nil {
 		t.Fatalf("Seek failed: %v", err)
 	}
-	data, err := f.Read("a")
+	data, err := f.Read(ctx, "a")
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
@@ -385,25 +387,26 @@ func TestFullIoProvider_TmpFile(t *testing.T) {
 }
 
 func TestFullIoProvider_Open(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
 
-	f, err := p.Open("test.txt", "w")
+	f, err := p.Open(ctx, "test.txt", "w")
 	if err != nil {
 		t.Fatalf("Open w failed: %v", err)
 	}
-	f.Write("hello world")
-	f.Close()
+	f.Write(ctx, "hello world")
+	f.Close(ctx)
 
-	f, err = p.Open("test.txt", "r")
+	f, err = p.Open(ctx, "test.txt", "r")
 	if err != nil {
 		t.Fatalf("Open r failed: %v", err)
 	}
-	data, err := f.Read("a")
+	data, err := f.Read(ctx, "a")
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
-	f.Close()
+	f.Close(ctx)
 
 	if data != "hello world" {
 		t.Fatalf("expected 'hello world', got %q", data)
@@ -411,24 +414,26 @@ func TestFullIoProvider_Open(t *testing.T) {
 }
 
 func TestFullIoProvider_InvalidMode(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
-	_, err := p.Open("test.txt", "z")
+	_, err := p.Open(ctx, "test.txt", "z")
 	if err == nil {
 		t.Fatal("expected error for invalid mode")
 	}
 }
 
 func TestFullIoProvider_SeekErrors(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
-	f, err := p.Open("test.txt", "w")
+	f, err := p.Open(ctx, "test.txt", "w")
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer f.Close()
+	defer f.Close(ctx)
 
-	_, err = f.Seek("invalid", 0)
+	_, err = f.Seek(ctx, "invalid", 0)
 	if err == nil {
 		t.Fatal("expected error for invalid whence")
 	}
@@ -438,22 +443,23 @@ func TestFullIoProvider_SeekErrors(t *testing.T) {
 }
 
 func TestFullIoProvider_SetVBuf(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
-	f, err := p.Open("test.txt", "w")
+	f, err := p.Open(ctx, "test.txt", "w")
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer f.Close()
+	defer f.Close(ctx)
 
 	for _, mode := range []string{"no", "full", "line"} {
-		err = f.SetVBuf(mode, 0)
+		err = f.SetVBuf(ctx, mode, 0)
 		if err != nil {
 			t.Fatalf("SetVBuf(%q) failed: %v", mode, err)
 		}
 	}
 
-	err = f.SetVBuf("invalid", 0)
+	err = f.SetVBuf(ctx, "invalid", 0)
 	if err == nil {
 		t.Fatal("expected error for invalid setvbuf mode")
 	}
@@ -480,18 +486,19 @@ func TestFullIoProvider_ReadNumber(t *testing.T) {
 		{"leading_space", "  42", "42"},
 	}
 
+	ctx := context.Background()
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			os.WriteFile(filepath.Join(dir, "num.txt"), []byte(tc.content), 0666)
-			f, err := p.Open("num.txt", "r")
+			f, err := p.Open(ctx, "num.txt", "r")
 			if err != nil {
 				t.Fatalf("Open failed: %v", err)
 			}
-			data, err := f.Read("n")
+			data, err := f.Read(ctx, "n")
 			if err != nil {
 				t.Fatalf("Read('n') failed: %v", err)
 			}
-			f.Close()
+			f.Close(ctx)
 			if data != tc.expected {
 				t.Fatalf("expected %q, got %q", tc.expected, data)
 			}
@@ -500,21 +507,22 @@ func TestFullIoProvider_ReadNumber(t *testing.T) {
 }
 
 func TestFullIoProvider_ReadNumberFail(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
 	os.WriteFile(filepath.Join(dir, "abc.txt"), []byte("abc 123"), 0666)
-	f, err := p.Open("abc.txt", "r")
+	f, err := p.Open(ctx, "abc.txt", "r")
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer f.Close()
+	defer f.Close(ctx)
 
-	_, err = f.Read("n")
+	_, err = f.Read(ctx, "n")
 	if err == nil {
 		t.Fatal("expected error reading non-number")
 	}
 	// After failed read, position should be unchanged
-	data, err := f.Read("l")
+	data, err := f.Read(ctx, "l")
 	if err != nil {
 		t.Fatalf("Read('l') after failed Read('n') failed: %v", err)
 	}
@@ -524,85 +532,89 @@ func TestFullIoProvider_ReadNumberFail(t *testing.T) {
 }
 
 func TestFullIoProvider_Remove(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
 
-	f, _ := p.Open("removeme.txt", "w")
-	f.Close()
+	f, _ := p.Open(ctx, "removeme.txt", "w")
+	f.Close(ctx)
 
-	err := p.Remove("removeme.txt")
+	err := p.Remove(ctx, "removeme.txt")
 	if err != nil {
 		t.Fatalf("Remove failed: %v", err)
 	}
 
-	err = p.Remove("nonexistent.txt")
+	err = p.Remove(ctx, "nonexistent.txt")
 	if err == nil {
 		t.Fatal("expected error for removing nonexistent file")
 	}
 }
 
 func TestFullIoProvider_Rename(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
 
-	f, _ := p.Open("old.txt", "w")
-	f.Write("content")
-	f.Close()
+	f, _ := p.Open(ctx, "old.txt", "w")
+	f.Write(ctx, "content")
+	f.Close(ctx)
 
-	err := p.Rename("old.txt", "new.txt")
+	err := p.Rename(ctx, "old.txt", "new.txt")
 	if err != nil {
 		t.Fatalf("Rename failed: %v", err)
 	}
 
-	_, err = p.Open("old.txt", "r")
+	_, err = p.Open(ctx, "old.txt", "r")
 	if err == nil {
 		t.Fatal("expected error opening old name after rename")
 	}
 
-	f, err = p.Open("new.txt", "r")
+	f, err = p.Open(ctx, "new.txt", "r")
 	if err != nil {
 		t.Fatalf("Open new name failed: %v", err)
 	}
-	data, _ := f.Read("a")
-	f.Close()
+	data, _ := f.Read(ctx, "a")
+	f.Close(ctx)
 	if data != "content" {
 		t.Fatalf("expected 'content', got %q", data)
 	}
 }
 
 func TestFullIoProvider_StdFiles(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
 
-	stdin := p.Stdin()
+	stdin := p.Stdin(ctx)
 	if stdin == nil {
 		t.Fatal("Stdin should not be nil")
 	}
-	if !stdin.IsStd() {
+	if !stdin.IsStd(ctx) {
 		t.Fatal("Stdin should be std")
 	}
 
-	stdout := p.Stdout()
+	stdout := p.Stdout(ctx)
 	if stdout == nil {
 		t.Fatal("Stdout should not be nil")
 	}
-	if !stdout.IsStd() {
+	if !stdout.IsStd(ctx) {
 		t.Fatal("Stdout should be std")
 	}
 
-	stderr := p.Stderr()
+	stderr := p.Stderr(ctx)
 	if stderr == nil {
 		t.Fatal("Stderr should not be nil")
 	}
-	if !stderr.IsStd() {
+	if !stderr.IsStd(ctx) {
 		t.Fatal("Stderr should be std")
 	}
 }
 
 func TestFullIoProvider_Capabilities(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewFullIoProvider(dir)
-	caps := p.Capabilities()
+	caps := p.Capabilities(ctx)
 	if !caps.AllowRead {
 		t.Fatal("AllowRead should be true")
 	}
@@ -612,35 +624,37 @@ func TestFullIoProvider_Capabilities(t *testing.T) {
 }
 
 func TestJailedIoProvider_TmpFile(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	p := vm.NewJailedIoProvider(dir)
-	_, err := p.TmpFile()
+	_, err := p.TmpFile(ctx)
 	if err == nil {
 		t.Fatal("expected error from jailed TmpFile")
 	}
 }
 
 func TestJailedIoProvider_ReadOnly(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello"), 0666)
 	p := vm.NewJailedIoProvider(dir)
 
 	// Read should work
-	f, err := p.Open("test.txt", "r")
+	f, err := p.Open(ctx, "test.txt", "r")
 	if err != nil {
 		t.Fatalf("Open r failed: %v", err)
 	}
-	data, err := f.Read("a")
+	data, err := f.Read(ctx, "a")
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
-	f.Close()
+	f.Close(ctx)
 	if data != "hello" {
 		t.Fatalf("expected 'hello', got %q", data)
 	}
 
 	// Write should fail
-	_, err = p.Open("test.txt", "w")
+	_, err = p.Open(ctx, "test.txt", "w")
 	if err == nil {
 		t.Fatal("expected error for write mode in jailed provider")
 	}

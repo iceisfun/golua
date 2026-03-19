@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -10,15 +11,15 @@ import (
 // timing primitives for game loops, rate limiting, and initialization guards.
 type LuaTimeProvider interface {
 	// Now returns the current time in milliseconds.
-	Now() int64
+	Now(ctx context.Context) int64
 
 	// Tick returns true once per interval (ms) for the given key,
 	// false otherwise. Used for periodic logic in hot paths.
-	Tick(key string, ms int64) bool
+	Tick(ctx context.Context, key string, ms int64) bool
 
 	// Once returns true on the first call for a given key, false
 	// on all subsequent calls. Used for one-time initialization.
-	Once(key string) bool
+	Once(ctx context.Context, key string) bool
 }
 
 // DefaultTimeProvider uses Go's time package.
@@ -37,7 +38,7 @@ func NewDefaultTimeProvider() *DefaultTimeProvider {
 }
 
 // Now returns the current time in milliseconds since Unix epoch.
-func (p *DefaultTimeProvider) Now() int64 {
+func (p *DefaultTimeProvider) Now(ctx context.Context) int64 {
 	return time.Now().UnixMilli()
 }
 
@@ -50,7 +51,7 @@ const (
 // last true for this key. First call for a key always returns true.
 // Keys longer than 512 bytes are truncated. Once 10,000 distinct keys
 // exist, new keys are silently ignored (returns false).
-func (p *DefaultTimeProvider) Tick(key string, ms int64) bool {
+func (p *DefaultTimeProvider) Tick(ctx context.Context, key string, ms int64) bool {
 	if len(key) > maxTickKeyLen {
 		key = key[:maxTickKeyLen]
 	}
@@ -75,7 +76,7 @@ func (p *DefaultTimeProvider) Tick(key string, ms int64) bool {
 // Once returns true on the first call for a given key, false on all
 // subsequent calls. Keys longer than 512 bytes are truncated. Once
 // 10,000 distinct keys exist, new keys are silently ignored (returns false).
-func (p *DefaultTimeProvider) Once(key string) bool {
+func (p *DefaultTimeProvider) Once(ctx context.Context, key string) bool {
 	if len(key) > maxTickKeyLen {
 		key = key[:maxTickKeyLen]
 	}

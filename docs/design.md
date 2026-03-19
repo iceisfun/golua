@@ -37,6 +37,18 @@ This document describes intentional differences between GoLua and the reference 
 
 **Rationale:** Embedding Lua in Go applications requires control over side effects. The provider model enables sandboxing, testability, and clean separation between the interpreter and the host environment.
 
+## Context Threading
+
+**Design:** All provider interface methods receive a `context.Context` as their first parameter. The VM stores a context internally (defaulting to `context.Background()` when created with `New()`), and stdlib functions pass `v.Context()` through to provider calls.
+
+**Flow:** `context.Context` → `VM.SetContext()` → Lua call → native stdlib function → `provider.Method(ctx, ...)`
+
+This allows Go code embedding GoLua to propagate cancellation and deadlines through the entire call chain. A caller can set a context with a timeout on the VM, and any provider method (file I/O, OS operations, process execution) will observe that cancellation.
+
+**Lifecycle hooks:** Providers may optionally implement `Initializable` (setup) and `Shutdownable` (teardown) interfaces via type assertion, enabling resource management tied to the VM lifecycle.
+
+**Rationale:** Go's `context.Context` is the standard mechanism for cancellation and deadline propagation. Threading it through providers gives embedders control over long-running or blocking operations without requiring Lua code awareness.
+
 ## No C Module Loading
 
 **Difference:** `require` does not load C shared objects (`.so`/`.dll`). The C file searcher always returns "not found".

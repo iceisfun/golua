@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"testing"
 
 	"github.com/iceisfun/golua/compiler"
@@ -13,8 +14,8 @@ type capturePrintProvider struct {
 	warns  []string
 }
 
-func (c *capturePrintProvider) Print(msg string) { c.prints = append(c.prints, msg) }
-func (c *capturePrintProvider) Warn(msg string)  { c.warns = append(c.warns, msg) }
+func (c *capturePrintProvider) Print(_ context.Context, msg string) { c.prints = append(c.prints, msg) }
+func (c *capturePrintProvider) Warn(_ context.Context, msg string)  { c.warns = append(c.warns, msg) }
 
 // runLuaWithProvider compiles and runs Lua code with a print provider set,
 // plus a minimal print/warn registered as globals (since vm tests can't

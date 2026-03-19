@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -19,7 +20,7 @@ func main() {
 	fmt.Println()
 
 	provider := vm.NewDefaultChanProvider()
-	results := provider.NewChannel(10) // buffered so Lua won't block
+	results := provider.NewChannel(context.Background(), 10) // buffered so Lua won't block
 
 	source := `
 		print("Lua: sending results...")

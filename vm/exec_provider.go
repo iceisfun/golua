@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"syscall"
@@ -15,7 +16,7 @@ type LuaExecProvider interface {
 	//   - ok is true if the command exited with code 0
 	//   - exitType is "exit" for normal termination or "signal" for signal termination
 	//   - exitCode is the exit code or signal number
-	Execute(command string) (ok bool, exitType string, exitCode int)
+	Execute(ctx context.Context, command string) (ok bool, exitType string, exitCode int)
 }
 
 // DefaultExecProvider implements LuaExecProvider using os/exec.
@@ -28,12 +29,12 @@ func NewDefaultExecProvider() *DefaultExecProvider {
 }
 
 // Execute runs a command via sh -c.
-func (p *DefaultExecProvider) Execute(command string) (bool, string, int) {
+func (p *DefaultExecProvider) Execute(ctx context.Context, command string) (bool, string, int) {
 	if command == "" {
 		return true, "exit", 0
 	}
 
-	cmd := exec.Command("sh", "-c", command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()

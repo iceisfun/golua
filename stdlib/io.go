@@ -104,8 +104,8 @@ func getFileHandle(v *vm.VM, val vm.Value, funcName string) *fileHandle {
 }
 
 // checkOpen panics if the file handle is closed.
-func (fh *fileHandle) checkOpen(method string) {
-	if fh.closed || fh.file.IsClosed() {
+func (fh *fileHandle) checkOpen(ctx context.Context, method string) {
+	if fh.closed || fh.file.IsClosed(ctx) {
 		panic(fmt.Sprintf("attempt to use a closed file"))
 	}
 }
@@ -119,7 +119,8 @@ func openIo(v *vm.VM) {
 
 	// Build the io table
 	ioTable := vm.NewEmptyTable()
-	caps := provider.Capabilities()
+	ctx := v.Context()
+	caps := provider.Capabilities(ctx)
 
 	if caps.AllowRead || caps.AllowWrite {
 		ioTable.SetString("open", vm.NewNativeFunc(makeIoOpen(v, provider)))
@@ -141,15 +142,15 @@ func openIo(v *vm.VM) {
 	// Standard file handles - create once and share between io.stdin/io.stdout/io.stderr
 	// and __input/__output so identity comparisons work (io.input() == io.stdin).
 	var stdinHandle, stdoutHandle, stderrHandle vm.Value
-	if f := provider.Stdin(); f != nil {
+	if f := provider.Stdin(ctx); f != nil {
 		stdinHandle = makeFileHandle(f)
 		ioTable.SetString("stdin", stdinHandle)
 	}
-	if f := provider.Stdout(); f != nil {
+	if f := provider.Stdout(ctx); f != nil {
 		stdoutHandle = makeFileHandle(f)
 		ioTable.SetString("stdout", stdoutHandle)
 	}
-	if f := provider.Stderr(); f != nil {
+	if f := provider.Stderr(ctx); f != nil {
 		stderrHandle = makeFileHandle(f)
 		ioTable.SetString("stderr", stderrHandle)
 	}
@@ -223,7 +224,7 @@ func makeIoPopen(provider vm.LuaProcessProvider) vm.NativeFunc {
 	}
 }
 
-func (f *popenFile) Read(format string) (string, error) {
+func (f *popenFile) Read(ctx context.Context, format string) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to use a closed file")
 	}
@@ -252,7 +253,7 @@ func (f *popenFile) Read(format string) (string, error) {
 	}
 }
 
-func (f *popenFile) ReadBytes(n int) (string, error) {
+func (f *popenFile) ReadBytes(ctx context.Context, n int) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to use a closed file")
 	}
@@ -280,7 +281,7 @@ func (f *popenFile) ReadBytes(n int) (string, error) {
 	return string(buf[:read]), nil
 }
 
-func (f *popenFile) Write(data string) error {
+func (f *popenFile) Write(ctx context.Context, data string) error {
 	if f.closed {
 		return fmt.Errorf("attempt to use a closed file")
 	}
@@ -291,15 +292,15 @@ func (f *popenFile) Write(data string) error {
 	return err
 }
 
-func (f *popenFile) Seek(whence string, offset int64) (int64, error) {
+func (f *popenFile) Seek(ctx context.Context, whence string, offset int64) (int64, error) {
 	return 0, fmt.Errorf("seek not supported on popen file")
 }
 
-func (f *popenFile) Flush() error { return nil }
+func (f *popenFile) Flush(ctx context.Context) error { return nil }
 
-func (f *popenFile) SetVBuf(mode string, size int) error { return nil }
+func (f *popenFile) SetVBuf(ctx context.Context, mode string, size int) error { return nil }
 
-func (f *popenFile) Close() error {
+func (f *popenFile) Close(ctx context.Context) error {
 	if f.closed {
 		return fmt.Errorf("attempt to use a closed file")
 	}
@@ -315,19 +316,20 @@ func (f *popenFile) Close() error {
 	return nil
 }
 
-func (f *popenFile) IsClosed() bool { return f.closed }
+func (f *popenFile) IsClosed(ctx context.Context) bool { return f.closed }
 
-func (f *popenFile) IsStd() bool { return false }
+func (f *popenFile) IsStd(ctx context.Context) bool { return false }
 
 func popenClose(v *vm.VM, fh *fileHandle) int {
-	if fh.closed || fh.file.IsClosed() {
+	ctx := v.Context()
+	if fh.closed || fh.file.IsClosed(ctx) {
 		panic("attempt to use a closed file")
 	}
 	pf, ok := fh.file.(*popenFile)
 	if !ok {
 		panic("invalid popen file")
 	}
-	if err := pf.Close(); err != nil {
+	if err := pf.Close(ctx); err != nil {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(err.Error()))
 		return 2
@@ -338,10 +340,11 @@ func popenClose(v *vm.VM, fh *fileHandle) int {
 }
 
 func popenCloseGC(fh *fileHandle) {
-	if fh.closed || fh.file.IsClosed() {
+	ctx := context.Background()
+	if fh.closed || fh.file.IsClosed(ctx) {
 		return
 	}
-	_ = fh.file.Close()
+	_ = fh.file.Close(ctx)
 	fh.closed = true
 }
 
@@ -541,7 +544,8 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			callerArgError(v, 2, "io.open", "invalid mode")
 		}
 
-		f, err := provider.Open(nameStr, mode)
+		ctx := v.Context()
+		f, err := provider.Open(ctx, nameStr, mode)
 		if err != nil {
 			v.Set(0, vm.Nil)
 			msg, errno := formatOpenError(nameStr, err)
@@ -600,7 +604,8 @@ func extractLuaFileError(err error) (int, string) {
 // makeIoTmpfile creates the io.tmpfile() function.
 func makeIoTmpfile(provider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		f, err := provider.TmpFile()
+		ctx := v.Context()
+		f, err := provider.TmpFile(ctx)
 		if err != nil {
 			v.Set(0, vm.Nil)
 			v.Set(1, vm.NewString(err.Error()))
@@ -629,17 +634,18 @@ func makeIoClose(ioTable *vm.Table) vm.NativeFunc {
 		if fh.closeFn != nil {
 			return fh.closeFn(v, fh)
 		}
-		if fh.file.IsStd() {
+		ctx := v.Context()
+		if fh.file.IsStd(ctx) {
 			// Cannot close standard files - return nil, error
 			v.Set(0, vm.Nil)
 			v.Set(1, vm.NewString("cannot close standard file"))
 			return 2
 		}
-		if fh.closed || fh.file.IsClosed() {
+		if fh.closed || fh.file.IsClosed(ctx) {
 			panic("attempt to use a closed file")
 		}
 
-		err := fh.file.Close()
+		err := fh.file.Close(ctx)
 		fh.closed = true
 		if err != nil {
 			v.Set(0, vm.Nil)
@@ -670,7 +676,8 @@ func ioType(v *vm.VM) int {
 		return 1
 	}
 
-	if fh.closed || fh.file.IsClosed() {
+	ctx := v.Context()
+	if fh.closed || fh.file.IsClosed(ctx) {
 		v.Set(0, vm.NewString("closed file"))
 	} else {
 		v.Set(0, vm.NewString("file"))
@@ -688,9 +695,10 @@ func makeIoFlush(provider vm.LuaIoProvider) vm.NativeFunc {
 		ioTable := ioVal.AsTable()
 		outputVal := ioTable.Get(vm.NewString("__output"))
 		fh := getFileHandle(v, outputVal, "io.flush")
-		fh.checkOpen("flush")
+		ctx := v.Context()
+		fh.checkOpen(ctx, "flush")
 
-		if err := fh.file.Flush(); err != nil {
+		if err := fh.file.Flush(ctx); err != nil {
 			v.Set(0, vm.Nil)
 			v.Set(1, vm.NewString(err.Error()))
 			return 2
@@ -717,7 +725,8 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			ioTable := ioVal.AsTable()
 			inputVal := ioTable.Get(vm.NewString("__input"))
 			fh := getFileHandle(v, inputVal, "io.lines")
-			fh.checkOpen("lines")
+			ctx := v.Context()
+			fh.checkOpen(ctx, "lines")
 			f = fh.file
 			toClose = false
 		} else {
@@ -727,7 +736,8 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			}
 			name := vm.ValueToString(arg)
 			var err error
-			f, err = provider.Open(name, "r")
+			ctx := v.Context()
+			f, err = provider.Open(ctx, name, "r")
 			if err != nil {
 				_, errDesc := extractLuaFileError(err)
 				panic(fmt.Sprintf("cannot open file '%s' (%s)", name, errDesc))
@@ -748,12 +758,13 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 				panic("file is already closed")
 			}
 
+			ctx := v.Context()
 			if len(formats) == 0 {
-				line, err := f.Read("l")
+				line, err := f.Read(ctx, "l")
 				if err != nil {
 					if err == io.EOF {
 						if toClose {
-							f.Close()
+							f.Close(ctx)
 							closed = true
 						}
 						// Return no results on EOF
@@ -768,7 +779,7 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			results := doFileReadFormats(v, f, formats, 1)
 			if results > 0 && v.Get(0).IsNil() {
 				if toClose {
-					f.Close()
+					f.Close(ctx)
 					closed = true
 				}
 				// Return no results on EOF
@@ -804,7 +815,8 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 			if arg.IsString() {
 				fname = arg.AsString()
 			}
-			f, err := provider.Open(fname, "r")
+			ctx := v.Context()
+			f, err := provider.Open(ctx, fname, "r")
 			if err != nil {
 				_, errDesc := extractLuaFileError(err)
 				panic(fmt.Sprintf("cannot open file '%s' (%s)", fname, errDesc))
@@ -817,7 +829,7 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 
 		// Assume it's a file handle - set as default input
 		fh := getFileHandle(v, arg, "io.input") // validate it's a file handle
-		fh.checkOpen("input")
+		fh.checkOpen(v.Context(), "input")
 		ioTable.SetString("__input", arg)
 		v.Set(0, arg)
 		return 1
@@ -840,7 +852,8 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 			if arg.IsString() {
 				fname = arg.AsString()
 			}
-			f, err := provider.Open(fname, "w")
+			ctx := v.Context()
+			f, err := provider.Open(ctx, fname, "w")
 			if err != nil {
 				_, errDesc := extractLuaFileError(err)
 				panic(fmt.Sprintf("cannot open file '%s' (%s)", fname, errDesc))
@@ -853,7 +866,7 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 
 		// Assume it's a file handle - set as default output
 		fh := getFileHandle(v, arg, "io.output") // validate it's a file handle
-		fh.checkOpen("output")
+		fh.checkOpen(v.Context(), "output")
 		ioTable.SetString("__output", arg)
 		v.Set(0, arg)
 		return 1
@@ -871,7 +884,7 @@ func makeIoRead(provider vm.LuaIoProvider) vm.NativeFunc {
 		ioTable := ioVal.AsTable()
 		inputVal := ioTable.Get(vm.NewString("__input"))
 		fh := getFileHandle(v, inputVal, "io.read")
-		if fh.closed || fh.file.IsClosed() {
+		if fh.closed || fh.file.IsClosed(v.Context()) {
 			panic("default input file is closed")
 		}
 
@@ -890,7 +903,7 @@ func makeIoWrite(provider vm.LuaIoProvider) vm.NativeFunc {
 		ioTable := ioVal.AsTable()
 		outputVal := ioTable.Get(vm.NewString("__output"))
 		fh := getFileHandle(v, outputVal, "io.write")
-		if fh.closed || fh.file.IsClosed() {
+		if fh.closed || fh.file.IsClosed(v.Context()) {
 			panic("default output file is closed")
 		}
 
@@ -901,7 +914,7 @@ func makeIoWrite(provider vm.LuaIoProvider) vm.NativeFunc {
 // fileRead implements f:read(...) method.
 func fileRead(v *vm.VM) int {
 	fh := getFileHandle(v, v.Get(1), "read")
-	fh.checkOpen("read")
+	fh.checkOpen(v.Context(), "read")
 
 	return doFileRead(v, fh.file, 2)
 }
@@ -923,9 +936,10 @@ func doFileRead(v *vm.VM, f vm.LuaFile, firstArg int) int {
 // doFileReadFormats performs the actual read operation using a slice of formats.
 // firstArg controls error reporting: 1 for io.read (module func), 2 for f:read (method).
 func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int) int {
+	ctx := v.Context()
 	if len(formats) == 0 {
 		// Default: read a line
-		line, err := f.Read("l")
+		line, err := f.Read(ctx, "l")
 		if err != nil {
 			if err == io.EOF {
 				v.Set(0, vm.Nil)
@@ -968,7 +982,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			}
 			if count == 0 {
 				// Read 0 bytes: test if at EOF
-				data, err := f.ReadBytes(0)
+				data, err := f.ReadBytes(ctx, 0)
 				if err != nil {
 					if isFileError(err) {
 						fileErr = err
@@ -979,7 +993,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 					v.Set(results, vm.NewString(data))
 				}
 			} else {
-				data, err := f.ReadBytes(int(count))
+				data, err := f.ReadBytes(ctx, int(count))
 				if err != nil {
 					if isFileError(err) {
 						fileErr = err
@@ -998,7 +1012,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 				// Use results+1 as the user-visible argument index (1-based, for the format arg)
 				fileArgError(v, firstArg+results, "read", "invalid format")
 			}
-			data, err := f.Read(format)
+			data, err := f.Read(ctx, format)
 			if err != nil {
 				if isFileError(err) {
 					fileErr = err
@@ -1188,7 +1202,7 @@ func parseHexFloat(data string) (float64, bool) {
 func fileWrite(v *vm.VM) int {
 	self := v.Get(1)
 	fh := getFileHandle(v, self, "write")
-	fh.checkOpen("write")
+	fh.checkOpen(v.Context(), "write")
 
 	return doFileWrite(v, fh.file, self, 2)
 }
@@ -1196,6 +1210,7 @@ func fileWrite(v *vm.VM) int {
 // doFileWrite performs the actual write operation. firstArg is the index
 // of the first data argument.
 func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
+	ctx := v.Context()
 	n := v.ArgCount() - (firstArg - 1)
 	for i := firstArg; i < firstArg+n; i++ {
 		arg := v.Get(i)
@@ -1215,7 +1230,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 		} else {
 			fileArgError(v, i, "write", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
-		err := f.Write(s)
+		err := f.Write(ctx, s)
 		if err != nil {
 			errno, errDesc := extractLuaFileError(err)
 			v.Set(0, vm.Nil)
@@ -1238,18 +1253,19 @@ func fileClose(v *vm.VM) int {
 		return fh.closeFn(v, fh)
 	}
 
-	if fh.file.IsStd() {
+	ctx := v.Context()
+	if fh.file.IsStd(ctx) {
 		// Cannot close standard files
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString("cannot close standard file"))
 		return 2
 	}
 
-	if fh.closed || fh.file.IsClosed() {
+	if fh.closed || fh.file.IsClosed(ctx) {
 		panic("attempt to use a closed file")
 	}
 
-	err := fh.file.Close()
+	err := fh.file.Close(ctx)
 	fh.closed = true
 	if err != nil {
 		v.Set(0, vm.Nil)
@@ -1264,7 +1280,7 @@ func fileClose(v *vm.VM) int {
 // fileLines implements f:lines(...) method.
 func fileLines(v *vm.VM) int {
 	fh := getFileHandle(v, v.Get(1), "lines")
-	fh.checkOpen("lines")
+	fh.checkOpen(v.Context(), "lines")
 	f := fh.file
 
 	var formats []vm.Value
@@ -1276,10 +1292,11 @@ func fileLines(v *vm.VM) int {
 	}
 
 	v.Set(0, vm.NewNativeFunc(func(v *vm.VM) int {
-		fh.checkOpen("lines iterator")
+		ctx := v.Context()
+		fh.checkOpen(ctx, "lines iterator")
 
 		if len(formats) == 0 {
-			line, err := f.Read("l")
+			line, err := f.Read(ctx, "l")
 			if err != nil {
 				if err == io.EOF {
 					return 0
@@ -1302,7 +1319,7 @@ func fileLines(v *vm.VM) int {
 // fileSeek implements f:seek([whence [, offset]]) method.
 func fileSeek(v *vm.VM) int {
 	fh := getFileHandle(v, v.Get(1), "seek")
-	fh.checkOpen("seek")
+	fh.checkOpen(v.Context(), "seek")
 
 	whence := "cur"
 	if !v.Get(2).IsNil() {
@@ -1326,7 +1343,8 @@ func fileSeek(v *vm.VM) int {
 		}
 	}
 
-	pos, err := fh.file.Seek(whence, offset)
+	ctx := v.Context()
+	pos, err := fh.file.Seek(ctx, whence, offset)
 	if err != nil {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(err.Error()))
@@ -1341,7 +1359,7 @@ func fileSeek(v *vm.VM) int {
 func fileSetVBuf(v *vm.VM) int {
 	self := v.Get(1)
 	fh := getFileHandle(v, self, "setvbuf")
-	fh.checkOpen("setvbuf")
+	fh.checkOpen(v.Context(), "setvbuf")
 
 	mode := v.Get(2)
 	if mode.IsNil() {
@@ -1373,7 +1391,8 @@ func fileSetVBuf(v *vm.VM) int {
 		fileArgError(v, 2, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
 	}
 
-	err := fh.file.SetVBuf(modeStr, size)
+	ctx := v.Context()
+	err := fh.file.SetVBuf(ctx, modeStr, size)
 	if err != nil {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(err.Error()))
@@ -1389,9 +1408,10 @@ func fileSetVBuf(v *vm.VM) int {
 func fileFlush(v *vm.VM) int {
 	self := v.Get(1)
 	fh := getFileHandle(v, self, "flush")
-	fh.checkOpen("flush")
+	ctx := v.Context()
+	fh.checkOpen(ctx, "flush")
 
-	err := fh.file.Flush()
+	err := fh.file.Flush(ctx)
 	if err != nil {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(err.Error()))
@@ -1415,7 +1435,8 @@ func fileToString(v *vm.VM) int {
 		v.Set(0, vm.NewString("file (?)"))
 		return 1
 	}
-	if fh.closed || fh.file.IsClosed() {
+	ctx := v.Context()
+	if fh.closed || fh.file.IsClosed(ctx) {
 		v.Set(0, vm.NewString("file (closed)"))
 	} else {
 		v.Set(0, vm.NewString(fmt.Sprintf("file (%p)", ud)))
@@ -1449,10 +1470,11 @@ func fileCloseGC(v *vm.VM) int {
 		fh.gcCloseFn(fh)
 		return 0
 	}
-	if fh.closed || fh.file.IsClosed() || fh.file.IsStd() {
+	ctx := v.Context()
+	if fh.closed || fh.file.IsClosed(ctx) || fh.file.IsStd(ctx) {
 		return 0
 	}
-	fh.file.Close()
+	fh.file.Close(ctx)
 	fh.closed = true
 	return 0
 }
