@@ -660,8 +660,8 @@ Or route output through your own logger:
 ```go
 type Logger struct{}
 
-func (l *Logger) Print(msg string) { log.Printf("lua: %s", msg) }
-func (l *Logger) Warn(msg string)  { log.Printf("lua warn: %s", msg) }
+func (l *Logger) Print(ctx context.Context, msg string) { log.Printf("lua: %s", msg) }
+func (l *Logger) Warn(ctx context.Context, msg string)  { log.Printf("lua warn: %s", msg) }
 
 v := vm.New()
 v.SetPrintProvider(&Logger{})
