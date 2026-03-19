@@ -7,6 +7,17 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
+// terminalCFuncVal is a singleton native function value representing the
+// synthetic [C] entry point at the bottom of the main VM call stack.
+// Lua 5.4 exposes this via debug.getinfo's "f" option on the outermost level.
+var terminalCFuncVal = NewNativeFunc(func(v *VM) int { return 0 })
+
+// terminalCFunc returns the synthetic [C] function value for the main VM's
+// outermost stack frame.
+func (vm *VM) terminalCFunc() Value {
+	return terminalCFuncVal
+}
+
 // Traceback formats a stack trace string. level is the number of frames to
 // skip from the top (0 = current frame, 1 = caller of traceback, etc.).
 // Long traces are truncated: first 10 entries + "..." + last 11 entries
@@ -25,7 +36,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 	b.WriteString("stack traceback:")
 
 	if level < 0 {
-		level = 0
+		return b.String()
 	}
 	start := len(vm.callStack) - 1 - level
 	if start < 0 {
@@ -279,6 +290,19 @@ func (vm *VM) HasLastErrorTraceback() bool {
 	return len(vm.lastErrorCallStack) > 0
 }
 
+// SaveLastErrorCallStack returns (and clears) the current lastErrorCallStack
+// so it can be restored later if a nested ProtectedCall succeeds.
+func (vm *VM) SaveLastErrorCallStack() []callFrame {
+	saved := vm.lastErrorCallStack
+	vm.lastErrorCallStack = nil
+	return saved
+}
+
+// RestoreLastErrorCallStack restores a previously saved error call stack.
+func (vm *VM) RestoreLastErrorCallStack(saved []callFrame) {
+	vm.lastErrorCallStack = saved
+}
+
 func (vm *VM) debugCallStack() ([]callFrame, bool) {
 	if len(vm.callStack) > 0 {
 		return vm.callStack, true
@@ -394,6 +418,20 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	stack, active := vm.debugCallStack()
 	idx := len(stack) - 1 - level
 	if idx < 0 || idx >= len(stack) {
+		// For the main VM (not coroutines), synthesize a terminal [C] frame
+		// at the level just past the real stack, matching Lua 5.4's C runtime frame.
+		if vm.yieldCh == nil && idx == -1 {
+			return &FrameInfo{
+				Source:          "=[C]",
+				ShortSrc:        "[C]",
+				LineDefined:     -1,
+				LastLineDefined: -1,
+				CurrentLine:     -1,
+				What:            "C",
+				IsVarArg:        true,
+				Func:            vm.terminalCFunc(),
+			}
+		}
 		return nil
 	}
 

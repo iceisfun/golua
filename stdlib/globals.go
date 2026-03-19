@@ -116,15 +116,23 @@ func luaToString(v *vm.VM) int {
 		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
 			exitNonYieldable := v.EnterNonYieldable()
 			defer exitNonYieldable()
+			// Save lastErrorCallStack so the inner ProtectedCall doesn't
+			// lose an outer error's snapshot, and restore it if __tostring
+			// succeeds. On error, the re-panic needs the inner snapshot
+			// to be active, so we DON'T restore in that case.
+			savedECS := v.SaveLastErrorCallStack()
 			results, err := v.ProtectedCall(ts, []vm.Value{val})
 			if err != nil {
 				// Re-raise as LuaError to preserve the original file:line
-				// prefix and prevent the outer pcall from adding a second one.
+				// prefix. Don't restore savedECS — the inner snapshot from
+				// ProtectedCall has the richer __tostring call stack.
 				if le, ok := err.(*vm.LuaError); ok {
 					panic(le)
 				}
 				panic(&vm.LuaError{Value: vm.NewString(err.Error())})
 			}
+			// __tostring succeeded — restore the outer snapshot.
+			v.RestoreLastErrorCallStack(savedECS)
 			if len(results) == 0 {
 				panic("'__tostring' must return a string")
 			}
@@ -307,6 +315,10 @@ func luaPcall(v *vm.VM) int {
 	}
 	fn := v.Get(1)
 
+	// Clear stale error call stack from any previous error so that
+	// a subsequent uncaught error gets a fresh traceback snapshot.
+	v.ClearLastErrorCallStack()
+
 	// Collect additional arguments
 	args := make([]vm.Value, argc-1)
 	for i := 2; i <= argc; i++ {
@@ -336,6 +348,10 @@ func luaPcall(v *vm.VM) int {
 	// ProtectedCall handles __call metamethods for tables
 	results, err := v.ProtectedCall(fn, args)
 
+	// Clear the error call stack snapshot — pcall has consumed the error,
+	// so stale frames shouldn't leak into subsequent unrelated tracebacks.
+	v.ClearLastErrorCallStack()
+
 	// Restore the outer message handler state
 	v.MsgHandler = savedMsgHandler
 	v.MsgHandlerUsed = savedMsgHandlerUsed
@@ -363,6 +379,8 @@ func luaPcall(v *vm.VM) int {
 
 // xpcall(f, msgh [, arg1, ...])
 func luaXpcall(v *vm.VM) int {
+	// Clear stale error call stack from any previous error.
+	v.ClearLastErrorCallStack()
 	fn := v.Get(1)
 	msgh := v.Get(2)
 	if !msgh.IsFunction() && !msgh.IsNativeFunc() {
@@ -393,6 +411,10 @@ func luaXpcall(v *vm.VM) int {
 	}
 
 	results, err := v.ProtectedCall(fn, args)
+
+	// Clear the error call stack snapshot — xpcall has consumed the error.
+	v.ClearLastErrorCallStack()
+
 	if err != nil {
 		v.Set(0, vm.False)
 		if v.MsgHandlerUsed {
