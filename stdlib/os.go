@@ -221,6 +221,12 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			}
 		}
 
+		// Lua 5.4: validate year fits in C's int (tm_year = year - 1900)
+		tmYear := int64(dateTable.Year) - 1900
+		if tmYear < math.MinInt32 || tmYear > math.MaxInt32 {
+			panic("field 'year' is out-of-bound")
+		}
+
 		// Optional fields with Lua 5.4 defaults: hour=12, min=0, sec=0
 		defaults := map[string]int{"hour": 12, "min": 0, "sec": 0}
 		for _, key := range []string{"hour", "min", "sec"} {

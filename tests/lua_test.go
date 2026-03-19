@@ -295,7 +295,11 @@ func needsFullIo(filename string) bool {
 		"test_table_math_name_fixes.lua",
 		"test_io_os_errors.lua",
 		"test_file_gc_close_validate.lua",
-		"test_debug_uservalue_io.lua":
+		"test_debug_uservalue_io.lua",
+		"test_io_lines_maxarg.lua",
+		"test_io_error_returns.lua",
+		"test_io_read_format_failure.lua",
+		"test_loadfile_binary_comment.lua":
 		return true
 	}
 	return false

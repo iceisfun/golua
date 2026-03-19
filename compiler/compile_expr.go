@@ -178,11 +178,13 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		fs.emit(ABx(OP_CLOSURE, reg, protoIdx), closureLine)
 
 	case *ast.TableConstructor: // e.g. {1, 2, key="val"}
-		// Table constructors use reg+1, reg+2, ... as scratch space for
-		// array values before SETLIST flushes them. If reg is below existing
-		// locals, that scratch space would clobber them. Build at a safe
-		// register and move the result.
-		if savedFreeReg > reg+1 {
+		// When reg < savedFreeReg the target is an existing local. Compiling
+		// the constructor directly at reg would clobber it with NEWTABLE
+		// before expressions that reference it (e.g. table.unpack(t)) are
+		// evaluated. Additionally, scratch space at reg+1, reg+2, ... for
+		// array values before SETLIST could clobber other locals. Use a temp
+		// register and move the result in both cases.
+		if reg < savedFreeReg {
 			tmp := fs.freeReg
 			c.compileTableConstructor(e, tmp)
 			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)

@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -445,8 +446,17 @@ func luaLoadfile(v *vm.VM) int {
 		return 2
 	}
 
-	// Detect binary chunk (starts with \x1b)
-	isBinary := len(source) > 0 && source[0] == '\x1b'
+	// Detect binary chunk. A file may start with a shebang (#) line
+	// followed by binary data, so strip the first line before checking.
+	binarySource := source
+	if len(binarySource) > 0 && binarySource[0] == '#' {
+		if idx := bytes.IndexByte(binarySource, '\n'); idx >= 0 {
+			binarySource = binarySource[idx+1:]
+		} else {
+			binarySource = nil // entire file is a shebang line
+		}
+	}
+	isBinary := len(binarySource) > 0 && binarySource[0] == '\x1b'
 
 	if isBinary {
 		if !strings.Contains(mode, "b") {
@@ -454,7 +464,7 @@ func luaLoadfile(v *vm.VM) int {
 			v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a binary chunk (mode is '%s')", mode)))
 			return 2
 		}
-		fn, errMsg := loadBinaryChunk(v, string(source), chunkName, env, hasEnv)
+		fn, errMsg := loadBinaryChunk(v, string(binarySource), chunkName, env, hasEnv)
 		if errMsg != "" {
 			v.Set(0, vm.Nil)
 			v.Set(1, vm.NewString(errMsg))
@@ -524,13 +534,22 @@ func luaDofile(v *vm.VM) int {
 		panic(err.Error())
 	}
 
-	// Detect binary chunk (starts with \x1b)
+	// Detect binary chunk. A file may start with a shebang (#) line
+	// followed by binary data, so strip the first line before checking.
 	var fn vm.Value
-	isBinary := len(source) > 0 && source[0] == '\x1b'
+	binarySource := source
+	if len(binarySource) > 0 && binarySource[0] == '#' {
+		if idx := bytes.IndexByte(binarySource, '\n'); idx >= 0 {
+			binarySource = binarySource[idx+1:]
+		} else {
+			binarySource = nil
+		}
+	}
+	isBinary := len(binarySource) > 0 && binarySource[0] == '\x1b'
 
 	if isBinary {
 		var errMsg string
-		fn, errMsg = loadBinaryChunk(v, string(source), chunkName, vm.Nil, false)
+		fn, errMsg = loadBinaryChunk(v, string(binarySource), chunkName, vm.Nil, false)
 		if errMsg != "" {
 			panic(errMsg)
 		}

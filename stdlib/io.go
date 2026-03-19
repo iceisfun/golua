@@ -3,15 +3,21 @@ package stdlib
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/iceisfun/golua/vm"
 )
+
+// maxArgLine is the maximum number of format arguments for f:lines()/io.lines().
+// Matches Lua 5.4's MAXARGLINE (liolib.c).
+const maxArgLine = 250
 
 // fileHandleMeta is a shared metatable for file handle userdata.
 // It contains __index pointing to a methods table, __name, __tostring,
@@ -556,6 +562,24 @@ func formatOpenError(name string, err error) (string, int) {
 	return formatPathError(name, err)
 }
 
+// isFileError reports whether err is an OS-level I/O error (like "bad file descriptor")
+// as opposed to a normal read condition (EOF, no number found, etc.).
+// Lua 5.4 uses ferror(f) to distinguish these cases.
+func isFileError(err error) bool {
+	if err == nil || err == io.EOF {
+		return false
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return true
+	}
+	var sysErr syscall.Errno
+	if errors.As(err, &sysErr) {
+		return true
+	}
+	return false
+}
+
 // extractLuaFileError extracts a human-readable error description from a Go error,
 // stripping the operation prefix. Returns (errno, description).
 func extractLuaFileError(err error) (int, string) {
@@ -713,6 +737,9 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 		for i := 2; i <= v.ArgCount(); i++ {
 			formats = append(formats, v.Get(i))
 		}
+		if len(formats) > maxArgLine {
+			callerArgError(v, maxArgLine+2, "io.lines", "too many arguments")
+		}
 
 		closed := false
 		// Return an iterator that reads lines
@@ -844,7 +871,9 @@ func makeIoRead(provider vm.LuaIoProvider) vm.NativeFunc {
 		ioTable := ioVal.AsTable()
 		inputVal := ioTable.Get(vm.NewString("__input"))
 		fh := getFileHandle(v, inputVal, "io.read")
-		fh.checkOpen("read")
+		if fh.closed || fh.file.IsClosed() {
+			panic("default input file is closed")
+		}
 
 		return doFileRead(v, fh.file, 1)
 	}
@@ -861,7 +890,9 @@ func makeIoWrite(provider vm.LuaIoProvider) vm.NativeFunc {
 		ioTable := ioVal.AsTable()
 		outputVal := ioTable.Get(vm.NewString("__output"))
 		fh := getFileHandle(v, outputVal, "io.write")
-		fh.checkOpen("write")
+		if fh.closed || fh.file.IsClosed() {
+			panic("default output file is closed")
+		}
 
 		return doFileWrite(v, fh.file, outputVal, 1)
 	}
@@ -900,19 +931,32 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 				v.Set(0, vm.Nil)
 				return 1
 			}
+			errno, errDesc := extractLuaFileError(err)
 			v.Set(0, vm.Nil)
-			v.Set(1, vm.NewString(err.Error()))
-			return 2
+			v.Set(1, vm.NewString(errDesc))
+			v.Set(2, vm.NewInt(int64(errno)))
+			return 3
 		}
 		v.Set(0, vm.NewString(line))
 		return 1
 	}
 
-	// Process each format argument
+	// Process each format argument.
+	// Track OS-level I/O errors: Lua 5.4 checks ferror(f) after the loop and
+	// returns nil, errmsg, errno if the underlying file had an error.
+	// Normal failures (EOF, no-number-found) produce nil and stop further reads
+	// (Lua 5.4 uses a success flag that gates the loop).
 	n := len(formats)
 	v.EnsureStack(v.Base() + n)
 	results := 0
+	var fileErr error
+	success := true
 	for _, arg := range formats {
+		if !success {
+			v.Set(results, vm.Nil)
+			results++
+			continue
+		}
 		if arg.IsNumber() {
 			// Read N bytes
 			count, ok := arg.ToInt()
@@ -926,14 +970,22 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 				// Read 0 bytes: test if at EOF
 				data, err := f.ReadBytes(0)
 				if err != nil {
+					if isFileError(err) {
+						fileErr = err
+					}
 					v.Set(results, vm.Nil)
+					success = false
 				} else {
 					v.Set(results, vm.NewString(data))
 				}
 			} else {
 				data, err := f.ReadBytes(int(count))
 				if err != nil {
+					if isFileError(err) {
+						fileErr = err
+					}
 					v.Set(results, vm.Nil)
+					success = false
 				} else {
 					v.Set(results, vm.NewString(data))
 				}
@@ -948,7 +1000,11 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			}
 			data, err := f.Read(format)
 			if err != nil {
+				if isFileError(err) {
+					fileErr = err
+				}
 				v.Set(results, vm.Nil)
+				success = false
 			} else {
 				// Check if format is "n" or "*n" for number parsing
 				cleanFmt := strings.TrimPrefix(format, "*")
@@ -967,6 +1023,14 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			fileArgError(v, firstArg+results, "read", fmt.Sprintf("string expected, got %s", arg.Type()))
 		}
 		results++
+	}
+	// Lua 5.4: if the file had an OS-level I/O error (ferror), return nil, msg, errno.
+	if fileErr != nil {
+		errno, errDesc := extractLuaFileError(fileErr)
+		v.Set(0, vm.Nil)
+		v.Set(1, vm.NewString(errDesc))
+		v.Set(2, vm.NewInt(int64(errno)))
+		return 3
 	}
 	return results
 }
@@ -1153,9 +1217,11 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 		}
 		err := f.Write(s)
 		if err != nil {
+			errno, errDesc := extractLuaFileError(err)
 			v.Set(0, vm.Nil)
-			v.Set(1, vm.NewString(err.Error()))
-			return 2
+			v.Set(1, vm.NewString(errDesc))
+			v.Set(2, vm.NewInt(int64(errno)))
+			return 3
 		}
 	}
 
@@ -1204,6 +1270,9 @@ func fileLines(v *vm.VM) int {
 	var formats []vm.Value
 	for i := 2; i <= v.ArgCount(); i++ {
 		formats = append(formats, v.Get(i))
+	}
+	if len(formats) > maxArgLine {
+		callerArgError(v, maxArgLine+2, "lines", "too many arguments")
 	}
 
 	v.Set(0, vm.NewNativeFunc(func(v *vm.VM) int {
