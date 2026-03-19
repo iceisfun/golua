@@ -1051,6 +1051,28 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	// preceding locals as out of scope.
 	c.compileBlockWith(s.Body, false, s.Cond.Pos().Line)
 
+	// Constant conditions can skip the generic boolean materialization path,
+	// which keeps repeat/until instruction shape much closer to Lua 5.4.
+	if isConstTrue(s.Cond) {
+		c.leaveScope(line)
+		return
+	}
+	if isConstFalsy(s.Cond) {
+		scope := fs.scopes[len(fs.scopes)-1]
+		if fs.needsClose(scope.nLocals) {
+			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
+		}
+		backJump := fs.emitJump(c.lastEmittedLine())
+		offset := loopStart - fs.pc()
+		if offset > MaxSJ || offset < MinSJ {
+			c.error(nil, "control structure too long")
+		} else {
+			fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
+		}
+		c.leaveScope(line)
+		return
+	}
+
 	// Evaluate condition (may reference body locals)
 	condLine := s.Cond.Pos().Line
 	reg := fs.freeReg
