@@ -139,7 +139,15 @@ done:
 	}
 
 	// Create VM and register standard library
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeoutMs > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+		defer cancel()
+	}
+
 	var vmOpts []vm.VMOption
+	vmOpts = append(vmOpts, vm.WithContext(ctx))
 	if gcStepInterval > 0 {
 		vmOpts = append(vmOpts, vm.WithLimits(vm.Limits{GCStepInterval: gcStepInterval}))
 	}
@@ -161,13 +169,6 @@ done:
 
 	configureCLIProviders(v, testMode, scriptDir)
 	stdlib.Open(v)
-
-	// Set timeout context if requested
-	if timeoutMs > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
-		defer cancel()
-		v.SetContext(ctx)
-	}
 
 	// Set command line arguments — use displayName (without '@' prefix)
 	luaArgs := vm.NewEmptyTable()
@@ -192,6 +193,8 @@ done:
 		}()
 		_, err = v.Run(proto)
 	}()
+
+	v.Close(context.Background())
 
 	if err != nil {
 		// Format error like Lua 5.4's msghandler + report in lua.c.
