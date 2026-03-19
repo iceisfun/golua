@@ -136,6 +136,7 @@ func (vm *VM) Pop() Value {
 // The code provider is used by load, loadfile, and dofile to resolve and load Lua chunks.
 func (vm *VM) SetCodeProvider(provider LuaCodeProvider) {
 	vm.codeProvider = provider
+	vm.registerProvider(provider)
 }
 
 // CodeProvider returns the current code provider, or nil if none is set.
@@ -175,6 +176,7 @@ func (vm *VM) CallerContext() *LuaCallerContext {
 // SetIoProvider sets the IO provider for this VM.
 func (vm *VM) SetIoProvider(provider LuaIoProvider) {
 	vm.ioProvider = provider
+	vm.registerProvider(provider)
 }
 
 // IoProvider returns the current IO provider, or nil if none is set.
@@ -185,6 +187,7 @@ func (vm *VM) IoProvider() LuaIoProvider {
 // SetOsProvider sets the OS provider for this VM.
 func (vm *VM) SetOsProvider(provider LuaOsProvider) {
 	vm.osProvider = provider
+	vm.registerProvider(provider)
 }
 
 // OsProvider returns the current OS provider, or nil if none is set.
@@ -195,6 +198,7 @@ func (vm *VM) OsProvider() LuaOsProvider {
 // SetExecProvider sets the exec provider for this VM.
 func (vm *VM) SetExecProvider(provider LuaExecProvider) {
 	vm.execProvider = provider
+	vm.registerProvider(provider)
 }
 
 // ExecProvider returns the current exec provider, or nil if none is set.
@@ -205,6 +209,7 @@ func (vm *VM) ExecProvider() LuaExecProvider {
 // SetExitHandler sets the exit handler for this VM.
 func (vm *VM) SetExitHandler(handler LuaExitHandler) {
 	vm.exitHandler = handler
+	vm.registerProvider(handler)
 }
 
 // ExitHandler returns the current exit handler, or nil if none is set.
@@ -215,6 +220,7 @@ func (vm *VM) ExitHandler() LuaExitHandler {
 // SetDebugProvider sets the debug provider for this VM.
 func (vm *VM) SetDebugProvider(provider LuaDebugProvider) {
 	vm.debugProvider = provider
+	vm.registerProvider(provider)
 }
 
 // DebugProvider returns the current debug provider, or nil if none is set.
@@ -225,6 +231,7 @@ func (vm *VM) DebugProvider() LuaDebugProvider {
 // SetChanProvider sets the channel provider for this VM.
 func (vm *VM) SetChanProvider(provider LuaChanProvider) {
 	vm.chanProvider = provider
+	vm.registerProvider(provider)
 }
 
 // ChanProvider returns the current channel provider, or nil if none is set.
@@ -235,6 +242,7 @@ func (vm *VM) ChanProvider() LuaChanProvider {
 // SetTimeProvider sets the time provider for this VM.
 func (vm *VM) SetTimeProvider(provider LuaTimeProvider) {
 	vm.timeProvider = provider
+	vm.registerProvider(provider)
 }
 
 // TimeProvider returns the current time provider, or nil if none is set.
@@ -245,6 +253,7 @@ func (vm *VM) TimeProvider() LuaTimeProvider {
 // SetLoadLibProvider sets the package.loadlib provider for this VM.
 func (vm *VM) SetLoadLibProvider(provider LuaLoadLibProvider) {
 	vm.loadLibProvider = provider
+	vm.registerProvider(provider)
 }
 
 // LoadLibProvider returns the current package.loadlib provider, or nil if none is set.
@@ -258,6 +267,7 @@ func (vm *VM) LoadLibProvider() LuaLoadLibProvider {
 // When set, the exec module becomes available via stdlib.Open.
 func (vm *VM) SetProcessProvider(provider LuaProcessProvider) {
 	vm.processProvider = provider
+	vm.registerProvider(provider)
 }
 
 // ProcessProvider returns the current process provider, or nil if none is set.
@@ -272,6 +282,7 @@ func (vm *VM) ProcessProvider() LuaProcessProvider {
 // writing to stdout/stderr (or the capture buffer).
 func (vm *VM) SetPrintProvider(provider LuaPrintProvider) {
 	vm.printProvider = provider
+	vm.registerProvider(provider)
 }
 
 // PrintProvider returns the current print provider, or nil if none is set.

@@ -94,6 +94,9 @@ type VM struct {
 	printProvider LuaPrintProvider // Provider for print/warn output routing (optional)
 	warnEnabled   bool             // Per-VM warn flag (controlled by warn("@on")/"@off")
 
+	// All registered providers for lifecycle management (Close)
+	registeredProviders []any
+
 	// Hook support
 	hookFunc     Value // Hook callback function
 	hookMask     byte  // Bitmask of active hook events

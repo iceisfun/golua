@@ -18,27 +18,17 @@ type Shutdownable interface {
 	Shutdown(ctx context.Context) error
 }
 
-// Close shuts down the VM by calling Shutdown on any providers that
-// implement the Shutdownable interface. Returns the first error encountered.
+// registerProvider adds a provider to the VM's registered list for
+// lifecycle management. Called by each Set*Provider method.
+func (vm *VM) registerProvider(p any) {
+	vm.registeredProviders = append(vm.registeredProviders, p)
+}
+
+// Close shuts down the VM by calling Shutdown on any registered providers
+// that implement the Shutdownable interface. Returns the first error encountered.
 func (vm *VM) Close(ctx context.Context) error {
-	providers := []interface{}{
-		vm.codeProvider,
-		vm.ioProvider,
-		vm.osProvider,
-		vm.execProvider,
-		vm.exitHandler,
-		vm.debugProvider,
-		vm.chanProvider,
-		vm.timeProvider,
-		vm.loadLibProvider,
-		vm.processProvider,
-		vm.printProvider,
-	}
 	var firstErr error
-	for _, p := range providers {
-		if p == nil {
-			continue
-		}
+	for _, p := range vm.registeredProviders {
 		if s, ok := p.(Shutdownable); ok {
 			if err := s.Shutdown(ctx); err != nil && firstErr == nil {
 				firstErr = err
