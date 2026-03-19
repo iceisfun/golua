@@ -224,7 +224,7 @@ func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 // makePreloadSearcher returns a searcher that checks package.preload.
 func makePreloadSearcher(preload *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		name := v.Get(1).AsString()
+		name := getString(v, 1, "?")
 		loader := preload.Get(vm.NewString(name))
 		if loader.IsNil() {
 			v.Set(0, vm.NewString("no field package.preload['"+name+"']"))
@@ -239,7 +239,7 @@ func makePreloadSearcher(preload *vm.Table) vm.NativeFunc {
 // makeLuaFileSearcher returns a searcher that tries to load Lua files via the code provider.
 func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		name := v.Get(1).AsString()
+		name := getString(v, 1, "?")
 
 		pathVal := pkg.GetString("path")
 		if !pathVal.IsString() {
@@ -286,7 +286,7 @@ func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 // makeCFileSearcher returns a searcher that always fails (C loading not supported).
 func makeCFileSearcher(pkg *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		name := v.Get(1).AsString()
+		name := getString(v, 1, "?")
 
 		cpathVal := pkg.GetString("cpath")
 		if !cpathVal.IsString() {
@@ -312,7 +312,7 @@ func makeCFileSearcher(pkg *vm.Table) vm.NativeFunc {
 // and includes its path probes in module-not-found errors.
 func makeCRootSearcher(pkg *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
-		name := v.Get(1).AsString()
+		name := getString(v, 1, "?")
 		dot := strings.IndexByte(name, '.')
 		if dot < 0 {
 			return 0

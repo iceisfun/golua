@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"fmt"
 	"unicode/utf8"
 
 	"github.com/iceisfun/golua/vm"
@@ -285,8 +286,12 @@ func luaUtf8Codes(v *vm.VM) int {
 
 	// Return iterator, string, initial state (0)
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
-		str := v.Get(1).AsString()
-		state, _ := v.Get(2).ToInt()
+		str := getString(v, 1, "?")
+		stateVal := v.Get(2)
+		state, ok := stateVal.ToInt()
+		if !ok {
+			callerArgError(v, 2, "?", fmt.Sprintf("number expected, got %s", v.ObjTypeName(stateVal)))
+		}
 
 		// State is: 0 = initial, >0 = 1-indexed position of last returned codepoint.
 		// Convert to 0-indexed byte offset for next codepoint to decode.
