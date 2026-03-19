@@ -117,9 +117,9 @@ type VM struct {
 	// Message handler for xpcall: called inside ProtectedCall's recovery
 	// BEFORE the call stack is truncated, so debug.traceback can see
 	// the full stack. Set by xpcall and cleared after use.
-	MsgHandler         Value
-	MsgHandlerResult   Value
-	MsgHandlerUsed     bool
+	msgHandler       Value
+	msgHandlerResult Value
+	msgHandlerUsed   bool
 	lastErrorCallStack []callFrame // saved call stack from the last error
 
 	// inMsgHandler tracks whether we're inside an xpcall message handler.
@@ -234,6 +234,24 @@ func (vm *VM) Run(proto *compiler.Proto) ([]Value, error) {
 	return vm.ProtectedCall(NewFunction(closure), nil)
 }
 
+// GetMsgHandler returns the current xpcall message handler.
+func (vm *VM) GetMsgHandler() Value { return vm.msgHandler }
+
+// SetMsgHandler sets the xpcall message handler.
+func (vm *VM) SetMsgHandler(h Value) { vm.msgHandler = h }
+
+// GetMsgHandlerResult returns the result from the last message handler call.
+func (vm *VM) GetMsgHandlerResult() Value { return vm.msgHandlerResult }
+
+// SetMsgHandlerResult sets the message handler result.
+func (vm *VM) SetMsgHandlerResult(r Value) { vm.msgHandlerResult = r }
+
+// IsMsgHandlerUsed returns whether the message handler was invoked.
+func (vm *VM) IsMsgHandlerUsed() bool { return vm.msgHandlerUsed }
+
+// SetMsgHandlerUsed sets whether the message handler was invoked.
+func (vm *VM) SetMsgHandlerUsed(used bool) { vm.msgHandlerUsed = used }
+
 // callMsgHandler calls the xpcall message handler with retry logic.
 // In Lua 5.4, if the message handler itself errors, it is re-invoked with
 // the new error value. This continues until the handler succeeds or a
@@ -300,21 +318,21 @@ func (vm *VM) callMsgHandler(msgh Value, errVal Value, errorCallStack []callFram
 		}
 		// Handler succeeded
 		if len(hResults) > 0 {
-			vm.MsgHandlerResult = hResults[0]
+			vm.msgHandlerResult = hResults[0]
 		} else {
-			vm.MsgHandlerResult = Nil
+			vm.msgHandlerResult = Nil
 		}
 		succeeded = true
 		break
 	}
 
 	if !succeeded {
-		vm.MsgHandlerResult = NewString("error in error handling")
+		vm.msgHandlerResult = NewString("error in error handling")
 	}
 
 	vm.limits.MaxCallDepth = savedMaxCallDepth
 	vm.callStack = truncatedStack
-	vm.MsgHandlerUsed = true
+	vm.msgHandlerUsed = true
 }
 
 // ProtectedCall calls a function in protected mode, catching any Lua errors.
@@ -394,11 +412,11 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			var errorCallStack []callFrame
 			// Only save if no inner ProtectedCall already captured a richer
 			// snapshot (e.g. __tostring → error re-raised by luaToString).
-			if vm.MsgHandler.IsNil() && vm.lastErrorCallStack == nil {
+			if vm.msgHandler.IsNil() && vm.lastErrorCallStack == nil {
 				vm.lastErrorCallStack = make([]callFrame, len(vm.callStack))
 				copy(vm.lastErrorCallStack, vm.callStack)
 			}
-			if !vm.MsgHandler.IsNil() && vm.lastErrorCallStack == nil {
+			if !vm.msgHandler.IsNil() && vm.lastErrorCallStack == nil {
 				errorCallStack = make([]callFrame, len(vm.callStack))
 				copy(errorCallStack, vm.callStack)
 			}
@@ -416,8 +434,8 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			var msgh Value
 			if errorCallStack != nil {
 				// Call message handler with original error first
-				msgh = vm.MsgHandler
-				vm.MsgHandler = Nil
+				msgh = vm.msgHandler
+				vm.msgHandler = Nil
 				var errVal Value
 				if le, ok := r.(*LuaError); ok {
 					errVal = le.Value
@@ -425,10 +443,10 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 					errVal = NewString(locatedMsg)
 				}
 				vm.callMsgHandler(msgh, errVal, errorCallStack)
-			} else if !vm.MsgHandler.IsNil() && vm.lastErrorCallStack != nil {
+			} else if !vm.msgHandler.IsNil() && vm.lastErrorCallStack != nil {
 				// callCloseHandlers from a prior level saved a __close error stack
-				msgh = vm.MsgHandler
-				vm.MsgHandler = Nil
+				msgh = vm.msgHandler
+				vm.msgHandler = Nil
 				var errVal Value
 				if le, ok := r.(*LuaError); ok {
 					errVal = le.Value
@@ -460,15 +478,15 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				vm.tbcVars = kept
 				// Extract the Lua error value to pass to __close handlers
 				var closeErrVal Value
-				if vm.MsgHandlerUsed {
-					closeErrVal = vm.MsgHandlerResult
+				if vm.msgHandlerUsed {
+					closeErrVal = vm.msgHandlerResult
 				} else if le, ok := r.(*LuaError); ok {
 					closeErrVal = le.Value
 				} else {
 					closeErrVal = NewString(fmt.Sprintf("%v", r))
 				}
 				if !msgh.IsNil() {
-					vm.MsgHandler = msgh
+					vm.msgHandler = msgh
 				}
 				// Use callCloseHandlers to protect each __close call individually.
 				// If a handler errors, it replaces err but other handlers still run.
@@ -487,10 +505,10 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 					}()
 					vm.callCloseHandlers(tbcToClose, closeErrVal, !msgh.IsNil())
 				}()
-				vm.MsgHandler = Nil
+				vm.msgHandler = Nil
 
-				if closeErrorOccurred && !msgh.IsNil() && vm.MsgHandlerUsed {
-					err = &LuaError{Value: vm.MsgHandlerResult}
+				if closeErrorOccurred && !msgh.IsNil() && vm.msgHandlerUsed {
+					err = &LuaError{Value: vm.msgHandlerResult}
 				}
 			}
 			// Restore vm.top after __close handlers are done.

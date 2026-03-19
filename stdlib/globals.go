@@ -331,12 +331,12 @@ func luaPcall(v *vm.VM) int {
 
 	// Save and clear the message handler so that a nested pcall inside
 	// xpcall doesn't accidentally trigger the xpcall message handler.
-	savedMsgHandler := v.MsgHandler
-	savedMsgHandlerUsed := v.MsgHandlerUsed
-	savedMsgHandlerResult := v.MsgHandlerResult
-	v.MsgHandler = vm.Nil
-	v.MsgHandlerUsed = false
-	v.MsgHandlerResult = vm.Nil
+	savedMsgHandler := v.GetMsgHandler()
+	savedMsgHandlerUsed := v.IsMsgHandlerUsed()
+	savedMsgHandlerResult := v.GetMsgHandlerResult()
+	v.SetMsgHandler(vm.Nil)
+	v.SetMsgHandlerUsed(false)
+	v.SetMsgHandlerResult(vm.Nil)
 	exitUserProtected := v.EnterUserProtected()
 	defer exitUserProtected()
 	if fn.RawEqual(v.GetGlobal("load")) {
@@ -353,9 +353,9 @@ func luaPcall(v *vm.VM) int {
 	v.ClearLastErrorCallStack()
 
 	// Restore the outer message handler state
-	v.MsgHandler = savedMsgHandler
-	v.MsgHandlerUsed = savedMsgHandlerUsed
-	v.MsgHandlerResult = savedMsgHandlerResult
+	v.SetMsgHandler(savedMsgHandler)
+	v.SetMsgHandlerUsed(savedMsgHandlerUsed)
+	v.SetMsgHandlerResult(savedMsgHandlerResult)
 
 	if err != nil {
 		v.Set(0, vm.False)
@@ -400,9 +400,9 @@ func luaXpcall(v *vm.VM) int {
 
 	// Set message handler so ProtectedCall can call it BEFORE truncating
 	// the call stack (allowing debug.traceback to see the full stack).
-	v.MsgHandler = msgh
-	v.MsgHandlerUsed = false
-	v.MsgHandlerResult = vm.Nil
+	v.SetMsgHandler(msgh)
+	v.SetMsgHandlerUsed(false)
+	v.SetMsgHandlerResult(vm.Nil)
 	exitUserProtected := v.EnterUserProtected()
 	defer exitUserProtected()
 	if fn.RawEqual(v.GetGlobal("load")) {
@@ -417,9 +417,9 @@ func luaXpcall(v *vm.VM) int {
 
 	if err != nil {
 		v.Set(0, vm.False)
-		if v.MsgHandlerUsed {
+		if v.IsMsgHandlerUsed() {
 			// Message handler was already called inside ProtectedCall
-			v.Set(1, v.MsgHandlerResult)
+			v.Set(1, v.GetMsgHandlerResult())
 		} else {
 			// Fallback: call the message handler now (shouldn't normally happen)
 			var errVal vm.Value
@@ -440,15 +440,15 @@ func luaXpcall(v *vm.VM) int {
 			}
 		}
 		// Clear message handler state
-		v.MsgHandler = vm.Nil
-		v.MsgHandlerUsed = false
-		v.MsgHandlerResult = vm.Nil
+		v.SetMsgHandler(vm.Nil)
+		v.SetMsgHandlerUsed(false)
+		v.SetMsgHandlerResult(vm.Nil)
 		return 2
 	}
 	// Clear message handler state on success
-	v.MsgHandler = vm.Nil
-	v.MsgHandlerUsed = false
-	v.MsgHandlerResult = vm.Nil
+	v.SetMsgHandler(vm.Nil)
+	v.SetMsgHandlerUsed(false)
+	v.SetMsgHandlerResult(vm.Nil)
 
 	// Success: return true followed by all results
 	v.EnsureStack(v.Base() + 1 + len(results))

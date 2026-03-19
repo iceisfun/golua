@@ -137,7 +137,7 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | -------------------- | --------------------------------------------- | ------------------------------------ |
 | `LuaCodeProvider`    | `dofile`, `loadfile`, `require` file searcher | `DirCodeProvider`                    |
 | `LuaIoProvider`      | `io.*` file operations                        | `JailedIoProvider`, `FullIoProvider` |
-| `LuaOsProvider`      | `os.*` core (`clock`, `time`, `date`, `getenv`, `setlocale`) | `DefaultOsProvider`                  |
+| `LuaOsProvider`      | `os.*` core (`clock`, `time`, `date`, `getenv`, `setlocale`) | `DefaultOsProvider`   |
 | `LuaExecProvider`    | `os.execute` command execution                | `DefaultExecProvider`                |
 | `LuaExitHandler`     | `os.exit` VM termination                      | `DefaultExitHandler`                 |
 | `LuaDebugProvider`   | `debug.*` capability gating                   | `DefaultDebugProvider`               |

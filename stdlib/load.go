@@ -85,15 +85,15 @@ func setLoadReaderTypeError(v *vm.VM, msg string) {
 }
 
 func protectedCallPreserveMsgState(v *vm.VM, fn vm.Value, args []vm.Value) ([]vm.Value, error) {
-	savedMsgHandler := v.MsgHandler
-	savedMsgHandlerUsed := v.MsgHandlerUsed
-	savedMsgHandlerResult := v.MsgHandlerResult
+	savedMsgHandler := v.GetMsgHandler()
+	savedMsgHandlerUsed := v.IsMsgHandlerUsed()
+	savedMsgHandlerResult := v.GetMsgHandlerResult()
 
 	results, err := v.ProtectedCall(fn, args)
 
-	v.MsgHandler = savedMsgHandler
-	v.MsgHandlerUsed = savedMsgHandlerUsed
-	v.MsgHandlerResult = savedMsgHandlerResult
+	v.SetMsgHandler(savedMsgHandler)
+	v.SetMsgHandlerUsed(savedMsgHandlerUsed)
+	v.SetMsgHandlerResult(savedMsgHandlerResult)
 	return results, err
 }
 

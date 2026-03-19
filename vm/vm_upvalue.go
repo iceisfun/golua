@@ -106,12 +106,12 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value, useMsgHandler bool)
 					// Save the call stack snapshot for the message handler.
 					// The last error's stack will be used by ProtectedCall
 					// to call xpcall's message handler.
-					if useMsgHandler && !vm.MsgHandler.IsNil() && !rawErrVal.RawEqual(prevErrVal) {
+					if useMsgHandler && !vm.msgHandler.IsNil() && !rawErrVal.RawEqual(prevErrVal) {
 						vm.lastErrorCallStack = make([]callFrame, len(vm.callStack))
 						copy(vm.lastErrorCallStack, vm.callStack)
-						vm.callMsgHandler(vm.MsgHandler, rawErrVal, vm.lastErrorCallStack)
-						if vm.MsgHandlerUsed {
-							errVal = vm.MsgHandlerResult
+						vm.callMsgHandler(vm.msgHandler, rawErrVal, vm.lastErrorCallStack)
+						if vm.msgHandlerUsed {
+							errVal = vm.msgHandlerResult
 						}
 					}
 
