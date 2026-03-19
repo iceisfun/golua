@@ -39,6 +39,39 @@ func runLuaWithContext(t *testing.T, source, name string, ctx context.Context, l
 	return v.Run(proto)
 }
 
+// TestContext_TimeoutInterruptsOsExecute verifies that a blocking native
+// os.execute call is surfaced as an execution interruption when the VM's
+// context expires, instead of being swallowed as a normal Lua return value.
+func TestContext_TimeoutInterruptsOsExecute(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	block, err := parser.Parse("test_os_execute_timeout", `return os.execute("sleep 5")`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile("test_os_execute_timeout", block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+
+	v := vm.New(vm.WithContext(ctx))
+	v.SetOsProvider(vm.NewDefaultOsProvider())
+	v.SetExecProvider(vm.NewDefaultExecProvider())
+	stdlib.Open(v)
+
+	_, err = v.Run(proto)
+	if err == nil {
+		t.Fatal("expected interruption from expired context")
+	}
+	if !strings.Contains(err.Error(), "execution interrupted") {
+		t.Fatalf("expected execution interruption, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected context deadline in error, got: %v", err)
+	}
+}
+
 func TestContext_CancelInfiniteWhile(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

@@ -632,34 +632,28 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
 			v := vm.stack[frame.base+b]
-			// Lua 5.4: bitwise ops do NOT coerce strings
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
-					vm.stack[frame.base+a] = NewInt(int64(sc) << uint(i))
+					if sc < 0 {
+						vm.stack[frame.base+a] = NewInt(i << uint(-sc))
+					} else {
+						vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
+					}
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
-				} else {
-					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 				}
-			} else {
-				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 			}
 
 		case compiler.OP_SHRI:
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
 			v := vm.stack[frame.base+b]
-			// Lua 5.4: bitwise ops do NOT coerce strings
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
-					vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
+					vm.stack[frame.base+a] = NewInt(int64(sc) << uint(i))
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
-				} else {
-					return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 				}
-			} else {
-				return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 			}
 
 		case compiler.OP_ADD, compiler.OP_SUB, compiler.OP_MUL, compiler.OP_MOD,
@@ -685,8 +679,47 @@ func (vm *VM) execute() ([]Value, error) {
 			vm.stack[frame.base+a] = result
 
 		case compiler.OP_MMBIN, compiler.OP_MMBINI, compiler.OP_MMBINK:
-			// Metamethod calls - for now, skip (we'd need metatable support)
-			// These are emitted after arithmetic ops to handle metamethods
+			if op == compiler.OP_MMBINI {
+				a := inst.A()
+				sb := inst.SB()
+				tag := decodeBytecodeMetamethodTag(inst.C())
+				left := vm.stack[frame.base+a]
+				right := NewInt(int64(sb))
+				if inst.K() == 1 {
+					left, right = right, left
+				}
+				skip := false
+				switch tag {
+				case compiler.TM_ADD, compiler.TM_SUB, compiler.TM_MUL, compiler.TM_MOD, compiler.TM_POW, compiler.TM_DIV, compiler.TM_IDIV:
+					skip = left.IsNumber() && right.IsNumber()
+				case compiler.TM_BAND, compiler.TM_BOR, compiler.TM_BXOR, compiler.TM_SHL, compiler.TM_SHR:
+					_, ok1 := left.ToInt()
+					_, ok2 := right.ToInt()
+					skip = !left.IsString() && !right.IsString() && ok1 && ok2
+				}
+				if skip {
+					break
+				}
+				mmName := tag.String()
+				mm := vm.getArithMetamethod(left, right, mmName)
+				if mm.IsNil() {
+					if tag == compiler.TM_SHL || tag == compiler.TM_SHR || tag == compiler.TM_BAND || tag == compiler.TM_BOR || tag == compiler.TM_BXOR {
+						if !left.IsNumber() {
+							return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(left), vm.varInfo(a))
+						}
+						return nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(right))
+					}
+					if !left.IsNumber() {
+						return nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(left), vm.varInfo(a))
+					}
+					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(right))
+				}
+				result, err := vm.callMetamethod(mmName[2:], mm, left, right)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = result
+			}
 
 		case compiler.OP_UNM:
 			a, b := inst.A(), inst.B()
@@ -959,14 +992,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, k := inst.A(), inst.K()
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			if !v.IsNumber() {
-				return nil, vm.runtimeError("attempt to compare %s with number", vm.ObjTypeName(v))
-			}
-			var lt bool
-			if v.IsInt() {
-				lt = v.AsInt() < int64(sb)
-			} else {
-				lt = v.AsFloat() < float64(sb)
+			lt, err := vm.lessThan(v, NewInt(int64(sb)))
+			if err != nil {
+				return nil, err
 			}
 			if lt != (k == 1) {
 				frame.pc++
@@ -976,14 +1004,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, k := inst.A(), inst.K()
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			if !v.IsNumber() {
-				return nil, vm.runtimeError("attempt to compare %s with number", vm.ObjTypeName(v))
-			}
-			var le bool
-			if v.IsInt() {
-				le = v.AsInt() <= int64(sb)
-			} else {
-				le = v.AsFloat() <= float64(sb)
+			le, err := vm.lessEqual(v, NewInt(int64(sb)))
+			if err != nil {
+				return nil, err
 			}
 			if le != (k == 1) {
 				frame.pc++
@@ -993,14 +1016,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, k := inst.A(), inst.K()
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			if !v.IsNumber() {
-				return nil, vm.runtimeError("attempt to compare %s with number", vm.ObjTypeName(v))
-			}
-			var gt bool
-			if v.IsInt() {
-				gt = v.AsInt() > int64(sb)
-			} else {
-				gt = v.AsFloat() > float64(sb)
+			gt, err := vm.lessThan(NewInt(int64(sb)), v)
+			if err != nil {
+				return nil, err
 			}
 			if gt != (k == 1) {
 				frame.pc++
@@ -1010,14 +1028,9 @@ func (vm *VM) execute() ([]Value, error) {
 			a, k := inst.A(), inst.K()
 			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			if !v.IsNumber() {
-				return nil, vm.runtimeError("attempt to compare %s with number", vm.ObjTypeName(v))
-			}
-			var ge bool
-			if v.IsInt() {
-				ge = v.AsInt() >= int64(sb)
-			} else {
-				ge = v.AsFloat() >= float64(sb)
+			ge, err := vm.lessEqual(NewInt(int64(sb)), v)
+			if err != nil {
+				return nil, err
 			}
 			if ge != (k == 1) {
 				frame.pc++
@@ -1092,7 +1105,6 @@ func (vm *VM) execute() ([]Value, error) {
 					// Set up parameters
 					numParams := proto.NumParams
 					numArgs := len(args)
-
 
 					if proto.IsVarArg {
 						for i := 0; i < numParams && i < numArgs; i++ {
@@ -1909,7 +1921,6 @@ dispatch:
 	for i := frame.base + a + nWanted; i < frameTop && i < len(vm.stack); i++ {
 		vm.stack[i] = Nil
 	}
-
 
 	return results, nil
 }

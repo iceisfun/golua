@@ -738,7 +738,7 @@ func (vm *VM) metamethodNameFromOp(proto *compiler.Proto, pc int) string {
 			next := proto.Code[pc+1]
 			nextOp := next.OpCode()
 			if nextOp == compiler.OP_MMBIN || nextOp == compiler.OP_MMBINI || nextOp == compiler.OP_MMBINK {
-				tag := compiler.MetamethodTag(next.C())
+				tag := decodeBytecodeMetamethodTag(next.C())
 				name := tag.String()
 				if len(name) > 2 && name[:2] == "__" {
 					return name[2:]
@@ -752,7 +752,7 @@ func (vm *VM) metamethodNameFromOp(proto *compiler.Proto, pc int) string {
 		if pc+1 < len(proto.Code) {
 			next := proto.Code[pc+1]
 			if next.OpCode() == compiler.OP_MMBINI {
-				tag := compiler.MetamethodTag(next.C())
+				tag := decodeBytecodeMetamethodTag(next.C())
 				name := tag.String()
 				if len(name) > 2 && name[:2] == "__" {
 					return name[2:]
@@ -767,7 +767,7 @@ func (vm *VM) metamethodNameFromOp(proto *compiler.Proto, pc int) string {
 		if pc+1 < len(proto.Code) {
 			next := proto.Code[pc+1]
 			if next.OpCode() == compiler.OP_MMBINK {
-				tag := compiler.MetamethodTag(next.C())
+				tag := decodeBytecodeMetamethodTag(next.C())
 				name := tag.String()
 				if len(name) > 2 && name[:2] == "__" {
 					return name[2:]
@@ -780,7 +780,7 @@ func (vm *VM) metamethodNameFromOp(proto *compiler.Proto, pc int) string {
 		if pc+1 < len(proto.Code) {
 			next := proto.Code[pc+1]
 			if next.OpCode() == compiler.OP_MMBINI {
-				tag := compiler.MetamethodTag(next.C())
+				tag := decodeBytecodeMetamethodTag(next.C())
 				name := tag.String()
 				if len(name) > 2 && name[:2] == "__" {
 					return name[2:]

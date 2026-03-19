@@ -160,6 +160,9 @@ func makeOsExecute(provider vm.LuaExecProvider) vm.NativeFunc {
 			callerArgError(v, 1, "os.execute", fmt.Sprintf("string expected, got %s", cmd.Type()))
 		}
 		ok, exitType, exitCode := provider.Execute(v.Context(), valueToString(cmd))
+		if err := v.CheckInterrupt(); err != nil {
+			panic(err)
+		}
 		if ok {
 			v.Set(0, vm.True)
 		} else {

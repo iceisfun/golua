@@ -6,6 +6,18 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
+// decodeBytecodeMetamethodTag normalizes metamethod tags coming from bytecode.
+// Lua 5.4 binary chunks encode OP_MMBIN* tags with a +6 offset relative to the
+// public TM_* ordinals, while GoLua's compiler currently emits the raw TM_*
+// values. Accept both so loaded reference chunks and locally compiled chunks
+// behave the same.
+func decodeBytecodeMetamethodTag(raw int) compiler.MetamethodTag {
+	if raw >= 6 && raw <= int(compiler.TM_EQ)+6 {
+		return compiler.MetamethodTag(raw - 6)
+	}
+	return compiler.MetamethodTag(raw)
+}
+
 // luaNumMod computes Lua's float modulo: result = fmod(a, b), then adjusts
 // the sign to match b when they differ. When the result is NaN, it returns
 // negative NaN to match C's fmod behavior (Go's math.Mod returns positive NaN).

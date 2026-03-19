@@ -14,15 +14,18 @@ go run ./examples/context
 
 ## Output
 
+The exact tick counts and elapsed time vary by machine, but the output shape
+looks like this:
+
 ```
 === Context Cancellation Example ===
 
 Game round started — NPC AI script running...
-NPC thinking... tick 1000000
-NPC thinking... tick 2000000
-NPC thinking... tick 3000000
+tick=100000 dt=0.000
+tick=200000 dt=0.000
+tick=300000 dt=0.000
 
-Script stopped after 501ms
+Script stopped after 500ms
 Exit reason: execution interrupted: context deadline exceeded
 
 === Game round over ===
