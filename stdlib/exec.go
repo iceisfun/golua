@@ -165,9 +165,6 @@ func makeExecRun(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 		}
 
 		ctx := v.Context()
-		if ctx == nil {
-			ctx = context.Background()
-		}
 
 		opts := vm.ProcessOptions{
 			Stdout: true,
@@ -221,9 +218,6 @@ func makeExecSpawn(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 		}
 
 		ctx := v.Context()
-		if ctx == nil {
-			ctx = context.Background()
-		}
 
 		opts := vm.ProcessOptions{
 			Stdin:  true,
@@ -266,9 +260,6 @@ func makeExecRunShell(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFun
 		}
 
 		ctx := v.Context()
-		if ctx == nil {
-			ctx = context.Background()
-		}
 
 		opts := vm.ProcessOptions{
 			Stdout: true,

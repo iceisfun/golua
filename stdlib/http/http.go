@@ -350,11 +350,7 @@ func doRequest(v *vm.VM, opts requestOpts) int {
 	if opts.Timeout > 0 {
 		timeout = opts.Timeout
 	}
-	baseCtx := v.Context()
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(baseCtx, timeout)
+	ctx, cancel := context.WithTimeout(v.Context(), timeout)
 	defer cancel()
 
 	// Build request
