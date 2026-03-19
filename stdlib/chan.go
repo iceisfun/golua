@@ -211,17 +211,13 @@ func makeChanSelect(luaVM *vm.VM, provider vm.LuaChanProvider) vm.NativeFunc {
 		cases := make([]reflect.SelectCase, 0, channelCount+2)
 		channelOffset := 0
 
-		// Optional context cancellation case
+		// Context cancellation case — always present since v.Context() is never nil
 		ctx := v.Context()
-		hasCtx := false
-		if ctx != nil {
-			cases = append(cases, reflect.SelectCase{
-				Dir:  reflect.SelectRecv,
-				Chan: reflect.ValueOf(ctx.Done()),
-			})
-			channelOffset = 1
-			hasCtx = true
-		}
+		cases = append(cases, reflect.SelectCase{
+			Dir:  reflect.SelectRecv,
+			Chan: reflect.ValueOf(ctx.Done()),
+		})
+		channelOffset = 1
 
 		// Channel recv cases
 		for i := 1; i <= channelCount; i++ {
@@ -256,7 +252,7 @@ func makeChanSelect(luaVM *vm.VM, provider vm.LuaChanProvider) vm.NativeFunc {
 		}
 
 		// Context cancelled
-		if hasCtx && chosen == 0 {
+		if chosen == 0 {
 			panic("interrupted")
 		}
 
