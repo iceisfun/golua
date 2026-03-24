@@ -32,11 +32,13 @@ func ParsePartial(source, input string) (*ast.Block, error) {
 	}
 	block := p.parseBlock()
 	if p.err != nil {
+		block.EndLine = p.tok.Pos.Line
 		return block, p.err
 	}
 	if p.tok.Type != token.EOS {
 		return block, p.errorf("<eof> expected%s", p.nearClause())
 	}
+	block.EndLine = p.tok.Pos.Line
 	return block, nil
 }
 
@@ -73,6 +75,7 @@ func parseImpl(source, input string, strip bool, maxVars int) (*ast.Block, error
 	if p.tok.Type != token.EOS {
 		return nil, p.errorf("<eof> expected%s", p.nearClause())
 	}
+	block.EndLine = p.tok.Pos.Line
 	return block, nil
 }
 

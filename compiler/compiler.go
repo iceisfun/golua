@@ -67,7 +67,7 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 	for _, o := range opts {
 		o(&cfg)
 	}
-	endLine := cfg.endLine
+	endLine := block.EndLine
 	if endLine == 0 {
 		endLine = blockMaxLine(block)
 	}

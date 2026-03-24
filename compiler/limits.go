@@ -40,8 +40,7 @@ func (cl CompilerLimits) effective() CompilerLimits {
 type CompileOption func(*compileConfig)
 
 type compileConfig struct {
-	limits  CompilerLimits
-	endLine int // last line of source (for compile error messages, 0 = auto)
+	limits CompilerLimits
 }
 
 // WithLimits returns a CompileOption that sets compiler limits.
@@ -51,11 +50,3 @@ func WithLimits(limits CompilerLimits) CompileOption {
 	}
 }
 
-// WithEndLine returns a CompileOption that sets the last line number of the
-// source, used for compile error message prefixes (matching Lua 5.4 behavior
-// where compile errors reference the EOF line, not the error source line).
-func WithEndLine(line int) CompileOption {
-	return func(cfg *compileConfig) {
-		cfg.endLine = line
-	}
-}

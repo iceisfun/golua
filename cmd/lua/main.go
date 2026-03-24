@@ -132,9 +132,7 @@ done:
 	}
 
 	// Compile — use the raw name so proto.Source stores it with the '@' prefix.
-	// Pass the true end-line (EOF line number) so that compile errors for
-	// unresolved gotos report the correct line, matching Lua 5.4 behavior.
-	proto, err := compiler.Compile(name, block, compiler.WithEndLine(countEndLine(source)))
+	proto, err := compiler.Compile(name, block)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
 		return 1
@@ -309,21 +307,3 @@ func formatLuaValue(val vm.Value) string {
 	return val.String()
 }
 
-// countEndLine returns the line number that the lexer would report at EOF,
-// matching Lua 5.4's line-number tracking. This is 1 + the number of newline
-// sequences (\n, \r\n, \r) in the source.
-func countEndLine(source string) int {
-	line := 1
-	for i := 0; i < len(source); i++ {
-		c := source[i]
-		if c == '\n' {
-			line++
-		} else if c == '\r' {
-			line++
-			if i+1 < len(source) && source[i+1] == '\n' {
-				i++
-			}
-		}
-	}
-	return line
-}

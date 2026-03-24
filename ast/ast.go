@@ -41,8 +41,9 @@ type Expr interface {
 
 // Block is a list of statements.
 type Block struct {
-	Start token.Pos
-	Stmts []Stmt
+	Start   token.Pos
+	EndLine int // line of the closing keyword or EOF (0 if unknown)
+	Stmts   []Stmt
 }
 
 func (b *Block) Pos() token.Pos { return b.Start }

@@ -621,8 +621,7 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 		compileSource = o.rawSource
 	}
 	proto, compileErr := compiler.Compile(compileSource, block,
-		compiler.WithLimits(v.GetLimits().CompilerLimits),
-		compiler.WithEndLine(countEndLine(source)))
+		compiler.WithLimits(v.GetLimits().CompilerLimits))
 	if compileErr != nil {
 		return vm.Nil, compileErr.Error()
 	}
@@ -707,21 +706,3 @@ func setProtoSource(proto *compiler.Proto, source string) {
 	}
 }
 
-// countEndLine returns the line number that the lexer would report at EOF,
-// matching Lua 5.4's linenumber tracking. This is 1 + the number of newline
-// sequences (\n, \r\n, \r) in the source.
-func countEndLine(source string) int {
-	line := 1
-	for i := 0; i < len(source); i++ {
-		c := source[i]
-		if c == '\n' {
-			line++
-		} else if c == '\r' {
-			line++
-			if i+1 < len(source) && source[i+1] == '\n' {
-				i++
-			}
-		}
-	}
-	return line
-}
