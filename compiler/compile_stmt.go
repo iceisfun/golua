@@ -1245,10 +1245,22 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	} else {
 		for i, iter := range s.Iters {
 			if i < 4 {
-				c.compileExprToReg(iter, base+i)
-				fs.freeReg = base + i + 1
-				if fs.freeReg > fs.maxReg {
-					fs.maxReg = fs.freeReg
+				isLast := i == nIter-1
+				if isLast && isMultiRet(iter) {
+					// Last expression is multires — expand to fill remaining control slots.
+					remaining := 4 - i
+					fs.freeReg = base + i
+					c.compileExprMultiRet(iter, remaining)
+					fs.freeReg = base + 4
+					if fs.freeReg > fs.maxReg {
+						fs.maxReg = fs.freeReg
+					}
+				} else {
+					c.compileExprToReg(iter, base+i)
+					fs.freeReg = base + i + 1
+					if fs.freeReg > fs.maxReg {
+						fs.maxReg = fs.freeReg
+					}
 				}
 			} else {
 				// Lua 5.4 still evaluates extra explist expressions for side
@@ -1258,8 +1270,9 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 				fs.freeReg = tmp
 			}
 		}
-		// Fill missing with nil
-		for i := nIter; i < 4; i++ {
+		// Fill missing with nil (only needed when last expr was not multires)
+		lastFillsRemaining := nIter > 0 && nIter <= 4 && isMultiRet(s.Iters[nIter-1])
+		for i := nIter; i < 4 && !lastFillsRemaining; i++ {
 			fs.emit(ABC(OP_LOADNIL, base+i, 0, 0, 0), line)
 			fs.freeReg = base + i + 1
 			if fs.freeReg > fs.maxReg {

@@ -164,6 +164,13 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 // indexValue tries to index a non-table value by looking up its metatable.
 // For example, if __index is a string, this chains through the string metatable.
 func (vm *VM) indexValue(val Value, key Value) (Value, error) {
+	return vm.indexValueDepth(val, key, vm.MaxMetaDepth())
+}
+
+func (vm *VM) indexValueDepth(val Value, key Value, depth int) (Value, error) {
+	if depth <= 0 {
+		return Nil, vm.runtimeError("'__index' chain too long; possible loop")
+	}
 	// Get the metatable for this value type
 	var mt LuaTable
 	if val.IsTable() {
@@ -186,7 +193,8 @@ func (vm *VM) indexValue(val Value, key Value) (Value, error) {
 	if index.IsFunction() || index.IsNativeFunc() {
 		return vm.callMetamethod("index", index, val, key)
 	}
-	return Nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
+	// __index is another value (e.g. a string) — chain through its metatable
+	return vm.indexValueDepth(index, key, depth-1)
 }
 
 // resolveIndex resolves an __index metamethod for a non-table value.
@@ -198,7 +206,8 @@ func (vm *VM) resolveIndex(mm Value, obj Value, key Value) (Value, error) {
 	if mm.IsFunction() || mm.IsNativeFunc() {
 		return vm.callMetamethod("index", mm, obj, key)
 	}
-	return Nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(obj))
+	// __index is another value (e.g. a string) — chain through its metatable
+	return vm.indexValue(mm, key)
 }
 
 // tableSet sets a value in a table, handling __newindex metamethod.

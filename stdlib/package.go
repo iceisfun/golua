@@ -266,9 +266,16 @@ func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 				continue
 			}
 
-			// Compile and return loader
-			displayName := chunkNameForDisplay(chunkName)
-			fn, errMsg := compileChunk(v, string(source), displayName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
+			// Compile and return loader (detect binary chunks)
+			var fn vm.Value
+			var errMsg string
+			sourceStr := string(source)
+			if len(sourceStr) > 0 && sourceStr[0] == '\x1b' {
+				fn, errMsg = loadBinaryChunk(v, sourceStr, chunkName, vm.Nil, false)
+			} else {
+				displayName := chunkNameForDisplay(chunkName)
+				fn, errMsg = compileChunk(v, sourceStr, displayName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
+			}
 			if errMsg != "" {
 				panic(fmt.Sprintf("error loading module '%s' from file '%s':\n\t%s", name, path, errMsg))
 			}
