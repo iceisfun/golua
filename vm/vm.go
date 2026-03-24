@@ -872,6 +872,7 @@ func (vm *VM) ClosePendingTBC(errVal Value) (finalErr error) {
 // nil, while keeping the VM itself alive for hook queries and isyieldable.
 func (vm *VM) ClearCallStack() {
 	vm.callStack = vm.callStack[:0]
+	vm.lastErrorCallStack = nil
 	vm.top = 0
 }
 

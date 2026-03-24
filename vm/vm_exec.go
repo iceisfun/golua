@@ -412,11 +412,27 @@ func (vm *VM) execute() ([]Value, error) {
 					code = proto.Code
 					consts = frame.closure.ConstValues()
 				} else if mm.IsTable() {
-					if err := vm.tableSet(mm.AsTable(), key, value); err != nil {
-						return nil, err
+					if tbl, ok := mm.AsTable().(*Table); ok && tbl.IsThread() {
+						if err := vm.newIndexValue(mm, key, value, vm.MaxMetaDepth()); err != nil {
+							return nil, err
+						}
+						frame = &vm.callStack[len(vm.callStack)-1]
+						proto = frame.closure.Proto
+						code = proto.Code
+						consts = frame.closure.ConstValues()
+					} else {
+						if err := vm.tableSet(mm.AsTable(), key, value); err != nil {
+							return nil, err
+						}
 					}
 				} else {
-					return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
+					if err := vm.newIndexValue(mm, key, value, vm.MaxMetaDepth()); err != nil {
+						return nil, err
+					}
+					frame = &vm.callStack[len(vm.callStack)-1]
+					proto = frame.closure.Proto
+					code = proto.Code
+					consts = frame.closure.ConstValues()
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
@@ -445,11 +461,27 @@ func (vm *VM) execute() ([]Value, error) {
 					code = proto.Code
 					consts = frame.closure.ConstValues()
 				} else if mm.IsTable() {
-					if err := vm.tableSet(mm.AsTable(), NewInt(int64(b)), value); err != nil {
-						return nil, err
+					if tbl, ok := mm.AsTable().(*Table); ok && tbl.IsThread() {
+						if err := vm.newIndexValue(mm, NewInt(int64(b)), value, vm.MaxMetaDepth()); err != nil {
+							return nil, err
+						}
+						frame = &vm.callStack[len(vm.callStack)-1]
+						proto = frame.closure.Proto
+						code = proto.Code
+						consts = frame.closure.ConstValues()
+					} else {
+						if err := vm.tableSet(mm.AsTable(), NewInt(int64(b)), value); err != nil {
+							return nil, err
+						}
 					}
 				} else {
-					return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
+					if err := vm.newIndexValue(mm, NewInt(int64(b)), value, vm.MaxMetaDepth()); err != nil {
+						return nil, err
+					}
+					frame = &vm.callStack[len(vm.callStack)-1]
+					proto = frame.closure.Proto
+					code = proto.Code
+					consts = frame.closure.ConstValues()
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))
@@ -480,11 +512,27 @@ func (vm *VM) execute() ([]Value, error) {
 					code = proto.Code
 					consts = frame.closure.ConstValues()
 				} else if mm.IsTable() {
-					if err := vm.tableSet(mm.AsTable(), NewString(key), value); err != nil {
-						return nil, err
+					if tbl, ok := mm.AsTable().(*Table); ok && tbl.IsThread() {
+						if err := vm.newIndexValue(mm, NewString(key), value, vm.MaxMetaDepth()); err != nil {
+							return nil, err
+						}
+						frame = &vm.callStack[len(vm.callStack)-1]
+						proto = frame.closure.Proto
+						code = proto.Code
+						consts = frame.closure.ConstValues()
+					} else {
+						if err := vm.tableSet(mm.AsTable(), NewString(key), value); err != nil {
+							return nil, err
+						}
 					}
 				} else {
-					return nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
+					if err := vm.newIndexValue(mm, NewString(key), value, vm.MaxMetaDepth()); err != nil {
+						return nil, err
+					}
+					frame = &vm.callStack[len(vm.callStack)-1]
+					proto = frame.closure.Proto
+					code = proto.Code
+					consts = frame.closure.ConstValues()
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(a))

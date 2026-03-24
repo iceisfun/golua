@@ -47,6 +47,9 @@ func runCLI(argv []string, stderr io.Writer) int {
 	// Parse flags
 	for len(args) > 0 {
 		switch args[0] {
+		case "--":
+			args = args[1:]
+			goto done
 		case "--timeout":
 			if len(args) < 2 {
 				fmt.Fprintln(stderr, "--timeout requires a value in milliseconds")

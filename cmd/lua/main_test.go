@@ -194,3 +194,17 @@ func TestConfigureCLIProviders_DefaultModeAllowsWrite(t *testing.T) {
 		t.Fatalf("expected written file: %v", err)
 	}
 }
+
+func TestRunCLI_DoubleDashStopsOptionParsing(t *testing.T) {
+	dir := t.TempDir()
+	script := writeTempLua(t, dir, "-e", `print("ok")`)
+
+	var stderr bytes.Buffer
+	exitCode := runCLI([]string{"lua", "--", script}, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr, got: %q", stderr.String())
+	}
+}

@@ -207,6 +207,17 @@ func luaDebugWhere(v *vm.VM) int {
 // debug.getinfo([thread,] f [, what])
 // f can be a function value or a stack level number.
 // what is a string of option letters: f l n S t u L (default "flnStu").
+func validateGetInfoWhat(v *vm.VM, what string, whatIdx int) {
+	for _, ch := range what {
+		if !strings.ContainsRune("flnStuLr", ch) {
+			if ch == '>' {
+				callerArgError(v, whatIdx, "debug.getinfo", "invalid option '>'")
+			}
+			callerArgError(v, whatIdx, "debug.getinfo", "invalid option")
+		}
+	}
+}
+
 func luaDebugGetInfo(v *vm.VM) int {
 	arg1 := v.Get(1)
 	var info *vm.FrameInfo
@@ -254,18 +265,24 @@ func luaDebugGetInfo(v *vm.VM) int {
 
 	if fArg.IsCallable() {
 		// debug.getinfo([thread,] func [, what])
+		what = "flnSrtu" // default
+		if whatGiven {
+			what = whatArg
+		}
+		validateGetInfoWhat(v, what, whatIdx)
 		info = v.GetFuncInfo(fArg)
 		if info == nil {
 			v.Set(0, vm.Nil)
 			return 1
 		}
+	} else {
+		// debug.getinfo([thread,] level [, what])
+		level := getInt(v, whatIdx-1, "debug.getinfo")
 		what = "flnSrtu" // default
 		if whatGiven {
 			what = whatArg
 		}
-	} else {
-		// debug.getinfo([thread,] level [, what])
-		level := getInt(v, whatIdx-1, "debug.getinfo")
+		validateGetInfoWhat(v, what, whatIdx)
 		if level < 0 {
 			v.Set(0, vm.Nil)
 			return 1
@@ -281,23 +298,11 @@ func luaDebugGetInfo(v *vm.VM) int {
 			v.Set(0, vm.Nil)
 			return 1
 		}
-		what = "flnSrtu" // default
-		if whatGiven {
-			what = whatArg
-		}
 	}
 
 buildResult:
 
-	// Validate the what string ('>' is C API only, not valid at Lua level)
-	for _, ch := range what {
-		if !strings.ContainsRune("flnStuLr", ch) {
-			if ch == '>' {
-				callerArgError(v, whatIdx, "debug.getinfo", "invalid option '>'")
-			}
-			callerArgError(v, whatIdx, "debug.getinfo", "invalid option")
-		}
-	}
+	validateGetInfoWhat(v, what, whatIdx)
 
 	// Build the result table
 	result := vm.NewEmptyTable()
