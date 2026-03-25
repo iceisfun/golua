@@ -20,7 +20,7 @@ type Shutdownable interface {
 
 When a provider implementing `Initializable` is set on a VM (e.g. via `v.SetIoProvider`), its `Initialize` method is called with the VM's context. Use this for startup tasks like opening connections or verifying configuration.
 
-If `Initialize` returns an error, the setter method returns that error and the provider is not registered.
+If `Initialize` returns an error, the setter method returns that error, the provider field is cleared, and the provider is not registered for shutdown.
 
 ## Shutdownable
 
@@ -50,7 +50,9 @@ Always call `v.Close(ctx)` when done with a VM:
 
 ```go
 v := vm.New(vm.WithContext(ctx))
-v.SetIoProvider(vm.NewFullIoProvider("/app/data"))
+if err := v.SetIoProvider(vm.NewFullIoProvider("/app/data")); err != nil {
+    log.Fatalf("provider init failed: %v", err)
+}
 stdlib.Open(v)
 
 _, err := v.Run(proto)

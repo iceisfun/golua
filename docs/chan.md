@@ -6,7 +6,7 @@ The `LuaChanProvider` interface controls the `chan` module for Go-to-Lua message
 
 ```go
 provider := vm.NewDefaultChanProvider()
-events := provider.NewChannel(0) // unbuffered
+events := provider.NewChannel(context.Background(), 0) // unbuffered
 
 v := vm.New()
 v.SetChanProvider(provider)
@@ -19,7 +19,7 @@ Or use the convenience function:
 
 ```go
 v := vm.New()
-provider := stdlib.ProvideChan(v) // sets provider and opens module
+stdlib.ProvideChan(v) // sets provider and opens module
 ```
 
 ## Interface

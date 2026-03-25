@@ -26,7 +26,26 @@ The `glob` package provides a deliberately simple, safe, and fast matching primi
 
 All matching is **case-insensitive**.
 
-## API
+## Lua API
+
+The `glob` module is automatically available when `stdlib.Open` is called.
+
+| Function | Description |
+|----------|-------------|
+| `glob.match(pattern, name)` | Returns true if `name` matches `pattern` |
+| `glob.match_words(pattern, name)` | Splits on whitespace, matches each word |
+| `glob.match_named(pattern, text)` | Returns `matched, captures_table` |
+| `glob.has_pattern(s)` | Returns true if `s` contains metacharacters |
+
+```lua
+glob.match("h*o", "hello")             -- true
+glob.match_words("ORG* PEACH", "ORGANIC PEACH")  -- true
+
+local ok, caps = glob.match_named(":method /api/:id", "GET /api/42")
+-- ok == true, caps.method == "GET", caps.id == "42"
+```
+
+## Go API
 
 ### `Match(pattern, name string) (bool, error)`
 
