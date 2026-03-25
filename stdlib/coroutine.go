@@ -49,19 +49,20 @@ const (
 
 // Coroutine represents a Lua coroutine
 type Coroutine struct {
-	id       int
-	fn       vm.Value        // The function to run
-	status   coroutineStatus // lifecycle state
-	started  bool            // Whether the goroutine has been started
-	vm       *vm.VM          // Reference to the VM
-	coVM     *vm.VM          // The coroutine's own VM (set after first resume)
-	thread   vm.Value        // Thread object (table) for coroutine.running
-	resumeCh chan []vm.Value // Channel to send resume args
-	yieldCh  chan []vm.Value // Channel to receive yield values
-	doneCh   chan struct{}   // Channel to signal completion
-	result   []vm.Value      // Final return values
-	err      error           // Error if panicked
-	mu       sync.Mutex
+	id             int
+	fn             vm.Value        // The function to run
+	status         coroutineStatus // lifecycle state
+	started        bool            // Whether the goroutine has been started
+	resumeChClosed bool            // Whether resumeCh has been closed by coClose
+	vm             *vm.VM          // Reference to the VM
+	coVM           *vm.VM          // The coroutine's own VM (set after first resume)
+	thread         vm.Value        // Thread object (table) for coroutine.running
+	resumeCh       chan []vm.Value  // Channel to send resume args
+	yieldCh        chan []vm.Value  // Channel to receive yield values
+	doneCh         chan struct{}    // Channel to signal completion
+	result         []vm.Value      // Final return values
+	err            error           // Error if panicked
+	mu             sync.Mutex
 }
 
 var (
@@ -201,20 +202,6 @@ func coResume(v *vm.VM) int {
 		coroutinesMu.Unlock()
 	}
 
-	// Start the goroutine if this is the first resume
-	co.mu.Lock()
-	if !co.started {
-		co.started = true
-		co.status = statusRunning
-		go runCoroutine(co)
-	} else {
-		co.status = statusRunning
-	}
-	co.mu.Unlock()
-
-	// Send args to the coroutine
-	co.resumeCh <- args
-
 	// restoreCallerStatus restores the caller's coroutine status to running
 	restoreCallerStatus := func() {
 		if callerID != 0 {
@@ -227,6 +214,28 @@ func coResume(v *vm.VM) int {
 			coroutinesMu.Unlock()
 		}
 	}
+
+	// Start the goroutine and send args under the same lock to prevent
+	// a concurrent coClose from closing resumeCh between the status
+	// transition and the send. The send is non-blocking because the
+	// channel is buffered(1) and empty when the coroutine is suspended.
+	co.mu.Lock()
+	if co.resumeChClosed {
+		co.mu.Unlock()
+		restoreCallerStatus()
+		v.Set(0, vm.False)
+		v.Set(1, vm.NewString("cannot resume dead coroutine"))
+		return 2
+	}
+	if !co.started {
+		co.started = true
+		co.status = statusRunning
+		go runCoroutine(co)
+	} else {
+		co.status = statusRunning
+	}
+	co.resumeCh <- args
+	co.mu.Unlock()
 
 	// Wait for yield or completion
 	select {
@@ -546,8 +555,13 @@ func coWrap(v *vm.VM) int {
 			}
 		}
 
-		// Start the goroutine if this is the first call
+		// Start the goroutine and send args under the same lock.
 		co.mu.Lock()
+		if co.resumeChClosed {
+			co.mu.Unlock()
+			restoreCallerStatus()
+			panic("cannot resume dead coroutine")
+		}
 		if !co.started {
 			co.started = true
 			co.status = statusRunning
@@ -555,10 +569,8 @@ func coWrap(v *vm.VM) int {
 		} else {
 			co.status = statusRunning
 		}
-		co.mu.Unlock()
-
-		// Send args to the coroutine
 		co.resumeCh <- args
+		co.mu.Unlock()
 
 		// Wait for yield or completion
 		select {
@@ -723,10 +735,12 @@ func coClose(v *vm.VM) int {
 	}
 	defer v.ExitCloseChain()
 
-	// Mark as running during __close metamethod execution.
+	// Mark as running during __close metamethod execution and flag
+	// resumeCh as closed so that a concurrent coResume will not send.
 	// Lua 5.4: coroutine.status reports "running" while __close handlers run.
 	co.mu.Lock()
 	co.status = statusRunning
+	co.resumeChClosed = true
 	co.mu.Unlock()
 
 	// If the coroutine goroutine is blocked on resumeCh, unblock it
@@ -734,6 +748,7 @@ func coClose(v *vm.VM) int {
 	// calls CloseAllTBC() which runs __close handlers. If any handler
 	// errors, CloseAllTBC re-raises the panic, which runCoroutine
 	// catches and stores as co.err.
+	// Safe: no concurrent send is possible because resumeChClosed is set.
 	if co.started {
 		close(co.resumeCh)
 		<-co.doneCh
