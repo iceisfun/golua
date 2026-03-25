@@ -20,8 +20,18 @@ type Shutdownable interface {
 
 // registerProvider adds a provider to the VM's registered list for
 // lifecycle management. Called by each Set*Provider method.
-func (vm *VM) registerProvider(p any) {
+//
+// If the provider implements Initializable, Initialize is called with the
+// VM's context. If Initialize returns an error, the provider is not
+// registered and registerProvider returns the error.
+func (vm *VM) registerProvider(p any) error {
+	if init, ok := p.(Initializable); ok {
+		if err := init.Initialize(vm.ctx); err != nil {
+			return err
+		}
+	}
 	vm.registeredProviders = append(vm.registeredProviders, p)
+	return nil
 }
 
 // Close shuts down the VM by calling Shutdown on any registered providers
