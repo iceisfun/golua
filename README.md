@@ -147,7 +147,7 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | [`LuaProcessProvider`](docs/exec.md) | `exec.*` process spawning and streaming       | `DefaultProcessProvider`             |
 | [`LuaLoadLibProvider`](docs/loadlib_provider.md) | `package.loadlib` native module hook          | custom host implementation           |
 
-All provider interface methods receive `ctx context.Context` as their first parameter, carrying the VM's context for cancellation and deadline propagation. Providers may optionally implement `Initializable` (called when set on a VM) or `Shutdownable` (called by `vm.Close(ctx)`) for lifecycle management.
+All provider interface methods receive `ctx context.Context` as their first parameter, carrying the VM's context for cancellation and deadline propagation. Providers may optionally implement [`Initializable` or `Shutdownable`](docs/lifecycle.md) (called when set on a VM / by `vm.Close(ctx)`) for lifecycle management.
 
 ## Examples
 
