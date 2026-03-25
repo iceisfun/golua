@@ -25,14 +25,14 @@ Good fits include plugin systems, user scripting, game logic, automation, and co
 - Deterministic `math.random` per VM instance (seeding one VM does not affect others)
 - Full debug library (`debug.getinfo`, `debug.traceback`, `debug.sethook`, `debug.getlocal`, `debug.setlocal`, `debug.getupvalue`, `debug.setupvalue`, `debug.upvalueid`, `debug.upvaluejoin`)
 - Go interop (call Lua from Go, expose Go functions to Lua)
-- Sandboxed code loading via `LuaCodeProvider` (controls `dofile`, `loadfile`, and `require`)
-- Sandboxed IO via `LuaIoProvider` (includes `JailedIoProvider` for read-only, directory-confined access)
-- Sandboxed OS via `LuaOsProvider` (includes `DefaultOsProvider` with optional env filtering)
-- Capability-gated channels for Go↔Lua message passing via `LuaChanProvider`
-- Millisecond-precision timing via `LuaTimeProvider` (`time.now`, `time.since`, `time.tick`)
+- Sandboxed code loading via [`LuaCodeProvider`](docs/code_provider.md) (controls `dofile`, `loadfile`, and `require`)
+- Sandboxed IO via [`LuaIoProvider`](docs/io_provider.md) (includes `JailedIoProvider` for read-only, directory-confined access)
+- Sandboxed OS via [`LuaOsProvider`](docs/os_provider.md) (includes `DefaultOsProvider` with optional env filtering)
+- Capability-gated channels for Go↔Lua message passing via [`LuaChanProvider`](docs/chan.md)
+- Millisecond-precision timing via [`LuaTimeProvider`](docs/time.md) (`time.now`, `time.since`, `time.tick`)
 - Optional HTTP client module (`http.get`, `http.post`, `http.fetch`) with automatic JSON coercion
-- Modern process execution via `LuaProcessProvider` (`exec.run`, `exec.spawn` with streaming I/O, stdin, kill, timed waits)
-- Output interception via `LuaPrintProvider` (redirect `print()`/`warn()` to logging, per-VM warn isolation)
+- Modern process execution via [`LuaProcessProvider`](docs/exec.md) (`exec.run`, `exec.spawn` with streaming I/O, stdin, kill, timed waits)
+- Output interception via [`LuaPrintProvider`](docs/print_provider.md) (redirect `print()`/`warn()` to logging, per-VM warn isolation)
 - Context cancellation and execution limits (call depth, stack, instructions)
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
 - Single static binary when compiled
@@ -135,17 +135,17 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 
 | Interface            | Controls                                      | Implementation                       |
 | -------------------- | --------------------------------------------- | ------------------------------------ |
-| `LuaCodeProvider`    | `dofile`, `loadfile`, `require` file searcher | `DirCodeProvider`                    |
-| `LuaIoProvider`      | `io.*` file operations                        | `JailedIoProvider`, `FullIoProvider` |
-| `LuaOsProvider`      | `os.*` core (`clock`, `time`, `date`, `getenv`, `setlocale`) | `DefaultOsProvider`   |
-| `LuaExecProvider`    | `os.execute` command execution                | `DefaultExecProvider`                |
-| `LuaExitHandler`     | `os.exit` VM termination                      | `DefaultExitHandler`                 |
-| `LuaDebugProvider`   | `debug.*` capability gating                   | `DefaultDebugProvider`               |
-| `LuaChanProvider`    | `chan.*` Go↔Lua channels                      | `DefaultChanProvider`                |
-| `LuaTimeProvider`    | `time.*` millisecond timing                   | `DefaultTimeProvider`                |
-| `LuaPrintProvider`   | `print()`/`warn()` output routing             | `DefaultPrintProvider`               |
-| `LuaProcessProvider` | `exec.*` process spawning and streaming       | `DefaultProcessProvider`             |
-| `LuaLoadLibProvider` | `package.loadlib` native module hook          | custom host implementation           |
+| [`LuaCodeProvider`](docs/code_provider.md)    | `dofile`, `loadfile`, `require` file searcher | `DirCodeProvider`                    |
+| [`LuaIoProvider`](docs/io_provider.md)      | `io.*` file operations                        | `JailedIoProvider`, `FullIoProvider` |
+| [`LuaOsProvider`](docs/os_provider.md)      | `os.*` core (`clock`, `time`, `date`, `getenv`, `setlocale`) | `DefaultOsProvider`   |
+| [`LuaExecProvider`](docs/exec_provider.md)    | `os.execute` command execution                | `DefaultExecProvider`                |
+| [`LuaExitHandler`](docs/exit_handler.md)     | `os.exit` VM termination                      | `DefaultExitHandler`                 |
+| [`LuaDebugProvider`](docs/debug_provider.md)   | `debug.*` capability gating                   | `DefaultDebugProvider`               |
+| [`LuaChanProvider`](docs/chan.md)    | `chan.*` Go↔Lua channels                      | `DefaultChanProvider`                |
+| [`LuaTimeProvider`](docs/time.md)    | `time.*` millisecond timing                   | `DefaultTimeProvider`                |
+| [`LuaPrintProvider`](docs/print_provider.md)   | `print()`/`warn()` output routing             | `DefaultPrintProvider`               |
+| [`LuaProcessProvider`](docs/exec.md) | `exec.*` process spawning and streaming       | `DefaultProcessProvider`             |
+| [`LuaLoadLibProvider`](docs/loadlib_provider.md) | `package.loadlib` native module hook          | custom host implementation           |
 
 All provider interface methods receive `ctx context.Context` as their first parameter, carrying the VM's context for cancellation and deadline propagation. Providers may optionally implement `Initializable` (called when set on a VM) or `Shutdownable` (called by `vm.Close(ctx)`) for lifecycle management.
 
@@ -212,7 +212,7 @@ results, err := v.ProtectedCall(fn, []vm.Value{
 
 ### Sandboxed Code Loading
 
-Implement `LuaCodeProvider` to control what Lua can load. All provider interface methods take `ctx context.Context` as their first parameter:
+Implement [`LuaCodeProvider`](docs/code_provider.md) to control what Lua can load. All provider interface methods take `ctx context.Context` as their first parameter:
 
 ```go
 type MyProvider struct{}
@@ -295,7 +295,7 @@ stdlib.Open(v)
 
 ### Process Execution
 
-The `exec` module provides modern process control beyond `os.execute`:
+The [`exec`](docs/exec.md) module provides modern process control beyond `os.execute`:
 
 ```go
 v := vm.New()
@@ -323,7 +323,7 @@ See [docs/exec.md](docs/exec.md) for the full API reference.
 
 ### Debug Library
 
-The full Lua 5.4 debug library, gated by `LuaDebugProvider` capabilities:
+The full Lua 5.4 debug library, gated by [`LuaDebugProvider`](docs/debug_provider.md) capabilities:
 
 ```go
 v := vm.New()
@@ -335,7 +335,7 @@ stdlib.Open(v)
 // debug.getregistry
 ```
 
-Individual capabilities can be enabled/disabled via `LuaDebugCaps` fields (e.g. `AllowSetHook`, `AllowSetLocal`, `AllowUpvalueJoin`).
+Individual capabilities can be enabled/disabled via [`LuaDebugCaps`](docs/debug_provider.md) fields (e.g. `AllowSetHook`, `AllowSetLocal`, `AllowUpvalueJoin`).
 
 ### Print Interception
 
@@ -514,13 +514,13 @@ Standard Lua modules are available by default. GoLua-specific extensions and hos
 | `utf8`      | No                   | UTF-8 encoding/decoding (strict mode)                                                         |
 | `bit32`     | No                   | Lua 5.2 bitwise compat library                                                                |
 | `glob`      | No                   | Case-insensitive Go-style pattern matching (`match`, `match_words`, `match_named`)            |
-| `io`        | `LuaIoProvider`      | File I/O (absent by default)                                                                  |
-| `os`        | `LuaOsProvider`      | OS core: `clock`, `time`, `date`, `difftime`, `getenv`, `setlocale` (`execute`/`exit`/`rename` also require their own providers) |
+| `io`        | [`LuaIoProvider`](docs/io_provider.md)      | File I/O (absent by default)                                                                  |
+| `os`        | [`LuaOsProvider`](docs/os_provider.md)      | OS core: `clock`, `time`, `date`, `difftime`, `getenv`, `setlocale` (`execute`/`exit`/`rename` also require their own providers) |
 | `package`   | No*                  | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers`, `searchpath` |
-| `debug`     | `LuaDebugProvider`   | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)              |
-| `chan`      | `LuaChanProvider`    | Go↔Lua message passing channels (absent by default)                                           |
-| `time`      | `LuaTimeProvider`    | Millisecond timing: now, since, periodic tick (absent by default)                             |
-| `exec`      | `LuaProcessProvider` | Process execution: run, spawn, streaming I/O, stdin, kill ([docs](docs/exec.md))              |
+| `debug`     | [`LuaDebugProvider`](docs/debug_provider.md)   | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)              |
+| `chan`      | [`LuaChanProvider`](docs/chan.md)    | Go↔Lua message passing channels (absent by default)                                           |
+| `time`      | [`LuaTimeProvider`](docs/time.md)    | Millisecond timing: now, since, periodic tick (absent by default)                             |
+| `exec`      | [`LuaProcessProvider`](docs/exec.md) | Process execution: run, spawn, streaming I/O, stdin, kill ([docs](docs/exec.md))              |
 | `http`      | Separate module      | HTTP client: get, post, put, patch, delete, fetch ([docs](docs/http.md))                      |
 
 \* `package.loadlib` is nil by default; set `LuaLoadLibProvider` to provide host-defined native module loading.
@@ -556,10 +556,10 @@ A fresh `vm.New()` instance has no file, network, process, or debug access unles
 
 - No filesystem access unless explicitly provided
 - No OS access unless explicitly provided
-- No native code loading (C Lua modules are incompatible; host can provide Go-native bindings via `LuaLoadLibProvider`)
+- No native code loading (C Lua modules are incompatible; host can provide Go-native bindings via [`LuaLoadLibProvider`](docs/loadlib_provider.md))
 - No ambient authority
 
-The default IO provider (`JailedIoProvider`) enforces:
+The default IO provider ([`JailedIoProvider`](docs/io_provider.md)) enforces:
 
 - root confinement
 - read-only access
@@ -621,7 +621,7 @@ go run ./cmd/luac script.lua
 Current compatibility notes and intentional boundaries:
 
 - The CLI enables a practical host-facing set of providers by default: `DefaultOsProvider`, `FullIoProvider`, `DirCodeProvider`, `DefaultExecProvider`, `DefaultExitHandler`, and `DefaultDebugProvider`. `--test` switches to a more test-like environment with `JailedIoProvider`, `DirCodeProvider`, and `DefaultDebugProvider`, without enabling `os.execute` or `os.exit`.
-- No C module loading — standard C Lua modules (.so/.dll) are compiled against the PUC-Rio C API and are not compatible with GoLua's VM. `package.loadlib` is nil by default; setting a `LuaLoadLibProvider` lets the host provide Go-native bindings or cgo-bridged libraries under the same API surface. `require` loads Lua modules via `LuaCodeProvider`.
+- No C module loading — standard C Lua modules (.so/.dll) are compiled against the PUC-Rio C API and are not compatible with GoLua's VM. `package.loadlib` is nil by default; setting a [`LuaLoadLibProvider`](docs/loadlib_provider.md) lets the host provide Go-native bindings or cgo-bridged libraries under the same API surface. `require` loads Lua modules via `LuaCodeProvider`.
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design; use `FullIoProvider` for read-write access)
 - Binary chunk format is compatible with Lua 5.4.8 — `load(string.dump(f))` round-tripping works, and chunks dumped by GoLua can be loaded by reference Lua 5.4.8 and vice versa. However, bytecode details may differ between compilers.

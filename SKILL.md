@@ -842,6 +842,161 @@ func (l *InMemoryLoader) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
 The caller context gives you the requesting script name, VM ID, and call depth
 for audit logging or policy decisions.
 
+## Provider Interface Reference
+
+Each provider is set on the VM before calling `stdlib.Open`. All methods take `ctx context.Context` as their first parameter.
+
+### LuaCodeProvider — controls dofile, loadfile, require
+
+```go
+type LuaCodeProvider interface {
+    LoadChunk(ctx context.Context, name string, caller *LuaCallerContext) (source []byte, chunkName string, err error)
+    Capabilities(ctx context.Context) LuaLoaderCaps
+}
+type LuaLoaderCaps struct { AllowDofile, AllowLoadfile bool }
+```
+
+Setter: `v.SetCodeProvider(...)` | Default: `vm.NewDirCodeProvider(root, caps)`
+
+### LuaIoProvider — controls io.* file operations
+
+```go
+type LuaIoProvider interface {
+    Open(ctx context.Context, name, mode string) (LuaFile, error)
+    Capabilities(ctx context.Context) LuaIoCaps
+    Stdin(ctx context.Context) LuaFile
+    Stdout(ctx context.Context) LuaFile
+    Stderr(ctx context.Context) LuaFile
+    TmpName(ctx context.Context) (string, error)
+    Remove(ctx context.Context, name string) error
+    Rename(ctx context.Context, oldname, newname string) error
+    TmpFile(ctx context.Context) (LuaFile, error)
+}
+type LuaIoCaps struct { AllowRead, AllowWrite bool }
+```
+
+Setter: `v.SetIoProvider(...)` | Defaults: `vm.NewJailedIoProvider(root)` (read-only), `vm.NewFullIoProvider(root)` (read-write)
+
+### LuaOsProvider — controls os.clock, os.time, os.date, os.getenv, os.setlocale
+
+```go
+type LuaOsProvider interface {
+    Clock(ctx context.Context) float64
+    Time(ctx context.Context, dateTable *LuaTimeInput) (int64, *LuaDateTime, error)
+    Date(ctx context.Context, format string, timestamp int64) (string, error)
+    DateTable(ctx context.Context, timestamp int64, utc bool) *LuaDateTime
+    Getenv(ctx context.Context, name string) (string, bool)
+    SetLocale(ctx context.Context, locale, category string) (string, bool)
+    Capabilities(ctx context.Context) LuaOsCaps
+}
+type LuaOsCaps struct {
+    AllowTime, AllowDate, AllowGetenv, AllowTmpName bool
+    AllowRemove, AllowExecute, AllowExit, AllowRename bool
+}
+```
+
+Setter: `v.SetOsProvider(...)` | Defaults: `vm.NewDefaultOsProvider()`, `vm.NewFilteredOsProvider(filter)`
+
+### LuaExecProvider — controls os.execute
+
+```go
+type LuaExecProvider interface {
+    Execute(ctx context.Context, command string) (ok bool, exitType string, exitCode int)
+}
+```
+
+Setter: `v.SetExecProvider(...)` | Default: `vm.NewDefaultExecProvider()`
+
+### LuaExitHandler — controls os.exit
+
+```go
+type LuaExitHandler interface {
+    Exit(ctx context.Context, code int, close bool)
+}
+```
+
+Setter: `v.SetExitHandler(...)` | Default: `vm.NewDefaultExitHandler()` (panics with `*LuaExitError`)
+
+### LuaDebugProvider — gates debug.* functions
+
+```go
+type LuaDebugProvider interface {
+    Capabilities(ctx context.Context) LuaDebugCaps
+}
+type LuaDebugCaps struct {
+    AllowTraceback, AllowStackDepth, AllowWhere, AllowGetInfo bool
+    AllowGetUpvalue, AllowSetUpvalue, AllowUpvalueID bool
+    AllowGetLocal, AllowSetLocal bool
+    AllowGetRegistry, AllowGetMetatable, AllowSetMetatable bool
+    AllowSetHook, AllowGetHook, AllowUpvalueJoin bool
+    AllowSetCStackLimit, AllowGetUserValue, AllowSetUserValue bool
+}
+```
+
+Setter: `v.SetDebugProvider(...)` | Default: `vm.NewDefaultDebugProvider()` (all enabled)
+
+### LuaChanProvider — controls chan.* Go↔Lua channels
+
+```go
+type LuaChanProvider interface {
+    NewChannel(ctx context.Context, size int) *LuaChannel
+    Capabilities(ctx context.Context) LuaChanCaps
+}
+type LuaChanCaps struct {
+    AllowSend, AllowRecv, AllowClose bool
+    AllowSelect, AllowTrySend, AllowTryRecv bool
+}
+```
+
+Setter: `v.SetChanProvider(...)` | Default: `vm.NewDefaultChanProvider()`
+
+### LuaTimeProvider — controls time.* millisecond timing
+
+```go
+type LuaTimeProvider interface {
+    Now(ctx context.Context) int64
+    Tick(ctx context.Context, key string, ms int64) bool
+    Once(ctx context.Context, key string) bool
+}
+```
+
+Setter: `v.SetTimeProvider(...)` | Default: `vm.NewDefaultTimeProvider()`
+
+### LuaPrintProvider — routes print()/warn() output
+
+```go
+type LuaPrintProvider interface {
+    Print(ctx context.Context, msg string)
+    Warn(ctx context.Context, msg string)
+}
+```
+
+Setter: `v.SetPrintProvider(...)` | Default: `vm.NewDefaultPrintProvider()` (stdout/stderr)
+
+### LuaProcessProvider — controls exec.* process spawning
+
+```go
+type LuaProcessProvider interface {
+    Spawn(ctx context.Context, cmd string, args []string, opts ProcessOptions) (LuaProcess, error)
+}
+type ProcessOptions struct {
+    Env map[string]string; Dir string
+    Stdin, Stdout, Stderr, MergeStderr bool
+}
+```
+
+Setter: `v.SetProcessProvider(...)` | Default: `vm.NewDefaultProcessProvider()`
+
+### LuaLoadLibProvider — controls package.loadlib
+
+```go
+type LuaLoadLibProvider interface {
+    LoadLib(ctx context.Context, path, init string, caller *LuaCallerContext) (loader NativeFunc, errmsg string, where string)
+}
+```
+
+Setter: `v.SetLoadLibProvider(...)` | Default: none (returns "absent")
+
 ## Guidance For AI Assistants
 
 If you only read this file, you should still be able to help a GoLua user with normal embedding work.
