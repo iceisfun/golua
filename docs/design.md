@@ -28,12 +28,16 @@ This document describes intentional differences between GoLua and the reference 
 
 **GoLua behavior:** Each capability is opt-in:
 - `LuaCodeProvider` — controls `dofile`, `loadfile`, `require` file searching
-- `LuaIoProvider` — controls all `io.*` operations
-- `LuaOsProvider` — controls `os.*` operations
+- `LuaIoProvider` — controls all `io.*` operations, `os.remove`, `os.rename`, `os.tmpname`
+- `LuaOsProvider` — controls `os.clock`, `os.time`, `os.date`, `os.getenv`
+- `LuaExecProvider` — controls `os.execute`
+- `LuaExitHandler` — controls `os.exit`
 - `LuaDebugProvider` — gates individual debug library capabilities
+- `LuaProcessProvider` — controls `exec.run`, `exec.spawn`, `exec.run_shell` (extension)
 - `LuaChanProvider` — Go↔Lua channel communication (extension)
 - `LuaTimeProvider` — millisecond timing (extension)
 - `LuaPrintProvider` — `print()`/`warn()` output routing
+- `LuaLoadLibProvider` — controls `package.loadlib` for host-defined native modules
 
 **Rationale:** Embedding Lua in Go applications requires control over side effects. The provider model enables sandboxing, testability, and clean separation between the interpreter and the host environment.
 
@@ -55,22 +59,19 @@ This allows Go code embedding GoLua to propagate cancellation and deadlines thro
 
 **Rationale:** GoLua is pure Go with no cgo dependency. Loading C shared libraries would require cgo and would undermine the sandbox model. Lua modules (`.lua` files) are fully supported via `LuaCodeProvider`.
 
-## No Binary Chunk Loading
+## Binary Chunk Loading
 
-**Difference:** `string.dump()` produces bytecode output, but `load()` cannot reload binary chunks. Only source strings are accepted by `load()`.
+**Behavior:** `string.dump()` produces Lua 5.4 format bytecode, and `load()`, `loadfile()`, and `dofile()` can reload binary chunks. The `mode` parameter (`"b"`, `"t"`, `"bt"`) controls whether binary, text, or both are accepted, matching Lua 5.4 semantics.
 
-**Rationale:** Binary chunk loading requires implementing a bytecode deserializer and verifier, which is a large attack surface for minimal benefit. Source-level loading is sufficient for all standard use cases.
+**Implementation:** `compiler/undump.go` implements a full Lua 5.4 binary chunk deserializer. Header fields (version, format, sizes, endianness) are validated before loading.
 
-## UTF-8 Strict Mode
+## UTF-8 Extended Range
 
-**Difference:** The `utf8` library enforces strict Unicode validation (U+0000 to U+10FFFF). The `lax` parameter is accepted for API compatibility but still uses Go's strict validation.
+**Behavior:** The `utf8` library supports both strict and lax modes, matching Lua 5.4:
 
-**What differs:**
-- `utf8.char` rejects codepoints above U+10FFFF (Lua accepts up to 0x7FFFFFFF)
-- Surrogates (U+D800-U+DFFF) are always rejected
-- `lax` mode may still error on invalid sequences
-
-**Rationale:** Go's `unicode/utf8` package enforces RFC 3629 (4-byte max, U+10FFFF limit). Implementing a custom UTF-8 encoder for non-standard codepoints would violate the project constraint of using only Go's standard library. The practical impact is negligible — codepoints above U+10FFFF are not valid Unicode.
+- **Strict mode** (default) validates standard Unicode (U+0000 to U+10FFFF) using Go's `unicode/utf8` package.
+- **Lax mode** accepts the full extended range (up to 0x7FFFFFFF) using custom `appendExtendedUTF8`/`decodeExtendedUTF8` codecs that produce 1–6 byte sequences per RFC 2279.
+- `utf8.char` always supports the full extended range regardless of mode.
 
 See [docs/utf8.md](utf8.md) for the full analysis.
 
@@ -109,6 +110,8 @@ GoLua includes several extensions not present in standard Lua:
 | `glob`    | Go-style case-insensitive pattern matching |
 | `chan`     | Go↔Lua channel-based message passing |
 | `time`    | Millisecond-precision timing and periodic triggers |
+| `exec`    | Process execution with streaming I/O and spawn |
+| `http`    | HTTP client (separate module in `stdlib/http`) |
 | `bit32`   | Lua 5.2 compatibility library (deprecated in Lua 5.3+) |
 
 These extensions are either absent by default (requiring a provider) or clearly namespaced to avoid conflicts with standard Lua code.

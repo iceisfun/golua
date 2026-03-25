@@ -105,7 +105,7 @@ func Open(v *vm.VM) {
 	// Bit32 library (Lua 5.2 compat)
 	openBit32(v)
 
-	// UTF-8 library (strict mode only)
+	// UTF-8 library (strict + lax mode)
 	openUtf8(v)
 
 	// Glob library (Go-style pattern matching)
