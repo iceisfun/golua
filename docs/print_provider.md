@@ -49,7 +49,7 @@ Writes print output to stdout with `fmt.Println()` and warn output to stderr wit
 - `print()` and `warn()` are always available (they do not require a provider)
 - Without a provider, the VM uses built-in stdout/stderr behavior
 - The `warn("@on")`/`warn("@off")` control flag is per-VM — disabling warnings in one VM does not affect others
-- Output capture (`vm.WithCaptureOutput(true)`) intercepts print output before the provider sees it
+- When a `LuaPrintProvider` is set, output routes to it exclusively; output capture (`vm.WithCaptureOutput(true)`) only applies when no provider is set
 
 ## Use Cases
 

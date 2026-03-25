@@ -222,7 +222,7 @@ func (p *MyProvider) LoadChunk(ctx context.Context, name string, caller *vm.LuaC
     // Return source, display name, and error
 }
 
-func (p *MyProvider) Capabilities() vm.LuaLoaderCaps {
+func (p *MyProvider) Capabilities(ctx context.Context) vm.LuaLoaderCaps {
     return vm.LuaLoaderCaps{
         AllowDofile:   true,
         AllowLoadfile: true,
@@ -231,7 +231,9 @@ func (p *MyProvider) Capabilities() vm.LuaLoaderCaps {
 
 // Use it
 v := vm.New()
-v.SetCodeProvider(&MyProvider{})
+if err := v.SetCodeProvider(&MyProvider{}); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 
@@ -246,9 +248,10 @@ cgo to bridge platform-specific libraries.
 ```go
 type MyLoadLibProvider struct{}
 
-func (p *MyLoadLibProvider) LoadLib(ctx context.Context, path, init string, caller *vm.LuaCallerContext) (vm.NativeFunc, error) {
+func (p *MyLoadLibProvider) LoadLib(ctx context.Context, path, init string, caller *vm.LuaCallerContext) (vm.NativeFunc, string, string) {
     // The host decides how to interpret path and init — they need not
-    // refer to actual .so/.dll files. Return an error to deny loading.
+    // refer to actual .so/.dll files. Return errmsg + where to deny loading.
+    // where is one of "open", "init", or "absent".
     if path == "mylib" && init == "luaopen_mylib" {
         return func(v *vm.VM) int {
             lib := vm.NewEmptyTable()
@@ -258,13 +261,15 @@ func (p *MyLoadLibProvider) LoadLib(ctx context.Context, path, init string, call
             }))
             v.Set(0, vm.NewTable(lib))
             return 1
-        }, nil
+        }, "", ""
     }
-    return nil, fmt.Errorf("%s: module not available", path)
+    return nil, path + ": module not available", "absent"
 }
 
 v := vm.New()
-v.SetLoadLibProvider(&MyLoadLibProvider{})
+if err := v.SetLoadLibProvider(&MyLoadLibProvider{}); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 
@@ -274,21 +279,31 @@ stdlib.Open(v)
 v := vm.New()
 
 // Read-only file access, confined to a directory
-v.SetIoProvider(vm.NewJailedIoProvider("/path/to/allowed/dir"))
+if err := v.SetIoProvider(vm.NewJailedIoProvider("/path/to/allowed/dir")); err != nil {
+    log.Fatal(err)
+}
 
 // OS functions (clock, time, date, getenv, setlocale)
-v.SetOsProvider(vm.NewDefaultOsProvider())
+if err := v.SetOsProvider(vm.NewDefaultOsProvider()); err != nil {
+    log.Fatal(err)
+}
 
 // Command execution (os.execute)
-v.SetExecProvider(vm.NewDefaultExecProvider())
+if err := v.SetExecProvider(vm.NewDefaultExecProvider()); err != nil {
+    log.Fatal(err)
+}
 
 // VM termination (os.exit)
-v.SetExitHandler(vm.NewDefaultExitHandler())
+if err := v.SetExitHandler(vm.NewDefaultExitHandler()); err != nil {
+    log.Fatal(err)
+}
 
 // Or restrict which env vars are visible
-v.SetOsProvider(vm.NewFilteredOsProvider(func(name string) bool {
+if err := v.SetOsProvider(vm.NewFilteredOsProvider(func(name string) bool {
     return name == "USER" || name == "HOME"
-}))
+})); err != nil {
+    log.Fatal(err)
+}
 
 stdlib.Open(v)
 ```
@@ -299,7 +314,9 @@ The [`exec`](docs/exec.md) module provides modern process control beyond `os.exe
 
 ```go
 v := vm.New()
-v.SetProcessProvider(vm.NewDefaultProcessProvider())
+if err := v.SetProcessProvider(vm.NewDefaultProcessProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 
@@ -327,7 +344,9 @@ The full Lua 5.4 debug library, gated by [`LuaDebugProvider`](docs/debug_provide
 
 ```go
 v := vm.New()
-v.SetDebugProvider(vm.NewDefaultDebugProvider()) // all capabilities enabled
+if err := v.SetDebugProvider(vm.NewDefaultDebugProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 // Lua now has: debug.getinfo, debug.traceback, debug.sethook, debug.gethook,
 // debug.getlocal, debug.setlocal, debug.getupvalue, debug.setupvalue,
@@ -352,7 +371,9 @@ func (p *LoggingProvider) Warn(ctx context.Context, msg string) {
 }
 
 v := vm.New()
-v.SetPrintProvider(&LoggingProvider{Name: "inventory.lua"})
+if err := v.SetPrintProvider(&LoggingProvider{Name: "inventory.lua"}); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 
@@ -410,7 +431,9 @@ events := provider.NewChannel(0) // unbuffered
 
 // Set up the VM
 v := vm.New()
-v.SetChanProvider(provider)
+if err := v.SetChanProvider(provider); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 
 // Pass the channel into Lua
@@ -447,7 +470,9 @@ Millisecond-precision timing for benchmarking and periodic triggers:
 
 ```go
 v := vm.New()
-v.SetTimeProvider(vm.NewDefaultTimeProvider())
+if err := v.SetTimeProvider(vm.NewDefaultTimeProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 
