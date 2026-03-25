@@ -6,10 +6,12 @@ The `LuaCodeProvider` interface controls what Lua scripts can load via `dofile()
 
 ```go
 v := vm.New()
-v.SetCodeProvider(vm.NewDirCodeProvider("/app/scripts", vm.LuaLoaderCaps{
+if err := v.SetCodeProvider(vm.NewDirCodeProvider("/app/scripts", vm.LuaLoaderCaps{
     AllowDofile:   true,
     AllowLoadfile: true,
-}))
+})); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

@@ -68,7 +68,9 @@ func main() {
 	}
 
 	v := vm.New()
-	v.SetTimeProvider(vm.NewDefaultTimeProvider())
+	if err := v.SetTimeProvider(vm.NewDefaultTimeProvider()); err != nil {
+		log.Fatalf("SetTimeProvider: %v", err)
+	}
 	stdlib.Open(v)
 
 	_, err = v.Run(proto)

@@ -71,7 +71,9 @@ func main() {
 	// --- Demo 1: Logging provider ---
 	fmt.Println("--- LoggingPrintProvider ---")
 	v1 := vm.New()
-	v1.SetPrintProvider(&LoggingPrintProvider{ScriptName: "inventory.lua"})
+	if err := v1.SetPrintProvider(&LoggingPrintProvider{ScriptName: "inventory.lua"}); err != nil {
+		log.Fatalf("SetPrintProvider: %v", err)
+	}
 	stdlib.Open(v1)
 
 	if _, err := v1.Run(proto); err != nil {
@@ -83,7 +85,9 @@ func main() {
 	fmt.Println("--- CollectingPrintProvider ---")
 	collector := &CollectingPrintProvider{}
 	v2 := vm.New()
-	v2.SetPrintProvider(collector)
+	if err := v2.SetPrintProvider(collector); err != nil {
+		log.Fatalf("SetPrintProvider: %v", err)
+	}
 	stdlib.Open(v2)
 
 	if _, err := v2.Run(proto); err != nil {
@@ -109,11 +113,15 @@ func main() {
 	c2 := &CollectingPrintProvider{}
 
 	vm1 := vm.New()
-	vm1.SetPrintProvider(c1)
+	if err := vm1.SetPrintProvider(c1); err != nil {
+		log.Fatalf("SetPrintProvider: %v", err)
+	}
 	stdlib.Open(vm1)
 
 	vm2 := vm.New()
-	vm2.SetPrintProvider(c2)
+	if err := vm2.SetPrintProvider(c2); err != nil {
+		log.Fatalf("SetPrintProvider: %v", err)
+	}
 	stdlib.Open(vm2)
 
 	// vm1 turns off warnings

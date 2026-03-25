@@ -69,7 +69,9 @@ type LuaLoaderCaps struct {
 ```go
 provider := NewInMemoryProvider()
 provider.Add("module.lua", `return { foo = 42 }`)
-v.SetCodeProvider(provider)
+if err := v.SetCodeProvider(provider); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Filesystem with Restrictions

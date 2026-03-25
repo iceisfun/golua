@@ -8,7 +8,9 @@ Additional `os.*` functions require their own providers: `os.execute` needs `Lua
 
 ```go
 v := vm.New()
-v.SetOsProvider(vm.NewDefaultOsProvider())
+if err := v.SetOsProvider(vm.NewDefaultOsProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

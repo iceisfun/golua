@@ -47,7 +47,9 @@ type LuaDebugProvider interface {
 
 ```go
 v := vm.New()
-v.SetDebugProvider(vm.NewDefaultDebugProvider())
+if err := v.SetDebugProvider(vm.NewDefaultDebugProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

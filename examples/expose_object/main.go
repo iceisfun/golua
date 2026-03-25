@@ -59,7 +59,9 @@ func main() {
 	// --- Step 3: Create VM and inject ---
 
 	v := vm.New()
-	v.SetCodeProvider(&FileProvider{dir: dir})
+	if err := v.SetCodeProvider(&FileProvider{dir: dir}); err != nil {
+		log.Fatalf("SetCodeProvider: %v", err)
+	}
 	stdlib.Open(v)
 
 	v.SetGlobal("goblin_core", vm.NewTable(goblinLua))

@@ -133,7 +133,9 @@ func main() {
 
 	// Create VM with provider
 	v := vm.New()
-	v.SetCodeProvider(provider)
+	if err := v.SetCodeProvider(provider); err != nil {
+		log.Fatalf("SetCodeProvider: %v", err)
+	}
 	stdlib.Open(v)
 
 	fmt.Println("=== Running with InMemoryProvider ===")
@@ -166,7 +168,9 @@ func main() {
 	restricted := NewRestrictedProvider(provider, []string{"utils.lua"})
 
 	v2 := vm.New()
-	v2.SetCodeProvider(restricted)
+	if err := v2.SetCodeProvider(restricted); err != nil {
+		log.Fatalf("SetCodeProvider: %v", err)
+	}
 	stdlib.Open(v2)
 
 	restrictedSource := `

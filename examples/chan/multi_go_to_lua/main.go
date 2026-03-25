@@ -57,7 +57,9 @@ func main() {
 	}
 
 	v := vm.New()
-	v.SetChanProvider(provider)
+	if err := v.SetChanProvider(provider); err != nil {
+		log.Fatalf("SetChanProvider: %v", err)
+	}
 	stdlib.Open(v)
 	v.SetGlobal("ch1", stdlib.WrapChannel(v, ch1))
 	v.SetGlobal("ch2", stdlib.WrapChannel(v, ch2))

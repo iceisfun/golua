@@ -227,7 +227,9 @@ The exec module requires a `LuaProcessProvider` to be set on the VM.
 
 ```go
 v := vm.New()
-v.SetProcessProvider(vm.NewDefaultProcessProvider())
+if err := v.SetProcessProvider(vm.NewDefaultProcessProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

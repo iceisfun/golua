@@ -6,8 +6,12 @@ The `LuaExecProvider` interface controls `os.execute()` command execution. This 
 
 ```go
 v := vm.New()
-v.SetOsProvider(vm.NewDefaultOsProvider())
-v.SetExecProvider(vm.NewDefaultExecProvider())
+if err := v.SetOsProvider(vm.NewDefaultOsProvider()); err != nil {
+    log.Fatal(err)
+}
+if err := v.SetExecProvider(vm.NewDefaultExecProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

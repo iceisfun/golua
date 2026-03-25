@@ -64,7 +64,9 @@ type LuaTimeProvider interface {
 
 ```go
 v := vm.New()
-v.SetTimeProvider(vm.NewDefaultTimeProvider())
+if err := v.SetTimeProvider(vm.NewDefaultTimeProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

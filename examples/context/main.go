@@ -54,7 +54,9 @@ func main() {
 	defer cancel()
 
 	v := vm.New(vm.WithContext(ctx))
-	v.SetOsProvider(vm.NewDefaultOsProvider())
+	if err := v.SetOsProvider(vm.NewDefaultOsProvider()); err != nil {
+		log.Fatalf("SetOsProvider: %v", err)
+	}
 	stdlib.Open(v)
 
 	fmt.Println("Game round started — NPC AI script running...")

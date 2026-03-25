@@ -6,7 +6,9 @@ The `LuaTimeProvider` interface controls the `time` module for millisecond-preci
 
 ```go
 v := vm.New()
-v.SetTimeProvider(vm.NewDefaultTimeProvider())
+if err := v.SetTimeProvider(vm.NewDefaultTimeProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

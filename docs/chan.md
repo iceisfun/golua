@@ -9,7 +9,9 @@ provider := vm.NewDefaultChanProvider()
 events := provider.NewChannel(context.Background(), 0) // unbuffered
 
 v := vm.New()
-v.SetChanProvider(provider)
+if err := v.SetChanProvider(provider); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 
 v.SetGlobal("events", stdlib.WrapChannel(v, events))

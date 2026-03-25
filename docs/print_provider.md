@@ -15,7 +15,9 @@ func (l *Logger) Warn(ctx context.Context, msg string) {
 }
 
 v := vm.New()
-v.SetPrintProvider(&Logger{Name: "inventory.lua"})
+if err := v.SetPrintProvider(&Logger{Name: "inventory.lua"}); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

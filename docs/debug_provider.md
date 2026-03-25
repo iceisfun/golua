@@ -6,7 +6,9 @@ The `LuaDebugProvider` interface gates access to the `debug` library. Without a 
 
 ```go
 v := vm.New()
-v.SetDebugProvider(vm.NewDefaultDebugProvider()) // all capabilities enabled
+if err := v.SetDebugProvider(vm.NewDefaultDebugProvider()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

@@ -92,8 +92,12 @@ func main() {
 	}
 
 	v := vm.New()
-	v.SetIoProvider(ioProvider)
-	v.SetOsProvider(osProvider)
+	if err := v.SetIoProvider(ioProvider); err != nil {
+		log.Fatalf("SetIoProvider: %v", err)
+	}
+	if err := v.SetOsProvider(osProvider); err != nil {
+		log.Fatalf("SetOsProvider: %v", err)
+	}
 	stdlib.Open(v)
 
 	_, err = v.Run(proto)
@@ -124,7 +128,9 @@ func main() {
 	proto2, _ := compiler.Compile("filtered", block2)
 
 	v2 := vm.New()
-	v2.SetOsProvider(filteredOsProvider)
+	if err := v2.SetOsProvider(filteredOsProvider); err != nil {
+		log.Fatalf("SetOsProvider: %v", err)
+	}
 	stdlib.Open(v2)
 	v2.Run(proto2)
 

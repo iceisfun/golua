@@ -44,7 +44,9 @@ func main() {
 	}
 
 	v := vm.New()
-	v.SetProcessProvider(vm.NewDefaultProcessProvider())
+	if err := v.SetProcessProvider(vm.NewDefaultProcessProvider()); err != nil {
+		log.Fatalf("SetProcessProvider: %v", err)
+	}
 	stdlib.Open(v)
 
 	_, err = v.Run(proto)

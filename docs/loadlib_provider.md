@@ -6,7 +6,9 @@ The `LuaLoadLibProvider` interface controls `package.loadlib()` behavior. Withou
 
 ```go
 v := vm.New()
-v.SetLoadLibProvider(&MyLoadLibProvider{})
+if err := v.SetLoadLibProvider(&MyLoadLibProvider{}); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

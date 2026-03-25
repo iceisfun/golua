@@ -65,7 +65,9 @@ func main() {
 	}
 
 	v := vm.New()
-	v.SetDebugProvider(vm.NewDefaultDebugProvider())
+	if err := v.SetDebugProvider(vm.NewDefaultDebugProvider()); err != nil {
+		log.Fatalf("SetDebugProvider: %v", err)
+	}
 	stdlib.Open(v)
 
 	_, err = v.Run(proto)

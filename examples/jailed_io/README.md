@@ -81,7 +81,9 @@ Examples: simulated game clock, deterministic replay timestamps, restricted envi
 
 ```go
 ioProvider := vm.NewJailedIoProvider("/path/to/allowed/dir")
-v.SetIoProvider(ioProvider)
+if err := v.SetIoProvider(ioProvider); err != nil {
+    log.Fatal(err)
+}
 ```
 
 - Uses `os.DirFS` to prevent path traversal
@@ -91,7 +93,9 @@ v.SetIoProvider(ioProvider)
 
 ```go
 osProvider := vm.NewDefaultOsProvider()
-v.SetOsProvider(osProvider)
+if err := v.SetOsProvider(osProvider); err != nil {
+    log.Fatal(err)
+}
 ```
 
 Delegates to the real system clock and environment.

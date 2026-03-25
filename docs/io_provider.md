@@ -7,12 +7,16 @@ The `LuaIoProvider` interface controls all `io.*` file operations, `os.remove`, 
 ```go
 // Read-only, directory-confined
 v := vm.New()
-v.SetIoProvider(vm.NewJailedIoProvider("/app/data"))
+if err := v.SetIoProvider(vm.NewJailedIoProvider("/app/data")); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 
 // Full read-write access
 v := vm.New()
-v.SetIoProvider(vm.NewFullIoProvider("/app/data"))
+if err := v.SetIoProvider(vm.NewFullIoProvider("/app/data")); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 

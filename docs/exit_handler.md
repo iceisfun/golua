@@ -6,8 +6,12 @@ The `LuaExitHandler` interface controls `os.exit()` behavior. Without both an ex
 
 ```go
 v := vm.New()
-v.SetOsProvider(vm.NewDefaultOsProvider())
-v.SetExitHandler(vm.NewDefaultExitHandler())
+if err := v.SetOsProvider(vm.NewDefaultOsProvider()); err != nil {
+    log.Fatal(err)
+}
+if err := v.SetExitHandler(vm.NewDefaultExitHandler()); err != nil {
+    log.Fatal(err)
+}
 stdlib.Open(v)
 ```
 
