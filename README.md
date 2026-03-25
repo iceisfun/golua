@@ -4,6 +4,8 @@
 
 # GoLua
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/iceisfun/golua.svg)](https://pkg.go.dev/github.com/iceisfun/golua)
+
 An embeddable, sandbox-first Lua 5.4 runtime for Go applications, with a small set of experimental 5.5 features. Pure Go, zero dependencies, no cgo.
 
 Good fits include plugin systems, user scripting, game logic, automation, and controlled configuration runtimes.
