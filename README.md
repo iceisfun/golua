@@ -239,11 +239,12 @@ stdlib.Open(v)
 
 ### package.loadlib Hook
 
-`package.loadlib` is nil by default. Standard C Lua modules (.so/.dll) are compiled
-against the PUC-Rio C API (`lua_State*`, `lua_push*`, etc.) and cannot be loaded
-directly into GoLua. This provider lets the host implement its own native module
-strategy — for example, mapping module names to Go-implemented bindings or using
-cgo to bridge platform-specific libraries.
+`package.loadlib` is always exposed but returns Lua's standard "absent" failure
+triple by default. Standard C Lua modules (.so/.dll) are compiled against the
+PUC-Rio C API (`lua_State*`, `lua_push*`, etc.) and cannot be loaded directly
+into GoLua. Setting a `LuaLoadLibProvider` lets the host implement its own native
+module strategy — for example, mapping module names to Go-implemented bindings or
+using cgo to bridge platform-specific libraries.
 
 ```go
 type MyLoadLibProvider struct{}
