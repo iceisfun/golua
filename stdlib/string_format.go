@@ -250,7 +250,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", v.ObjTypeName(val)))
 			}
 		case 'p':
-			ps := luaPointerFormat(val)
+			ps := v.PointerString(val)
 			if spec != "%" {
 				goSpec := spec + "s"
 				ps = fmt.Sprintf(goSpec, ps)
@@ -1131,7 +1131,3 @@ func luaQuote(v *vm.VM, val vm.Value, argIdx int) string {
 	return b.String()
 }
 
-// luaPointerFormat implements Lua's %p format.
-func luaPointerFormat(val vm.Value) string {
-	return val.PointerString()
-}

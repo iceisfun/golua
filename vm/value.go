@@ -42,7 +42,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // nativeFuncBox wraps a NativeFunc in a heap-allocated struct so that it
@@ -58,24 +57,42 @@ type nativeFuncBox struct {
 
 var emptyStringSentinel byte
 
-var (
-	stringPointerMu  sync.Mutex
-	stringPointerIDs = map[string]*stringPointerToken{}
-)
-
 type stringPointerToken struct{ _ byte }
 
-func stringPointerID(s string) any {
+// stringInternMap is the per-VM interning cache for short string pointer identity.
+// Stored in VM.internalState under the "stringptrs" key.
+type stringInternMap struct {
+	ids map[string]*stringPointerToken
+}
+
+const stringInternsKey = "stringptrs"
+
+// getStringInterns returns the per-VM string interning map, creating it lazily.
+func getStringInterns(vm *VM) *stringInternMap {
+	if r := vm.InternalState(stringInternsKey); r != nil {
+		return r.(*stringInternMap)
+	}
+	m := &stringInternMap{ids: make(map[string]*stringPointerToken)}
+	vm.SetInternalState(stringInternsKey, m)
+	return m
+}
+
+// stringPointerID returns a stable pointer identity for a short string within
+// a VM's lifetime. The interning map is shared between a root VM and its
+// coroutines, and is released when the VM is garbage collected.
+func (vm *VM) stringPointerID(s string) any {
 	if s == "" {
 		return &emptyStringSentinel
 	}
-	stringPointerMu.Lock()
-	defer stringPointerMu.Unlock()
-	if id, ok := stringPointerIDs[s]; ok {
+	m := getStringInterns(vm)
+	// The internalMu already serializes lazy-init; after that, only one
+	// goroutine at a time executes Lua in a given VM tree (coroutines
+	// alternate), so no extra lock is needed on the map itself.
+	if id, ok := m.ids[s]; ok {
 		return id
 	}
 	id := &stringPointerToken{}
-	stringPointerIDs[s] = id
+	m.ids[s] = id
 	return id
 }
 
@@ -657,19 +674,16 @@ func (v Value) String() string {
 
 // PointerString returns the %p representation for string.format.
 // Tables, strings, and functions return a hex address; other types return "(null)".
+//
+// For short string interning (Lua 5.4 semantics where equal short strings share
+// the same %p address), use [VM.PointerString] instead — it requires a VM for
+// the per-VM interning cache.
 func (v Value) PointerString() string {
 	switch v.typ {
 	case typeTable:
 		return fmt.Sprintf("%p", v.ptr)
 	case typeString:
 		s := v.ptr.(string)
-		// Short strings (≤40 chars) are interned in Lua 5.4: equal strings
-		// share the same %p address. Use stringPointerID for value-based identity.
-		// Long strings use reflect to get the underlying data pointer, matching
-		// Lua 5.4's behavior where long strings are not interned.
-		if len(s) <= 40 {
-			return fmt.Sprintf("%p", stringPointerID(s))
-		}
 		return fmt.Sprintf("0x%x", reflect.ValueOf(s).Pointer())
 	case typeFunction:
 		return fmt.Sprintf("%p", v.ptr)
@@ -680,6 +694,25 @@ func (v Value) PointerString() string {
 	default:
 		return "(null)"
 	}
+}
+
+// PointerString returns the %p representation for a value, with short string
+// interning (Lua 5.4 semantics: equal short strings ≤40 chars share the same
+// %p address). The interning cache is per-VM and released when the VM is
+// garbage collected.
+func (vm *VM) PointerString(v Value) string {
+	if v.typ == typeString {
+		s := v.ptr.(string)
+		// Short strings (≤40 chars) are interned in Lua 5.4: equal strings
+		// share the same %p address.
+		// Long strings use reflect to get the underlying data pointer, matching
+		// Lua 5.4's behavior where long strings are not interned.
+		if len(s) <= 40 {
+			return fmt.Sprintf("%p", vm.stringPointerID(s))
+		}
+		return fmt.Sprintf("0x%x", reflect.ValueOf(s).Pointer())
+	}
+	return v.PointerString()
 }
 
 // intFloatEqual returns true if int i and float f represent the same value.
