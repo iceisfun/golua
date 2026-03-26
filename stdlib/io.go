@@ -19,35 +19,40 @@ import (
 // Matches Lua 5.4's MAXARGLINE (liolib.c).
 const maxArgLine = 250
 
-// fileHandleMeta is a shared metatable for file handle userdata.
-// It contains __index pointing to a methods table, __name, __tostring,
-// and __gc for identification and method dispatch.
-var fileHandleMeta *vm.Table
+// ioState holds per-VM file handle tables created when the IO provider is first used.
+type ioState struct {
+	meta    *vm.Table // metatable for file handle userdata
+	methods *vm.Table // methods table (__index target)
+}
 
-// fileMethodsTable contains the methods available on file handles.
-var fileMethodsTable *vm.Table
+// getIoState returns the per-VM ioState, creating it on first call.
+func getIoState(v *vm.VM) *ioState {
+	if s := v.InternalState("io"); s != nil {
+		return s.(*ioState)
+	}
 
-func init() {
-	fileMethodsTable = vm.NewEmptyTable()
-	// Populate file methods. These are instance methods dispatched via __index.
-	// Each method extracts the LuaFile from the userdata's fileHandle.
-	fileMethodsTable.SetString("read", vm.NewNativeFunc(fileRead))
-	fileMethodsTable.SetString("close", vm.NewNativeFunc(fileClose))
-	fileMethodsTable.SetString("lines", vm.NewNativeFunc(fileLines))
-	fileMethodsTable.SetString("write", vm.NewNativeFunc(fileWrite))
-	fileMethodsTable.SetString("seek", vm.NewNativeFunc(fileSeek))
-	fileMethodsTable.SetString("setvbuf", vm.NewNativeFunc(fileSetVBuf))
-	fileMethodsTable.SetString("flush", vm.NewNativeFunc(fileFlush))
+	methods := vm.NewEmptyTable()
+	methods.SetString("read", vm.NewNativeFunc(fileRead))
+	methods.SetString("close", vm.NewNativeFunc(fileClose))
+	methods.SetString("lines", vm.NewNativeFunc(fileLines))
+	methods.SetString("write", vm.NewNativeFunc(fileWrite))
+	methods.SetString("seek", vm.NewNativeFunc(fileSeek))
+	methods.SetString("setvbuf", vm.NewNativeFunc(fileSetVBuf))
+	methods.SetString("flush", vm.NewNativeFunc(fileFlush))
 
-	fileHandleMeta = vm.NewEmptyTable()
-	fileHandleMeta.SetString("__name", vm.NewString("FILE*"))
-	fileHandleMeta.SetString("__index", vm.NewTable(fileMethodsTable))
-	fileHandleMeta.SetString("__tostring", vm.NewNativeFunc(fileToString))
+	meta := vm.NewEmptyTable()
+	meta.SetString("__name", vm.NewString("FILE*"))
+	meta.SetString("__index", vm.NewTable(methods))
+	meta.SetString("__tostring", vm.NewNativeFunc(fileToString))
 	// __close and __gc silently close the file if not already closed.
 	// This is needed for to-be-closed variables (generic for with io.lines).
 	closeGC := vm.NewNativeFunc(fileCloseGC)
-	fileHandleMeta.SetString("__close", closeGC)
-	fileHandleMeta.SetString("__gc", closeGC)
+	meta.SetString("__close", closeGC)
+	meta.SetString("__gc", closeGC)
+
+	s := &ioState{meta: meta, methods: methods}
+	v.SetInternalState("io", s)
+	return s
 }
 
 // fileHandle is the Go data stored inside a file userdata value.
@@ -59,14 +64,14 @@ type fileHandle struct {
 }
 
 // makeFileHandle creates a file handle userdata wrapping a LuaFile.
-func makeFileHandle(f vm.LuaFile) vm.Value {
+func makeFileHandle(v *vm.VM, f vm.LuaFile) vm.Value {
 	fh := &fileHandle{file: f}
-	return vm.NewUserdataValueUV(fh, fileHandleMeta, 0)
+	return vm.NewUserdataValueUV(fh, getIoState(v).meta, 0)
 }
 
-func makeFileHandleWithClose(f vm.LuaFile, closeFn func(*vm.VM, *fileHandle) int, gcCloseFn func(*fileHandle)) vm.Value {
+func makeFileHandleWithClose(v *vm.VM, f vm.LuaFile, closeFn func(*vm.VM, *fileHandle) int, gcCloseFn func(*fileHandle)) vm.Value {
 	fh := &fileHandle{file: f, closeFn: closeFn, gcCloseFn: gcCloseFn}
-	return vm.NewUserdataValueUV(fh, fileHandleMeta, 0)
+	return vm.NewUserdataValueUV(fh, getIoState(v).meta, 0)
 }
 
 // fileArgError raises a "bad argument" error for file operations.
@@ -143,15 +148,15 @@ func openIo(v *vm.VM) {
 	// and __input/__output so identity comparisons work (io.input() == io.stdin).
 	var stdinHandle, stdoutHandle, stderrHandle vm.Value
 	if f := provider.Stdin(ctx); f != nil {
-		stdinHandle = makeFileHandle(f)
+		stdinHandle = makeFileHandle(v, f)
 		ioTable.SetString("stdin", stdinHandle)
 	}
 	if f := provider.Stdout(ctx); f != nil {
-		stdoutHandle = makeFileHandle(f)
+		stdoutHandle = makeFileHandle(v, f)
 		ioTable.SetString("stdout", stdoutHandle)
 	}
 	if f := provider.Stderr(ctx); f != nil {
-		stderrHandle = makeFileHandle(f)
+		stderrHandle = makeFileHandle(v, f)
 		ioTable.SetString("stderr", stderrHandle)
 	}
 
@@ -219,7 +224,7 @@ func makeIoPopen(provider vm.LuaProcessProvider) vm.NativeFunc {
 		if pf.mode == "r" {
 			pf.reader = bufio.NewReader(processReadCloser{proc: proc})
 		}
-		v.Set(0, makeFileHandleWithClose(pf, popenClose, popenCloseGC))
+		v.Set(0, makeFileHandleWithClose(v, pf, popenClose, popenCloseGC))
 		return 1
 	}
 }
@@ -554,7 +559,7 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			return 3
 		}
 
-		v.Set(0, makeFileHandle(f))
+		v.Set(0, makeFileHandle(v, f))
 		return 1
 	}
 }
@@ -611,7 +616,7 @@ func makeIoTmpfile(provider vm.LuaIoProvider) vm.NativeFunc {
 			v.Set(1, vm.NewString(err.Error()))
 			return 2
 		}
-		v.Set(0, makeFileHandle(f))
+		v.Set(0, makeFileHandle(v, f))
 		return 1
 	}
 }
@@ -792,7 +797,7 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			// The 4th value is a to-be-closed variable for generic for
 			v.Set(1, vm.Nil)
 			v.Set(2, vm.Nil)
-			v.Set(3, makeFileHandle(f))
+			v.Set(3, makeFileHandle(v, f))
 			return 4
 		}
 		return 1
@@ -821,7 +826,7 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 				_, errDesc := extractLuaFileError(err)
 				panic(fmt.Sprintf("cannot open file '%s' (%s)", fname, errDesc))
 			}
-			handle := makeFileHandle(f)
+			handle := makeFileHandle(v, f)
 			ioTable.SetString("__input", handle)
 			v.Set(0, handle)
 			return 1
@@ -858,7 +863,7 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 				_, errDesc := extractLuaFileError(err)
 				panic(fmt.Sprintf("cannot open file '%s' (%s)", fname, errDesc))
 			}
-			handle := makeFileHandle(f)
+			handle := makeFileHandle(v, f)
 			ioTable.SetString("__output", handle)
 			v.Set(0, handle)
 			return 1
