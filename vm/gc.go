@@ -12,33 +12,21 @@ type gcEntry struct {
 	gcFunc Value
 }
 
-var (
-	gcPendingMu sync.Mutex
-	gcPending   []gcEntry
-)
-
-// gcTableFinalizer is the Go finalizer callback set on tables with __gc.
-// Runs in Go's finalizer goroutine — cannot call Lua code directly.
-// Looks up __gc from the CURRENT metatable (Lua 5.4 semantics).
-func gcTableFinalizer(t *Table) {
-	mt := t.Metatable()
-	if mt == nil {
-		return
-	}
-	gcFunc := mt.Get(metaGc)
-	if gcFunc.IsNil() {
-		return
-	}
-	gcPendingMu.Lock()
-	gcPending = append(gcPending, gcEntry{table: t, gcFunc: gcFunc})
-	gcPendingMu.Unlock()
+// gcQueue holds pending __gc finalizations for a VM and its coroutines.
+// A single queue is shared between a root VM and all coroutine VMs it spawns.
+type gcQueue struct {
+	mu      sync.Mutex
+	pending []gcEntry
 }
 
 // RegisterGcFinalizer checks if t has a __gc metamethod and registers a Go
 // finalizer if so. Safe to call multiple times (idempotent).
 //
+// The finalizer closure captures the VM's gcQueue (not the VM itself) to avoid
+// preventing the VM from being garbage collected.
+//
 // Lua 5.4 Reference: §2.5.3 (garbage-collection metamethods).
-func RegisterGcFinalizer(t *Table) {
+func (vm *VM) RegisterGcFinalizer(t *Table) {
 	mt := t.Metatable()
 	if mt == nil {
 		return
@@ -46,7 +34,20 @@ func RegisterGcFinalizer(t *Table) {
 	if mt.Get(metaGc).IsNil() {
 		return
 	}
-	runtime.SetFinalizer(t, gcTableFinalizer)
+	q := vm.gcQueue
+	runtime.SetFinalizer(t, func(t *Table) {
+		mt := t.Metatable()
+		if mt == nil {
+			return
+		}
+		gcFunc := mt.Get(metaGc)
+		if gcFunc.IsNil() {
+			return
+		}
+		q.mu.Lock()
+		q.pending = append(q.pending, gcEntry{table: t, gcFunc: gcFunc})
+		q.mu.Unlock()
+	})
 }
 
 // ProcessGcFinalizers triggers Go's GC, waits for finalizers to run,
@@ -97,10 +98,11 @@ func (vm *VM) ProcessGcFinalizers() {
 		vm.gcCallCount++
 	}
 
-	gcPendingMu.Lock()
-	entries := gcPending
-	gcPending = nil
-	gcPendingMu.Unlock()
+	q := vm.gcQueue
+	q.mu.Lock()
+	entries := q.pending
+	q.pending = nil
+	q.mu.Unlock()
 
 	for _, entry := range entries {
 		// Lua 5.4: __gc finalizers run inside a C-call boundary that
@@ -116,10 +118,11 @@ func (vm *VM) ProcessGcFinalizers() {
 // any weak table sweeps or ephemeron resolution. Used by the periodic GC step
 // in CheckInterrupt to avoid the overhead of full weak table processing.
 func (vm *VM) processGcFinalizersOnly() {
-	gcPendingMu.Lock()
-	entries := gcPending
-	gcPending = nil
-	gcPendingMu.Unlock()
+	q := vm.gcQueue
+	q.mu.Lock()
+	entries := q.pending
+	q.pending = nil
+	q.mu.Unlock()
 
 	for _, entry := range entries {
 		exit := vm.EnterNonYieldable()
@@ -127,4 +130,3 @@ func (vm *VM) processGcFinalizersOnly() {
 		exit()
 	}
 }
-

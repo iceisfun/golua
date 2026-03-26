@@ -35,7 +35,8 @@ func (vm *VM) registerProvider(p any) error {
 }
 
 // Close shuts down the VM by calling Shutdown on any registered providers
-// that implement the Shutdownable interface. Returns the first error encountered.
+// that implement the Shutdownable interface, then runs close hooks and
+// discards pending GC finalizers. Returns the first error encountered.
 func (vm *VM) Close(ctx context.Context) error {
 	var firstErr error
 	for _, p := range vm.registeredProviders {
@@ -45,5 +46,19 @@ func (vm *VM) Close(ctx context.Context) error {
 			}
 		}
 	}
+
+	// Run close hooks (only root VM has these; coroutine VMs have nil closeHooks).
+	for _, hook := range vm.closeHooks {
+		hook(ctx)
+	}
+	vm.closeHooks = nil
+
+	// Discard pending GC entries to prevent leaks after shutdown.
+	if vm.gcQueue != nil {
+		vm.gcQueue.mu.Lock()
+		vm.gcQueue.pending = nil
+		vm.gcQueue.mu.Unlock()
+	}
+
 	return firstErr
 }

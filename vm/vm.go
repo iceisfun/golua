@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -148,6 +149,17 @@ type VM struct {
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout
 	outputLines   *[]string // Shared captured output buffer (pointer for coroutine sharing)
 
+	// GC finalization queue shared between root VM and its coroutines.
+	gcQueue *gcQueue
+
+	// Per-VM state bag for stdlib packages (coroutine registry, channel registry, etc.).
+	// Shared between root VM and its coroutines via pointer/reference.
+	internalState map[string]any
+	internalMu    *sync.Mutex
+
+	// Close hooks run when Close() is called. NOT shared with coroutine VMs.
+	closeHooks []func(context.Context)
+
 	// Pre-allocated return value buffer for OP_RETURN/OP_RETURN1.
 	// Since the VM processes one instruction at a time (no concurrency),
 	// this buffer can be reused across returns without allocation.
@@ -185,14 +197,17 @@ type callFrame struct {
 // Optional VMOption arguments can configure context and limits.
 func New(opts ...VMOption) *VM {
 	vm := &VM{
-		stack:       make([]Value, 256),
-		callStack:   make([]callFrame, 0, 32),
-		globals:     NewEmptyTable(),
-		warnEnabled: false,
-		closeDepth:  new(int32),
-		gcMode:      "incremental",
-		gcRunning:   true,
-		ctx:         context.Background(),
+		stack:         make([]Value, 256),
+		callStack:     make([]callFrame, 0, 32),
+		globals:       NewEmptyTable(),
+		warnEnabled:   false,
+		closeDepth:    new(int32),
+		gcMode:        "incremental",
+		gcRunning:     true,
+		ctx:           context.Background(),
+		gcQueue:       &gcQueue{},
+		internalState: make(map[string]any),
+		internalMu:    &sync.Mutex{},
 	}
 	for _, opt := range opts {
 		opt(vm)
@@ -702,6 +717,9 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		closeDepth:        parent.closeDepth,
 		captureOutput:     parent.captureOutput,
 		outputLines:       parent.outputLines,
+		gcQueue:           parent.gcQueue,
+		internalState:     parent.internalState,
+		internalMu:        parent.internalMu,
 	}
 }
 

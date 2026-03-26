@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/iceisfun/golua/vm"
@@ -15,9 +16,25 @@ func init() {
 	channelHandleMeta.SetString("__name", vm.NewString("channel"))
 }
 
-// channelRegistry maps channel IDs to LuaChannel pointers.
-// Keyed by int64 ID, same pattern as the coroutine registry.
-var channelRegistry = make(map[int64]*vm.LuaChannel)
+// chanRegistry is the per-VM channel registry, stored in VM internal state.
+type chanRegistry struct {
+	mu       sync.Mutex
+	channels map[int64]*vm.LuaChannel
+}
+
+const chanRegistryKey = "chan"
+
+// getChanRegistry returns the per-VM channel registry, creating it lazily.
+func getChanRegistry(v *vm.VM) *chanRegistry {
+	if r := v.InternalState(chanRegistryKey); r != nil {
+		return r.(*chanRegistry)
+	}
+	reg := &chanRegistry{
+		channels: make(map[int64]*vm.LuaChannel),
+	}
+	v.SetInternalState(chanRegistryKey, reg)
+	return reg
+}
 
 // openChan registers the chan library if a ChanProvider is set.
 func openChan(v *vm.VM) {
@@ -51,7 +68,10 @@ func ProvideChan(v *vm.VM) {
 
 // makeChannelHandle creates a Lua table handle wrapping a LuaChannel.
 func makeChannelHandle(v *vm.VM, ch *vm.LuaChannel) vm.Value {
-	channelRegistry[ch.ID()] = ch
+	reg := getChanRegistry(v)
+	reg.mu.Lock()
+	reg.channels[ch.ID()] = ch
+	reg.mu.Unlock()
 
 	handle := vm.NewEmptyTable()
 	handle.SetMetatable(channelHandleMeta)
@@ -79,9 +99,10 @@ func makeChannelHandle(v *vm.VM, ch *vm.LuaChannel) vm.Value {
 	return vm.NewTable(handle)
 }
 
-// extractChannel extracts a *LuaChannel from a Lua channel handle table.
-func extractChannel(v vm.Value) *vm.LuaChannel {
-	t := v.AsTable()
+// extractChannel extracts a *LuaChannel from a Lua channel handle table,
+// using the per-VM channel registry.
+func extractChannel(v *vm.VM, handle vm.Value) *vm.LuaChannel {
+	t := handle.AsTable()
 	if t == nil {
 		return nil
 	}
@@ -90,7 +111,11 @@ func extractChannel(v vm.Value) *vm.LuaChannel {
 		return nil
 	}
 	id := idVal.AsInt()
-	return channelRegistry[id]
+	reg := getChanRegistry(v)
+	reg.mu.Lock()
+	ch := reg.channels[id]
+	reg.mu.Unlock()
+	return ch
 }
 
 // chan.make(size?)
@@ -221,7 +246,7 @@ func makeChanSelect(luaVM *vm.VM, provider vm.LuaChanProvider) vm.NativeFunc {
 
 		// Channel recv cases
 		for i := 1; i <= channelCount; i++ {
-			ch := extractChannel(v.Get(i))
+			ch := extractChannel(v, v.Get(i))
 			if ch == nil {
 				panic("bad argument to 'chan.select' (channel expected)")
 			}

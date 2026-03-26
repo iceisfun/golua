@@ -408,6 +408,29 @@ func (vm *VM) MaxMetaDepth() int {
 	return vm.limits.MaxMetaDepth
 }
 
+// InternalState returns the value stored under key in the VM's internal state bag.
+// Returns nil if the key has not been set. The internal state is shared between
+// a root VM and all its coroutine VMs.
+func (vm *VM) InternalState(key string) any {
+	vm.internalMu.Lock()
+	defer vm.internalMu.Unlock()
+	return vm.internalState[key]
+}
+
+// SetInternalState stores a value in the VM's internal state bag under the given key.
+// The internal state is shared between a root VM and all its coroutine VMs.
+func (vm *VM) SetInternalState(key string, val any) {
+	vm.internalMu.Lock()
+	defer vm.internalMu.Unlock()
+	vm.internalState[key] = val
+}
+
+// OnClose registers a hook function that will be called when Close() is invoked.
+// Close hooks are NOT shared with coroutine VMs — only the root VM runs them.
+func (vm *VM) OnClose(hook func(context.Context)) {
+	vm.closeHooks = append(vm.closeHooks, hook)
+}
+
 // InstructionCount returns the current checkpoint visit count.
 func (vm *VM) InstructionCount() int64 {
 	return vm.instrCount

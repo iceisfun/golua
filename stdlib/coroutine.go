@@ -65,11 +65,26 @@ type Coroutine struct {
 	mu             sync.Mutex
 }
 
-var (
-	coroutineID  int
-	coroutinesMu sync.Mutex
-	coroutines   = make(map[int]*Coroutine)
-)
+// coRegistry is the per-VM coroutine registry, stored in VM internal state.
+type coRegistry struct {
+	mu         sync.Mutex
+	nextID     int
+	coroutines map[int]*Coroutine
+}
+
+const coRegistryKey = "coroutine"
+
+// getCoRegistry returns the per-VM coroutine registry, creating it lazily.
+func getCoRegistry(v *vm.VM) *coRegistry {
+	if r := v.InternalState(coRegistryKey); r != nil {
+		return r.(*coRegistry)
+	}
+	reg := &coRegistry{
+		coroutines: make(map[int]*Coroutine),
+	}
+	v.SetInternalState(coRegistryKey, reg)
+	return reg
+}
 
 func openCoroutine(v *vm.VM) {
 	co := vm.NewEmptyTable()
@@ -101,10 +116,11 @@ func coCreate(v *vm.VM) int {
 		callerArgError(v, 1, "coroutine.create", fmt.Sprintf("function expected, got %s", coArgType(v, 1)))
 	}
 
-	coroutinesMu.Lock()
-	coroutineID++
-	id := coroutineID
-	coroutinesMu.Unlock()
+	reg := getCoRegistry(v)
+	reg.mu.Lock()
+	reg.nextID++
+	id := reg.nextID
+	reg.mu.Unlock()
 
 	co := &Coroutine{
 		id:       id,
@@ -116,9 +132,9 @@ func coCreate(v *vm.VM) int {
 		doneCh:   make(chan struct{}),
 	}
 
-	coroutinesMu.Lock()
-	coroutines[id] = co
-	coroutinesMu.Unlock()
+	reg.mu.Lock()
+	reg.coroutines[id] = co
+	reg.mu.Unlock()
 
 	// Create a table to represent the coroutine (with metatable for type identification)
 	coTable := vm.NewEmptyTable()
@@ -157,9 +173,10 @@ func coResume(v *vm.VM) int {
 		return 2
 	}
 
-	coroutinesMu.Lock()
-	co := coroutines[int(id)]
-	coroutinesMu.Unlock()
+	reg := getCoRegistry(v)
+	reg.mu.Lock()
+	co := reg.coroutines[int(id)]
+	reg.mu.Unlock()
 
 	if co == nil {
 		v.Set(0, vm.False)
@@ -193,25 +210,25 @@ func coResume(v *vm.VM) int {
 	// Set caller's status to normal while the resumed coroutine runs
 	callerID := v.CoroutineID()
 	if callerID != 0 {
-		coroutinesMu.Lock()
-		if caller := coroutines[callerID]; caller != nil {
+		reg.mu.Lock()
+		if caller := reg.coroutines[callerID]; caller != nil {
 			caller.mu.Lock()
 			caller.status = statusNormal
 			caller.mu.Unlock()
 		}
-		coroutinesMu.Unlock()
+		reg.mu.Unlock()
 	}
 
 	// restoreCallerStatus restores the caller's coroutine status to running
 	restoreCallerStatus := func() {
 		if callerID != 0 {
-			coroutinesMu.Lock()
-			if caller := coroutines[callerID]; caller != nil {
+			reg.mu.Lock()
+			if caller := reg.coroutines[callerID]; caller != nil {
 				caller.mu.Lock()
 				caller.status = statusRunning
 				caller.mu.Unlock()
 			}
-			coroutinesMu.Unlock()
+			reg.mu.Unlock()
 		}
 	}
 
@@ -376,14 +393,15 @@ func coYield(v *vm.VM) int {
 
 	// Mark coroutine as suspended before yielding
 	coID := v.CoroutineID()
+	reg := getCoRegistry(v)
 	if coID != 0 {
-		coroutinesMu.Lock()
-		if co := coroutines[coID]; co != nil {
+		reg.mu.Lock()
+		if co := reg.coroutines[coID]; co != nil {
 			co.mu.Lock()
 			co.status = statusSuspended
 			co.mu.Unlock()
 		}
-		coroutinesMu.Unlock()
+		reg.mu.Unlock()
 	}
 
 	yieldCh <- values
@@ -407,13 +425,13 @@ func coYield(v *vm.VM) int {
 	}
 
 	if coID != 0 {
-		coroutinesMu.Lock()
-		if co := coroutines[coID]; co != nil {
+		reg.mu.Lock()
+		if co := reg.coroutines[coID]; co != nil {
 			co.mu.Lock()
 			co.status = statusRunning
 			co.mu.Unlock()
 		}
-		coroutinesMu.Unlock()
+		reg.mu.Unlock()
 	}
 
 	// Return the resume args
@@ -446,9 +464,10 @@ func coStatus(v *vm.VM) int {
 		return 1
 	}
 
-	coroutinesMu.Lock()
-	co := coroutines[int(id)]
-	coroutinesMu.Unlock()
+	reg := getCoRegistry(v)
+	reg.mu.Lock()
+	co := reg.coroutines[int(id)]
+	reg.mu.Unlock()
 
 	if co == nil {
 		v.Set(0, vm.NewString(string(statusDead)))
@@ -478,10 +497,11 @@ func coWrap(v *vm.VM) int {
 	}
 
 	// Create the coroutine
-	coroutinesMu.Lock()
-	coroutineID++
-	id := coroutineID
-	coroutinesMu.Unlock()
+	reg := getCoRegistry(v)
+	reg.mu.Lock()
+	reg.nextID++
+	id := reg.nextID
+	reg.mu.Unlock()
 
 	// Create a thread table for this coroutine (for coroutine.running inside it)
 	coTable := vm.NewEmptyTable()
@@ -507,9 +527,9 @@ func coWrap(v *vm.VM) int {
 	co.coVM = coVM
 	coTable.SetVMRef(coVM)
 
-	coroutinesMu.Lock()
-	coroutines[id] = co
-	coroutinesMu.Unlock()
+	reg.mu.Lock()
+	reg.coroutines[id] = co
+	reg.mu.Unlock()
 
 	// Return a wrapper function that resumes the coroutine on each call.
 	// Unlike coroutine.resume, errors are raised directly (not returned as false, err).
@@ -535,23 +555,23 @@ func coWrap(v *vm.VM) int {
 		// Set caller's status to normal while the resumed coroutine runs
 		callerID := v.CoroutineID()
 		if callerID != 0 {
-			coroutinesMu.Lock()
-			if caller := coroutines[callerID]; caller != nil {
+			reg.mu.Lock()
+			if caller := reg.coroutines[callerID]; caller != nil {
 				caller.mu.Lock()
 				caller.status = statusNormal
 				caller.mu.Unlock()
 			}
-			coroutinesMu.Unlock()
+			reg.mu.Unlock()
 		}
 		restoreCallerStatus := func() {
 			if callerID != 0 {
-				coroutinesMu.Lock()
-				if caller := coroutines[callerID]; caller != nil {
+				reg.mu.Lock()
+				if caller := reg.coroutines[callerID]; caller != nil {
 					caller.mu.Lock()
 					caller.status = statusRunning
 					caller.mu.Unlock()
 				}
-				coroutinesMu.Unlock()
+				reg.mu.Unlock()
 			}
 		}
 
@@ -663,9 +683,10 @@ func coClose(v *vm.VM) int {
 		panic("cannot close a normal coroutine")
 	}
 
-	coroutinesMu.Lock()
-	co := coroutines[int(id)]
-	coroutinesMu.Unlock()
+	reg := getCoRegistry(v)
+	reg.mu.Lock()
+	co := reg.coroutines[int(id)]
+	reg.mu.Unlock()
 
 	if co == nil {
 		// Already dead/collected — that's fine
@@ -686,9 +707,9 @@ func coClose(v *vm.VM) int {
 	}
 
 	if status == statusDead {
-		coroutinesMu.Lock()
-		delete(coroutines, int(id))
-		coroutinesMu.Unlock()
+		reg.mu.Lock()
+		delete(reg.coroutines, int(id))
+		reg.mu.Unlock()
 
 		// Close any pending TBC vars on the coroutine VM.
 		co.mu.Lock()
@@ -754,14 +775,14 @@ func coClose(v *vm.VM) int {
 		<-co.doneCh
 	}
 
-	// Now mark as dead and remove from global map
+	// Now mark as dead and remove from registry
 	co.mu.Lock()
 	co.status = statusDead
 	co.mu.Unlock()
 
-	coroutinesMu.Lock()
-	delete(coroutines, int(id))
-	coroutinesMu.Unlock()
+	reg.mu.Lock()
+	delete(reg.coroutines, int(id))
+	reg.mu.Unlock()
 
 	// Clear the call stack so debug.getinfo(co, level) returns nil,
 	// while keeping VMRef alive so gethook/isyieldable still work.
@@ -803,9 +824,10 @@ func coIsYieldable(v *vm.VM) int {
 		idVal := tbl.Get(vm.NewString("__coroutine_id"))
 		if !idVal.IsNil() {
 			id, _ := idVal.ToInt()
-			coroutinesMu.Lock()
-			co := coroutines[int(id)]
-			coroutinesMu.Unlock()
+			reg := getCoRegistry(v)
+			reg.mu.Lock()
+			co := reg.coroutines[int(id)]
+			reg.mu.Unlock()
 			if co != nil {
 				co.mu.Lock()
 				status := co.status

@@ -842,7 +842,7 @@ func luaSetmetatable(v *vm.VM) int {
 	}
 	// Register __gc finalizer if applicable
 	if concrete, ok := tbl.(*vm.Table); ok {
-		vm.RegisterGcFinalizer(concrete)
+		v.RegisterGcFinalizer(concrete)
 	}
 	v.Set(0, vm.NewTable(tbl))
 	return 1
