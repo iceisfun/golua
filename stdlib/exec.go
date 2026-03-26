@@ -8,29 +8,38 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
-// processHandleMeta is a shared metatable for process handle userdata.
-var processHandleMeta *vm.Table
+// execState holds per-VM process handle tables created when the exec module is first used.
+type execState struct {
+	meta    *vm.Table // metatable for process handle userdata
+	methods *vm.Table // methods table (__index target)
+}
 
-// processMethodsTable contains methods available on process handles.
-var processMethodsTable *vm.Table
+// getExecState returns the per-VM execState, creating it on first call.
+func getExecState(v *vm.VM) *execState {
+	if s := v.InternalState("exec"); s != nil {
+		return s.(*execState)
+	}
 
-func init() {
-	processMethodsTable = vm.NewEmptyTable()
-	processMethodsTable.SetString("read", vm.NewNativeFunc(processRead))
-	processMethodsTable.SetString("readline", vm.NewNativeFunc(processReadLine))
-	processMethodsTable.SetString("readlines", vm.NewNativeFunc(processReadLines))
-	processMethodsTable.SetString("write", vm.NewNativeFunc(processWrite))
-	processMethodsTable.SetString("close_stdin", vm.NewNativeFunc(processCloseStdin))
-	processMethodsTable.SetString("wait", vm.NewNativeFunc(processWait))
-	processMethodsTable.SetString("is_complete", vm.NewNativeFunc(processIsComplete))
-	processMethodsTable.SetString("kill", vm.NewNativeFunc(processKill))
-	processMethodsTable.SetString("exit_code", vm.NewNativeFunc(processExitCode))
-	processMethodsTable.SetString("stderr", vm.NewNativeFunc(processStderr))
+	methods := vm.NewEmptyTable()
+	methods.SetString("read", vm.NewNativeFunc(processRead))
+	methods.SetString("readline", vm.NewNativeFunc(processReadLine))
+	methods.SetString("readlines", vm.NewNativeFunc(processReadLines))
+	methods.SetString("write", vm.NewNativeFunc(processWrite))
+	methods.SetString("close_stdin", vm.NewNativeFunc(processCloseStdin))
+	methods.SetString("wait", vm.NewNativeFunc(processWait))
+	methods.SetString("is_complete", vm.NewNativeFunc(processIsComplete))
+	methods.SetString("kill", vm.NewNativeFunc(processKill))
+	methods.SetString("exit_code", vm.NewNativeFunc(processExitCode))
+	methods.SetString("stderr", vm.NewNativeFunc(processStderr))
 
-	processHandleMeta = vm.NewEmptyTable()
-	processHandleMeta.SetString("__name", vm.NewString("PROCESS*"))
-	processHandleMeta.SetString("__index", vm.NewTable(processMethodsTable))
-	processHandleMeta.SetString("__tostring", vm.NewNativeFunc(processToString))
+	meta := vm.NewEmptyTable()
+	meta.SetString("__name", vm.NewString("PROCESS*"))
+	meta.SetString("__index", vm.NewTable(methods))
+	meta.SetString("__tostring", vm.NewNativeFunc(processToString))
+
+	s := &execState{meta: meta, methods: methods}
+	v.SetInternalState("exec", s)
+	return s
 }
 
 // processHandle is the Go data stored inside a process userdata value.
@@ -43,14 +52,14 @@ type processHandle struct {
 	stderrOk bool
 }
 
-func makeProcessHandle(proc vm.LuaProcess, opts vm.ProcessOptions) vm.Value {
+func makeProcessHandle(v *vm.VM, proc vm.LuaProcess, opts vm.ProcessOptions) vm.Value {
 	ph := &processHandle{
 		proc:     proc,
 		stdinOk:  opts.Stdin,
 		stdoutOk: opts.Stdout,
 		stderrOk: opts.Stderr,
 	}
-	return vm.NewUserdataValueUV(ph, processHandleMeta, 0)
+	return vm.NewUserdataValueUV(ph, getExecState(v).meta, 0)
 }
 
 func getProcessHandle(v *vm.VM, val vm.Value, funcName string) *processHandle {
@@ -240,7 +249,7 @@ func makeExecSpawn(luaVM *vm.VM, provider vm.LuaProcessProvider) vm.NativeFunc {
 			panic(fmt.Sprintf("exec.spawn: %s", err.Error()))
 		}
 
-		v.Set(0, makeProcessHandle(proc, opts))
+		v.Set(0, makeProcessHandle(v, proc, opts))
 		return 1
 	}
 }
