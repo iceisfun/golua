@@ -608,20 +608,78 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		return results, err
 	}
 
-	// Check for __call metamethod
-	op := "__call"
-	mm := vm.getMetafield(fn, op)
-	if !mm.IsNil() {
-		// New args: prepend fn (self)
+	// Resolve __call metamethod chain (up to MaxCallChainDepth levels)
+	cur := fn
+	for depth := 1; ; depth++ {
+		mm := vm.getMetafield(cur, "__call")
+		if mm.IsNil() {
+			return nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
+		}
+		if depth > MaxCallChainDepth {
+			return nil, vm.runtimeError("'__call' chain too long")
+		}
+		// Prepend cur as self
 		newArgs := make([]Value, len(args)+1)
-		newArgs[0] = fn
+		newArgs[0] = cur
 		copy(newArgs[1:], args)
-		vm.pendingCallName = "call"
-		vm.pendingCallNameWhat = "metamethod"
-		return vm.ProtectedCall(mm, newArgs)
+		args = newArgs
+
+		if mm.IsNativeFunc() || mm.IsFunction() {
+			vm.pendingCallName = "call"
+			vm.pendingCallNameWhat = "metamethod"
+			fn = mm
+			break
+		}
+		// mm is itself not directly callable; continue resolving
+		cur = mm
 	}
 
-	return nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
+	// Dispatch the resolved function
+	if fn.IsNativeFunc() {
+		nf := fn.AsNativeFunc()
+		base := vm.top
+		vm.ensureStack(base + len(args) + 10)
+
+		vm.stack[base] = fn
+		for i, arg := range args {
+			vm.stack[base+1+i] = arg
+		}
+
+		clearStart := base + 1 + len(args)
+		clearEnd := clearStart + 4
+		if clearEnd > len(vm.stack) {
+			clearEnd = len(vm.stack)
+		}
+		for i := clearStart; i < clearEnd; i++ {
+			vm.stack[i] = Nil
+		}
+
+		vm.callStack = append(vm.callStack, callFrame{
+			base:                  base,
+			argc:                  len(args),
+			funcValue:             fn,
+			suppressTracebackName: vm.pendingSuppressTracebackName,
+		})
+		vm.pendingSuppressTracebackName = false
+		vm.top = base + 1 + len(args)
+		vm.fireCallHook()
+
+		nResults := nf(vm)
+		vm.fireReturnHook()
+		vm.callStack = vm.callStack[:len(vm.callStack)-1]
+
+		results = make([]Value, nResults)
+		for i := 0; i < nResults; i++ {
+			results[i] = vm.stack[base+i]
+		}
+
+		vm.top = savedTop
+		return results, nil
+	}
+
+	// fn.IsFunction()
+	results, err = vm.call(fn.AsClosure(), args, MultiReturn)
+	return results, err
 }
 
 // callUnprotected calls a function without catching errors, so panics
@@ -665,17 +723,61 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 		return
 	}
 
-	// Check for __call metamethod
-	mm := vm.getMetafield(fn, "__call")
-	if !mm.IsNil() {
+	// Resolve __call metamethod chain (up to MaxCallChainDepth levels)
+	origFn := fn
+	cur := fn
+	for depth := 1; ; depth++ {
+		mm := vm.getMetafield(cur, "__call")
+		if mm.IsNil() {
+			panic(vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(origFn)))
+		}
+		if depth > MaxCallChainDepth {
+			panic(vm.runtimeError("'__call' chain too long"))
+		}
+		// Prepend cur as self
 		newArgs := make([]Value, len(args)+1)
-		newArgs[0] = fn
+		newArgs[0] = cur
 		copy(newArgs[1:], args)
-		vm.callUnprotected(mm, newArgs)
+		args = newArgs
+
+		if mm.IsNativeFunc() || mm.IsFunction() {
+			fn = mm
+			break
+		}
+		cur = mm
+	}
+
+	// Dispatch the resolved function
+	if fn.IsNativeFunc() {
+		nf := fn.AsNativeFunc()
+		savedTop := vm.top
+		base := vm.top
+		vm.ensureStack(base + len(args) + 10)
+		vm.stack[base] = fn
+		for i, arg := range args {
+			vm.stack[base+1+i] = arg
+		}
+		clearStart := base + 1 + len(args)
+		clearEnd := clearStart + 4
+		if clearEnd > len(vm.stack) {
+			clearEnd = len(vm.stack)
+		}
+		for i := clearStart; i < clearEnd; i++ {
+			vm.stack[i] = Nil
+		}
+		vm.callStack = append(vm.callStack, callFrame{
+			base:      base,
+			argc:      len(args),
+			funcValue: fn,
+		})
+		vm.top = base + 1 + len(args)
+		nf(vm)
+		vm.callStack = vm.callStack[:len(vm.callStack)-1]
+		vm.top = savedTop
 		return
 	}
 
-	panic(vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn)))
+	vm.call(fn.AsClosure(), args, 0) //nolint:errcheck
 }
 
 // NewCoroutineVM creates a new VM for running a coroutine. The child VM shares
@@ -1132,10 +1234,13 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 	// Resolve __call chain: each level prepends self
 	cur := fn
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for depth := 1; ; depth++ {
 		mm := vm.getMetafield(cur, "__call")
 		if mm.IsNil() {
 			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", vm.ObjTypeName(fn), name)
+		}
+		if depth > MaxCallChainDepth {
+			return Nil, vm.runtimeError("'__call' chain too long")
 		}
 		// Prepend cur as self
 		newArgs := make([]Value, len(args)+1)
@@ -1189,7 +1294,6 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 		// __call is itself not directly callable — continue resolving
 		cur = mm
 	}
-	return Nil, vm.runtimeError("'__call' chain too long; possible loop")
 }
 
 // GetMetafield retrieves a metafield from a value's metatable (exported for stdlib use).

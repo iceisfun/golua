@@ -9,7 +9,7 @@ do
     else n = n - 1; return foo()
     end
   end
-  for i = 1, 100 do
+  for i = 1, 15 do
     foo = setmetatable({}, {__call = foo})
   end
   assert(coroutine.wrap(function() return foo() end)() == 1023)

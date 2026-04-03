@@ -25,6 +25,12 @@ const DefaultMaxStackSlots = 1000000
 // loops from metatable cycles, not a semantic limit.
 const DefaultMaxMetaDepth = 2000
 
+// MaxCallChainDepth is the maximum number of __call metamethod resolutions
+// allowed for a single function call expression. This matches Lua 5.5's
+// limit (0xf stored in a 4-bit counter). When exceeded, a "'__call' chain
+// too long" error is raised.
+const MaxCallChainDepth = 15
+
 // Limits configures execution limits for the VM.
 // Zero values mean no limit (except MaxMetaDepth, where 0 means use DefaultMaxMetaDepth).
 type Limits struct {

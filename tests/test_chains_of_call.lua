@@ -3,7 +3,7 @@
 -- What: Tests building a chain of __call metamethods and invoking through them
 
 do
-  local N = 20
+  local N = 15
   local u = table.pack
   for i = 1, N do
     u = setmetatable({i}, {__call = u})

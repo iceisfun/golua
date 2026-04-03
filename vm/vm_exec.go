@@ -1141,6 +1141,7 @@ func (vm *VM) execute() ([]Value, error) {
 			vm.closeUpvalues(frame.base)
 
 			// Dispatch loop for __call support
+			callChainDepth := 0
 			for {
 				if fn.IsFunction() {
 					closure := fn.AsClosure()
@@ -1241,6 +1242,10 @@ func (vm *VM) execute() ([]Value, error) {
 					op := "__call"
 					mm := vm.getMetafield(fn, op)
 					if !mm.IsNil() {
+						callChainDepth++
+						if callChainDepth > MaxCallChainDepth {
+							return nil, vm.runtimeError("'__call' chain too long")
+						}
 						// Create new args with self (fn) prepended
 						newArgs := make([]Value, len(args)+1)
 						newArgs[0] = fn
@@ -1831,6 +1836,7 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 
 	var results []Value
 	var err error
+	callChainDepth := 0
 
 dispatch:
 	if fn.IsFunction() {
@@ -1918,6 +1924,11 @@ dispatch:
 		mm := vm.getMetafield(fn, "__call")
 		if mm.IsNil() {
 			return nil, vm.runtimeError("attempt to call a %s value%s", vm.ObjTypeName(fn), vm.varInfo(a))
+		}
+
+		callChainDepth++
+		if callChainDepth > MaxCallChainDepth {
+			return nil, vm.runtimeError("'__call' chain too long")
 		}
 
 		// Build new args: prepend fn (self) so the call becomes mm(fn, args...)
