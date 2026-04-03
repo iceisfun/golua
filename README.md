@@ -4,7 +4,7 @@
 
 # GoLua
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/iceisfun/golua.svg)](https://pkg.go.dev/github.com/iceisfun/golua)
+[![Go Reference](https://pkg.go.dev/badge/github.com/iceisfun/golua/v2.svg)](https://pkg.go.dev/github.com/iceisfun/golua/v2)
 
 An embeddable, sandbox-first Lua 5.5 runtime for Go applications. Pure Go, zero dependencies, no cgo.
 
@@ -50,19 +50,56 @@ Good fits include plugin systems, user scripting, game logic, automation, and co
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
 - Single static binary when compiled
 
+## Versions
+
+GoLua is available in two variants, published as separate Go module versions:
+
+| | **v1 — Lua 5.4.8** (`master`) | **v2 — Lua 5.5.0** (`lua_5_5_0`) |
+|---|---|---|
+| Import | `github.com/iceisfun/golua` | `github.com/iceisfun/golua/v2` |
+| Install | `go get github.com/iceisfun/golua` | `go get github.com/iceisfun/golua/v2` |
+| Lua compat | PUC-Rio 5.4.8 | PUC-Rio 5.5.0 |
+| Binary format | Lua 5.4 bytecode | Lua 5.5 bytecode |
+
+### v1 — Lua 5.4.8 (recommended for most users)
+
+- Battle-tested language spec with the widest ecosystem of Lua libraries and documentation
+- Binary chunk format matches PUC-Rio 5.4.8
+- Stable API — no breaking changes planned
+- Best choice when you need maximum compatibility with existing Lua code
+
+### v2 — Lua 5.5.0
+
+- Latest language features: `global` declarations, named varargs (`... name`), `local<const>`/`local<close>` prefix syntax, `table.create`, `debug.getinfo` `extraargs` field
+- Stricter compile-time checking (undeclared globals are errors unless opted out)
+- Removed deprecated math functions (`atan2`, `cosh`, `sinh`, `tanh`, `log10`, `pow`)
+- `LUA_PATH_5_5` / `LUA_CPATH_5_5` env var precedence for module paths
+- Best choice for new projects that don't need to load existing 5.4 bytecode or libraries that depend on removed APIs
+
+Both versions share the same provider architecture, sandbox model, and Go interop patterns. Code using the embedding API migrates between versions with only import path changes.
+
 ## Installation
 
 ### Library
 
 ```bash
+# Lua 5.4.8
 go get github.com/iceisfun/golua
+
+# Lua 5.5.0
+go get github.com/iceisfun/golua/v2
 ```
 
 ### CLI
 
 ```bash
+# Lua 5.5.0
 go install github.com/iceisfun/golua/v2/cmd/lua@latest
 go install github.com/iceisfun/golua/v2/cmd/luac@latest
+
+# Lua 5.4.8
+go install github.com/iceisfun/golua/cmd/lua@latest
+go install github.com/iceisfun/golua/cmd/luac@latest
 ```
 
 GoLua is pure Go and does not require cgo.
