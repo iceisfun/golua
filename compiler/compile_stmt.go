@@ -1176,11 +1176,12 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	)
 	fs.nActVar += 3
 
-	// Add the loop variable as a local
+	// Add the loop variable as a const local (Lua 5.5: for-loop control variables are read-only)
 	fs.locals = append(fs.locals, localVar{
 		name:    s.Name.Name,
 		reg:     base + 3,
 		startPC: fs.pc(),
+		attrib:  "const",
 	})
 	fs.nActVar++
 
@@ -1316,10 +1317,16 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		if fs.freeReg > fs.maxReg {
 			fs.maxReg = fs.freeReg
 		}
+		// Lua 5.5: the first loop variable (control variable) is read-only
+		attrib := ""
+		if i == 0 {
+			attrib = "const"
+		}
 		fs.locals = append(fs.locals, localVar{
 			name:    name.Name,
 			reg:     reg,
 			startPC: fs.pc(),
+			attrib:  attrib,
 		})
 		fs.nActVar++
 	}

@@ -32,11 +32,14 @@ end
 
 -- --------------------------------------------------------------------------
 -- [Test 2] [test-suite] closure: testing closures with 'for' control variable
+-- Updated for Lua 5.5: for-loop control variable is read-only, so we shadow
+-- it with a mutable local for closure capture tests.
 -- Verifies: all assert() calls pass without error
 do
   a = {}
   for i=1,10 do
-    a[i] = {set = function(x) i=x end, get = function () return i end}
+    local ii = i  -- shadow with mutable local (i is const in Lua 5.5)
+    a[i] = {set = function(x) ii=x end, get = function () return ii end}
     if i == 3 then break end
   end
   assert(a[4] == nil)
@@ -49,9 +52,10 @@ do
   a = {}
   local t = {"a", "b"}
   for i = 1, #t do
+    local ii = i  -- shadow with mutable local (i is const in Lua 5.5)
     local k = t[i]
-    a[i] = {set = function(x, y) i=x; k=y end,
-            get = function () return i, k end}
+    a[i] = {set = function(x, y) ii=x; k=y end,
+            get = function () return ii, k end}
     if i == 2 then break end
   end
   a[1].set(10, 20)
