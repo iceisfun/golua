@@ -149,12 +149,13 @@ type localVar struct {
 
 // scopeInfo records the state at scope entry for restoration on scope exit.
 type scopeInfo struct {
-	nLocals    int   // number of locals when scope opened
-	baseReg    int   // register base (freeReg) when scope opened — used for OP_CLOSE
-	breakJumps []int // pending break jump PCs to be patched on scope exit
-	isLoop     bool  // is this a loop scope?
-	firstLabel int   // index into labels slice
-	firstGoto  int   // index into pendGotos slice
+	nLocals        int   // number of locals when scope opened
+	baseReg        int   // register base (freeReg) when scope opened — used for OP_CLOSE
+	breakJumps     []int // pending break jump PCs to be patched on scope exit
+	isLoop         bool  // is this a loop scope?
+	firstLabel     int   // index into labels slice
+	firstGoto      int   // index into pendGotos slice
+	savedGlobalEnv globalEnv
 }
 
 // labelInfo records a ::label:: definition for goto resolution.
@@ -174,6 +175,17 @@ type pendingGoto struct {
 	closePC int // pc of placeholder OP_CLOSE (-1 if none)
 }
 
+// globalEnv tracks Lua 5.5 compile-time global declarations for the
+// current scope. Every function starts with an implicit "global *"
+// (explicit=false, star=true). Once an explicit global statement appears,
+// undeclared names become errors.
+type globalEnv struct {
+	explicit bool              // any explicit global declaration seen in this scope chain
+	names    map[string]string // declared name → attrib ("" or "const")
+	star     bool              // wildcard * declared
+	starAttr string            // "" (rw) or "const" (ro)
+}
+
 // funcState holds per-function compiler state: the proto being built,
 // register allocator, local variables, scopes, and upvalue tracking.
 type funcState struct {
@@ -191,6 +203,7 @@ type funcState struct {
 	upvalues    []UpvalDesc
 	upvalLookup map[string]int // name → index in upvalues
 	constLookup map[Value]int  // deduplication map for constants
+	globalEnv   globalEnv      // Lua 5.5 global declaration tracking
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +318,19 @@ func (c *compiler) newFuncState(source string, parent *funcState) *funcState {
 		parent:      parent,
 		upvalLookup: make(map[string]int),
 		constLookup: make(map[Value]int),
+	}
+	// Inherit the parent's global environment. In Lua 5.5, function bodies
+	// do not start fresh — they carry the enclosing scope's global
+	// declaration restrictions.
+	if parent != nil {
+		fs.globalEnv = parent.globalEnv
+		if parent.globalEnv.names != nil {
+			cp := make(map[string]string, len(parent.globalEnv.names))
+			for k, v := range parent.globalEnv.names {
+				cp[k] = v
+			}
+			fs.globalEnv.names = cp
+		}
 	}
 	c.fs = fs
 	return fs
@@ -780,12 +806,22 @@ func (c *compiler) resolveUpvalue(fs *funcState, name string) (int, bool) {
 
 // enterScope pushes a new scope. isLoop marks it as a loop (for break resolution).
 func (fs *funcState) enterScope(isLoop bool) {
+	// Deep copy the current globalEnv so it can be restored on scope exit.
+	saved := fs.globalEnv
+	if saved.names != nil {
+		cp := make(map[string]string, len(saved.names))
+		for k, v := range saved.names {
+			cp[k] = v
+		}
+		saved.names = cp
+	}
 	fs.scopes = append(fs.scopes, scopeInfo{
-		nLocals:    fs.nActVar,
-		baseReg:    fs.regTop(),
-		isLoop:     isLoop,
-		firstLabel: len(fs.labels),
-		firstGoto:  len(fs.pendGotos),
+		nLocals:        fs.nActVar,
+		baseReg:        fs.regTop(),
+		isLoop:         isLoop,
+		firstLabel:     len(fs.labels),
+		firstGoto:      len(fs.pendGotos),
+		savedGlobalEnv: saved,
 	})
 }
 
@@ -837,6 +873,9 @@ func (c *compiler) leaveScope(line int) {
 	// beyond their count (e.g., when a while loop condition temp creates
 	// a gap between outer and inner locals).
 	fs.freeReg = fs.regTop()
+
+	// Restore globalEnv from before this scope.
+	fs.globalEnv = scope.savedGlobalEnv
 
 	// Remove labels from this scope
 	fs.labels = fs.labels[:scope.firstLabel]
@@ -895,6 +934,44 @@ func (c *compiler) patchJump(jpc int) {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+// checkGlobalRead verifies that a global name is allowed to be read under
+// the current Lua 5.5 global declaration rules.
+func (c *compiler) checkGlobalRead(name string, node ast.Node) {
+	ge := &c.fs.globalEnv
+	if !ge.explicit {
+		return
+	}
+	if _, ok := ge.names[name]; ok {
+		return
+	}
+	if ge.star {
+		return
+	}
+	c.error(node, "variable '%s' not declared", name)
+}
+
+// checkGlobalWrite verifies that a global name is allowed to be written under
+// the current Lua 5.5 global declaration rules.
+func (c *compiler) checkGlobalWrite(name string, node ast.Node) {
+	ge := &c.fs.globalEnv
+	if !ge.explicit {
+		return
+	}
+	if attrib, ok := ge.names[name]; ok {
+		if attrib == "const" {
+			c.error(node, "attempt to assign to const variable '%s'", name)
+		}
+		return
+	}
+	if ge.star {
+		if ge.starAttr == "const" {
+			c.error(node, "attempt to assign to const variable '%s'", name)
+		}
+		return
+	}
+	c.error(node, "variable '%s' not declared", name)
+}
 
 // resolveEnv returns the upvalue index for _ENV (the global environment table).
 func (c *compiler) resolveEnv() int {

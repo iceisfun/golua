@@ -286,12 +286,14 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 
 	// If there's a local _ENV, look up via that table instead of globals
 	if envReg, ok := fs.lookupLocal("_ENV"); ok {
+		c.checkGlobalRead(e.Name, e)
 		nameK := fs.stringConstant(e.Name)
 		fs.emitGetField(reg, envReg, nameK, e.P.Line)
 		return
 	}
 
 	// Global: _ENV[name]
+	c.checkGlobalRead(e.Name, e)
 	envUV := c.resolveEnv()
 	nameK := fs.stringConstant(e.Name)
 	fs.emitGetTabUp(reg, envUV, nameK, e.P.Line)

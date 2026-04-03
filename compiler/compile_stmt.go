@@ -582,6 +582,7 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		}
 		// Local _ENV: _ENV[name] via SETFIELD on local
 		if envReg, ok := fs.lookupLocal("_ENV"); ok {
+			c.checkGlobalWrite(t.Name, target)
 			nameK := fs.stringConstant(t.Name)
 			tempReg := fs.reserveReg()
 			c.compileExprToReg(value, tempReg)
@@ -590,6 +591,7 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 			return
 		}
 		// Global: _ENV[name]
+		c.checkGlobalWrite(t.Name, target)
 		c.compileSetGlobal(t.Name, value, line)
 
 	case *ast.FieldExpr:
@@ -649,11 +651,13 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 		}
 		// Local _ENV: _ENV[name] via SETFIELD on local
 		if envReg, ok := fs.lookupLocal("_ENV"); ok {
+			c.checkGlobalWrite(t.Name, target)
 			nameK := fs.stringConstant(t.Name)
 			fs.emitSetField(envReg, nameK, srcReg, line)
 			return
 		}
 		// Global: _ENV[name]
+		c.checkGlobalWrite(t.Name, target)
 		envUV := c.resolveEnv()
 		nameK := fs.stringConstant(t.Name)
 		fs.emitSetTabUp(envUV, nameK, srcReg, line)
@@ -1550,9 +1554,11 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 			}
 			fs.emit(ABC(OP_SETUPVAL, reg, uvIdx, 0, 0), line)
 		} else if envReg, ok := fs.lookupLocal("_ENV"); ok {
+			c.checkGlobalWrite(name.Name, s.Name)
 			nameK := fs.stringConstant(name.Name)
 			fs.emitSetField(envReg, nameK, reg, line)
 		} else {
+			c.checkGlobalWrite(name.Name, s.Name)
 			envUV := c.resolveEnv()
 			nameK := fs.stringConstant(name.Name)
 			fs.emitSetTabUp(envUV, nameK, reg, line)
@@ -1607,17 +1613,40 @@ func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 
 // compileGlobalStmt compiles "global name = expr" — assigns to _ENV[name].
 func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
-	// Treat like assignment to _ENV[name]
 	fs := c.fs
 	line := s.P.Line
 
+	// Register declarations in globalEnv tracking.
+	ge := &fs.globalEnv
+	ge.explicit = true
+
 	if s.Star {
-		return // global * is a parser directive, no codegen
+		attrib := ""
+		if len(s.Attribs) > 0 {
+			attrib = s.Attribs[0]
+		}
+		ge.star = true
+		ge.starAttr = attrib
+		return // global * is a directive, no codegen
 	}
 
 	for i, name := range s.Names {
-		nameK := fs.stringConstant(name.Name)
+		attrib := ""
+		if i < len(s.Attribs) {
+			attrib = s.Attribs[i]
+		}
+		if attrib == "close" {
+			c.error(s, "global variables cannot be to-be-closed")
+			return
+		}
+		if ge.names == nil {
+			ge.names = make(map[string]string)
+		}
+		ge.names[name.Name] = attrib
+
+		// Codegen: assign initial value to _ENV[name]
 		if i < len(s.Values) {
+			nameK := fs.stringConstant(name.Name)
 			reg := fs.reserveReg()
 			c.compileExprToReg(s.Values[i], reg)
 			if envReg, ok := fs.lookupLocal("_ENV"); ok {
@@ -1635,6 +1664,14 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	fs := c.fs
 	line := s.P.Line
+
+	// Register the function name as a read-write global declaration.
+	ge := &fs.globalEnv
+	ge.explicit = true
+	if ge.names == nil {
+		ge.names = make(map[string]string)
+	}
+	ge.names[s.Name.Name] = ""
 
 	protoIdx := c.compileFunc(s.Func, line)
 	closureLine := s.Func.EndLine
