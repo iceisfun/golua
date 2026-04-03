@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/iceisfun/golua/ast"
+	"github.com/iceisfun/golua/v2/ast"
 )
 
 // exprEndLine returns the line of the last token in an expression.

@@ -59,9 +59,9 @@ module, not part of the standard library.
 
 ```go
 import (
-    "github.com/iceisfun/golua/stdlib"
-    gohttp "github.com/iceisfun/golua/stdlib/http"
-    "github.com/iceisfun/golua/vm"
+    "github.com/iceisfun/golua/v2/stdlib"
+    gohttp "github.com/iceisfun/golua/v2/stdlib/http"
+    "github.com/iceisfun/golua/v2/vm"
 )
 
 v := vm.New()

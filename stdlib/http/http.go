@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 const defaultTimeout = 60 * time.Second

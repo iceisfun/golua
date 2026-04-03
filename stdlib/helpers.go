@@ -3,7 +3,7 @@ package stdlib
 import (
 	"fmt"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // callerFuncName resolves the native function's name from the calling Lua

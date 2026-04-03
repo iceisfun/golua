@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/compiler"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // string.dump(function [, strip])

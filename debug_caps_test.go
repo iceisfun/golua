@@ -5,10 +5,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/parser"
-	"github.com/iceisfun/golua/stdlib"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/compiler"
+	"github.com/iceisfun/golua/v2/parser"
+	"github.com/iceisfun/golua/v2/stdlib"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // capProvider is a debug provider that returns a specific LuaDebugCaps.

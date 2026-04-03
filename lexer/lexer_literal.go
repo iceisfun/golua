@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/iceisfun/golua/token"
+	"github.com/iceisfun/golua/v2/token"
 )
 
 // scanString reads a short string delimited by ' or ".

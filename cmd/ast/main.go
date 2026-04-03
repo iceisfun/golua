@@ -21,10 +21,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/iceisfun/golua/ast"
-	"github.com/iceisfun/golua/lexer"
-	"github.com/iceisfun/golua/parser"
-	"github.com/iceisfun/golua/token"
+	"github.com/iceisfun/golua/v2/ast"
+	"github.com/iceisfun/golua/v2/lexer"
+	"github.com/iceisfun/golua/v2/parser"
+	"github.com/iceisfun/golua/v2/token"
 )
 
 var (

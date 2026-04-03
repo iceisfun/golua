@@ -1,7 +1,7 @@
 package stdlib
 
 import (
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 func openBit32(v *vm.VM) {

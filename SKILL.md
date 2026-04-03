@@ -77,10 +77,10 @@ import (
     "fmt"
     "log"
 
-    "github.com/iceisfun/golua/compiler"
-    "github.com/iceisfun/golua/parser"
-    "github.com/iceisfun/golua/stdlib"
-    "github.com/iceisfun/golua/vm"
+    "github.com/iceisfun/golua/v2/compiler"
+    "github.com/iceisfun/golua/v2/parser"
+    "github.com/iceisfun/golua/v2/stdlib"
+    "github.com/iceisfun/golua/v2/vm"
 )
 
 func main() {
@@ -706,8 +706,8 @@ The HTTP module lives in a separate package and must be opened explicitly:
 
 ```go
 import (
-    "github.com/iceisfun/golua/stdlib"
-    gohttp "github.com/iceisfun/golua/stdlib/http"
+    "github.com/iceisfun/golua/v2/stdlib"
+    gohttp "github.com/iceisfun/golua/v2/stdlib/http"
 )
 
 v := vm.New()

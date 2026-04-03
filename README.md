@@ -61,8 +61,8 @@ go get github.com/iceisfun/golua
 ### CLI
 
 ```bash
-go install github.com/iceisfun/golua/cmd/lua@latest
-go install github.com/iceisfun/golua/cmd/luac@latest
+go install github.com/iceisfun/golua/v2/cmd/lua@latest
+go install github.com/iceisfun/golua/v2/cmd/luac@latest
 ```
 
 GoLua is pure Go and does not require cgo.
@@ -76,10 +76,10 @@ import (
     "fmt"
     "log"
 
-    "github.com/iceisfun/golua/compiler"
-    "github.com/iceisfun/golua/parser"
-    "github.com/iceisfun/golua/stdlib"
-    "github.com/iceisfun/golua/vm"
+    "github.com/iceisfun/golua/v2/compiler"
+    "github.com/iceisfun/golua/v2/parser"
+    "github.com/iceisfun/golua/v2/stdlib"
+    "github.com/iceisfun/golua/v2/vm"
 )
 
 func main() {

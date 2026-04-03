@@ -12,10 +12,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/parser"
-	"github.com/iceisfun/golua/stdlib"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/compiler"
+	"github.com/iceisfun/golua/v2/parser"
+	"github.com/iceisfun/golua/v2/stdlib"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // helper compiles and runs Lua source, returning any error.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iceisfun/golua/parser"
+	"github.com/iceisfun/golua/v2/parser"
 )
 
 // compile is a test helper that parses+compiles Lua source.

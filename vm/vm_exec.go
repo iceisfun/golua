@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/v2/compiler"
 )
 
 // call invokes a closure with the given arguments and returns results.

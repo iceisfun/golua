@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/v2/compiler"
 )
 
 // VM is the Lua virtual machine state. Each VM instance has its own stack,

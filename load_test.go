@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/parser"
-	"github.com/iceisfun/golua/stdlib"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/compiler"
+	"github.com/iceisfun/golua/v2/parser"
+	"github.com/iceisfun/golua/v2/stdlib"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // TestFileProvider is a simple filesystem-based code provider for testing

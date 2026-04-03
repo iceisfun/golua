@@ -248,7 +248,7 @@ def emit_go(cases: list[Case], oracle: dict[int, tuple[bool, str]]) -> str:
         '\t"math"',
         '\t"testing"',
         "",
-        '\t"github.com/iceisfun/golua/vm"',
+        '\t"github.com/iceisfun/golua/v2/vm"',
         ")",
         "",
         "type generatedFormatArg struct {",

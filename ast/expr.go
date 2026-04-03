@@ -1,6 +1,6 @@
 package ast
 
-import "github.com/iceisfun/golua/token"
+import "github.com/iceisfun/golua/v2/token"
 
 // ---------------------------------------------------------------------------
 // Expressions

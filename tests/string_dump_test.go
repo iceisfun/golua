@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/stdlib"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/compiler"
+	"github.com/iceisfun/golua/v2/stdlib"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // runGoLua compiles and runs a Lua snippet, returns captured output and error.

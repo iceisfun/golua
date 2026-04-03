@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/parser"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/compiler"
+	"github.com/iceisfun/golua/v2/parser"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 func compileTestLua(source string) (*compiler.Proto, error) {

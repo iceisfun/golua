@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/parser"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/compiler"
+	"github.com/iceisfun/golua/v2/parser"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // newTestVM creates a VM with the http module and basic builtins registered.

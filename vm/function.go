@@ -1,7 +1,7 @@
 package vm
 
 import (
-	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/v2/compiler"
 )
 
 // Closure represents a Lua closure: a function prototype paired with its

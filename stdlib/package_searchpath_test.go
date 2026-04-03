@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // testCodeProvider resolves chunks from a fixed map.

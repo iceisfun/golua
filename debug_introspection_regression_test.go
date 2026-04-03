@@ -3,7 +3,7 @@ package golua_test
 import (
 	"testing"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 func TestDebugGetInfoRegression_ActiveLinesIncludeLoopHeaders(t *testing.T) {

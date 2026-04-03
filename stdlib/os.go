@@ -7,7 +7,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // formatPathError formats an OS error for Lua, stripping the Go operation prefix.

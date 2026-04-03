@@ -3,7 +3,7 @@ package vm
 import (
 	"math"
 
-	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/v2/compiler"
 )
 
 // decodeBytecodeMetamethodTag normalizes metamethod tags coming from bytecode.

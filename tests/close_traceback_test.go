@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iceisfun/golua/stdlib"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v2/stdlib"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 func runGoLuaWithDebug(t *testing.T, code string) (string, error) {

@@ -12,9 +12,9 @@ package parser
 import (
 	"fmt"
 
-	"github.com/iceisfun/golua/ast"
-	"github.com/iceisfun/golua/lexer"
-	"github.com/iceisfun/golua/token"
+	"github.com/iceisfun/golua/v2/ast"
+	"github.com/iceisfun/golua/v2/lexer"
+	"github.com/iceisfun/golua/v2/token"
 )
 
 // ParsePartial parses the given Lua source and returns a partial AST block

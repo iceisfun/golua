@@ -1,6 +1,6 @@
 package stdlib
 
-import "github.com/iceisfun/golua/vm"
+import "github.com/iceisfun/golua/v2/vm"
 
 // openTime registers the time library if a TimeProvider is set.
 func openTime(v *vm.VM) {
