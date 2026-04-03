@@ -7,6 +7,39 @@ import (
 	"github.com/iceisfun/golua/v2/vm"
 )
 
+// defaultPackagePath is the built-in default for package.path.
+const defaultPackagePath = "?.lua;?/init.lua"
+
+// defaultPackageCpath is the built-in default for package.cpath.
+const defaultPackageCpath = "?.so;?/init"
+
+// getEnvPath looks up a path env var with Lua 5.5 version-specific precedence.
+// It checks envName_5_5 first, then envName. If the value contains ";;", that
+// sequence is replaced with the defaultVal. Returns the resolved path or
+// defaultVal if neither env var is set.
+func getEnvPath(v *vm.VM, versionedName, genericName, defaultVal string) string {
+	provider := v.OsProvider()
+	if provider == nil {
+		return defaultVal
+	}
+	ctx := v.Context()
+
+	val, ok := provider.Getenv(ctx, versionedName)
+	if !ok {
+		val, ok = provider.Getenv(ctx, genericName)
+	}
+	if !ok {
+		return defaultVal
+	}
+
+	// Replace ";;" with the default path (Lua convention)
+	val = strings.Replace(val, ";;", ";"+defaultVal+";", 1)
+	// Clean up leading/trailing semicolons from the substitution
+	val = strings.TrimPrefix(val, ";")
+	val = strings.TrimSuffix(val, ";")
+	return val
+}
+
 // openPackage registers the package module and require global.
 // Must be called AFTER all other modules so package.loaded can snapshot them.
 func openPackage(v *vm.VM) {
@@ -33,8 +66,9 @@ func openPackage(v *vm.VM) {
 	registry.Set(vm.NewString("_PRELOAD"), vm.NewTable(preload))
 
 	// package.path / package.cpath
-	pkg.SetString("path", vm.NewString("?.lua;?/init.lua"))
-	pkg.SetString("cpath", vm.NewString("?.so;?/init"))
+	// Lua 5.5: check LUA_PATH_5_5 before LUA_PATH, LUA_CPATH_5_5 before LUA_CPATH
+	pkg.SetString("path", vm.NewString(getEnvPath(v, "LUA_PATH_5_5", "LUA_PATH", defaultPackagePath)))
+	pkg.SetString("cpath", vm.NewString(getEnvPath(v, "LUA_CPATH_5_5", "LUA_CPATH", defaultPackageCpath)))
 
 	// package.config (POSIX defaults)
 	pkg.SetString("config", vm.NewString("/\n;\n?\n!\n-\n"))
