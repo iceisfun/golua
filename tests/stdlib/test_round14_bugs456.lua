@@ -8,16 +8,15 @@ assert(1 / (-0.0 % 1) == -math.huge, "constant folded -0.0 % 1 should be -0.0 (g
 local z = -0.0
 assert(1 / (z % 1) == -math.huge, "runtime -0.0 % 1 should be -0.0")
 
--- Bug 5: Parser accepts `local <attr> name` syntax (should reject it)
-local f, err = load("local <close> x = nil")
-assert(f == nil, "local <close> x should be a syntax error, got function")
-assert(err:find("<name> expected"), "error should mention '<name> expected', got: " .. tostring(err))
+-- Bug 5 (Lua 5.4): `local <attr> name` syntax was rejected.
+-- In Lua 5.5, `local<const>` and `local <close>` are valid prefix-attribute syntax.
+local f = load("local <close> x = nil")
+assert(f ~= nil, "local <close> x should be valid in 5.5")
 
-local f2, err2 = load("local <const> x = 1")
-assert(f2 == nil, "local <const> x should be a syntax error, got function")
-assert(err2:find("<name> expected"), "error should mention '<name> expected', got: " .. tostring(err2))
+local f2 = load("local <const> x = 1")
+assert(f2 ~= nil, "local <const> x should be valid in 5.5")
 
--- Valid syntax should still work
+-- Both prefix-attribute and post-attribute syntax should work
 local f3 = load("local x <close> = setmetatable({}, {__close=function()end})")
 assert(f3 ~= nil, "valid local x <close> should parse")
 

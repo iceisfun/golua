@@ -566,19 +566,22 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 		return ast.NewLocalFuncStmt(pos, name, fn)
 	}
 
+	// Lua 5.5: local<const> x, y = ... — prefix attribute applies to all names
+	defAttrib := p.parseAttrib()
+
 	names := []*ast.NameExpr{p.parseName()}
 	p.addLocals(1)
 	if p.err != nil {
 		return nil
 	}
-	attribs := []string{p.parseAttrib()}
+	attribs := []string{p.parseAttribOr(defAttrib)}
 	for p.match(token.Type(',')) {
 		names = append(names, p.parseName())
 		p.addLocals(1)
 		if p.err != nil {
 			return nil
 		}
-		attribs = append(attribs, p.parseAttrib())
+		attribs = append(attribs, p.parseAttribOr(defAttrib))
 		if p.err != nil {
 			return nil
 		}
