@@ -174,6 +174,21 @@ do
   --> =99
 end
 
+-- Integration: const initializer, rw global, function body inheritance
+do
+  global print, type
+  global count = 10
+  global<const> VERSION = "1.0.0"
+
+  local function increment()
+    count = count + 1
+    print("Version:", VERSION, "Count:", count)
+  end
+
+  increment()
+  --> =Version:	1.0.0	Count:	11
+end
+
 -- global function also registers name for subsequent use
 do
   global function myFunc() return "hi" end
