@@ -1,19 +1,19 @@
 -- Bug: tostring() on float values that format without a decimal point
 -- should append ".0" to distinguish from integers.
--- lua5.4: tostring(2.9999999999999996) = "3.0"
--- golua:  tostring(2.9999999999999996) = "3"
+-- Lua 5.5: uses shortest round-trip representation (%.15g then %.17g)
+-- and appends ".0" when result looks like an integer.
 
--- Test 1: float that rounds to integer representation in %.14g
+-- Test 1: float near integer preserves full precision
 local s1 = tostring(2.9999999999999996)
-assert(s1 == "3.0", "expected '3.0', got '" .. s1 .. "'")
+assert(s1 == "2.9999999999999996", "expected '2.9999999999999996', got '" .. s1 .. "'")
 
 -- Test 2: another near-integer float
 local s2 = tostring(1.0000000000000002)
-assert(s2 == "1.0", "expected '1.0', got '" .. s2 .. "'")
+assert(s2 == "1.0000000000000002", "expected '1.0000000000000002', got '" .. s2 .. "'")
 
 -- Test 3: large near-integer float
 local s3 = tostring(9999999999999.998)
-assert(s3 == "10000000000000.0", "expected '10000000000000.0', got '" .. s3 .. "'")
+assert(s3 == "9999999999999.998", "expected '9999999999999.998', got '" .. s3 .. "'")
 
 -- Test 4: 1.0 should be "1.0" (basic float)
 local s4 = tostring(1.0)

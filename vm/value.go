@@ -649,7 +649,13 @@ func (v Value) String() string {
 			}
 			return "nan"
 		}
-		s := fmt.Sprintf("%.14g", f)
+		// Lua 5.5 shortest round-trip: first try %.15g, then %.17g if
+		// parsing back gives a different value. Append ".0" when the
+		// result looks like a plain integer (no '.' or exponent).
+		s := fmt.Sprintf("%.15g", f)
+		if check, err := strconv.ParseFloat(s, 64); err != nil || check != f {
+			s = fmt.Sprintf("%.17g", f)
+		}
 		if !strings.ContainsAny(s, ".eE") {
 			s += ".0"
 		}

@@ -42,7 +42,7 @@ do
     print(string.format("%.2f", f))
     --> =3.14
     print(string.unpack("d", string.pack("d", math.pi)))
-    --> =3.1415926535898	9
+    --> =3.1415926535897931	9
 end
 
 -- Lua number type ('n')

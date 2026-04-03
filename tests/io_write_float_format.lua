@@ -1,6 +1,6 @@
--- Test: io.write/file:write uses %.14g for floats (no ".0" suffix)
--- Unlike tostring() which appends ".0" to integer-valued floats,
--- io.write uses C's fprintf with %.14g directly.
+-- Test: io.write/file:write uses same format as tostring() for floats
+-- Lua 5.5: io.write uses the shortest round-trip representation,
+-- including ".0" suffix for integer-valued floats.
 
 -- Capture io.write output via temp file
 local function capture_write(...)
@@ -14,15 +14,15 @@ local function capture_write(...)
     return s
 end
 
--- Integer-valued floats: no ".0" suffix
-assert(capture_write(42.0) == "42", "42.0 -> '42'")
-assert(capture_write(1.0) == "1", "1.0 -> '1'")
-assert(capture_write(0.0) == "0", "0.0 -> '0'")
-assert(capture_write(100.0) == "100", "100.0 -> '100'")
-assert(capture_write(1e10) == "10000000000", "1e10")
+-- Integer-valued floats: ".0" suffix (same as tostring)
+assert(capture_write(42.0) == "42.0", "42.0 -> '" .. capture_write(42.0) .. "'")
+assert(capture_write(1.0) == "1.0", "1.0 -> '" .. capture_write(1.0) .. "'")
+assert(capture_write(0.0) == "0.0", "0.0 -> '" .. capture_write(0.0) .. "'")
+assert(capture_write(100.0) == "100.0", "100.0 -> '" .. capture_write(100.0) .. "'")
+assert(capture_write(1e10) == "10000000000.0", "1e10 -> '" .. capture_write(1e10) .. "'")
 
 -- Negative zero
-assert(capture_write(-0.0) == "-0", "-0.0 -> '-0'")
+assert(capture_write(-0.0) == "-0.0", "-0.0 -> '" .. capture_write(-0.0) .. "'")
 
 -- Non-integer floats: unchanged
 assert(capture_write(1.5) == "1.5", "1.5 -> '1.5'")
@@ -40,7 +40,8 @@ assert(capture_write(0/0) == "-nan" or capture_write(0/0) == "nan", "nan")
 -- Scientific notation (already has 'e', no ".0" issue)
 assert(capture_write(1e100) == "1e+100", "1e100")
 
--- Verify tostring DOES have ".0" (to confirm the distinction)
+-- Verify tostring matches io.write for floats (Lua 5.5 unification)
 assert(tostring(42.0) == "42.0", "tostring(42.0) should have .0")
 assert(tostring(1.0) == "1.0", "tostring(1.0) should have .0")
 assert(tostring(0.0) == "0.0", "tostring(0.0) should have .0")
+assert(capture_write(42.0) == tostring(42.0), "io.write should match tostring for floats")
