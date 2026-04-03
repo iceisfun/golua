@@ -320,6 +320,7 @@ buildResult:
 			result.SetString("namewhat", vm.NewString(info.NameWhat))
 		case 't':
 			result.SetString("istailcall", vm.NewBool(info.IsTailCall))
+			result.SetString("extraargs", vm.NewInt(int64(info.ExtraArgs)))
 		case 'u':
 			result.SetString("nups", vm.NewInt(int64(info.NUps)))
 			result.SetString("nparams", vm.NewInt(int64(info.NParams)))

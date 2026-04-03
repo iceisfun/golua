@@ -114,6 +114,7 @@ type VM struct {
 	pendingCallName              string
 	pendingCallNameWhat          string
 	pendingSuppressTracebackName bool
+	pendingExtraArgs             int // Extra args count from __call chains, consumed by vm.call()
 
 	// Message handler for xpcall: called inside ProtectedCall's recovery
 	// BEFORE the call stack is truncated, so debug.traceback can see
@@ -191,6 +192,7 @@ type callFrame struct {
 	suppressTracebackName bool
 	ftransfer             int // First "transfer" index for debug hooks (1-based, 0 = unavailable)
 	ntransfer             int // Number of transfer values for debug hooks
+	extraArgs             int // Number of extra arguments added by __call metamethod chains
 }
 
 // New creates a new VM with an empty global environment.

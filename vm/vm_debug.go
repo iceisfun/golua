@@ -399,6 +399,7 @@ type FrameInfo struct {
 
 	// t fields
 	IsTailCall bool
+	ExtraArgs  int // number of extra arguments from __call metamethod chains
 
 	// r fields
 	FTransfer int // first "transfer" value index (1-based, for hooks)
@@ -459,6 +460,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 		if callerIdx >= 0 {
 			info.Name, info.NameWhat = vm.funcNameFromCall(&stack[callerIdx])
 		}
+		info.ExtraArgs = frame.extraArgs
 		info.Func = frame.funcValue
 		return info
 	}
@@ -472,6 +474,7 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	info.NParams = proto.NumParams
 	info.IsVarArg = proto.IsVarArg
 	info.IsTailCall = frame.isTailCall
+	info.ExtraArgs = frame.extraArgs
 	info.Func = frame.funcValue
 
 	if proto.LineDef == 0 {

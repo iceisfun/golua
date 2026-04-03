@@ -75,10 +75,12 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		callName:              vm.pendingCallName,
 		callNameWhat:          vm.pendingCallNameWhat,
 		suppressTracebackName: vm.pendingSuppressTracebackName,
+		extraArgs:             vm.pendingExtraArgs,
 	}
 	vm.pendingCallName = ""
 	vm.pendingCallNameWhat = ""
 	vm.pendingSuppressTracebackName = false
+	vm.pendingExtraArgs = 0
 	vm.callStack = append(vm.callStack, frame)
 
 	// Update vm.top to point past this frame's registers
@@ -1148,6 +1150,7 @@ func (vm *VM) execute() ([]Value, error) {
 
 			// Dispatch loop for __call support
 			callChainDepth := 0
+			tailExtraArgs := frame.extraArgs
 			for {
 				if fn.IsFunction() {
 					closure := fn.AsClosure()
@@ -1156,6 +1159,7 @@ func (vm *VM) execute() ([]Value, error) {
 					frame.funcValue = fn
 					frame.pc = 0
 					frame.isTailCall = true
+					frame.extraArgs = tailExtraArgs
 					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
 
@@ -1239,6 +1243,7 @@ func (vm *VM) execute() ([]Value, error) {
 						base:      nativeBase,
 						argc:      len(args),
 						funcValue: fn,
+						extraArgs: tailExtraArgs,
 					}
 					vm.callStack = append(vm.callStack, nativeFrame)
 					nResults := nf(vm)
@@ -1262,7 +1267,8 @@ func (vm *VM) execute() ([]Value, error) {
 						copy(newArgs[1:], args)
 						args = newArgs
 						fn = mm
-						continue // Retry dispatch with metamethod
+						tailExtraArgs++ // Each __call adds one extra argument
+						continue        // Retry dispatch with metamethod
 					}
 					vi := ""
 					name, what := regObjName(tailProto, tailPC, a)
@@ -1902,12 +1908,14 @@ func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
 	var results []Value
 	var err error
 	callChainDepth := 0
+	extraArgs := 0
 
 dispatch:
 	if fn.IsFunction() {
 		// vm.top is at frameTop, so vm.call will place the new frame right after
 		// the calling frame's full register space. Args are copied into a slice
 		// so they're safe regardless of where the new frame starts.
+		vm.pendingExtraArgs = extraArgs
 		results, err = vm.call(fn.AsClosure(), args, c-1)
 	} else if fn.IsNativeFunc() {
 		// Set up for native function
@@ -1923,6 +1931,7 @@ dispatch:
 			funcValue: fn,
 			ftransfer: 1,         // args start at getlocal index 1 (base+1 = first arg)
 			ntransfer: len(args), // number of arguments
+			extraArgs: extraArgs,
 		}
 		vm.callStack = append(vm.callStack, nativeFrame)
 
@@ -2011,6 +2020,7 @@ dispatch:
 		}
 		fn = mm
 		args = newArgs
+		extraArgs++ // Each __call adds one extra argument (the self/object)
 		goto dispatch
 	}
 
