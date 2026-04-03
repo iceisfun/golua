@@ -1047,6 +1047,11 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 		}
 	}
 
+	// Compute the dynamic SETLIST flush threshold based on available registers.
+	// This follows the Lua 5.5 algorithm (lparser.c maxtostore) which replaces
+	// the fixed 50 (LFIELDS_PER_FLUSH) to allow deeper constructor nesting.
+	flushThreshold := fs.maxToStore()
+
 	// Fill table fields
 	arrIdx := 0
 	pendingList := 0 // number of pending SETLIST items
@@ -1080,8 +1085,8 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 
 			c.compileExprToReg(f.Value, arrReg)
 
-			// Flush in batches of 50 (like Lua's LFIELDS_PER_FLUSH)
-			if pendingList >= 50 {
+			// Flush when pending items reach the dynamic threshold
+			if pendingList >= flushThreshold {
 				c.emitSetList(reg, pendingList, arrIdx-pendingList+1, line)
 				pendingList = 0
 				fs.freeReg = reg + 1

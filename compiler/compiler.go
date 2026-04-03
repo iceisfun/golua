@@ -441,6 +441,21 @@ func (fs *funcState) reserveRegs(n int) int {
 	return base
 }
 
+// maxToStore computes the dynamic SETLIST flush threshold for table
+// constructors based on the number of free registers. This follows the
+// Lua 5.5 algorithm (lparser.c maxtostore) which replaces the fixed 50
+// (LFIELDS_PER_FLUSH) to allow deeper constructor nesting.
+func (fs *funcState) maxToStore() int {
+	numFree := fs.c.limits.MaxRegs - fs.freeReg
+	if numFree >= 160 {
+		return numFree / 5
+	}
+	if numFree >= 80 {
+		return 10
+	}
+	return 1
+}
+
 // emit appends an instruction to the current proto and returns its pc.
 func (fs *funcState) emit(inst Instruction, line int) int {
 	pc := len(fs.proto.Code)
