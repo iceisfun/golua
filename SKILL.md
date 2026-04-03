@@ -1,6 +1,6 @@
 ---
 name: golua
-description: Embed Lua in Go applications using github.com/iceisfun/golua. Covers VM setup, native function binding, table manipulation, metatables, sandboxing, and provider-based capability control.
+description: Embed Lua 5.5 in Go applications using github.com/iceisfun/golua. Covers VM setup, native function binding, table manipulation, metatables, sandboxing, and provider-based capability control.
 license: MIT
 compatibility: claude-code, opencode
 metadata:
@@ -18,7 +18,7 @@ Copy-paste block for an AI assistant:
 
 ```text
 SKILLS:
-- GoLua is an embeddable, sandbox-first Lua runtime for Go.
+- GoLua is an embeddable, sandbox-first Lua 5.5 runtime for Go.
 - Most hosts only need five steps: parser.Parse -> compiler.Compile -> vm.New -> stdlib.Open -> v.Run.
 - A fresh VM is sandboxed by default. `io`, `os`, `debug`, `time`, `chan`, `exec`, and `http` are not available unless the host enables them.
 - Main host tasks:
@@ -34,6 +34,8 @@ SKILLS:
   - return values are 0-indexed with v.Set(0), v.Set(1), ...
   - return the number of Lua results
   - use v.ArgCount() for variadic functions
+- Lua 5.5 features: `global` keyword for explicit global declarations, named varargs (`... args`), `local<const>`/`local<close>` prefix-attribute syntax, read-only for-loop variables, `table.create(narr, nrec)`, `error(nil)` returns `"<no error object>"`.
+- Removed APIs (Lua 5.5): math.atan2, math.cosh, math.sinh, math.tanh, math.log10, math.pow, debug.setcstacklimit are all removed (nil).
 - Prefer explicit type checks like IsString, IsNumber, IsTable before calling AsString, AsInt, AsTable.
 - If Go owns mutable state, expose closures that capture the Go pointer. If Lua just needs data, return a plain table snapshot.
 - Value constructors: vm.NewInt(int64), vm.NewFloat(float64), vm.NewString(string), vm.NewBool(bool), vm.NewTable(*Table), vm.NewNativeFunc(NativeFunc). Pre-built: vm.Nil, vm.True, vm.False.
@@ -53,6 +55,18 @@ If a user just added GoLua to their app, the useful mental model is small:
 5. Run the compiled chunk.
 
 That is the core path most integrations start from.
+
+## Lua 5.5 Language Features
+
+GoLua implements Lua 5.5. Key language changes from 5.4:
+
+- **`global` soft keyword**: Global variable declarations can use `global x = 10` for explicit intent with compile-time checking. Undeclared global access produces a compile warning/error when global declarations are present in the chunk.
+- **Named vararg parameters**: `function f(... args)` packs variadic arguments into a table `args` with an `n` field holding the count, replacing the need for `{...}` and `select("#", ...)`.
+- **Prefix-attribute syntax**: Local variable attributes can use `local<const> x = 10` and `local<close> f = io.open(...)` in addition to the 5.4 postfix syntax (`local x <const> = 10`). Both forms are supported.
+- **Read-only for-loop control variables**: The control variable of a `for` loop (both numeric and generic) is read-only; assigning to it is a compile-time error.
+- **`table.create(narr, nrec)`**: Preallocate a table with `narr` array slots and `nrec` hash slots for performance-sensitive code.
+- **`error(nil)` returns `"<no error object>"`**: Passing nil to `error()` produces the string `"<no error object>"` instead of propagating nil.
+- **Removed APIs**: The following functions from Lua 5.4 are removed in golua's 5.5 implementation: `math.atan2`, `math.cosh`, `math.sinh`, `math.tanh`, `math.log10`, `math.pow`, `debug.setcstacklimit`. Use `math.atan` instead of `math.atan2`.
 
 ## Smallest Useful Example
 
@@ -523,7 +537,7 @@ Use this for user-facing validation failures. Do not use plain Go panics for nor
 
 ## Metatables
 
-GoLua supports full Lua 5.4 metatables. Set a metatable on any table to define
+GoLua supports full Lua 5.5 metatables. Set a metatable on any table to define
 operator overloads, custom indexing, and string conversion.
 
 ### Basic metatable with __tostring and __add
@@ -587,7 +601,7 @@ print(c)         --> vec2(4, 6)
 
 ### Supported metamethods
 
-All standard Lua 5.4 metamethods work: `__add`, `__sub`, `__mul`, `__div`,
+All standard Lua 5.5 metamethods work: `__add`, `__sub`, `__mul`, `__div`,
 `__mod`, `__pow`, `__unm`, `__idiv`, `__band`, `__bor`, `__bxor`, `__bnot`,
 `__shl`, `__shr`, `__eq`, `__lt`, `__le`, `__concat`, `__len`, `__index`,
 `__newindex`, `__call`, `__tostring`, `__close`.

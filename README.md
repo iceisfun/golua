@@ -6,21 +6,32 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/iceisfun/golua.svg)](https://pkg.go.dev/github.com/iceisfun/golua)
 
-An embeddable, sandbox-first Lua 5.4 runtime for Go applications, with a small set of experimental 5.5 features. Pure Go, zero dependencies, no cgo.
+An embeddable, sandbox-first Lua 5.5 runtime for Go applications. Pure Go, zero dependencies, no cgo.
 
 Good fits include plugin systems, user scripting, game logic, automation, and controlled configuration runtimes.
 
 ## Features
 
-- **Full Lua 5.4 language support** (with experimental 5.5 features)
+- **Lua 5.5 language support** including:
+  - `global` declarations (soft keyword, compile-time checking)
+  - Named vararg parameters (`... name`)
+  - `local<const>` and `local<close>` prefix-attribute syntax
+  - `table.create(narr, nrec)` for pre-allocated tables
+  - Float-to-string shortest round-trip representation
+  - `__call` chain depth limit (15)
+  - For-loop read-only control variables
+  - `utf8.offset` second return value
+  - `error(nil)` returns `"<no error object>"`
+  - Removed deprecated math functions (`atan2`, `cosh`, `sinh`, `tanh`, `log10`, `pow`)
+  - Removed `debug.setcstacklimit`
 - Coroutines with yield/resume
 - Complete metamethod system (`__index`, `__newindex`, `__call`, `__close`, `__eq`, `__lt`, `__le`, `__add`, `__concat`, `__len`, `__tostring`, etc.)
 - Module system (`require`, `package.loaded`, `package.preload`, `package.searchers`, `package.searchpath`)
 - Pattern matching (`string.match`, `string.gsub`, `string.find`, `string.gmatch`)
 - Binary data packing (`string.pack`, `string.unpack`, `string.packsize`)
-- Function serialization (`string.dump` / `load` round-trip, Lua 5.4.8 binary format compatible)
+- Function serialization (`string.dump` / `load` round-trip)
 - Go-style glob matching (`glob.match`, `glob.match_words`, `glob.match_named`)
-- `<const>` and `<close>` variable attributes with to-be-closed support
+- `<const>` and `<close>` variable attributes (including `local<const>`/`local<close>` prefix syntax) with to-be-closed support
 - Bitwise operators (`&`, `|`, `~`, `<<`, `>>`) and `bit32` compat library
 - Integer division (`//`) and full integer/float numeric model
 - UTF-8 library (`utf8.char`, `utf8.codepoint`, `utf8.codes`, `utf8.len`, `utf8.offset`)
@@ -126,7 +137,7 @@ Source → Lexer → Parser → AST → Compiler → Proto (bytecode)
 | `lexer`       | Tokenizes Lua source into a stream of tokens                                |
 | `parser`      | Parses tokens into an AST                                                   |
 | `ast`         | Abstract syntax tree node definitions                                       |
-| `compiler`    | Compiles AST into Lua 5.4 bytecode (`Proto`)                                |
+| `compiler`    | Compiles AST into Lua 5.5 bytecode (`Proto`)                                |
 | `vm`          | Executes bytecode, manages stack/coroutines, defines `Value` and `LuaTable` |
 | `stdlib`      | Registers standard library functions (`string`, `math`, `table`, etc.)      |
 | `check`       | Static diagnostics for editor integration                                   |
@@ -343,7 +354,7 @@ See [docs/exec.md](docs/exec.md) for the full API reference.
 
 ### Debug Library
 
-The full Lua 5.4 debug library, gated by [`LuaDebugProvider`](docs/debug_provider.md) capabilities:
+The full Lua debug library, gated by [`LuaDebugProvider`](docs/debug_provider.md) capabilities:
 
 ```go
 v := vm.New()
@@ -419,9 +430,9 @@ v.SetMaxMetaDepth(500) // runtime setter equivalent
 
 The VM checks for cancellation at backedges (loop iterations), function calls, and tail calls. No per-instruction overhead is added unless `MaxInstructions` is set. Context and limits are inherited by coroutine VMs. Errors from limits are catchable by `pcall`.
 
-`MaxMetaDepth` bounds the length of `__index` and `__newindex` table-to-table chains to prevent infinite loops from metatable cycles. The default is 2000, matching Lua 5.4's `MAXTAGLOOP`. A value of 0 means "use the default". Function metamethods are not affected by this limit.
+`MaxMetaDepth` bounds the length of `__index` and `__newindex` table-to-table chains to prevent infinite loops from metatable cycles. The default is 2000, matching Lua's `MAXTAGLOOP`. A value of 0 means "use the default". Function metamethods are not affected by this limit.
 
-`CompilerLimits` enforces Lua 5.4 compile-time limits on locals, registers, and upvalues per function. These apply to `load()` and `dofile()` calls within the VM. Zero values use Lua 5.4 defaults. Limits can also be passed directly to `compiler.Compile()` via `compiler.WithLimits()`.
+`CompilerLimits` enforces compile-time limits on locals, registers, and upvalues per function. These apply to `load()` and `dofile()` calls within the VM. Zero values use defaults. Limits can also be passed directly to `compiler.Compile()` via `compiler.WithLimits()`.
 
 ### Channels (Go↔Lua Message Passing)
 
@@ -545,7 +556,7 @@ Standard Lua modules are available by default. GoLua-specific extensions and hos
 | `io`        | [`LuaIoProvider`](docs/io_provider.md)      | File I/O (absent by default)                                                                  |
 | `os`        | [`LuaOsProvider`](docs/os_provider.md)      | OS core: `clock`, `time`, `date`, `difftime`, `getenv`, `setlocale` (`execute`/`exit`/`rename` also require their own providers) |
 | `package`   | No*                  | Module system: `require`, `package.loaded`, `package.preload`, `package.searchers`, `searchpath` |
-| `debug`     | [`LuaDebugProvider`](docs/debug_provider.md)   | Full Lua 5.4 debug library: getinfo, hooks, locals, upvalues (absent by default)              |
+| `debug`     | [`LuaDebugProvider`](docs/debug_provider.md)   | Full Lua debug library: getinfo, hooks, locals, upvalues (absent by default)                  |
 | `chan`      | [`LuaChanProvider`](docs/chan.md)    | Go↔Lua message passing channels (absent by default)                                           |
 | `time`      | [`LuaTimeProvider`](docs/time.md)    | Millisecond timing: now, since, periodic tick (absent by default)                             |
 | `exec`      | [`LuaProcessProvider`](docs/exec.md) | Process execution: run, spawn, streaming I/O, stdin, kill ([docs](docs/exec.md))              |
@@ -652,7 +663,7 @@ Current compatibility notes and intentional boundaries:
 - No C module loading — standard C Lua modules (.so/.dll) are compiled against the PUC-Rio C API and are not compatible with GoLua's VM. `package.loadlib` is nil by default; setting a [`LuaLoadLibProvider`](docs/loadlib_provider.md) lets the host provide Go-native bindings or cgo-bridged libraries under the same API surface. `require` loads Lua modules via `LuaCodeProvider`.
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design; use `FullIoProvider` for read-write access)
-- Binary chunk format is compatible with Lua 5.4.8 — `load(string.dump(f))` round-tripping works, and chunks dumped by GoLua can be loaded by reference Lua 5.4.8 and vice versa. However, bytecode details may differ between compilers.
+- `load(string.dump(f))` round-tripping works within GoLua. Binary chunk format targets Lua 5.5; cross-loading with other Lua implementations may not work due to bytecode differences.
 - `os.setlocale` only supports the `"C"` locale — Go has no native locale support. Queries return `"C"` and setting any other locale returns `nil`.
 - GC behavior differs from C Lua — GoLua delegates garbage collection entirely to Go's runtime GC. `collectgarbage("collect")` triggers `runtime.GC()` but Go's GC timing is non-deterministic, so tests that depend on exact finalization order or count may not pass.
 - VM instances are isolated but not safe for concurrent mutation from multiple goroutines without external synchronization.
