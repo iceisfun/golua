@@ -33,9 +33,8 @@ func allCaps() vm.LuaDebugCaps {
 		AllowSetMetatable:   true,
 		AllowSetHook:        true,
 		AllowGetHook:        true,
-		AllowUpvalueJoin:    true,
-		AllowSetCStackLimit: true,
-		AllowGetUserValue:   true,
+		AllowUpvalueJoin:  true,
+		AllowGetUserValue: true,
 		AllowSetUserValue:   true,
 	}
 }
@@ -62,7 +61,6 @@ var capFieldToFunc = []struct {
 	{"AllowSetHook", "sethook", `debug.sethook(function() end, "")`},
 	{"AllowGetHook", "gethook", `debug.gethook()`},
 	{"AllowUpvalueJoin", "upvaluejoin", `local x,y=1,2; local f=function()return x end; local g=function()return y end; debug.upvaluejoin(f,1,g,1)`},
-	{"AllowSetCStackLimit", "setcstacklimit", `debug.setcstacklimit(200)`},
 	{"AllowGetUserValue", "getuservalue", `debug.getuservalue({})`},
 	{"AllowSetUserValue", "setuservalue", `pcall(debug.setuservalue, {}, nil)`},
 }

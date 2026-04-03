@@ -85,10 +85,6 @@ func openDebug(v *vm.VM) {
 		debug.SetString("setuservalue", vm.NewNativeFunc(luaDebugSetUserValue))
 	}
 
-	if caps.AllowSetCStackLimit {
-		debug.SetString("setcstacklimit", vm.NewNativeFunc(luaDebugSetCStackLimit))
-	}
-
 	v.SetGlobal("debug", vm.NewTable(debug))
 }
 

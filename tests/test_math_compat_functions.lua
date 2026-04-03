@@ -1,19 +1,18 @@
-assert(type(math.atan2) == "function")
-assert(type(math.log10) == "function")
-assert(type(math.pow) == "function")
+-- Lua 5.5: deprecated math functions removed (atan2, log10, pow, cosh, sinh, tanh)
+-- frexp and ldexp are still present
+
+assert(math.atan2 == nil, "math.atan2 should be removed in 5.5")
+assert(math.log10 == nil, "math.log10 should be removed in 5.5")
+assert(math.pow == nil, "math.pow should be removed in 5.5")
+assert(math.cosh == nil, "math.cosh should be removed in 5.5")
+assert(math.sinh == nil, "math.sinh should be removed in 5.5")
+assert(math.tanh == nil, "math.tanh should be removed in 5.5")
+
+-- frexp and ldexp still exist
 assert(type(math.frexp) == "function")
 assert(type(math.ldexp) == "function")
-assert(type(math.cosh) == "function")
-assert(type(math.sinh) == "function")
-assert(type(math.tanh) == "function")
-assert(math.atan2 == math.atan)
 
-assert(math.log10(1000) == 3.0)
-assert(math.pow(2, 3) == 8.0)
 assert(math.ldexp(0.5, 4) == 8.0)
-assert(math.cosh(0) == 1.0)
-assert(math.sinh(0) == 0.0)
-assert(math.tanh(0) == 0.0)
 
 do
   local m, e = math.frexp(8)

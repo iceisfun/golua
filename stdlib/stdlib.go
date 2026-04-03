@@ -41,7 +41,7 @@ import (
 // Open registers all standard library functions and modules in the VM.
 // Conditional modules (io, os, debug, chan, time, exec) are only registered if
 // their corresponding provider has been set on the VM. Open also sets
-// _G and _VERSION ("Lua 5.4") as globals.
+// _G and _VERSION ("Lua 5.5") as globals.
 func Open(v *vm.VM) {
 	// Basic functions
 	v.SetGlobal("print", vm.NewNativeFunc(luaPrint))
@@ -73,7 +73,7 @@ func Open(v *vm.VM) {
 	v.SetGlobal("_G", vm.NewTable(v.Globals()))
 
 	// _VERSION
-	v.SetGlobal("_VERSION", vm.NewString("Lua 5.4"))
+	v.SetGlobal("_VERSION", vm.NewString("Lua 5.5"))
 
 	// String library
 	openString(v)
