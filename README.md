@@ -174,6 +174,11 @@ See the `examples/` directory for complete examples:
 - **[capture_output](examples/capture_output/)** - capture `print()` output in-memory
 - **[print_provider](examples/print_provider/)** - route `print()` and `warn()` through host logging
 
+### Lua 5.5 Features
+
+- **[lua55_globals](examples/lua55_globals/)** - global declarations, const globals, wildcard mode, compile-time checking
+- **[lua55_features](examples/lua55_features/)** - named varargs, prefix attributes, table.create, read-only for-loops, error(nil)
+
 ### Sandboxing And Host Integration
 
 - **[code_provider](examples/code_provider/)** - sandboxed file/module loading with `LuaCodeProvider`
