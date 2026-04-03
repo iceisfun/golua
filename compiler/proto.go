@@ -112,8 +112,10 @@ type Proto struct {
 	LineDef  int   // first line of the function definition
 	LastLine int   // last line of the function definition
 
-	NumParams int  // number of fixed (named) parameters
-	IsVarArg  bool // true if the function accepts varargs (...)
+	NumParams      int  // number of fixed (named) parameters
+	IsVarArg       bool // true if the function accepts varargs (...)
+	HasNamedVarArg bool // Lua 5.5: function has a named vararg parameter (... name)
+	VarArgReg      int  // register index of the named vararg local
 
 	MaxStack int // high-water mark of register usage (determines stack allocation)
 

@@ -1785,6 +1785,25 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 			varargLine = fe.Body.Stmts[0].Pos().Line
 		}
 		fs.emit(ABC(OP_VARARGPREP, fs.proto.NumParams, 0, 0, 0), varargLine)
+
+		// Lua 5.5: named vararg parameter — register a const local for
+		// the vararg table. The VM creates the table during call setup.
+		if fe.VarArgName != "" {
+			reg := fs.freeReg
+			fs.locals = append(fs.locals, localVar{
+				name:    fe.VarArgName,
+				reg:     reg,
+				startPC: 0,
+				attrib:  "const",
+			})
+			fs.nActVar++
+			fs.freeReg++
+			if fs.freeReg > fs.maxReg {
+				fs.maxReg = fs.freeReg
+			}
+			fs.proto.HasNamedVarArg = true
+			fs.proto.VarArgReg = reg
+		}
 	}
 
 	c.compileBlockWith(fe.Body, true, fe.EndLine)

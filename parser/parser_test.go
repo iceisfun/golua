@@ -486,14 +486,40 @@ func TestForStmtErrorMessage(t *testing.T) {
 	}
 }
 
-// TestNamedVarargRejected verifies that Lua 5.5-style named varargs
-// (function(... name)) are rejected with a parse error matching Lua 5.4.
-func TestNamedVarargRejected(t *testing.T) {
-	expectError(t, `local function f(... x) end`, "')' expected")
+// TestNamedVarargAccepted verifies that Lua 5.5-style named varargs
+// (function(... name)) parse successfully.
+func TestNamedVarargAccepted(t *testing.T) {
+	block, err := Parse("test", `local function f(... x) end`)
+	if err != nil {
+		t.Fatalf("named vararg should parse successfully: %v", err)
+	}
+	// Verify the AST has the VarArgName set
+	ls := block.Stmts[0].(*ast.LocalFuncStmt)
+	fe := ls.Func
+	if !fe.VarArg {
+		t.Fatalf("expected VarArg=true")
+	}
+	if fe.VarArgName != "x" {
+		t.Fatalf("expected VarArgName='x', got %q", fe.VarArgName)
+	}
 }
 
-func TestNamedVarargRejectedWithParams(t *testing.T) {
-	expectError(t, `local function f(a, b, ... rest) end`, "')' expected")
+func TestNamedVarargWithParams(t *testing.T) {
+	block, err := Parse("test", `local function f(a, b, ... rest) end`)
+	if err != nil {
+		t.Fatalf("named vararg with params should parse successfully: %v", err)
+	}
+	ls := block.Stmts[0].(*ast.LocalFuncStmt)
+	fe := ls.Func
+	if len(fe.Params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(fe.Params))
+	}
+	if !fe.VarArg {
+		t.Fatalf("expected VarArg=true")
+	}
+	if fe.VarArgName != "rest" {
+		t.Fatalf("expected VarArgName='rest', got %q", fe.VarArgName)
+	}
 }
 
 func TestPlainVarargStillAccepted(t *testing.T) {

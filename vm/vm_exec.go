@@ -43,6 +43,12 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 			varargSlice = make([]Value, numVararg)
 			copy(varargSlice, args[numParams:numParams+numVararg])
 		}
+
+		// Lua 5.5: named vararg parameter — create a table from the varargs
+		// and store it in the designated register.
+		if proto.HasNamedVarArg {
+			vm.stack[base+proto.VarArgReg] = vm.createVarArgTable(varargSlice, numVararg)
+		}
 	} else {
 		// Non-vararg: copy args, nil-fill rest
 		for i := 0; i < numParams && i < numArgs; i++ {
@@ -1172,6 +1178,10 @@ func (vm *VM) execute() ([]Value, error) {
 							frame.numVararg = 0
 							frame.varargs = nil
 						}
+						// Lua 5.5: named vararg parameter
+						if proto.HasNamedVarArg {
+							vm.stack[frame.base+proto.VarArgReg] = vm.createVarArgTable(frame.varargs, frame.numVararg)
+						}
 						frame.isVararg = true
 					} else {
 						for i := 0; i < numParams && i < numArgs; i++ {
@@ -1720,22 +1730,51 @@ func (vm *VM) execute() ([]Value, error) {
 			// Copy varargs to R[A], ..., R[A+C-2]
 			// If C=0, copy all varargs and set top
 
-			numWanted := c - 1
-			if c == 0 {
-				numWanted = frame.numVararg
-				vm.top = frame.base + a + numWanted
-			}
+			// Lua 5.5: when a named vararg table exists, read from the table
+			// so that modifications to the named vararg are visible via ...
+			if proto.HasNamedVarArg {
+				vatab := vm.stack[frame.base+proto.VarArgReg].AsTable()
+				nField := vatab.Get(NewString("n"))
+				if !nField.IsInt() || nField.AsInt() < 0 || nField.AsInt() > int64(math.MaxInt32/2) {
+					return nil, vm.runtimeError("vararg table has no proper 'n'")
+				}
+				nVararg := int(nField.AsInt())
 
-			// Ensure the stack can hold all vararg values.
-			if needed := frame.base + a + numWanted; needed > len(vm.stack) {
-				vm.ensureStack(needed)
-			}
+				numWanted := c - 1
+				if c == 0 {
+					numWanted = nVararg
+					vm.top = frame.base + a + numWanted
+				}
 
-			for i := 0; i < numWanted; i++ {
-				if i < frame.numVararg {
-					vm.stack[frame.base+a+i] = frame.varargs[i]
-				} else {
-					vm.stack[frame.base+a+i] = Nil
+				if needed := frame.base + a + numWanted; needed > len(vm.stack) {
+					vm.ensureStack(needed)
+				}
+
+				for i := 0; i < numWanted; i++ {
+					if i < nVararg {
+						vm.stack[frame.base+a+i] = vatab.Get(NewInt(int64(i + 1)))
+					} else {
+						vm.stack[frame.base+a+i] = Nil
+					}
+				}
+			} else {
+				numWanted := c - 1
+				if c == 0 {
+					numWanted = frame.numVararg
+					vm.top = frame.base + a + numWanted
+				}
+
+				// Ensure the stack can hold all vararg values.
+				if needed := frame.base + a + numWanted; needed > len(vm.stack) {
+					vm.ensureStack(needed)
+				}
+
+				for i := 0; i < numWanted; i++ {
+					if i < frame.numVararg {
+						vm.stack[frame.base+a+i] = frame.varargs[i]
+					} else {
+						vm.stack[frame.base+a+i] = Nil
+					}
 				}
 			}
 
@@ -1766,6 +1805,18 @@ func (vm *VM) execute() ([]Value, error) {
 }
 
 // Helper methods
+
+// createVarArgTable creates a table from a vararg slice with an `n` field,
+// implementing Lua 5.5 named vararg parameters (§3.4.12).
+func (vm *VM) createVarArgTable(varargs []Value, numVararg int) Value {
+	t := NewTableWithSize(numVararg, 1)
+	for i := 0; i < numVararg; i++ {
+		t.SetInt(i+1, varargs[i])
+	}
+	// Set t.n = numVararg
+	t.SetString("n", NewInt(int64(numVararg)))
+	return NewTable(t)
+}
 
 // ensureStack grows the VM stack to hold at least n slots.
 // Panics on stack overflow when limits are set. This panic is always caught
