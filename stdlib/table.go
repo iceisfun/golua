@@ -18,6 +18,7 @@ func openTable(v *vm.VM) {
 	t.SetString("unpack", vm.NewNativeFunc(tableUnpack))
 	t.SetString("pack", vm.NewNativeFunc(tablePack))
 	t.SetString("move", vm.NewNativeFunc(tableMove))
+	t.SetString("create", vm.NewNativeFunc(tableCreate))
 
 	v.SetGlobal("table", vm.NewTable(t))
 }
@@ -543,5 +544,29 @@ func tableMove(v *vm.VM) int {
 	}
 
 	v.Set(0, a2)
+	return 1
+}
+
+// table.create([narr [, nrec]])
+// Creates a new empty table with preallocated capacity for narr array slots
+// and nrec hash slots. Both parameters default to 0 if not provided.
+func tableCreate(v *vm.VM) int {
+	narr := 0
+	nrec := 0
+	if !v.Get(1).IsNil() {
+		narr = int(getInt(v, 1, "table.create"))
+	}
+	if !v.Get(2).IsNil() {
+		nrec = int(getInt(v, 2, "table.create"))
+	}
+
+	var tbl *vm.Table
+	if narr > 0 || nrec > 0 {
+		tbl = vm.NewTableWithSize(narr, nrec)
+	} else {
+		tbl = vm.NewEmptyTable()
+	}
+
+	v.Set(0, vm.NewTable(tbl))
 	return 1
 }
