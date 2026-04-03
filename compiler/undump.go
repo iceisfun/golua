@@ -131,7 +131,7 @@ func (u *undumper) checkHeader() error {
 		return u.error("not a binary chunk")
 	}
 	// Version
-	if u.readByte() != 0x54 {
+	if u.readByte() != 0x55 {
 		return u.error("version mismatch")
 	}
 	// Format
@@ -183,7 +183,13 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 
 	// Function header
 	p.NumParams = int(u.readByte())
-	p.IsVarArg = u.readByte() != 0
+	// Vararg flag byte: bit 0 = has vararg, bit 1 = named vararg (... name)
+	vaFlag := u.readByte()
+	p.IsVarArg = vaFlag&1 != 0
+	p.HasNamedVarArg = vaFlag&2 != 0
+	if p.HasNamedVarArg {
+		p.VarArgReg = int(u.readByte())
+	}
 	p.MaxStack = int(u.readByte())
 
 	// Instructions

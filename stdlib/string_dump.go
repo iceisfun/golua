@@ -39,7 +39,7 @@ func dumpProto(p *compiler.Proto, strip bool) []byte {
 
 	// Header
 	buf.Write([]byte("\x1bLua")) // signature
-	buf.WriteByte(0x54)          // version 5.4
+	buf.WriteByte(0x55)          // version 5.5
 	buf.WriteByte(0)             // format
 	buf.Write([]byte("\x19\x93\r\n\x1a\n")) // LUAC_DATA
 	buf.WriteByte(4)             // instruction size
@@ -134,10 +134,17 @@ func (d *dumper) dumpFunction(p *compiler.Proto) {
 
 	// Function header
 	d.writeByte(byte(p.NumParams))
+	// Vararg flag byte: bit 0 = has vararg, bit 1 = named vararg (... name)
+	var vaFlag byte
 	if p.IsVarArg {
-		d.writeByte(1)
-	} else {
-		d.writeByte(0)
+		vaFlag |= 1
+	}
+	if p.HasNamedVarArg {
+		vaFlag |= 2
+	}
+	d.writeByte(vaFlag)
+	if p.HasNamedVarArg {
+		d.writeByte(byte(p.VarArgReg))
 	}
 	d.writeByte(byte(p.MaxStack))
 

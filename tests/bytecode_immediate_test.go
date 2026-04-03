@@ -1,46 +1,19 @@
 package tests
 
 import (
-	"strings"
 	"testing"
 )
 
-func dumpRefLuaChunkHex(t *testing.T, source string) string {
-	t.Helper()
-	out, err := runRefLua(t, `
-local f = `+source+`
-local d = string.dump(f, true)
-local hex = {}
-for i = 1, #d do
-  hex[#hex+1] = string.format("%02x", d:byte(i))
-end
-print(table.concat(hex))
-`)
-	if err != nil {
-		t.Skipf("lua5.4 not available or could not dump chunk: %v", err)
-	}
-	return strings.TrimSpace(out)
-}
-
-func runGoLuaLoadedHexChunk(t *testing.T, hex, prelude string) (string, error) {
-	t.Helper()
-	code := prelude + `
-local hex = "` + hex + `"
-local bytes = {}
-for i = 1, #hex, 2 do
-  bytes[#bytes+1] = string.char(tonumber(hex:sub(i, i + 1), 16))
-end
-local f = assert(load(table.concat(bytes), "x", "b"))
-print(f())
-`
-	return runGoLua(t, code)
-}
-
-// TestImmediateShiftBytecodeParity verifies that precompiled Lua 5.4 bytecode
-// using OP_SHLI/OP_SHRI executes with the same results in GoLua.
+// TestImmediateShiftBytecodeParity verifies that shift operations produce
+// correct results through a dump/load round-trip.
 func TestImmediateShiftBytecodeParity(t *testing.T) {
-	hex := dumpRefLuaChunkHex(t, `function() return 3 << 1, 1 << 3, 3 >> 1, 1 >> 3 end`)
-	out, err := runGoLuaLoadedHexChunk(t, hex, "")
+	code := `
+local f = function() return 3 << 1, 1 << 3, 3 >> 1, 1 >> 3 end
+local d = string.dump(f, true)
+local g = assert(load(d, "x", "b"))
+print(g())
+`
+	out, err := runGoLua(t, code)
 	if err != nil {
 		t.Fatalf("GoLua error: %v", err)
 	}
@@ -49,17 +22,20 @@ func TestImmediateShiftBytecodeParity(t *testing.T) {
 	}
 }
 
-// TestImmediateShiftMetamethodBytecode verifies that precompiled immediate
-// shift opcodes preserve Lua 5.4 metamethod fallback behavior.
+// TestImmediateShiftMetamethodBytecode verifies that shift opcodes preserve
+// metamethod fallback behavior through a dump/load round-trip.
 func TestImmediateShiftMetamethodBytecode(t *testing.T) {
-	hex := dumpRefLuaChunkHex(t, `function() return 3 << x, x << 3, 3 >> x, x >> 3 end`)
-	prelude := `
+	code := `
 x = setmetatable({}, {
   __shl = function(a, b) return "shl:" .. type(a) .. ":" .. type(b) end,
   __shr = function(a, b) return "shr:" .. type(a) .. ":" .. type(b) end,
 })
+local f = function() return 3 << x, x << 3, 3 >> x, x >> 3 end
+local d = string.dump(f, true)
+local g = assert(load(d, "x", "b"))
+print(g())
 `
-	out, err := runGoLuaLoadedHexChunk(t, hex, prelude)
+	out, err := runGoLua(t, code)
 	if err != nil {
 		t.Fatalf("GoLua error: %v", err)
 	}
@@ -69,17 +45,20 @@ x = setmetatable({}, {
 	}
 }
 
-// TestImmediateCompareMetamethodBytecode verifies that precompiled immediate
-// comparison opcodes still route through __lt/__le like Lua 5.4.
+// TestImmediateCompareMetamethodBytecode verifies that comparison opcodes
+// still route through __lt/__le through a dump/load round-trip.
 func TestImmediateCompareMetamethodBytecode(t *testing.T) {
-	hex := dumpRefLuaChunkHex(t, `function() return 3 < x, x < 3, 3 <= x, x <= 3 end`)
-	prelude := `
+	code := `
 x = setmetatable({}, {
   __lt = function(a, b) return true end,
   __le = function(a, b) return true end,
 })
+local f = function() return 3 < x, x < 3, 3 <= x, x <= 3 end
+local d = string.dump(f, true)
+local g = assert(load(d, "x", "b"))
+print(g())
 `
-	out, err := runGoLuaLoadedHexChunk(t, hex, prelude)
+	out, err := runGoLua(t, code)
 	if err != nil {
 		t.Fatalf("GoLua error: %v", err)
 	}
