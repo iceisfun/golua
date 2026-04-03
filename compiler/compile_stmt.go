@@ -1619,6 +1619,8 @@ func (c *compiler) compileLocalFuncStmt(s *ast.LocalFuncStmt) {
 }
 
 // compileGlobalStmt compiles "global name = expr" — assigns to _ENV[name].
+// When an initializer is present, emits a runtime check (OP_ERRNNIL) that
+// raises an error if the global already has a non-nil value, matching Lua 5.5.
 func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -1656,6 +1658,20 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 			nameK := fs.stringConstant(name.Name)
 			reg := fs.reserveReg()
 			c.compileExprToReg(s.Values[i], reg)
+			// Runtime check: error if _ENV[name] is already non-nil.
+			chkReg := fs.reserveReg()
+			if envReg, ok := fs.lookupLocal("_ENV"); ok {
+				fs.emitGetField(chkReg, envReg, nameK, line)
+			} else {
+				envUV := c.resolveEnv()
+				fs.emitGetTabUp(chkReg, envUV, nameK, line)
+			}
+			bx := nameK + 1
+			if nameK >= MaxArgBx {
+				bx = 0
+			}
+			fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
+			fs.freeReg = reg + 1 // free the check register
 			if envReg, ok := fs.lookupLocal("_ENV"); ok {
 				fs.emitSetField(envReg, nameK, reg, line)
 			} else {
@@ -1668,6 +1684,8 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 }
 
 // compileGlobalFuncStmt compiles "global function name(...) ... end".
+// Like compileGlobalStmt, emits OP_ERRNNIL to check that the global is not
+// already defined before assigning the closure.
 func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	fs := c.fs
 	line := s.P.Line
@@ -1689,6 +1707,20 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	fs.emit(ABx(OP_CLOSURE, reg, protoIdx), closureLine)
 
 	nameK := fs.stringConstant(s.Name.Name)
+	// Runtime check: error if _ENV[name] is already non-nil.
+	chkReg := fs.reserveReg()
+	if envReg, ok := fs.lookupLocal("_ENV"); ok {
+		fs.emitGetField(chkReg, envReg, nameK, line)
+	} else {
+		envUV := c.resolveEnv()
+		fs.emitGetTabUp(chkReg, envUV, nameK, line)
+	}
+	bx := nameK + 1
+	if nameK >= MaxArgBx {
+		bx = 0
+	}
+	fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
+	fs.freeReg = reg + 1 // free the check register
 	if envReg, ok := fs.lookupLocal("_ENV"); ok {
 		fs.emitSetField(envReg, nameK, reg, line)
 	} else {

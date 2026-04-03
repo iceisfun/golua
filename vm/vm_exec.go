@@ -1739,6 +1739,20 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 			}
 
+		case compiler.OP_ERRNNIL:
+			// OP_ERRNNIL A Bx — raise error if R[A] ~= nil.
+			// Bx encodes the constant index + 1 for the global name
+			// (Bx == 0 means the name didn't fit).
+			a, bx := inst.A(), inst.Bx()
+			val := vm.stack[frame.base+a]
+			if !val.IsNil() {
+				name := "?"
+				if bx > 0 {
+					name = proto.Constants[bx-1].SVal
+				}
+				return nil, vm.runtimeError("global '%s' already defined", name)
+			}
+
 		case compiler.OP_VARARGPREP:
 			// Handled during call setup
 

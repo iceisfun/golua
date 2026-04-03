@@ -138,7 +138,7 @@ const (
 
 	OP_GETVARG // A B C   R[A] := R[B][R[C]], R[B] is vararg param
 
-	OP_ERRNNIL // A Bx    raise error if R[A] ~= nil
+	OP_ERRNNIL // A Bx    raise error if R[A] ~= nil (K[Bx-1] is global name)
 
 	OP_VARARGPREP // A    (adjust varargs)
 
