@@ -17,13 +17,17 @@ do
 end
 
 ----------------------------------------------------------------------
--- 2. 'global = 1' at statement start is a declaration, not assignment
+-- 2. 'global = 1' at statement start is a plain assignment
 ----------------------------------------------------------------------
 do
-  local f, err = load("global = 1")
-  print(f == nil)
+  local env = setmetatable({}, {__index = _G})
+  local f, err = load("global = 1; return global", nil, nil, env)
+  print(f ~= nil)
   --> =true
-  -- parser treats "global =" as a global declaration, expects name list
+  if f then
+    print(f())
+    --> =1
+  end
 end
 
 ----------------------------------------------------------------------

@@ -99,13 +99,15 @@ type funcScope struct {
 }
 
 type parser struct {
-	lex     *lexer.Lexer
-	tok     token.Token // current (lookahead) token
-	source  string
-	err     error
-	depth   int         // recursion depth counter
-	funcs   []funcScope // stack of function scopes for local var limit checking
-	maxVars int         // maximum local variables per function (0 = maxLocalVars)
+	lex        *lexer.Lexer
+	tok        token.Token // current (lookahead) token
+	lookahead  token.Token // second lookahead token (valid when hasLookahead)
+	hasLookahead bool
+	source     string
+	err        error
+	depth      int         // recursion depth counter
+	funcs      []funcScope // stack of function scopes for local var limit checking
+	maxVars    int         // maximum local variables per function (0 = maxLocalVars)
 }
 
 func (p *parser) maxVarsLimit() int {
@@ -126,6 +128,11 @@ func isLvalue(e ast.Expr) bool {
 }
 
 func (p *parser) advance() error {
+	if p.hasLookahead {
+		p.tok = p.lookahead
+		p.hasLookahead = false
+		return nil
+	}
 	tok, err := p.lex.Next()
 	if err != nil {
 		p.err = err
@@ -133,6 +140,21 @@ func (p *parser) advance() error {
 	}
 	p.tok = tok
 	return nil
+}
+
+// peekNext returns the token after the current one without consuming it.
+func (p *parser) peekNext() token.Token {
+	if p.hasLookahead {
+		return p.lookahead
+	}
+	tok, err := p.lex.Next()
+	if err != nil {
+		p.err = err
+		return token.Token{Type: token.EOS}
+	}
+	p.lookahead = tok
+	p.hasLookahead = true
+	return tok
 }
 
 func (p *parser) expect(typ token.Type) (token.Token, error) {
@@ -390,9 +412,15 @@ func (p *parser) parseStatement() ast.Stmt {
 		return p.parseLabelStmt()
 	default:
 		// Lua 5.5: "global" is a soft keyword — only treated as the global
-		// declaration keyword at statement start, otherwise it's a regular name.
+		// declaration keyword at statement start when followed by a name,
+		// attribute (<), wildcard (*), or 'function'. Otherwise it's a
+		// regular name (e.g. global = 10, global(), global.field).
 		if p.tok.Type == token.NAME && p.tok.Literal == "global" {
-			return p.parseGlobalStmt()
+			next := p.peekNext()
+			switch next.Type {
+			case token.NAME, token.FUNCTION, token.Type('*'), token.Type('<'):
+				return p.parseGlobalStmt()
+			}
 		}
 		return p.parseExprStat()
 	}
