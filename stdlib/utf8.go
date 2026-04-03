@@ -389,13 +389,11 @@ func luaUtf8Offset(v *vm.VM) int {
 	p := i - 1
 
 	if n == 0 {
-		if p == slen {
-			v.Set(0, vm.NewInt(int64(slen+1)))
-			return 1
-		}
-		// Find beginning of current character by walking backwards
-		for p > 0 && !utf8.RuneStart(s[p]) {
-			p--
+		if p < slen {
+			// Find beginning of current character by walking backwards
+			for p > 0 && !utf8.RuneStart(s[p]) {
+				p--
+			}
 		}
 	} else if n > 0 {
 		// Check not a continuation byte
@@ -425,12 +423,26 @@ func luaUtf8Offset(v *vm.VM) int {
 		}
 	}
 
-	if n == 0 {
-		// Found the target character
-		v.Set(0, vm.NewInt(int64(p+1))) // 1-indexed
-	} else {
+	if n != 0 {
 		// Could not traverse n characters
 		v.Set(0, vm.Nil)
+		return 1
 	}
-	return 1
+
+	// Found the target character — return start and end byte positions.
+	startPos := p + 1 // 1-indexed
+	v.Set(0, vm.NewInt(int64(startPos)))
+
+	// Find the end position (last byte of the character).
+	// For multi-byte characters, skip continuation bytes.
+	endPos := p
+	if p < slen && s[p]&0x80 != 0 {
+		// Multi-byte character: advance past continuation bytes
+		for endPos+1 < slen && s[endPos+1]&0xC0 == 0x80 {
+			endPos++
+		}
+	}
+	// endPos is 0-indexed position of last byte; convert to 1-indexed
+	v.Set(1, vm.NewInt(int64(endPos+1)))
+	return 2
 }
