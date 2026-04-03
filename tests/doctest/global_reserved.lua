@@ -1,71 +1,74 @@
--- Test that 'global' is a reserved keyword in golua (Lua 5.5).
+-- Test that 'global' is a soft keyword in golua (Lua 5.5).
 --
--- In Lua 5.4, 'global' is an ordinary identifier -- you can use it as a
--- variable name, table field key, or function name.  In Lua 5.5 (and golua),
--- 'global' is a keyword used for global-variable declarations.
---
--- NOTE: In reference Lua 5.5, 'global' is a *soft* keyword -- it can still
--- appear as a local variable name or table field.  golua currently treats it
--- as a hard reserved word, which is stricter.  These tests document the
--- CURRENT golua behavior.
+-- In Lua 5.5, 'global' is only special at statement start. It can still be
+-- used as a local variable name, table field key, function parameter, etc.
 
 ----------------------------------------------------------------------
--- 1. 'global' cannot be used as a local variable name
+-- 1. 'global' can be used as a local variable name
 ----------------------------------------------------------------------
 do
-  local f, err = load("local global = 1")
-  print(f == nil)
+  local f, err = load("local global = 1; return global")
+  print(f ~= nil)
   --> =true
-  print(type(err) == "string" and err:find("near 'global'") ~= nil)
-  --> =true
+  if f then
+    print(f())
+    --> =1
+  end
 end
 
 ----------------------------------------------------------------------
--- 2. 'global' cannot appear as a bare assignment target (parsed as decl)
+-- 2. 'global = 1' at statement start is a declaration, not assignment
 ----------------------------------------------------------------------
 do
   local f, err = load("global = 1")
   print(f == nil)
   --> =true
-  print(type(err) == "string" and err:find("near '='") ~= nil)
-  --> =true
+  -- parser treats "global =" as a global declaration, expects name list
 end
 
 ----------------------------------------------------------------------
--- 3. 'function global() end' is invalid (global is not a <name>)
+-- 3. 'function global() end' is valid (global is a NAME)
 ----------------------------------------------------------------------
 do
-  local f, err = load("function global() end")
-  print(f == nil)
+  local env = setmetatable({}, {__index = _G})
+  local f, err = load("function global() return 42 end; return global()", nil, nil, env)
+  print(f ~= nil)
   --> =true
-  print(type(err) == "string" and err:find("near 'global'") ~= nil)
-  --> =true
+  if f then
+    print(f())
+    --> =42
+  end
 end
 
 ----------------------------------------------------------------------
--- 4. 'for global = ...' is invalid
+-- 4. 'for global = ...' is valid (global as loop variable name)
 ----------------------------------------------------------------------
 do
-  local f, err = load("for global = 1, 3 do end")
-  print(f == nil)
+  local f, err = load("local s = 0; for global = 1, 3 do s = s + global end; return s")
+  print(f ~= nil)
   --> =true
-  print(type(err) == "string" and err:find("near 'global'") ~= nil)
-  --> =true
+  if f then
+    print(f())
+    --> =6
+  end
 end
 
 ----------------------------------------------------------------------
--- 5. 'global' as table field key is invalid in golua (stricter than 5.5)
+-- 5. 'global' as table field key is valid
 ----------------------------------------------------------------------
 do
   local f, err = load("return {global = 1}")
-  print(f == nil)
+  print(f ~= nil)
   --> =true
-  print(type(err) == "string" and err:find("global") ~= nil)
-  --> =true
+  if f then
+    local t = f()
+    print(t.global)
+    --> =1
+  end
 end
 
 ----------------------------------------------------------------------
--- 6. The 'global' declaration syntax DOES work (fresh env to avoid leaks)
+-- 6. The 'global' declaration syntax works (fresh env to avoid leaks)
 ----------------------------------------------------------------------
 do
   local env = setmetatable({}, {__index = _G})
@@ -127,4 +130,31 @@ do
   local f, err = load("global <const> *; return true")
   print(f ~= nil)
   --> =true
+end
+
+----------------------------------------------------------------------
+-- 11. 'global' as function parameter
+----------------------------------------------------------------------
+do
+  local f, err = load("local function f(global) return global end; return f(99)")
+  print(f ~= nil)
+  --> =true
+  if f then
+    print(f())
+    --> =99
+  end
+end
+
+----------------------------------------------------------------------
+-- 12. 'global' as method name via dot syntax
+----------------------------------------------------------------------
+do
+  local env = setmetatable({}, {__index = _G})
+  local f, err = load("local t = {}; function t.global() return 7 end; return t.global()", nil, nil, env)
+  print(f ~= nil)
+  --> =true
+  if f then
+    print(f())
+    --> =7
+  end
 end

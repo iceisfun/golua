@@ -166,7 +166,7 @@ func TestKeywords(t *testing.T) {
 		{"false", token.FALSE},
 		{"for", token.FOR},
 		{"function", token.FUNCTION},
-		{"global", token.GLOBAL},
+		// "global" is a soft keyword — lexer returns NAME, parser handles it
 		{"goto", token.GOTO},
 		{"if", token.IF},
 		{"in", token.IN},
@@ -189,7 +189,7 @@ func TestKeywords(t *testing.T) {
 }
 
 func TestIdentifiers(t *testing.T) {
-	cases := []string{"foo", "bar123", "_private", "_", "__index", "camelCase"}
+	cases := []string{"foo", "bar123", "_private", "_", "__index", "camelCase", "global"}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			expectSingle(t, name, token.NAME, name)

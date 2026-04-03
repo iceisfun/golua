@@ -73,8 +73,9 @@ var keywords = map[string]Type{
 	"false":    FALSE,
 	"for":      FOR,
 	"function": FUNCTION,
-	"global":   GLOBAL,
-	"goto":     GOTO,
+	// "global" is a soft keyword in Lua 5.5 — handled by the parser
+	// contextually at statement start, not by the lexer.
+	"goto": GOTO,
 	"if":       IF,
 	"in":       IN,
 	"local":    LOCAL,

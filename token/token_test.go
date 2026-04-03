@@ -9,8 +9,9 @@ func TestLookupIdent(t *testing.T) {
 	if LookupIdent("while") != WHILE {
 		t.Error("expected WHILE for 'while'")
 	}
-	if LookupIdent("global") != GLOBAL {
-		t.Error("expected GLOBAL for 'global'")
+	// "global" is a soft keyword in Lua 5.5 — lexer returns NAME, parser handles it.
+	if LookupIdent("global") != NAME {
+		t.Error("expected NAME for 'global' (soft keyword)")
 	}
 	if LookupIdent("myvar") != NAME {
 		t.Error("expected NAME for 'myvar'")

@@ -378,8 +378,6 @@ func (p *parser) parseStatement() ast.Stmt {
 		return p.parseFuncStmt()
 	case token.LOCAL:
 		return p.parseLocalStmt()
-	case token.GLOBAL:
-		return p.parseGlobalStmt()
 	case token.RETURN:
 		return p.parseReturnStmt()
 	case token.BREAK:
@@ -391,6 +389,11 @@ func (p *parser) parseStatement() ast.Stmt {
 	case token.DBCOLON:
 		return p.parseLabelStmt()
 	default:
+		// Lua 5.5: "global" is a soft keyword — only treated as the global
+		// declaration keyword at statement start, otherwise it's a regular name.
+		if p.tok.Type == token.NAME && p.tok.Literal == "global" {
+			return p.parseGlobalStmt()
+		}
 		return p.parseExprStat()
 	}
 }
