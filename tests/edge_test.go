@@ -925,8 +925,9 @@ func TestProbe_PcallErrorObjects(t *testing.T) {
 	if !results[1].ToBool() || !results[1].IsBool() {
 		t.Errorf("pcall error(true): got %v", results[1])
 	}
-	if !results[2].IsNil() {
-		t.Errorf("pcall error(nil): got %v, expected nil", results[2])
+	// Lua 5.5: error(nil) is replaced by the string "<no error object>"
+	if !results[2].IsString() || results[2].AsString() != "<no error object>" {
+		t.Errorf("pcall error(nil): got %v, expected \"<no error object>\"", results[2])
 	}
 }
 

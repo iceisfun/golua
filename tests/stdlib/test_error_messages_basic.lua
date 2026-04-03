@@ -12,7 +12,8 @@ do
   end
 
   assert(doit("error('hi', 0)") == 'hi')
-  assert(doit("error()") == nil)
+  -- Lua 5.5: error() with no args returns "<no error object>" instead of nil
+  assert(doit("error()") == "<no error object>")
   assert(doit("table.unpack({}, 1, n=2^30)"))
   assert(doit("a=math.sin()"))
   assert(not doit("tostring(1)") and doit("tostring()"))

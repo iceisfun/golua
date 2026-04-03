@@ -360,11 +360,17 @@ func luaPcall(v *vm.VM) int {
 	if err != nil {
 		v.Set(0, vm.False)
 		// Preserve the original Lua error value if available
+		var errVal vm.Value
 		if le, ok := err.(*vm.LuaError); ok {
-			v.Set(1, le.Value)
+			errVal = le.Value
 		} else {
-			v.Set(1, vm.NewString(err.Error()))
+			errVal = vm.NewString(err.Error())
 		}
+		// Lua 5.5: nil error object is replaced by the string "<no error object>"
+		if errVal.IsNil() {
+			errVal = vm.NewString("<no error object>")
+		}
+		v.Set(1, errVal)
 		return 2
 	}
 
@@ -417,9 +423,10 @@ func luaXpcall(v *vm.VM) int {
 
 	if err != nil {
 		v.Set(0, vm.False)
+		var finalErrVal vm.Value
 		if v.IsMsgHandlerUsed() {
 			// Message handler was already called inside ProtectedCall
-			v.Set(1, v.GetMsgHandlerResult())
+			finalErrVal = v.GetMsgHandlerResult()
 		} else {
 			// Fallback: call the message handler now (shouldn't normally happen)
 			var errVal vm.Value
@@ -432,13 +439,18 @@ func luaXpcall(v *vm.VM) int {
 			handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{errVal})
 			exitNonYieldable()
 			if handlerErr != nil {
-				v.Set(1, vm.NewString("error in error handling"))
+				finalErrVal = vm.NewString("error in error handling")
 			} else if len(handlerResults) > 0 {
-				v.Set(1, handlerResults[0])
+				finalErrVal = handlerResults[0]
 			} else {
-				v.Set(1, vm.Nil)
+				finalErrVal = vm.Nil
 			}
 		}
+		// Lua 5.5: nil error object is replaced by the string "<no error object>"
+		if finalErrVal.IsNil() {
+			finalErrVal = vm.NewString("<no error object>")
+		}
+		v.Set(1, finalErrVal)
 		// Clear message handler state
 		v.SetMsgHandler(vm.Nil)
 		v.SetMsgHandlerUsed(false)
@@ -498,14 +510,41 @@ func luaCollectgarbage(v *vm.VM) int {
 		v.Set(1, vm.NewInt(0))
 		v.Set(2, vm.NewInt(0))
 		return 3
-	case "setpause":
-		// Stub: accept the value and return the previous (dummy) value.
-		// Go manages its own GC; these values have no effect.
-		v.Set(0, vm.NewInt(200))
-		return 1
-	case "setstepmul":
-		// Stub: accept the value and return the previous (dummy) value.
-		v.Set(0, vm.NewInt(100))
+	case "param":
+		// Lua 5.5: collectgarbage("param", name [, value])
+		// Get/set GC parameters by name.
+		arg2 := v.Get(2)
+		if arg2.IsNil() || (!arg2.IsString() && !arg2.IsNumber()) {
+			callerArgError(v, 2, "collectgarbage", fmt.Sprintf("string expected%s", gotDesc(v, 2)))
+		}
+		paramName := ""
+		if arg2.IsString() {
+			paramName = arg2.AsString()
+		} else {
+			paramName = valueToString(arg2)
+		}
+		// Default values for GC parameters (since Go manages its own GC)
+		paramDefaults := map[string]int64{
+			"pause":      250,
+			"minormul":   20,
+			"majorminor": 50,
+			"minormajor": 68,
+			"stepmul":    200,
+			"stepsize":   9600,
+		}
+		defaultVal, ok := paramDefaults[paramName]
+		if !ok {
+			callerArgError(v, 2, "collectgarbage", fmt.Sprintf("invalid option '%s'", paramName))
+		}
+		// If a third argument is provided (and not nil), validate it's a number
+		arg3 := v.Get(3)
+		if !arg3.IsNil() {
+			if !arg3.IsNumber() {
+				callerArgError(v, 3, "collectgarbage", fmt.Sprintf("number expected%s", gotDesc(v, 3)))
+			}
+		}
+		// Return the current (default) value; setting has no effect in Go's GC
+		v.Set(0, vm.NewInt(defaultVal))
 		return 1
 	case "step":
 		// Trigger a GC step. Return true (cycle completed) since Go's GC always completes.

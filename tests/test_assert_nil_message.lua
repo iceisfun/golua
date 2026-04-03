@@ -1,10 +1,11 @@
--- Bug: assert(false, nil) should raise nil as the error value,
--- not the default "assertion failed!" message.
+-- assert(false, nil) should raise nil as the error value,
+-- which is replaced by "<no error object>" per Lua 5.5 semantics.
 
--- Test 1: assert(false, nil) should raise nil
+-- Test 1: assert(false, nil) - Lua 5.5: nil error replaced by string
 local ok1, err1 = pcall(assert, false, nil)
 assert(not ok1, "assert(false, nil) should fail")
-assert(err1 == nil, "assert(false, nil) error should be nil, got " .. type(err1) .. ": " .. tostring(err1))
+-- Lua 5.5: nil error object is replaced by "<no error object>"
+assert(err1 == "<no error object>", "assert(false, nil) error should be '<no error object>', got " .. type(err1) .. ": " .. tostring(err1))
 
 -- Test 2: assert(false) with no 2nd arg should use default message
 local ok2, err2 = pcall(assert, false)

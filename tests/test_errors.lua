@@ -46,7 +46,8 @@ end
 -- [Test 2] [test-suite] errors: test error message with no info
 -- Verifies: all assert() calls pass without error
 do
-  assert(doit("error()") == nil)
+  -- Lua 5.5: error() with no args returns "<no error object>" instead of nil
+  assert(doit("error()") == "<no error object>")
 end
 
 -- --------------------------------------------------------------------------
@@ -203,8 +204,9 @@ do
     local res, msg = pcall(function () error(t) end)
     assert(not res and msg == t)
 
+    -- Lua 5.5: error(nil) is replaced by the string "<no error object>"
     res, msg = pcall(function () error(nil) end)
-    assert(not res and msg == nil)
+    assert(not res and msg == "<no error object>")
 
     local function f() error{msg='x'} end
     res, msg = xpcall(f, function (r) return {msg=r.msg..'y'} end)
@@ -223,8 +225,9 @@ do
     res, msg = pcall(assert, false, t)
     assert(not res and msg == t)
 
+    -- Lua 5.5: assert(nil, nil) internally calls error(nil), so msg is replaced
     res, msg = pcall(assert, nil, nil)
-    assert(not res and msg == nil)
+    assert(not res and msg == "<no error object>")
 
     -- 'assert' without arguments
     res, msg = pcall(assert)

@@ -10,7 +10,8 @@ local ok2, err2 = xpcall(function() error({k = 1}) end, function(_) error("handl
 assert(ok2 == false, "xpcall should fail when handler errors (object error)")
 assert(err2 == "error in error handling", "xpcall handler error should be generic for object errors")
 
--- If handler does not error and returns nil, xpcall should return false, nil.
+-- Lua 5.5: handler sees nil (before replacement), returns nil, which is then
+-- replaced with "<no error object>" by the nil-error-object mechanism.
 local ok3, err3 = xpcall(function() error(nil) end, function(e) return e and e.k end)
 assert(ok3 == false, "xpcall should fail for original nil error")
-assert(err3 == nil, "handler return value should be propagated when no handler error")
+assert(err3 == "<no error object>", "nil handler result should be replaced with <no error object>")
