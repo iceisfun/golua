@@ -356,3 +356,20 @@ func (t MetamethodTag) String() string {
 	}
 	return fmt.Sprintf("MetamethodTag(%d)", t)
 }
+
+// MetamethodTagFromLua54 converts a Lua 5.4-style TM ordinal (as emitted in
+// reference binary chunks via OP_MMBIN*) into GoLua's MetamethodTag value.
+// Lua 5.4's TM_* enum places fast-access TMs (INDEX..EQ) first, so its TM_ADD
+// is 6 while GoLua's TM_ADD is 0. Only the arithmetic/bitwise tags that can
+// appear in OP_MMBIN* (TM_ADD..TM_SHR in Lua 5.4, i.e. 6..17) are translated.
+// Returns ok=false for out-of-range values.
+func MetamethodTagFromLua54(lua54Ord int) (MetamethodTag, bool) {
+	// Lua 5.4 ordinals (from ltm.h): INDEX=0, NEWINDEX=1, GC=2, MODE=3,
+	// LEN=4, EQ=5, ADD=6, SUB=7, MUL=8, MOD=9, POW=10, DIV=11, IDIV=12,
+	// BAND=13, BOR=14, BXOR=15, SHL=16, SHR=17.
+	// Map 6..17 (ADD..SHR in Lua 5.4) onto our TM_ADD..TM_SHR (0..11).
+	if lua54Ord >= 6 && lua54Ord <= 17 {
+		return MetamethodTag(lua54Ord - 6), true
+	}
+	return 0, false
+}
