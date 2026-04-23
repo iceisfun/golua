@@ -18,17 +18,54 @@ func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 	l.stringRawStart = l.pos - 1
 	l.readChar() // skip opening delimiter
 
+	// pendingEscapeErr holds a deferred escape-sequence error (e.g. "decimal
+	// escape too large"). When set, we keep consuming through the closing
+	// delimiter so the lexer state is clean for subsequent tokens, then
+	// return the error with the full raw string (including the closing
+	// quote) as its "near" context. This matches Lua 5.4/5.5's behaviour
+	// where the diagnostic quotes the whole offending literal.
+	var pendingEscapeErrMsg string
+
 	var buf strings.Builder
 	for l.current != delim {
 		switch l.current {
 		case eof:
+			if pendingEscapeErrMsg != "" {
+				return token.Token{}, l.finalizeStringErr(pendingEscapeErrMsg)
+			}
 			return token.Token{}, l.errorf("unfinished string near <eof>")
 		case '\n', '\r':
+			if pendingEscapeErrMsg != "" {
+				return token.Token{}, l.finalizeStringErr(pendingEscapeErrMsg)
+			}
 			return token.Token{}, l.errorf("unfinished string near %s", l.stringNearExcludeCurrent())
 		case '\\':
 			ch, isUnicode, err := l.scanEscape()
 			if err != nil {
+				// If we already have a deferred "decimal escape too large"
+				// pending, swallow any later escape error: we report the
+				// first offender and continue consuming to the closing
+				// delimiter for a clean post-string lexer state.
+				if pendingEscapeErrMsg != "" {
+					continue
+				}
+				// Defer "decimal escape too large" only: Lua 5.4/5.5 reports
+				// this error with the full literal (through the closing
+				// quote) as the "near" context, so we must continue
+				// consuming until the delimiter. Other escape errors (bad
+				// hex digit, invalid escape, etc.) are reported at their
+				// exact location with a shorter near-clause, matching
+				// Lua's original diagnostic layout — return immediately.
+				if pe, ok := err.(*token.PosError); ok &&
+					strings.HasPrefix(pe.Msg, "decimal escape too large") {
+					pendingEscapeErrMsg = pe.Msg
+					continue
+				}
 				return token.Token{}, err
+			}
+			if pendingEscapeErrMsg != "" {
+				// Still consuming through to closing quote; don't buffer.
+				continue
 			}
 			if ch != -2 { // -2 is sentinel for \z (skip whitespace, write nothing)
 				if isUnicode {
@@ -45,9 +82,20 @@ func (l *Lexer) scanString(pos token.Pos) (token.Token, error) {
 				}
 			}
 		default:
-			l.writeCurrent(&buf)
+			if pendingEscapeErrMsg == "" {
+				l.writeCurrent(&buf)
+			}
 			l.readChar()
 		}
+	}
+	// Hit the closing delimiter. If there was a deferred escape error,
+	// report it with the full literal as "near" context, then advance
+	// past the closing delimiter so the lexer is in a clean state for
+	// subsequent token scans.
+	if pendingEscapeErrMsg != "" {
+		err := l.finalizeStringErr(pendingEscapeErrMsg)
+		l.readChar() // advance past closing delimiter
+		return token.Token{}, err
 	}
 	// Capture raw source text with delimiters for "near" context in error messages.
 	// l.pos is past the closing delimiter (readChar already consumed it into l.current).
