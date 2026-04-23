@@ -301,14 +301,17 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, 
 		return vm.callMetamethod(mmName[2:], mm, v1, v2)
 	}
 
-	if !ok1 {
-		if v1.IsNumber() {
+	// Match Lua 5.4 luaT_trybinTM ordering: if both operands are numbers,
+	// the failure is a non-integer-representable number; otherwise the
+	// failure is the non-number operand (strings never coerce for bitwise).
+	if v1.IsNumber() && v2.IsNumber() {
+		if !ok1 {
 			return Nil, vm.runtimeErrorForNumber(regB)
 		}
-		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v1), vm.varInfo(regB))
-	}
-	if v2.IsNumber() {
 		return Nil, vm.runtimeErrorForNumber(regC)
+	}
+	if !v1.IsNumber() {
+		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v1), vm.varInfo(regB))
 	}
 	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v2), vm.varInfo(regC))
 }
@@ -343,14 +346,17 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value, regB int) (Value, error)
 		return vm.callMetamethod(mmName[2:], mm, v, kv)
 	}
 
-	if !ok1 {
-		if v.IsNumber() {
+	// Match Lua 5.4 luaT_trybinTM ordering: if both operands are numbers,
+	// the failure is a non-integer-representable number; otherwise the
+	// failure is the non-number operand (strings never coerce for bitwise).
+	if v.IsNumber() && kv.IsNumber() {
+		if !ok1 {
 			return Nil, vm.runtimeErrorForNumber(regB)
 		}
-		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(regB))
-	}
-	if kv.IsNumber() {
 		return Nil, vm.runtimeError("number has no integer representation")
+	}
+	if !v.IsNumber() {
+		return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v), vm.varInfo(regB))
 	}
 	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value", vm.ObjTypeName(kv))
 }
