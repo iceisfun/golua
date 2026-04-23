@@ -54,7 +54,7 @@ func TestDebugTracebackRegression_NativeFramesUseCFormatting(t *testing.T) {
     return debug.traceback("", 0)
   end)
   assert(ok, tb)
-  assert(tb:find("[C]: in function 'pcall'", 1, true), tb)
+  assert(tb:find("[C]: in global 'pcall'", 1, true), tb)
 end
 
 capture()
@@ -106,7 +106,7 @@ assert(type(err) == "string", err)
 local tb = debug.traceback(co)
 assert(tb:find("stack traceback:", 1, true), tb)
 assert(tb:find("boom", 1, true), tb)
-assert(tb:find("function 'error'", 1, true), tb)
+assert(tb:find("global 'error'", 1, true), tb)
 	`
 	runLuaWithDebug(t, source, "test_debug_traceback_errored_coroutine", provider)
 }
@@ -123,7 +123,7 @@ end
 
 local ok, msg = run()
 assert(ok == false, tostring(ok))
-assert(msg:find("[C]: in function 'debug.traceback'", 1, true), msg)
+assert(msg:find("[C]: in field 'debug.traceback'", 1, true), msg)
 `
 	runLuaWithDebug(t, source, "test_debug_traceback_qualified_c_name", provider)
 }
@@ -131,10 +131,10 @@ assert(msg:find("[C]: in function 'debug.traceback'", 1, true), msg)
 func TestDebugTracebackRegression_TopLevelNativeFramesResolveDisplayName(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	source := `local cases = {
-  {fn = function() return math.abs() end, want = "[C]: in function 'math.abs'"},
-  {fn = function() return string.byte() end, want = "[C]: in function 'string.byte'"},
-  {fn = function() return table.insert({}) end, want = "[C]: in function 'table.insert'"},
-  {fn = function() return pcall() end, want = "[C]: in function 'pcall'"},
+  {fn = function() return math.abs() end, want = "[C]: in field 'math.abs'"},
+  {fn = function() return string.byte() end, want = "[C]: in field 'string.byte'"},
+  {fn = function() return table.insert({}) end, want = "[C]: in field 'table.insert'"},
+  {fn = function() return pcall() end, want = "[C]: in global 'pcall'"},
 }
 
 for _, tc in ipairs(cases) do

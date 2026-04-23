@@ -55,7 +55,7 @@ func TestRunCLI_TopLevelNativeErrorIncludesTraceback(t *testing.T) {
 	if !strings.Contains(msg, "lua: ") {
 		t.Fatalf("expected program prefix, got: %s", msg)
 	}
-	if !strings.Contains(msg, "[C]: in function 'math.abs'") {
+	if !strings.Contains(msg, "[C]: in field 'math.abs'") {
 		t.Fatalf("expected native traceback frame, got: %s", msg)
 	}
 	if !strings.Contains(msg, "in main chunk") {
@@ -78,7 +78,7 @@ func TestRunCLI_HookErrorIncludesHookTraceback(t *testing.T) {
 	if !strings.Contains(msg, "in hook '?'") {
 		t.Fatalf("expected hook frame, got: %s", msg)
 	}
-	if !strings.Contains(msg, "[C]: in function 'error'") {
+	if !strings.Contains(msg, "[C]: in global 'error'") {
 		t.Fatalf("expected outer traceback for hook error, got: %s", msg)
 	}
 }
@@ -148,13 +148,13 @@ print(tostring(err))
 	if !strings.Contains(msg, "inner") {
 		t.Fatalf("expected inner error message, got: %s", msg)
 	}
-	if !strings.Contains(msg, "[C]: in function 'error'") {
+	if !strings.Contains(msg, "[C]: in global 'error'") {
 		t.Fatalf("expected inner error frame, got: %s", msg)
 	}
 	if !strings.Contains(msg, "in function <") {
 		t.Fatalf("expected inner __tostring frame, got: %s", msg)
 	}
-	if !strings.Contains(msg, "[C]: in function 'tostring'") {
+	if !strings.Contains(msg, "[C]: in global 'tostring'") {
 		t.Fatalf("expected outer tostring frame, got: %s", msg)
 	}
 }

@@ -12,10 +12,11 @@ local ok, tb = xpcall(caller, debug.traceback)
 print(tb:find("in function 'gfunc'") ~= nil)
 --> =true
 
--- Non-tail call (should always show name — baseline)
+-- Non-tail call (should always show name — baseline).
+-- lua5.5 reports "in global 'gfunc'" because gfunc is resolved via _ENV.
 function caller2() local r = gfunc(); return r end
 local ok2, tb2 = xpcall(caller2, debug.traceback)
-print(tb2:find("in function 'gfunc'") ~= nil)
+print(tb2:find("in global 'gfunc'") ~= nil)
 --> =true
 
 -- Tail call chain with (...tail calls...) marker
