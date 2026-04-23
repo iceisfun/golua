@@ -1046,16 +1046,33 @@ func TestDebug_Traceback_BeyondStack(t *testing.T) {
 	runLuaWithDebug(t, src, "test_traceback_beyond_stack", provider)
 }
 
-// Bug 8: debug.upvaluejoin with native functions should error with "Lua function expected"
+// Bug 8: debug.upvaluejoin with native functions.
+// Lua 5.5 (ldblib.c db_upvaluejoin): upvalue indices are validated first; an
+// invalid index errors at the index-arg (#2/#4) with "invalid upvalue index".
+// Only when indices are valid does the "Lua function expected" check fire.
+// Here print has no upvalues, so the #2 invalid-index path wins.
 func TestDebug_UpvalueJoin_NativeFunc(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	src := `
-		-- upvaluejoin rejects native functions as "Lua function expected"
-		-- matching Lua 5.4 behavior
+		-- print has no upvalues: invalid-index error at arg #2
 		local ok, err = pcall(debug.upvaluejoin, print, 1, print, 1)
 		assert(not ok, "should error for native function")
-		assert(string.find(err, "Lua function expected"),
-			"should say 'Lua function expected', got: " .. tostring(err))
+		assert(string.find(err, "invalid upvalue index", 1, true),
+			"should say 'invalid upvalue index', got: " .. tostring(err))
+		assert(string.find(err, "bad argument #2", 1, true),
+			"should report arg #2, got: " .. tostring(err))
+
+		-- When a Lua closure's index is valid but f2 is a C function with a
+		-- valid index too, "Lua function expected" fires at arg #3.
+		local it = string.gmatch("ab", ".")
+		local mk = function() local x = 1; return function() return x end end
+		local f = mk()
+		local ok2, err2 = pcall(debug.upvaluejoin, f, 1, it, 1)
+		assert(not ok2, "should error for native f2")
+		assert(string.find(err2, "Lua function expected", 1, true),
+			"should say 'Lua function expected', got: " .. tostring(err2))
+		assert(string.find(err2, "bad argument #3", 1, true),
+			"should report arg #3, got: " .. tostring(err2))
 	`
 	runLuaWithDebug(t, src, "test_upvaluejoin_native", provider)
 }
