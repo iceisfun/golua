@@ -216,6 +216,15 @@ do
    return a<b, "dummy"
   end
 
+  -- Lua 5.4 removed the implicit __le -> not (b < a) fallback, so __le must
+  -- be defined explicitly for <=/>= to work on tables.
+  t.__le = function (a,b,c)
+    assert(c == nil)
+    if type(a) == 'table' then a = a.x end
+    if type(b) == 'table' then b = b.x end
+   return a<=b, "dummy"
+  end
+
   function Op(x) return setmetatable({x=x}, t) end
 
   local function test ()
@@ -234,14 +243,6 @@ do
   end
 
   test()
-
-  t.__le = function (a,b,c)
-    assert(c == nil)
-    if type(a) == 'table' then a = a.x end
-    if type(b) == 'table' then b = b.x end
-   return a<=b, "dummy"
-  end
-
   test()  -- retest comparisons, now using both 'lt' and 'le'
   print("PASS")
 end
@@ -275,9 +276,11 @@ do
 
   assert(Set{1,2,3} < Set{1,2,3,4})
   assert(not(Set{1,2,3,4} < Set{1,2,3,4}))
-  assert((Set{1,2,3,4} <= Set{1,2,3,4}))
-  assert((Set{1,2,3,4} >= Set{1,2,3,4}))
-  assert((Set{1,3} <= Set{3,5}))   -- wrong!! model needs a 'le' method ;-)
+  -- Lua 5.4 removed the implicit __le -> not (b < a) fallback, so <=/>= on
+  -- tables without __le must raise a comparison error.
+  assert(not pcall(function() return Set{1,2,3,4} <= Set{1,2,3,4} end))
+  assert(not pcall(function() return Set{1,2,3,4} >= Set{1,2,3,4} end))
+  assert(not pcall(function() return Set{1,3} <= Set{3,5} end))
 
   t.__le = function (a,b)
     for k in pairs(a) do
@@ -379,11 +382,14 @@ do
   d = {}
   t1.__eq = function () return true end
   t1.__lt = function () return true end
+  -- Lua 5.4 removed the __le -> __lt fallback, so use an explicit __le here.
+  t1.__le = function () return false end
   setmetatable(d, t1)
   assert(c == d and c < d and not(d <= c))
   t2 = {}
   t2.__eq = t1.__eq
   t2.__lt = t1.__lt
+  t2.__le = t1.__le
   setmetatable(d, t2)
   assert(c == d and c < d and not(d <= c))
   print("PASS")

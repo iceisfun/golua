@@ -441,10 +441,8 @@ do
 
   assert(run(function () if (a>=b) then return '>=' else return '<' end end,
          {"le", "sub"}) == "<")
-  -- '<=' using '<'
-  mt.__le = nil
-  assert(run(function () if (a<=b) then return '<=' else return '>' end end,
-         {"lt"}) == "<=")
+  -- Lua 5.4 removed the __le -> not (b < a) fallback, so <=/>= on tables
+  -- without __le raises an error rather than invoking __lt.
   assert(run(function () if (a==b) then return '==' else return '~=' end end,
          {"eq"}) == "~=")
 
@@ -491,7 +489,9 @@ do
           (type(a) == "table" and a.x or a) < (type(b) == "table" and b.x or b)
       end,
     }
-    local mt2 = { __lt = mt1.__lt }   -- no __le
+    -- Lua 5.4 removed the implicit __le -> __lt fallback, so mt2 needs __le
+    -- explicitly for <=/>= to work on these tables.
+    local mt2 = { __lt = mt1.__lt, __le = mt1.__le }
 
     local function run (f)
       local co = coroutine.wrap(f)

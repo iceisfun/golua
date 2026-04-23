@@ -185,13 +185,16 @@ do
 end
 
 -- --------------------------------------------------------------------------
--- [Test 13] __le that uses __lt
--- In Lua 5.4, a <= b tries __le first, then falls back to not (b < a)
+-- [Test 13] __le must be defined for <=; the pre-5.4 __lt fallback was removed.
+-- With only __lt set, `a <= b` between tables must raise a comparison error.
 do
   local mt = { __lt = function (a, b) return false end }
   local t = {}
   setmetatable(t, mt)
-  assert({} <= t)
+  local ok, err = pcall(function() return {} <= t end)
+  assert(not ok, "expected comparison error, got no error")
+  assert(string.find(err, "attempt to compare two table values", 1, true),
+    "expected 'attempt to compare two table values', got: " .. tostring(err))
 end
 
 -- --------------------------------------------------------------------------

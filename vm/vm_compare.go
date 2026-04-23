@@ -88,23 +88,9 @@ func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
 		return res.ToBool(), nil
 	}
 
-	// 3. Fallback to __lt ( b < a )
-	// Lua spec: if __le is not present, try __lt(b, a)
-	// a <= b  ===  not (b < a)
-	op = "__lt"
-	mm = vm.getMetafield(v2, op)
-	if mm.IsNil() {
-		mm = vm.getMetafield(v1, op)
-	}
-
-	if !mm.IsNil() {
-		res, err := vm.callMetamethod("lt", mm, v2, v1) // Note swapped args: b < a
-		if err != nil {
-			return false, err
-		}
-		return !res.ToBool(), nil
-	}
-
+	// Lua 5.4 removed the implicit __le -> not (b < a) fallback.
+	// With only __lt defined, a <= b must raise a comparison error.
+	// See Lua 5.5 reference manual section 2.4.
 	return false, vm.compareError(v1, v2)
 }
 
