@@ -164,6 +164,22 @@ func (l *Lexer) stringErrorf(format string, args ...any) error {
 	return &token.PosError{Pos: l.currentPos(), Msg: msg + " near " + l.stringNear()}
 }
 
+// finalizeStringErr constructs a PosError for a deferred escape-sequence
+// error after the lexer has consumed through to the closing delimiter (or
+// EOF/newline). The "near" context spans the opening delimiter through the
+// current position, matching Lua 5.4/5.5's diagnostic format. If the
+// pendingMsg already contains " near '", its existing near-clause is
+// stripped and replaced so the final message quotes the full literal.
+func (l *Lexer) finalizeStringErr(pendingMsg string) error {
+	// Strip any " near '...'" suffix that was attached when the escape
+	// error was first raised (stringErrorf appends one). We'll rebuild it
+	// with the full literal's range below.
+	if idx := strings.Index(pendingMsg, " near '"); idx >= 0 {
+		pendingMsg = pendingMsg[:idx]
+	}
+	return &token.PosError{Pos: l.currentPos(), Msg: pendingMsg + " near " + l.stringNear()}
+}
+
 // incLine handles newline sequences: \n, \r, \n\r, \r\n.
 // Returns an error if the line count exceeds maxLines (Lua 5.4 MAX_INT).
 func (l *Lexer) incLine() error {
