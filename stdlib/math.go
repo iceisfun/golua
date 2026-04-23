@@ -385,7 +385,7 @@ func mathRad(v *vm.VM) int {
 func mathPow(v *vm.VM) int {
 	x := getNumber(v, 1, "math.pow")
 	y := getNumber(v, 2, "math.pow")
-	v.Set(0, vm.NewFloat(math.Pow(x, y)))
+	v.Set(0, vm.NewFloat(vm.PowWithSubnormalFix(x, y)))
 	return 1
 }
 

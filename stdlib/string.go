@@ -48,7 +48,7 @@ func openString(v *vm.VM) {
 	strMeta.SetString("__div", vm.NewNativeFunc(makeStringArith("div", func(a, b float64) float64 { return a / b }, nil)))
 	strMeta.SetString("__idiv", vm.NewNativeFunc(makeStringArithFloorDiv()))
 	strMeta.SetString("__mod", vm.NewNativeFunc(makeStringArithMod()))
-	strMeta.SetString("__pow", vm.NewNativeFunc(makeStringArith("pow", func(a, b float64) float64 { return math.Pow(a, b) }, nil)))
+	strMeta.SetString("__pow", vm.NewNativeFunc(makeStringArith("pow", func(a, b float64) float64 { return vm.PowWithSubnormalFix(a, b) }, nil)))
 	strMeta.SetString("__unm", vm.NewNativeFunc(stringMetaUnm))
 
 	v.SetStringMeta(strMeta)
