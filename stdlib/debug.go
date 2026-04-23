@@ -836,37 +836,66 @@ func luaDebugSetHook(v *vm.VM) int {
 
 // debug.upvaluejoin(f1, n1, f2, n2)
 // Makes the n1-th upvalue of f1 refer to the same storage as the n2-th upvalue of f2.
+// Lua 5.5 ordering (see ldblib.c db_upvaluejoin):
+//  1. checkupval(arg1, arg2): argf must be a function; then the upvalue index is
+//     validated against ANY function kind; an invalid index errors at the
+//     index-arg (#2 or #4) with "invalid upvalue index".
+//  2. After both indices validate, both functions must be Lua closures; a C
+//     function errors at its function-arg (#1 or #3) with "Lua function expected".
+//  3. Perform the join.
 func luaDebugUpvalueJoin(v *vm.VM) int {
 	n1 := getInt(v, 2, "debug.upvaluejoin")
 
 	f1 := v.Get(1)
-	if !f1.IsFunction() {
+	if !f1.IsCallable() {
 		got := f1.Type()
 		if v.ArgCount() < 1 {
 			got = "no value"
 		}
-		callerArgError(v, 1, "debug.upvaluejoin", fmt.Sprintf("Lua function expected, got %s", got))
+		callerArgError(v, 1, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
 	}
 
-	c1 := f1.AsClosure()
-	if n1 < 1 || int(n1) > len(c1.Upvalues) {
+	// Determine f1's upvalue count without requiring it to be a Lua closure.
+	var n1ups int
+	if c1 := f1.AsClosure(); c1 != nil {
+		n1ups = len(c1.Upvalues)
+	} else {
+		n1ups = f1.NativeFuncNups()
+	}
+	if n1 < 1 || int(n1) > n1ups {
 		callerArgError(v, 2, "debug.upvaluejoin", "invalid upvalue index")
 	}
 
 	n2 := getInt(v, 4, "debug.upvaluejoin")
 	f2 := v.Get(3)
-	if !f2.IsFunction() {
+	if !f2.IsCallable() {
 		got := f2.Type()
 		if v.ArgCount() < 3 {
 			got = "no value"
 		}
-		callerArgError(v, 3, "debug.upvaluejoin", fmt.Sprintf("Lua function expected, got %s", got))
+		callerArgError(v, 3, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
 	}
-	c2 := f2.AsClosure()
-	if n2 < 1 || int(n2) > len(c2.Upvalues) {
+	var n2ups int
+	if c2 := f2.AsClosure(); c2 != nil {
+		n2ups = len(c2.Upvalues)
+	} else {
+		n2ups = f2.NativeFuncNups()
+	}
+	if n2 < 1 || int(n2) > n2ups {
 		callerArgError(v, 4, "debug.upvaluejoin", "invalid upvalue index")
 	}
 
+	// After both indices validate, require both operands to be Lua closures.
+	// C closures cannot share upvalue storage with Lua closures.
+	if !f1.IsFunction() {
+		callerArgError(v, 1, "debug.upvaluejoin", "Lua function expected")
+	}
+	if !f2.IsFunction() {
+		callerArgError(v, 3, "debug.upvaluejoin", "Lua function expected")
+	}
+
+	c1 := f1.AsClosure()
+	c2 := f2.AsClosure()
 	c1.Upvalues[int(n1)-1] = c2.Upvalues[int(n2)-1]
 	return 0
 }
