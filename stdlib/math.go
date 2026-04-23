@@ -256,11 +256,13 @@ func mathFmod(v *vm.VM) int {
 func mathLog(v *vm.VM) int {
 	x := getNumber(v, 1, "math.log")
 	var result float64
+	base10 := false
 	if v.Get(2).IsNil() {
 		result = math.Log(x)
 	} else {
 		base := getNumber(v, 2, "math.log")
 		if base == 10.0 {
+			base10 = true
 			result = math.Log10(x)
 		} else if base == 2.0 {
 			result = math.Log2(x)
@@ -268,10 +270,17 @@ func mathLog(v *vm.VM) int {
 			result = math.Log(x) / math.Log(base)
 		}
 	}
-	// Go's math.Log returns positive NaN for negative inputs;
-	// C's log returns negative NaN. Force negative NaN to match Lua 5.4.
 	if math.IsNaN(result) {
-		result = math.Copysign(math.NaN(), -1)
+		if base10 {
+			// Go's math.Log10 returns signed NaN for negative inputs;
+			// glibc's log10 returns positive NaN. Canonicalize to match Lua 5.5.
+			result = math.NaN()
+		} else {
+			// Go's math.Log returns positive NaN for negative inputs;
+			// C's log returns negative NaN. Force negative NaN to match Lua 5.5
+			// for the natural-log and non-10 base paths.
+			result = math.Copysign(math.NaN(), -1)
+		}
 	}
 	v.Set(0, vm.NewFloat(result))
 	return 1
