@@ -280,11 +280,18 @@ func coResume(v *vm.VM) int {
 		if err != nil {
 			v.Set(0, vm.False)
 			// Preserve the original Lua error value if available
+			var errVal vm.Value
 			if le, ok := err.(*vm.LuaError); ok {
-				v.Set(1, le.Value)
+				errVal = le.Value
 			} else {
-				v.Set(1, vm.NewString(err.Error()))
+				errVal = vm.NewString(err.Error())
 			}
+			// Lua 5.5: nil error object is replaced by "<no error object>".
+			// Apply symmetrically with pcall/xpcall on the resume path.
+			if errVal.IsNil() {
+				errVal = vm.NewString("<no error object>")
+			}
+			v.Set(1, errVal)
 			return 2
 		}
 
