@@ -198,6 +198,22 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 	for i := 0; i < nCode; i++ {
 		p.Code[i] = u.readInstruction()
 	}
+	// Lua 5.4 encodes MMBIN tags with its own TM_* ordinals (fast-access TMs
+	// first, so TM_ADD=6). GoLua's own ordinals start at TM_ADD=0. Translate
+	// the C field of MMBIN/MMBINI/MMBINK instructions from the reference
+	// encoding to GoLua's, so later decoding (and traceback "metamethod 'X'"
+	// labels) is unambiguous.
+	for i, inst := range p.Code {
+		op := inst.OpCode()
+		if op != OP_MMBIN && op != OP_MMBINI && op != OP_MMBINK {
+			continue
+		}
+		tag, ok := MetamethodTagFromLua54(inst.C())
+		if !ok {
+			continue
+		}
+		p.Code[i] = ABC(op, inst.A(), inst.B(), int(tag), inst.K())
+	}
 
 	// Constants
 	nK := u.readInt()

@@ -6,15 +6,14 @@ import (
 	"github.com/iceisfun/golua/v2/compiler"
 )
 
-// decodeBytecodeMetamethodTag normalizes metamethod tags coming from bytecode.
-// Lua 5.4 binary chunks encode OP_MMBIN* tags with a +6 offset relative to the
-// public TM_* ordinals, while GoLua's compiler currently emits the raw TM_*
-// values. Accept both so loaded reference chunks and locally compiled chunks
-// behave the same.
+// decodeBytecodeMetamethodTag returns the MetamethodTag stored in the C field
+// of an OP_MMBIN* instruction. By this point the tag is always in GoLua's
+// ordinal space: locally compiled chunks emit raw TM_* ordinals, and Lua 5.4
+// reference chunks are translated at undump time (see undump.go). Previously
+// this function subtracted 6 for any raw >= 6, which collided with our own
+// TM_IDIV (ordinal 6) and caused idiv frames to be labelled 'add' in
+// tracebacks.
 func decodeBytecodeMetamethodTag(raw int) compiler.MetamethodTag {
-	if raw >= 6 && raw <= int(compiler.TM_EQ)+6 {
-		return compiler.MetamethodTag(raw - 6)
-	}
 	return compiler.MetamethodTag(raw)
 }
 
