@@ -1,12 +1,5 @@
--- table.create(narr, nrec) preallocates a table with capacity hints.
+-- table.create(narr [, nrec]) preallocates a table with capacity hints.
 -- The returned table is always empty regardless of the capacity hints.
-
--- No arguments: same as {}
-local t1 = table.create()
-print(type(t1))
---> =table
-print(#t1)
---> =0
 
 -- Array slots only
 local t2 = table.create(10)
@@ -40,4 +33,11 @@ local t4 = table.create(0, 0)
 print(type(t4))
 --> =table
 print(#t4)
+--> =0
+
+-- table.create(0) is valid (nrec defaults to 0)
+local t5 = table.create(0)
+print(type(t5))
+--> =table
+print(#t5)
 --> =0

@@ -547,22 +547,39 @@ func tableMove(v *vm.VM) int {
 	return 1
 }
 
-// table.create([narr [, nrec]])
+// maxTableCreateSize caps narr/nrec so `make([]...)` can never panic with
+// "makeslice: cap out of range". Lua 5.5's reference implementation uses
+// MAXASIZE (INT_MAX); for a sandboxed Go host any value this large would
+// realistically OOM the process. 1<<30 (~1G entries) is absurdly large for
+// a preallocation hint while leaving headroom before Go's own allocator
+// rejects the request.
+const maxTableCreateSize = 1 << 30
+
+// table.create(narr [, nrec])
 // Creates a new empty table with preallocated capacity for narr array slots
-// and nrec hash slots. Both parameters default to 0 if not provided.
+// and nrec hash slots. narr is required; nrec defaults to 0. Negative or
+// excessively large values are rejected before any slice allocation so that
+// no Go-internal allocation error can surface to Lua.
 func tableCreate(v *vm.VM) int {
-	narr := 0
-	nrec := 0
-	if !v.Get(1).IsNil() {
-		narr = int(getInt(v, 1, "table.create"))
+	if v.ArgCount() < 1 {
+		callerArgError(v, 1, "table.create", "number expected, got no value")
 	}
-	if !v.Get(2).IsNil() {
-		nrec = int(getInt(v, 2, "table.create"))
+	narr := getInt(v, 1, "table.create")
+	if narr < 0 || narr > maxTableCreateSize {
+		callerArgError(v, 1, "table.create", "out of range")
+	}
+
+	var nrec int64
+	if v.ArgCount() >= 2 && !v.Get(2).IsNil() {
+		nrec = getInt(v, 2, "table.create")
+		if nrec < 0 || nrec > maxTableCreateSize {
+			callerArgError(v, 2, "table.create", "out of range")
+		}
 	}
 
 	var tbl *vm.Table
 	if narr > 0 || nrec > 0 {
-		tbl = vm.NewTableWithSize(narr, nrec)
+		tbl = vm.NewTableWithSize(int(narr), int(nrec))
 	} else {
 		tbl = vm.NewEmptyTable()
 	}
