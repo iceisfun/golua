@@ -378,7 +378,7 @@ func foldArith(e *ast.BinopExpr) ast.Expr {
 		}
 		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
 	case "^":
-		r := math.Pow(lFloat, rFloat)
+		r := powWithSubnormalFix(lFloat, rFloat)
 		if math.IsNaN(r) || math.IsInf(r, 0) {
 			return nil // leave edge cases to runtime for correct NaN/Inf sign
 		}
@@ -1212,3 +1212,24 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 		fs.freeReg = tableReg
 	}
 }
+
+// powWithSubnormalFix computes x^y with a rescaling fix for positive
+// subnormal (denormal) bases, matching libm's pow. See vm/vm_pow.go for
+// the full rationale. Duplicated here because the compiler package must
+// not import vm.
+func powWithSubnormalFix(x, y float64) float64 {
+	if x == 0 || math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) {
+		return math.Pow(x, y)
+	}
+	const smallestNormal = 2.2250738585072014e-308 // 2^-1022
+	if math.Abs(x) >= smallestNormal {
+		return math.Pow(x, y)
+	}
+	if x < 0 {
+		return math.Pow(x, y)
+	}
+	mantBits := math.Float64bits(x) & ((1 << 52) - 1)
+	m := float64(mantBits)
+	return math.Pow(m, y) * math.Exp2(-1074.0*y)
+}
+

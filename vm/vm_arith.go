@@ -52,7 +52,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, er
 		case compiler.OP_MOD:
 			return NewFloat(luaNumMod(n1, n2)), nil
 		case compiler.OP_POW:
-			return NewFloat(math.Pow(n1, n2)), nil
+			return NewFloat(PowWithSubnormalFix(n1, n2)), nil
 		}
 	}
 
@@ -113,7 +113,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, er
 		case compiler.OP_MOD:
 			result = luaNumMod(n1, n2)
 		case compiler.OP_POW:
-			result = math.Pow(n1, n2)
+			result = PowWithSubnormalFix(n1, n2)
 		}
 		return NewFloat(result), nil
 	}
@@ -155,7 +155,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 		case compiler.OP_MODK:
 			return NewFloat(luaNumMod(n1, n2)), nil
 		case compiler.OP_POWK:
-			return NewFloat(math.Pow(n1, n2)), nil
+			return NewFloat(PowWithSubnormalFix(n1, n2)), nil
 		}
 	}
 
@@ -215,7 +215,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 		case compiler.OP_MODK:
 			result = luaNumMod(n1, n2)
 		case compiler.OP_POWK:
-			result = math.Pow(n1, n2)
+			result = PowWithSubnormalFix(n1, n2)
 		}
 		return NewFloat(result), nil
 	}
