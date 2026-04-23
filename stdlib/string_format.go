@@ -745,7 +745,15 @@ func formatAltGeneralFloat(spec string, specChar byte, n float64) string {
 	core := fmt.Sprintf("%."+strconv.Itoa(prec)+string(specChar), abs)
 	isExp := strings.ContainsAny(core, "eE")
 	origExp := decimalExponent(abs)
-	crossedToExp := isExp && origExp < prec
+	// C's %g chooses exp form when origExp < -4 or origExp >= prec; otherwise
+	// fixed form. "crossedToExp" captures the edge case where Go picked exp form
+	// even though C would have picked fixed — this only happens when rounding
+	// bumped the magnitude across the prec boundary (e.g. %#.2g of 99.99995
+	// rounds to 100 = 1e+02). In that case libc emits the mantissa with a
+	// trailing '.' but no padded trailing zeros. For values legitimately in
+	// exp form (origExp < -4 or origExp >= prec), we still want the full
+	// prec-sig-digit mantissa with trailing zeros under '#'.
+	crossedToExp := isExp && origExp >= -4 && origExp < prec
 
 	var out string
 	if isExp {
