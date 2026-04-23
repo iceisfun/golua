@@ -21,8 +21,10 @@ assert(err:find("got no value"), "status(): " .. err)
 -- coroutine.close
 local ok, err = pcall(coroutine.close, 42)
 assert(err:find("got number"), "close(42): " .. err)
+-- Lua 5.5: no-arg defaults to the current thread; on main this yields
+-- "cannot close main thread", not "got no value".
 local ok, err = pcall(coroutine.close)
-assert(err:find("got no value"), "close(): " .. err)
+assert(err:find("cannot close main thread"), "close(): " .. err)
 
 -- coroutine.resume
 local ok, err = pcall(coroutine.resume, "x")

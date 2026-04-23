@@ -663,8 +663,22 @@ func coWrap(v *vm.VM) int {
 }
 
 // coroutine.close(co) -> ok [, errmsg]
+// Lua 5.5: if no argument is given, defaults to the current thread. Closing
+// the main thread always errors with "cannot close main thread".
 func coClose(v *vm.VM) int {
-	coTable := getThreadTable(v, 1, "coroutine.close")
+	var coTable *vm.Table
+	if v.ArgCount() < 1 {
+		// Default to the current thread (matches Lua 5.5 getoptco behavior).
+		thread := v.ThreadObj()
+		if tbl, ok := thread.AsTable().(*vm.Table); ok && tbl != nil && tbl.IsThread() {
+			coTable = tbl
+		} else {
+			callerArgError(v, 1, "coroutine.close", "thread expected, got no value")
+		}
+	} else {
+		coTable = getThreadTable(v, 1, "coroutine.close")
+	}
+
 	idVal := coTable.Get(vm.NewString("__coroutine_id"))
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
@@ -672,15 +686,27 @@ func coClose(v *vm.VM) int {
 
 	id, _ := idVal.ToInt()
 
-	// Cannot close the running (main) thread
-	if int(id) == v.CoroutineID() {
-		panic("cannot close a running coroutine")
+	// The main thread has id=0. Closing it (whether passed explicitly or via
+	// the no-arg default when running on main) is always an error per 5.5.
+	if int(id) == 0 {
+		// When called from a coroutine, the main thread is in "normal" status
+		// and "cannot close a normal coroutine" would be more precise, but
+		// Lua 5.5's dispatch order checks the main-thread identity only on the
+		// RUNNING branch. In practice, the main thread is either currently
+		// running (when id==v.CoroutineID()==0) or is the parent of a running
+		// coroutine (status == normal). 5.5's error for the latter is still
+		// "cannot close a normal coroutine", but our only invariant is that
+		// the main thread itself can never be closed: report the specific
+		// 5.5 message when we are running on main.
+		if v.CoroutineID() == 0 {
+			panic("cannot close main thread")
+		}
+		panic("cannot close a normal coroutine")
 	}
 
-	// The main thread (id=0) is never in the coroutines map.
-	// When called from a coroutine, the main thread is in "normal" status.
-	if int(id) == 0 {
-		panic("cannot close a normal coroutine")
+	// Cannot close the currently-running coroutine (from within itself).
+	if int(id) == v.CoroutineID() {
+		panic("cannot close a running coroutine")
 	}
 
 	reg := getCoRegistry(v)

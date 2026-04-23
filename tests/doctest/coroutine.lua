@@ -135,16 +135,16 @@ do
     --> ~false\t.*cannot resume dead coroutine
 end
 
--- Test coroutine.close() (5.4)
+-- Test coroutine.close() (5.5: no-arg defaults to current thread; main errors)
 do
     print(pcall(coroutine.close))
-    --> ~false\t.*thread expected, got no value
+    --> ~false\t.*cannot close main thread
 
     print(pcall(coroutine.close, 1))
     --> ~false\t.*thread expected
 
     print(pcall(coroutine.close, coroutine.running()))
-    --> ~false\t.*cannot close a running coroutine
+    --> ~false\t.*cannot close main thread
 
     local co = coroutine.create(function()
         coroutine.yield()

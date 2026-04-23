@@ -14,9 +14,9 @@ do
   local st, msg = coroutine.close(co)
   assert(st and msg == nil)
 
-  -- cannot close the running coroutine
+  -- cannot close the main thread (Lua 5.5: message says "main thread")
   local st, msg = pcall(coroutine.close, coroutine.running())
-  assert(not st and string.find(msg, "running"))
+  assert(not st and string.find(msg, "main"))
 
   -- closing a coroutine after an error
   local co = coroutine.create(error)
