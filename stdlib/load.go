@@ -41,6 +41,12 @@ const earlySyntaxCheckInterval2 = 200
 
 func setLoadReaderError(v *vm.VM, err error) {
 	preserveRaw := v.InDirectProtectedLoad() || v.InUserProtected()
+	// Reference Lua only adds a traceback to load's returned error message
+	// when an errfunc (message handler) is active on the stack. The standalone
+	// interpreter installs one in docall, so the main thread effectively always
+	// has one; coroutines have none unless an explicit xpcall handler is set.
+	// When there is no active handler, the message must be returned bare.
+	appendTraceback := v.CoroutineID() == 0
 	if le, ok := err.(*vm.LuaError); ok {
 		if !le.Value.IsString() {
 			if preserveRaw {
@@ -53,8 +59,10 @@ func setLoadReaderError(v *vm.VM, err error) {
 			} else {
 				msg = fmt.Sprintf("(error object is a %s value)", le.Value.Type())
 			}
-			if tb := v.TracebackFromLastError("", 0); tb != "" {
-				msg += "\n" + tb
+			if appendTraceback {
+				if tb := v.TracebackFromLastError("", 0); tb != "" {
+					msg += "\n" + tb
+				}
 			}
 			v.Set(1, vm.NewString(msg))
 			return
@@ -64,8 +72,10 @@ func setLoadReaderError(v *vm.VM, err error) {
 			return
 		}
 		msg := le.Value.AsString()
-		if tb := v.TracebackFromLastError("", 0); tb != "" {
-			msg += "\n" + tb
+		if appendTraceback {
+			if tb := v.TracebackFromLastError("", 0); tb != "" {
+				msg += "\n" + tb
+			}
 		}
 		v.Set(1, vm.NewString(msg))
 		return
