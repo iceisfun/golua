@@ -154,6 +154,11 @@ func luaLoad(v *vm.VM) int {
 			callerArgError(v, 3, "load", fmt.Sprintf("string expected, got %s", m.Type()))
 		}
 	}
+	// Lua 5.5: mode strings containing 'B' are reserved for fixed-buffer
+	// loads (not exposed to Lua code) and must be rejected.
+	if strings.Contains(mode, "B") {
+		callerArgError(v, 3, "load", "invalid mode")
+	}
 	env := v.Get(4)
 	hasEnv := v.ArgCount() >= 4
 
@@ -436,6 +441,11 @@ func luaLoadfile(v *vm.VM) int {
 		} else {
 			callerArgError(v, 2, "loadfile", fmt.Sprintf("string expected, got %s", m.Type()))
 		}
+	}
+	// Lua 5.5: mode strings containing 'B' are reserved for fixed-buffer
+	// loads (not exposed to Lua code) and must be rejected.
+	if strings.Contains(mode, "B") {
+		callerArgError(v, 2, "loadfile", "invalid mode")
 	}
 	env := v.Get(3)
 	hasEnv := v.ArgCount() >= 3
