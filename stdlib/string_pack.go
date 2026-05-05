@@ -860,7 +860,11 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 		}
 	}
 
-	if *offset+int(slen) > len(data) {
+	// Compare in uint64 before int conversion: when slen has its top bit set,
+	// int(slen) overflows negative on 64-bit platforms, and the bounds check
+	// becomes vacuously true while the slice operation panics with a Go
+	// "slice bounds out of range" runtime error that leaks through pcall.
+	if slen > uint64(len(data)-*offset) {
 		panic("bad argument #2 to 'string.unpack' (data string too short)")
 	}
 
