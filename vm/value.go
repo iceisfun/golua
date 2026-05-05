@@ -369,6 +369,34 @@ func (v Value) NativeFuncNups() int {
 	return 0
 }
 
+// TrimASCIISpace strips ONLY the bytes Lua's isspace() recognizes:
+// '\t', '\n', '\v', '\f', '\r', and ' ' (0x09–0x0D and 0x20).
+//
+// This must be used in place of strings.TrimSpace anywhere golua coerces a
+// string to a number (tonumber, arithmetic-on-strings, math.* on string
+// args, %d/%i format coercion, etc.). Go's strings.TrimSpace calls
+// unicode.IsSpace, which strips NBSP (U+00A0), en-space (U+2002),
+// ideographic space (U+3000), and other Unicode whitespace code points
+// that reference Lua does NOT accept as numeric prefixes/suffixes.
+func TrimASCIISpace(s string) string {
+	lo, hi := 0, len(s)
+	for lo < hi {
+		c := s[lo]
+		if c != ' ' && c != '\t' && c != '\n' && c != '\v' && c != '\f' && c != '\r' {
+			break
+		}
+		lo++
+	}
+	for hi > lo {
+		c := s[hi-1]
+		if c != ' ' && c != '\t' && c != '\n' && c != '\v' && c != '\f' && c != '\r' {
+			break
+		}
+		hi--
+	}
+	return s[lo:hi]
+}
+
 // rejectInfNan returns true if the trimmed string is an inf/nan token that
 // Go's strconv.ParseFloat would accept but Lua 5.4 must reject.
 func rejectInfNan(s string) bool {
@@ -386,7 +414,7 @@ func rejectInfNan(s string) bool {
 // StringToNumericValue converts a string to a numeric Value, preserving the
 // integer/float distinction based on the string format.
 func StringToNumericValue(s string) (Value, bool) {
-	s = strings.TrimSpace(s)
+	s = TrimASCIISpace(s)
 	if s == "" {
 		return Nil, false
 	}
@@ -517,7 +545,7 @@ func (v Value) ToNumber() (float64, bool) {
 	case typeFloat:
 		return v.num, true
 	case typeString:
-		s := strings.TrimSpace(v.ptr.(string))
+		s := TrimASCIISpace(v.ptr.(string))
 		if s == "" {
 			return 0, false
 		}
@@ -569,7 +597,7 @@ func (v Value) ToInt() (int64, bool) {
 		return 0, false
 	case typeString:
 		// Try parsing string as number, then convert to int
-		s := strings.TrimSpace(v.ptr.(string))
+		s := TrimASCIISpace(v.ptr.(string))
 		if s == "" {
 			return 0, false
 		}
