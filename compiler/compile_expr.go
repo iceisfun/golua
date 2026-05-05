@@ -1242,6 +1242,10 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 // the full rationale. Duplicated here because the compiler package must
 // not import vm.
 func powWithSubnormalFix(x, y float64) float64 {
+	return libmNaNSignFix(x, y, powWithSubnormalFixImpl(x, y))
+}
+
+func powWithSubnormalFixImpl(x, y float64) float64 {
 	if x == 0 || math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) {
 		return math.Pow(x, y)
 	}
@@ -1255,5 +1259,49 @@ func powWithSubnormalFix(x, y float64) float64 {
 	mantBits := math.Float64bits(x) & ((1 << 52) - 1)
 	m := float64(mantBits)
 	return math.Pow(m, y) * math.Exp2(-1074.0*y)
+}
+
+// libmNaNSignFix mirrors vm.libmNaNSignFix. See vm/vm_pow.go for
+// rationale. Duplicated because the compiler package cannot import vm.
+func libmNaNSignFix(x, y, r float64) float64 {
+	if !math.IsNaN(r) {
+		return r
+	}
+	xIsNaN := math.IsNaN(x)
+	yIsNaN := math.IsNaN(y)
+	switch {
+	case xIsNaN && yIsNaN:
+		return math.Copysign(r, libmSignOf(x))
+	case xIsNaN:
+		if y == 1 || y == -1 {
+			return math.Copysign(r, +1)
+		}
+		if libmIsOddInt(y) {
+			return math.Copysign(r, -libmSignOf(x))
+		}
+		return math.Copysign(r, libmSignOf(x))
+	case yIsNaN:
+		return math.Copysign(r, libmSignOf(y))
+	default:
+		return math.Copysign(r, -1)
+	}
+}
+
+func libmSignOf(f float64) float64 {
+	if math.Signbit(f) {
+		return -1
+	}
+	return 1
+}
+
+func libmIsOddInt(y float64) bool {
+	if math.IsNaN(y) || math.IsInf(y, 0) {
+		return false
+	}
+	if math.Abs(y) >= (1 << 53) {
+		return false
+	}
+	yi, yf := math.Modf(y)
+	return yf == 0 && int64(yi)&1 == 1
 }
 
