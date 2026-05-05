@@ -735,7 +735,19 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 		// key falls within that range it was a legitimate array key
 		// that was deleted; treat it as "past end of array" and
 		// continue iteration into the hash part (or return nil).
+		// If the key is itself a live hash entry (e.g. table.create
+		// reserved an array but the key landed in the hash), advance
+		// past it via nextHashAfter to avoid returning the same key
+		// and looping forever.
 		if i := key.AsInt(); i >= 1 && int(i) <= cap(t.array) {
+			if kv, vv, ok := t.nextHashAfter(hashKey(key)); ok {
+				if kv.IsNil() {
+					t.iterHash = false
+				} else {
+					t.iterHash = true
+				}
+				return kv, vv, nil
+			}
 			if kv, vv, ok := t.firstLiveHashEntry(); ok {
 				t.iterHash = true
 				return kv, vv, nil
