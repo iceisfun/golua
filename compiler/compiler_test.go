@@ -1,7 +1,6 @@
 package compiler
 
 import (
-	"math"
 	"strings"
 	"testing"
 
@@ -643,8 +642,11 @@ func TestFibonacci(t *testing.T) {
 	if fib.NumParams != 1 {
 		t.Errorf("fib should have 1 param, got %d", fib.NumParams)
 	}
-	if !hasOp(fib, OP_LT) || !hasOp(fib, OP_SUB) || !hasOp(fib, OP_ADD) {
-		t.Error("fib should have LT, SUB, ADD")
+	// Lua 5.5 rewrites x - <int_literal> as ADDI with negated immediate, so
+	// fib(n-1) / fib(n-2) emit OP_ADDI (not OP_SUB). The outer fib(...)+fib(...)
+	// remains a register-register OP_ADD.
+	if !hasOp(fib, OP_LT) || !hasOp(fib, OP_ADDI) || !hasOp(fib, OP_ADD) {
+		t.Error("fib should have LT, ADDI, ADD")
 	}
 }
 
@@ -786,8 +788,13 @@ func TestCompileLuaTestFiles(t *testing.T) {
 	}
 }
 
-// TestConstantFoldNegativeZero verifies that constant folding preserves
-// the sign of negative zero (-0.0).
+// TestConstantFoldNegativeZero verifies that constant folding does not
+// freeze the sign of negative zero (-0.0) into a single compile-time
+// constant. Reference Lua's constfolding() declines to fold when the
+// float result is NaN or 0, leaving the runtime computation to produce
+// the correct IEEE sign of zero. We verify by ensuring NO compile-time
+// constant equals the result for these expressions — the work must
+// happen at runtime via UNM/ADD/SUB/MUL etc.
 func TestConstantFoldNegativeZero(t *testing.T) {
 	tests := []struct {
 		name string
@@ -795,41 +802,32 @@ func TestConstantFoldNegativeZero(t *testing.T) {
 	}{
 		{"mul_0_neg1", "return 0.0 * -1"},
 		{"add_neg0_neg0", "return -0.0 + -0.0"},
-		{"sub_0_0", "return 0.0 - 0.0"}, // positive zero, control case
+		{"sub_0_0", "return 0.0 - 0.0"},
 		{"mul_neg0_1", "return -0.0 * 1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := compile(t, tt.src)
-			// The folded constant should appear in the constant table or as
-			// a LOADF instruction. Find the float constant in the proto.
-			found := false
+			// No folded zero constant should be in the constant table — that
+			// would mean the compiler folded the result and lost the sign
+			// distinction. (UNM at runtime preserves the correct sign.)
 			for _, k := range p.Constants {
-				if k.Type == ValFloat && math.Signbit(k.FVal) {
-					found = true
+				if k.Type == ValFloat && k.FVal == 0 {
+					t.Errorf("expression %q: zero float constant %v in pool — folder should leave it to runtime", tt.name, k.FVal)
 				}
 			}
-			// Also check for LOADF with sBx=0 which would be positive zero
+			// At least one arithmetic op must remain (no fold == runtime work).
+			hasArith := false
 			for _, inst := range p.Code {
-				if inst.OpCode() == OP_LOADF {
-					sbx := inst.SBx()
-					if sbx == 0 && tt.name != "sub_0_0" {
-						t.Errorf("LOADF with sBx=0 used for %s; negative zero sign lost", tt.name)
-					}
+				switch inst.OpCode() {
+				case OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_IDIV, OP_POW,
+					OP_ADDI, OP_ADDK, OP_SUBK, OP_MULK, OP_DIVK, OP_MODK, OP_POWK, OP_IDIVK,
+					OP_UNM:
+					hasArith = true
 				}
 			}
-			// For expressions that should produce -0.0, verify a constant exists
-			if tt.name != "sub_0_0" && !found {
-				// Check if it was loaded via LOADF (which can't represent -0)
-				hasLoadF := false
-				for _, inst := range p.Code {
-					if inst.OpCode() == OP_LOADF {
-						hasLoadF = true
-					}
-				}
-				if hasLoadF {
-					t.Errorf("negative zero constant folding lost sign; used LOADF instead of LOADK")
-				}
+			if !hasArith {
+				t.Errorf("expression %q: expected runtime arithmetic op (no fold), but none found", tt.name)
 			}
 		})
 	}

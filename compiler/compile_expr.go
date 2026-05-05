@@ -345,29 +345,37 @@ func foldArith(e *ast.BinopExpr) ast.Expr {
 		// For / and ^, fall through to float path.
 	}
 
+	// floatFold returns a folded float result, but declines to fold when the
+	// result is NaN or 0.0 — matching reference Lua's constfolding() in
+	// lcode.c: "folds neither NaN nor 0.0 (to avoid problems with -0.0)".
+	// IEEE means runtime arithmetic must produce the correct sign of zero
+	// (e.g. (-0.0) + 0.0 = +0.0 vs (-0.0) - 0.0 = -0.0); folding at compile
+	// time would freeze a single sign and lose that distinction.
+	floatFold := func(r float64) ast.Expr {
+		if math.IsNaN(r) || r == 0 {
+			return nil
+		}
+		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+	}
+
 	// Float path (at least one float, or int-only ops that produce float).
 	switch e.Op {
 	case "+":
-		r := lFloat + rFloat
-		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+		return floatFold(lFloat + rFloat)
 	case "-":
-		r := lFloat - rFloat
-		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+		return floatFold(lFloat - rFloat)
 	case "*":
-		r := lFloat * rFloat
-		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+		return floatFold(lFloat * rFloat)
 	case "/":
 		if rFloat == 0 {
 			return nil // leave division by zero to runtime for correct NaN sign
 		}
-		r := lFloat / rFloat
-		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+		return floatFold(lFloat / rFloat)
 	case "//":
 		if rFloat == 0 {
 			return nil
 		}
-		r := math.Floor(lFloat / rFloat)
-		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+		return floatFold(math.Floor(lFloat / rFloat))
 	case "%":
 		if rFloat == 0 {
 			return nil
@@ -376,13 +384,13 @@ func foldArith(e *ast.BinopExpr) ast.Expr {
 		if r != 0 && (r < 0) != (rFloat < 0) {
 			r += rFloat
 		}
-		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+		return floatFold(r)
 	case "^":
 		r := powWithSubnormalFix(lFloat, rFloat)
 		if math.IsNaN(r) || math.IsInf(r, 0) {
 			return nil // leave edge cases to runtime for correct NaN/Inf sign
 		}
-		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
+		return floatFold(r)
 	case "&", "|", "~", "<<", ">>":
 		// Bitwise ops require integers; if either is float, no fold.
 		return nil
@@ -557,6 +565,29 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 			fs.emit(ABC(OP_ADDI, reg, rightReg, imm+OffsetSC, 0), line)
 			fs.emit(ABC(OP_MMBINI, rightReg, imm+OffsetSC, int(TM_ADD), 1), line)
 			fs.freeReg = rightReg
+			return
+		}
+	}
+
+	// Lua 5.5 rewrites  x - <int_literal>  to  x + (-<int_literal>)  and
+	// emits OP_ADDI. This is observable on signed-zero floats:
+	//   IEEE: (-0.0) + 0.0 = +0.0  but  (-0.0) - 0.0 = -0.0
+	// so the rewrite changes the sign of zero in that corner. The
+	// metamethod hint still points to TM_SUB and is given the ORIGINAL
+	// (unnegated) immediate so __sub(a, n) gets the right operand.
+	// smallIntConst's range ([-OffsetSC..OffsetSC]) keeps -imm in-range,
+	// so there is no overflow concern (mininteger never reaches here).
+	if e.Op == "-" {
+		if imm, ok := smallIntConst(e.Right); ok {
+			// a - imm  →  ADDI reg, leftReg, -imm; MMBINI leftReg, imm, TM_SUB, 0
+			// (MMBINI carries the original imm so the __sub metamethod
+			//  receives the user-written argument value.)
+			leftReg := fs.reserveReg()
+			c.compileExprToReg(e.Left, leftReg)
+			c.fixDischargedLine(line)
+			fs.emit(ABC(OP_ADDI, reg, leftReg, -imm+OffsetSC, 0), line)
+			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_SUB), 0), line)
+			fs.freeReg = leftReg
 			return
 		}
 	}
