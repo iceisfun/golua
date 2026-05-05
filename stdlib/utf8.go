@@ -409,6 +409,11 @@ func luaUtf8Offset(v *vm.VM) int {
 			for p > 0 && !utf8.RuneStart(s[p]) {
 				p--
 			}
+			// Lua 5.5: after rewind, the resolved start byte must not
+			// itself be a continuation byte (lutf8lib.c:217-218).
+			if !utf8.RuneStart(s[p]) {
+				panic("initial position is a continuation byte")
+			}
 		}
 	} else if n > 0 {
 		// Check not a continuation byte
