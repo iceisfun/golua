@@ -847,13 +847,13 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 			slen = binary.LittleEndian.Uint64(raw[:8])
 			for j := 8; j < prefixSize; j++ {
 				if raw[j] != 0 {
-					panic("bad argument #2 to 'string.unpack' (data string too short)")
+					panic(fmt.Sprintf("%d-byte integer does not fit into Lua Integer", prefixSize))
 				}
 			}
 		} else {
 			for j := 0; j < prefixSize-8; j++ {
 				if raw[j] != 0 {
-					panic("bad argument #2 to 'string.unpack' (data string too short)")
+					panic(fmt.Sprintf("%d-byte integer does not fit into Lua Integer", prefixSize))
 				}
 			}
 			slen = binary.BigEndian.Uint64(raw[prefixSize-8:])
