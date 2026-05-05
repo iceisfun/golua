@@ -335,6 +335,12 @@ func luaUtf8Codes(v *vm.VM) int {
 			if cp < 0 || size == 0 {
 				panic("invalid UTF-8 code")
 			}
+			// Reference lutf8lib.c iter_aux: error if byte after just-decoded
+			// codepoint is an orphan continuation byte (before yielding).
+			next := n + size
+			if next < len(str) && str[next]&0xC0 == 0x80 {
+				panic("invalid UTF-8 code")
+			}
 			v.Set(0, vm.NewInt(int64(n+1)))
 			v.Set(1, vm.NewInt(cp))
 			return 2
@@ -347,6 +353,13 @@ func luaUtf8Codes(v *vm.VM) int {
 
 		r, size := utf8.DecodeRuneInString(str[n:])
 		if r == utf8.RuneError && size <= 1 {
+			panic("invalid UTF-8 code")
+		}
+
+		// Reference lutf8lib.c iter_aux: error if byte after just-decoded
+		// codepoint is an orphan continuation byte (before yielding).
+		next := n + size
+		if next < len(str) && str[next]&0xC0 == 0x80 {
 			panic("invalid UTF-8 code")
 		}
 
