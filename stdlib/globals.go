@@ -165,7 +165,7 @@ func luaToNumber(v *vm.VM) int {
 		if bi < 2 || bi > 36 {
 			callerArgError(v, 2, "tonumber", "base out of range")
 		}
-		s := strings.TrimSpace(val.AsString())
+		s := vm.TrimASCIISpace(val.AsString())
 		if i, err := strconv.ParseInt(s, int(bi), 64); err == nil {
 			v.Set(0, vm.NewInt(i))
 			return 1
@@ -191,7 +191,7 @@ func luaToNumber(v *vm.VM) int {
 	}
 
 	if val.IsString() {
-		trimmed := strings.TrimSpace(val.AsString())
+		trimmed := vm.TrimASCIISpace(val.AsString())
 		if trimmed == "" {
 			v.Set(0, vm.Nil)
 			return 1
