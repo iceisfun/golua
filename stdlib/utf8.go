@@ -278,9 +278,11 @@ func luaUtf8Codepoint(v *vm.VM) int {
 func luaUtf8Codes(v *vm.VM) int {
 	s := getString(v, 1, "utf8.codes")
 
-	// Lax mode (arg 2): when true, accept extended codepoints (> U+10FFFF)
+	// Lax mode (arg 2): when true, accept extended codepoints (> U+10FFFF).
+	// First-byte rune-start validation runs unconditionally (matches
+	// reference lutf8lib.c: lax mode only relaxes per-byte continuation rules).
 	lax := v.Get(2).ToBool()
-	if !lax && len(s) > 0 && !utf8.RuneStart(s[0]) {
+	if len(s) > 0 && !utf8.RuneStart(s[0]) {
 		callerArgError(v, 1, "utf8.codes", "invalid UTF-8 code")
 	}
 
