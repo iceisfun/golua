@@ -633,17 +633,30 @@ func (vm *VM) execute() ([]Value, error) {
 			} else if v.IsFloat() {
 				vm.stack[frame.base+a] = NewFloat(v.num + float64(sc))
 			} else {
-				// Try __add metamethod with correct operand order.
-				immVal := NewInt(int64(sc))
-				arg1, arg2 := v, immVal
+				// Non-numeric: dispatch to the metamethod implied by the
+				// following MMBINI. The compiler emits ADDI for both x + n
+				// (TM_ADD) and the rewrite x - n → x + (-n) (TM_SUB), so the
+				// tag must come from MMBINI rather than being hardcoded. The
+				// MMBINI carries the user-written immediate (un-negated) in
+				// its sB field — that's the value the metamethod must see.
+				mmName := "__add"
+				immForMM := int64(sc)
+				flip := false
 				if frame.pc < len(code) {
 					nextInst := code[frame.pc]
-					if nextInst.OpCode() == compiler.OP_MMBINI && nextInst.K() == 1 {
-						arg1, arg2 = immVal, v
+					if nextInst.OpCode() == compiler.OP_MMBINI {
+						mmName = decodeBytecodeMetamethodTag(nextInst.C()).String()
+						immForMM = int64(nextInst.SB())
+						flip = nextInst.K() == 1
 					}
 				}
-				if mm := vm.getArithMetamethod(arg1, arg2, "__add"); !mm.IsNil() {
-					result, err := vm.callMetamethod("add", mm, arg1, arg2)
+				immVal := NewInt(immForMM)
+				arg1, arg2 := v, immVal
+				if flip {
+					arg1, arg2 = immVal, v
+				}
+				if mm := vm.getArithMetamethod(arg1, arg2, mmName); !mm.IsNil() {
+					result, err := vm.callMetamethod(mmName[2:], mm, arg1, arg2)
 					if err != nil {
 						return nil, err
 					}
