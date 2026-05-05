@@ -55,6 +55,20 @@ func (t *Table) SetVMRef(vm *VM) { t.vmRef = vm }
 // VMRef returns the coroutine VM reference, or nil if not set.
 func (t *Table) VMRef() *VM { return t.vmRef }
 
+// maxTableEntries caps the array part of a table to bound runaway growth
+// (e.g. an unbounded `t[#t+1] = v` loop inside pcall). Without this cap the
+// underlying Go runtime.growslice eventually reaches its host-allocation
+// limit and calls runtime.throw("out of memory"), which is uncatchable
+// (recover() does not catch runtime.throw) and aborts the embedding
+// process. The cap of 1<<22 (~4.2M entries) consumes ~167MB at 40B/Value
+// before the cap fires; the last growslice expansion needs ~200MB of
+// transient old+new headroom, well below any sane host memory budget so
+// the Go allocator never reaches its throw path. The cap is far above
+// any realistic Lua table workload (stress tests use 10K-class sizes).
+// Once exceeded, Set/SetInt raise a Lua "not enough memory" error that
+// pcall absorbs (matching reference Lua 5.5 behavior).
+const maxTableEntries = 1 << 22
+
 // NewEmptyTable creates a new empty table.
 func NewEmptyTable() *Table {
 	return &Table{}
@@ -394,7 +408,12 @@ func (t *Table) Set(key, value Value) error {
 					}
 					return nil
 				} else if idx == len(t.array)+1 && !value.IsNil() {
-					// Extend array
+					// Extend array. Cap growth to bound runaway tables that
+					// would otherwise reach Go's runtime.throw("out of memory")
+					// from runtime.growslice (uncatchable by recover/pcall).
+					if len(t.array) >= maxTableEntries {
+						return fmt.Errorf("not enough memory")
+					}
 					t.array = append(t.array, value)
 					// If this key previously existed in integer hash, clear it to
 					// avoid dual storage (array + hash) for the same numeric index.
@@ -445,6 +464,14 @@ func (t *Table) SetInt(i int, value Value) {
 		return
 	}
 	if i == len(t.array)+1 && !value.IsNil() {
+		// Cap growth to bound runaway tables that would otherwise reach
+		// Go's runtime.throw("out of memory") from runtime.growslice
+		// (uncatchable by recover/pcall). SetInt has no error return so
+		// raise via panic — the VM's ProtectedCall recover converts this
+		// into a Lua error that pcall can catch.
+		if len(t.array) >= maxTableEntries {
+			panic("not enough memory")
+		}
 		t.array = append(t.array, value)
 		// Clear stale integer-hash entry for this key to prevent duplicate
 		// traversal via pairs/next after promotion into the array part.
