@@ -990,6 +990,15 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			if count < 0 {
 				panic("resulting string too large")
 			}
+			// Bound count before delegating to provider's allocator. Without
+			// this, very large counts (e.g. 1<<60) reach make([]byte, count)
+			// and trigger a Go runtime makeslice panic ("len out of range")
+			// that leaks through pcall. Reference Lua raises the structured
+			// "not enough memory" error.
+			const maxReadBytes = 1 << 30 // 1 GiB
+			if count > maxReadBytes {
+				panic("not enough memory")
+			}
 			if count == 0 {
 				// Read 0 bytes: test if at EOF
 				data, err := f.ReadBytes(ctx, 0)
