@@ -33,10 +33,10 @@ func TestDebugUservalueRegression_GetAndSetUservalue(t *testing.T) {
 		assert(val2 == "abc")
 		assert(exists2 == true)
 
-		-- setuservalue on non-userdata errors with "full userdata expected"
+		-- setuservalue on non-userdata errors with "userdata expected" (matches reference Lua)
 		local ok, err = pcall(debug.setuservalue, {}, 1)
 		assert(ok == false)
-		assert(tostring(err):find("full userdata expected, got table", 1, true), tostring(err))
+		assert(tostring(err):find("userdata expected, got table", 1, true), tostring(err))
 	`)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
