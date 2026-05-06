@@ -1344,10 +1344,20 @@ func fileSeek(v *vm.VM) int {
 
 	var offset int64
 	if !v.Get(3).IsNil() {
+		arg := v.Get(3)
 		var ok bool
-		offset, ok = v.Get(3).ToInt()
+		offset, ok = arg.ToInt()
 		if !ok {
-			fileArgError(v, 3, "seek", "number expected")
+			// Distinguish "got non-number" from "got non-integer-representable
+			// number" (fractional float, NaN, ±Inf, beyond int64), matching
+			// reference Lua 5.4/5.5 wording.
+			if arg.IsNumber() {
+				fileArgError(v, 3, "seek", "number has no integer representation")
+			}
+			if _, isNum := arg.ToNumber(); isNum {
+				fileArgError(v, 3, "seek", "number has no integer representation")
+			}
+			fileArgError(v, 3, "seek", fmt.Sprintf("number expected, got %s", v.ObjTypeName(arg)))
 		}
 	}
 
@@ -1384,9 +1394,19 @@ func fileSetVBuf(v *vm.VM) int {
 
 	var size int
 	if !v.Get(3).IsNil() {
-		sz, ok := v.Get(3).ToInt()
+		arg := v.Get(3)
+		sz, ok := arg.ToInt()
 		if !ok {
-			fileArgError(v, 3, "setvbuf", "number expected")
+			// Distinguish "got non-number" from "got non-integer-representable
+			// number" (fractional float, NaN, ±Inf, beyond int64), matching
+			// reference Lua 5.4/5.5 wording.
+			if arg.IsNumber() {
+				fileArgError(v, 3, "setvbuf", "number has no integer representation")
+			}
+			if _, isNum := arg.ToNumber(); isNum {
+				fileArgError(v, 3, "setvbuf", "number has no integer representation")
+			}
+			fileArgError(v, 3, "setvbuf", fmt.Sprintf("number expected, got %s", v.ObjTypeName(arg)))
 		}
 		size = int(sz)
 	}
