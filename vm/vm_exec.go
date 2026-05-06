@@ -1829,8 +1829,12 @@ func (vm *VM) execute() ([]Value, error) {
 // implementing Lua 5.5 named vararg parameters (§3.4.12).
 func (vm *VM) createVarArgTable(varargs []Value, numVararg int) Value {
 	t := NewTableWithSize(numVararg, 1)
+	// Use EnsureArraySize + RawSetArray so leading/embedded nils don't
+	// force values into the hash part. This mirrors table.pack semantics:
+	// rawlen(args) reflects the packed count regardless of nil values.
+	t.EnsureArraySize(numVararg)
 	for i := 0; i < numVararg; i++ {
-		t.SetInt(i+1, varargs[i])
+		t.RawSetArray(i+1, varargs[i])
 	}
 	// Set t.n = numVararg
 	t.SetString("n", NewInt(int64(numVararg)))
