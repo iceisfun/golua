@@ -536,8 +536,11 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			callerArgError(v, 1, "io.open", fmt.Sprintf("string expected, got %s", v.ObjTypeName(name)))
 		}
 		mode := "r"
-		if !v.Get(2).IsNil() {
-			mode = v.Get(2).AsString()
+		if modeArg := v.Get(2); !modeArg.IsNil() {
+			if !modeArg.IsString() {
+				callerArgError(v, 2, "io.open", fmt.Sprintf("string expected, got %s", v.ObjTypeName(modeArg)))
+			}
+			mode = modeArg.AsString()
 		}
 
 		// Validate mode before calling provider (invalid mode is a hard error)
