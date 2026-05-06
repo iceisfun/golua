@@ -1303,7 +1303,12 @@ func fileLines(v *vm.VM) int {
 
 	v.Set(0, vm.NewNativeFunc(func(v *vm.VM) int {
 		ctx := v.Context()
-		fh.checkOpen(ctx, "lines iterator")
+		// Reference C Lua's io_readline iterator emits this specific
+		// wording when the underlying file has been closed since the
+		// iterator was created (liolib.c, "file is already closed").
+		if fh.closed || fh.file.IsClosed(ctx) {
+			panic("file is already closed")
+		}
 
 		if len(formats) == 0 {
 			line, err := f.Read(ctx, "l")
