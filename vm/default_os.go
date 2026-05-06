@@ -242,7 +242,8 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 			i++
 			switch format[i] {
 			case 'Y':
-				result.WriteString(t.Format("2006"))
+				// Natural-width year (no zero-padding); matches glibc strftime.
+				result.WriteString(fmt.Sprintf("%d", t.Year()))
 			case 'y':
 				result.WriteString(t.Format("06"))
 			case 'm':
@@ -312,9 +313,9 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 				isoYear, _ := t.ISOWeek()
 				result.WriteString(fmt.Sprintf("%02d", isoYear%100))
 			case 'G':
-				// ISO 8601 4-digit year
+				// ISO 8601 week-based year, natural width (matches glibc strftime).
 				isoYear, _ := t.ISOWeek()
-				result.WriteString(fmt.Sprintf("%04d", isoYear))
+				result.WriteString(fmt.Sprintf("%d", isoYear))
 			case 'V':
 				// ISO 8601 week number
 				_, isoWeek := t.ISOWeek()
