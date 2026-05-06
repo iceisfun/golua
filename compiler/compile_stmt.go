@@ -36,6 +36,11 @@ func stmtEndLine(s ast.Stmt) int {
 func (c *compiler) preRegisterUpvalues(fs *funcState, expr ast.Expr) {
 	switch e := expr.(type) {
 	case *ast.NameExpr:
+		// Inlined `<const>` locals are substituted at use-sites and
+		// never become upvalues.
+		if _, isInlined := lookupInlinedAny(fs, e.Name); isInlined {
+			return
+		}
 		if _, isLocal := fs.lookupLocal(e.Name); !isLocal {
 			c.resolveUpvalue(fs, e.Name)
 		}
@@ -321,10 +326,55 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 	// Base register — locals will occupy base..base+nNames-1
 	base := fs.freeReg
 
-	// Compile all RHS values into base, base+1, ...
+	// Lua 5.5 inlining of `<const>` locals (lparser.c:localstat):
+	// when nNames == nValues and the LAST variable is `<const>` and its
+	// initializer folds to a compile-time scalar constant (nil/bool/
+	// number/string), we skip emitting code for it, do not allocate a
+	// register for it, and substitute its value at use-sites.
+	//
+	// Only the last variable is eligible (matching the reference
+	// compiler), and the inlining only applies when there are no
+	// adjustments (no missing/extra values).
+	inlineLast := false
+	var inlineVal Value
+	if nNames == nValues && nNames > 0 {
+		lastIdx := nNames - 1
+		lastAttrib := ""
+		if lastIdx < len(s.Attribs) {
+			lastAttrib = s.Attribs[lastIdx]
+		}
+		// _ENV is the implicit table for global resolution. Reference
+		// Lua does inline `local _ENV <const> = K` (and the resulting
+		// `name = v` indexes the inlined constant), but plumbing the
+		// inlined value through every global access site here would
+		// touch many call sites for negligible benefit. We keep _ENV
+		// allocated to a register so the existing `lookupLocal("_ENV")`
+		// fallback paths continue to work; runtime semantics still
+		// match (assigning a global indexes the local _ENV value).
+		if lastAttrib == "const" && s.Names[lastIdx].Name != "_ENV" {
+			if v, ok := tryFoldConstScalar(s.Values[lastIdx]); ok {
+				inlineLast = true
+				inlineVal = v
+			}
+		}
+	}
+
+	// Number of variables that actually consume a register (everything
+	// except the optionally-inlined trailing var).
+	nRegVars := nNames
+	if inlineLast {
+		nRegVars--
+	}
+
+	// Compile all RHS values into base, base+1, ... (skipping the
+	// trailing inlined value, which produces no code).
 	lastIsMultiRet := false
 	if nValues > 0 {
 		for i := 0; i < nValues; i++ {
+			if inlineLast && i == nValues-1 {
+				// Inlined trailing value — no code, no register.
+				continue
+			}
 			if i == nValues-1 && i < nNames-1 && isMultiRet(s.Values[i]) {
 				// Last expression is multi-return, needs to fill remaining slots
 				c.compileExprMultiRet(s.Values[i], nNames-i)
@@ -340,7 +390,7 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 				// More values than names — evaluate for side effects into temp
 				tmp := fs.freeReg
 				c.compileExprToReg(s.Values[i], tmp)
-				fs.freeReg = base + nNames // discard temp
+				fs.freeReg = base + nRegVars // discard temp
 			}
 		}
 
@@ -382,7 +432,7 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 	}
 	fs.checkVarLimitAt(nNames, errLine, nearToken)
 
-	fs.freeReg = base + nNames
+	fs.freeReg = base + nRegVars
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
@@ -393,11 +443,18 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 		if i < len(s.Attribs) {
 			attrib = s.Attribs[i]
 		}
+		isInlined := inlineLast && i == nNames-1
+		reg := base + i
+		if isInlined {
+			reg = -1
+		}
 		fs.locals = append(fs.locals, localVar{
-			name:    name.Name,
-			reg:     base + i,
-			startPC: -1,
-			attrib:  attrib,
+			name:      name.Name,
+			reg:       reg,
+			startPC:   -1,
+			attrib:    attrib,
+			inlined:   isInlined,
+			inlineVal: inlineValIf(isInlined, inlineVal),
 		})
 		fs.nActVar++
 	}
@@ -413,6 +470,16 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 			fs.emit(ABC(OP_TBC, base+i, 0, 0, 0), line)
 		}
 	}
+}
+
+// inlineValIf returns v when cond is true, otherwise the zero Value.
+// Used purely as a struct-literal helper to keep the inlined-local
+// declaration site compact.
+func inlineValIf(cond bool, v Value) Value {
+	if cond {
+		return v
+	}
+	return Value{}
 }
 
 // ---------------------------------------------------------------------------
@@ -556,6 +623,12 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 
 	switch t := target.(type) {
 	case *ast.NameExpr:
+		// Inlined `<const>` local in any enclosing scope — error before
+		// any other resolution so the message matches a regular const.
+		if _, ok := lookupInlinedAny(fs, t.Name); ok {
+			c.error(target, "attempt to assign to const variable '%s'", t.Name)
+			return
+		}
 		// Local?
 		if reg, ok := fs.lookupLocal(t.Name); ok {
 			if fs.isConst(t.Name) {
@@ -629,6 +702,11 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 
 	switch t := target.(type) {
 	case *ast.NameExpr:
+		// Inlined `<const>` local in any enclosing scope — error first.
+		if _, ok := lookupInlinedAny(fs, t.Name); ok {
+			c.error(target, "attempt to assign to const variable '%s'", t.Name)
+			return
+		}
 		if reg, ok := fs.lookupLocal(t.Name); ok {
 			if fs.isConst(t.Name) {
 				c.error(target, "attempt to assign to const variable '%s'", t.Name)
@@ -1534,6 +1612,12 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 	// Assign to the target
 	switch name := s.Name.(type) {
 	case *ast.NameExpr:
+		// Inlined `<const>` local — assignment is an error.
+		if _, ok := lookupInlinedAny(fs, name.Name); ok {
+			c.error(s.Name, "attempt to assign to const variable '%s'", name.Name)
+			fs.freeReg = reg
+			return
+		}
 		// Simple name: could be local, upvalue, or global
 		if localReg, ok := fs.lookupLocal(name.Name); ok {
 			if fs.isConst(name.Name) {

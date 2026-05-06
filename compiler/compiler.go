@@ -145,6 +145,12 @@ type localVar struct {
 	startPC  int
 	attrib   string // "", "const", "close"
 	captured bool   // true if captured as an upvalue by an inner closure
+	// inlined marks a `<const>` local whose initializer is a compile-time
+	// foldable scalar (nil/bool/number/string). Inlined locals consume no
+	// register (reg = -1), produce no debug-info entry, and are substituted
+	// at use-sites with their constant value (matches Lua 5.5 semantics).
+	inlined   bool
+	inlineVal Value
 }
 
 // scopeInfo records the state at scope entry for restoration on scope exit.
@@ -321,9 +327,9 @@ func (c *compiler) closeFuncState() *Proto {
 		c.errorAtEOF("no visible label '%s' for <goto> at line %d", pg.name, pg.line)
 	}
 
-	// Close all remaining locals
+	// Close all remaining locals (skip inlined <const>: no debug entry)
 	for i := range fs.locals {
-		if fs.locals[i].startPC >= 0 {
+		if fs.locals[i].startPC >= 0 && !fs.locals[i].inlined {
 			p.Locals = append(p.Locals, LocalVar{
 				Name:    fs.locals[i].name,
 				StartPC: fs.locals[i].startPC,
@@ -648,13 +654,37 @@ func (fs *funcState) activateLocal(idx int) {
 }
 
 // lookupLocal searches for an active local variable by name, returning its register.
+// Inlined `<const>` locals have no register and are skipped here; callers that need
+// to substitute their constant value should use lookupInlined first.
 func (fs *funcState) lookupLocal(name string) (int, bool) {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
-		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
-			return fs.locals[i].reg, true
+		lv := fs.locals[i]
+		if lv.name == name && lv.startPC >= 0 {
+			if lv.inlined {
+				return 0, false
+			}
+			return lv.reg, true
 		}
 	}
 	return 0, false
+}
+
+// lookupInlined searches for an active inlined `<const>` local by name and
+// returns its compile-time constant value. Returns ok=false if no such
+// inlined local is in scope (the name might still be a regular local,
+// upvalue, or global — caller continues normal resolution).
+func (fs *funcState) lookupInlined(name string) (Value, bool) {
+	for i := len(fs.locals) - 1; i >= 0; i-- {
+		lv := fs.locals[i]
+		if lv.name == name && lv.startPC >= 0 && lv.inlined {
+			return lv.inlineVal, true
+		}
+		// A regular local with the same name shadows any inlined binding.
+		if lv.name == name && lv.startPC >= 0 && !lv.inlined {
+			return Value{}, false
+		}
+	}
+	return Value{}, false
 }
 
 // needsClose returns true if any local at or above fromLocal is <close> or captured.
@@ -690,9 +720,13 @@ func (fs *funcState) needsCloseTBC(fromLocal int) bool {
 
 // isConst returns true if the named local has the <const> or <close> attribute.
 // Both attributes make a variable immutable (Lua 5.4 §3.3.7).
+// Inlined locals are always const.
 func (fs *funcState) isConst(name string) bool {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
 		if fs.locals[i].name == name && fs.locals[i].startPC >= 0 {
+			if fs.locals[i].inlined {
+				return true
+			}
 			return fs.locals[i].attrib == "const" || fs.locals[i].attrib == "close"
 		}
 	}
@@ -820,7 +854,7 @@ func (c *compiler) leaveScope(line int) {
 		start := len(fs.locals) - nToRemove
 		endPC := fs.pc()
 		for i := start; i < len(fs.locals); i++ {
-			if fs.locals[i].startPC >= 0 {
+			if fs.locals[i].startPC >= 0 && !fs.locals[i].inlined {
 				fs.proto.Locals = append(fs.proto.Locals, LocalVar{
 					Name:    fs.locals[i].name,
 					StartPC: fs.locals[i].startPC,
