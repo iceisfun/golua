@@ -232,13 +232,14 @@ func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 		name := getString(v, 1, "?")
 
 		pathVal := pkg.GetString("path")
-		if !pathVal.IsString() {
+		pathStr, ok := coercePathString(pathVal)
+		if !ok {
 			panic("'package.path' must be a string")
 		}
 
 		// Replace dots with directory separator
 		fname := strings.ReplaceAll(name, ".", "/")
-		paths := expandTemplates(fname, pathVal.AsString())
+		paths := expandTemplates(fname, pathStr)
 
 		provider := machine.CodeProvider()
 		var errBuf strings.Builder
@@ -286,13 +287,14 @@ func makeCFileSearcher(pkg *vm.Table) vm.NativeFunc {
 		name := getString(v, 1, "?")
 
 		cpathVal := pkg.GetString("cpath")
-		if !cpathVal.IsString() {
+		cpathStr, ok := coercePathString(cpathVal)
+		if !ok {
 			v.Set(0, vm.Nil)
 			return 1
 		}
 
 		fname := strings.ReplaceAll(name, ".", "/")
-		paths := expandTemplates(fname, cpathVal.AsString())
+		paths := expandTemplates(fname, cpathStr)
 
 		var errBuf strings.Builder
 		for _, path := range paths {
@@ -316,13 +318,14 @@ func makeCRootSearcher(pkg *vm.Table) vm.NativeFunc {
 		}
 
 		cpathVal := pkg.GetString("cpath")
-		if !cpathVal.IsString() {
+		cpathStr, ok := coercePathString(cpathVal)
+		if !ok {
 			v.Set(0, vm.Nil)
 			return 1
 		}
 
 		root := name[:dot]
-		paths := expandTemplates(strings.ReplaceAll(root, ".", "/"), cpathVal.AsString())
+		paths := expandTemplates(strings.ReplaceAll(root, ".", "/"), cpathStr)
 
 		var errBuf strings.Builder
 		for _, path := range paths {
@@ -332,6 +335,20 @@ func makeCRootSearcher(pkg *vm.Table) vm.NativeFunc {
 		v.Set(0, vm.NewString(errBuf.String()))
 		return 1
 	}
+}
+
+// coercePathString accepts package.path / package.cpath values, coercing
+// numbers to their string form (matching reference Lua's lua_tostring on the
+// path field). Returns the coerced string and ok=true on success; ok=false for
+// any other type (including nil) so callers can raise the appropriate error.
+func coercePathString(val vm.Value) (string, bool) {
+	if val.IsString() {
+		return val.AsString(), true
+	}
+	if val.IsNumber() {
+		return vm.ValueToString(val), true
+	}
+	return "", false
 }
 
 // expandTemplates splits a path template string by ";" and replaces "?" with name.
