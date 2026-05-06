@@ -1410,9 +1410,11 @@ func fileSeek(v *vm.VM) int {
 	ctx := v.Context()
 	pos, err := fh.file.Seek(ctx, whence, offset)
 	if err != nil {
+		errno, errDesc := extractLuaFileError(err)
 		v.Set(0, vm.Nil)
-		v.Set(1, vm.NewString(err.Error()))
-		return 2
+		v.Set(1, vm.NewString(errDesc))
+		v.Set(2, vm.NewInt(int64(errno)))
+		return 3
 	}
 
 	v.Set(0, vm.NewInt(pos))
