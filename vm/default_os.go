@@ -45,9 +45,9 @@ func (p *DefaultOsProvider) Time(ctx context.Context, dateTable *LuaTimeInput) (
 		return time.Now().Unix(), nil, nil
 	}
 
-	t, ok := resolveLocalTime(*dateTable)
-	if !ok {
-		t = time.Date(dateTable.Year, time.Month(dateTable.Month), dateTable.Day, dateTable.Hour, dateTable.Min, dateTable.Sec, 0, time.Local)
+	t, err := resolveLocalTime(*dateTable)
+	if err != nil {
+		return 0, nil, err
 	}
 	return t.Unix(), dateTimeFromTime(t, true), nil
 }
@@ -97,10 +97,10 @@ func dateTimeFromTime(t time.Time, hasDST bool) *LuaDateTime {
 	}
 }
 
-func resolveLocalTime(input LuaTimeInput) (time.Time, bool) {
+func resolveLocalTime(input LuaTimeInput) (time.Time, error) {
 	base := time.Date(input.Year, time.Month(input.Month), input.Day, input.Hour, input.Min, input.Sec, 0, time.Local)
 	if !input.HasIsDST {
-		return base, true
+		return base, nil
 	}
 
 	// C's mktime uses tm_isdst as a hint: when isdst=1, it uses the DST
@@ -141,13 +141,14 @@ func resolveLocalTime(input LuaTimeInput) (time.Time, bool) {
 	for _, z := range zones {
 		if z.isDST == input.IsDST {
 			cand := time.Unix(localBase.Unix()-int64(z.offset), 0).In(time.Local)
-			return cand, true
+			return cand, nil
 		}
 	}
 
-	// If no zone matches the DST flag (e.g., timezone has no DST),
-	// fall back to the default resolution.
-	return base, true
+	// No zone in this year matches the requested DST state. C's mktime
+	// returns -1 here (e.g., requesting isdst=1 under TZ=UTC); reference
+	// Lua surfaces that as a runtime error.
+	return time.Time{}, fmt.Errorf("time result cannot be represented in this installation")
 }
 
 // Getenv returns an environment variable, respecting the optional filter.
