@@ -1094,6 +1094,10 @@ func parseReadNumber(data string) vm.Value {
 	if isHexFloat {
 		fv, err := strconv.ParseFloat(data, 64)
 		if err != nil {
+			// Accept overflow/underflow results (ErrRange) — produces ±Inf or 0.
+			if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+				return vm.NewFloat(fv)
+			}
 			// Go doesn't support hex floats without p exponent (e.g. "0x1.8").
 			// Parse manually: integer part + fractional part.
 			fv, ok := parseHexFloat(data)
