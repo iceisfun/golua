@@ -533,7 +533,7 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 		} else if name.IsNumber() {
 			nameStr = vm.ValueToString(name)
 		} else {
-			callerArgError(v, 1, "io.open", fmt.Sprintf("string expected, got %s", name.Type()))
+			callerArgError(v, 1, "io.open", fmt.Sprintf("string expected, got %s", v.ObjTypeName(name)))
 		}
 		mode := "r"
 		if !v.Get(2).IsNil() {
@@ -737,7 +737,7 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 		} else {
 			arg := v.Get(1)
 			if !arg.IsString() && !arg.IsNumber() {
-				callerArgError(v, 1, "io.lines", fmt.Sprintf("string expected, got %s", arg.Type()))
+				callerArgError(v, 1, "io.lines", fmt.Sprintf("string expected, got %s", v.ObjTypeName(arg)))
 			}
 			name := vm.ValueToString(arg)
 			var err error
@@ -1039,7 +1039,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			}
 		} else {
 			// Invalid format type
-			fileArgError(v, firstArg+results, "read", fmt.Sprintf("string expected, got %s", arg.Type()))
+			fileArgError(v, firstArg+results, "read", fmt.Sprintf("string expected, got %s", v.ObjTypeName(arg)))
 		}
 		results++
 	}
@@ -1233,7 +1233,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 				}
 			}
 		} else {
-			fileArgError(v, i, "write", fmt.Sprintf("string expected, got %s", arg.Type()))
+			fileArgError(v, i, "write", fmt.Sprintf("string expected, got %s", v.ObjTypeName(arg)))
 		}
 		err := f.Write(ctx, s)
 		if err != nil {
@@ -1376,7 +1376,7 @@ func fileSetVBuf(v *vm.VM) int {
 	} else if mode.IsNumber() {
 		modeStr = mode.String()
 	} else {
-		fileArgError(v, 2, "setvbuf", fmt.Sprintf("string expected, got %s", mode.Type()))
+		fileArgError(v, 2, "setvbuf", fmt.Sprintf("string expected, got %s", v.ObjTypeName(mode)))
 	}
 
 	var size int
