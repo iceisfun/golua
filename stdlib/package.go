@@ -180,25 +180,15 @@ func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 				args := []vm.Value{vm.NewString(name), extra}
 				loadResults, loadErr := v.ProtectedCall(loader, args)
 				if loadErr != nil {
-					// Extract error message string
-					var errStr string
+					// Reference Lua uses lua_call (unprotected) here; runtime
+					// errors from the loaded chunk propagate unchanged. The
+					// "error loading module ... from file ..." prefix is added
+					// by the file searcher (checkload in C) only when the
+					// load/parse phase fails. Re-raise the error as-is.
 					if luaErr, ok := loadErr.(*vm.LuaError); ok {
-						errStr = vm.ValueToString(luaErr.Value)
-					} else {
-						errStr = loadErr.Error()
+						panic(luaErr)
 					}
-					// Wrap with "error loading module" context.
-					// Include "from file" when extra is a file path string.
-					// Don't re-wrap if the error already has "error loading module"
-					// wrapping (from a nested require call).
-					if !strings.HasPrefix(errStr, "error loading module") {
-						if extra.IsString() && extra.AsString() != ":preload:" {
-							errStr = fmt.Sprintf("error loading module '%s' from file '%s':\n\t%s", name, extra.AsString(), errStr)
-						} else {
-							errStr = fmt.Sprintf("error loading module '%s':\n\t%s", name, errStr)
-						}
-					}
-					panic(&vm.LuaError{Value: vm.NewString(errStr)})
+					panic(&vm.LuaError{Value: vm.NewString(loadErr.Error())})
 				}
 
 				// If loader returns non-nil, set package.loaded[name]
