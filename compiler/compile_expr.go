@@ -269,6 +269,15 @@ func (c *compiler) compileExprMultiRet(expr ast.Expr, n int) {
 func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 	fs := c.fs
 
+	// Inlined `<const>` local — emit the constant directly. Search the
+	// current function's locals first; if not found, walk enclosing
+	// functions (inlined consts are inlined across closure boundaries
+	// too — they consume no upvalue slot).
+	if val, ok := lookupInlinedAny(fs, e.Name); ok {
+		c.emitInlinedConst(reg, val, e.P.Line)
+		return
+	}
+
 	// Local variable
 	if localReg, ok := fs.lookupLocal(e.Name); ok {
 		if localReg != reg {
@@ -477,6 +486,104 @@ func numericValue(e ast.Expr) (bool, int64, float64, bool) {
 		return numericValue(folded)
 	}
 	return false, 0, 0, false
+}
+
+// lookupInlinedAny searches the current function and all enclosing
+// functions for an active inlined `<const>` local with the given name.
+// Returns the constant value and ok=true on success. Lua 5.5 inlines
+// `<const>` locals across closure boundaries (they take no upvalue
+// slot in inner functions), so the search walks up `fs.parent`.
+func lookupInlinedAny(fs *funcState, name string) (Value, bool) {
+	for cur := fs; cur != nil; cur = cur.parent {
+		if v, ok := cur.lookupInlined(name); ok {
+			return v, true
+		}
+		// If a regular local with that name shadows in any enclosing
+		// scope, stop (it would be the resolution target, not the
+		// inlined binding).
+		if _, ok := cur.lookupLocal(name); ok {
+			return Value{}, false
+		}
+	}
+	return Value{}, false
+}
+
+// emitInlinedConst emits the bytecode to materialize a Value into reg,
+// matching the codegen used for the corresponding literal expression.
+// Used at use-sites of inlined `<const>` locals.
+func (c *compiler) emitInlinedConst(reg int, v Value, line int) {
+	fs := c.fs
+	switch v.Type {
+	case ValNil:
+		fs.emit(ABC(OP_LOADNIL, reg, 0, 0, 0), line)
+	case ValTrue:
+		fs.emit(ABC(OP_LOADTRUE, reg, 0, 0, 0), line)
+	case ValFalse:
+		fs.emit(ABC(OP_LOADFALSE, reg, 0, 0, 0), line)
+	case ValInt:
+		if v.IVal >= -OffsetSBx && v.IVal <= OffsetSBx {
+			fs.emit(AsBx(OP_LOADI, reg, int(v.IVal)), line)
+		} else {
+			k := fs.addConstant(v)
+			fs.loadConstant(reg, k, line)
+		}
+	case ValFloat:
+		iv := int(v.FVal)
+		if float64(iv) == v.FVal && iv >= -OffsetSBx && iv <= OffsetSBx && !math.Signbit(v.FVal) {
+			fs.emit(AsBx(OP_LOADF, reg, iv), line)
+		} else {
+			k := fs.addConstant(v)
+			fs.loadConstant(reg, k, line)
+		}
+	case ValString:
+		k := fs.addConstant(StringValue(c.internString(v.SVal)))
+		fs.loadConstant(reg, k, line)
+	default:
+		// Unreachable: tryFoldConstScalar only produces scalar Values.
+		fs.emit(ABC(OP_LOADNIL, reg, 0, 0, 0), line)
+	}
+}
+
+// tryFoldConstScalar attempts to evaluate expr to a compile-time scalar
+// constant suitable for inlining a `<const>` local. Returns the resulting
+// Value (typed nil/bool/int/float/string) and ok=true on success. Mirrors
+// Lua 5.5's reference compiler which inlines `<const>` locals whose
+// initializer is a literal nil, true, false, integer, float, or string,
+// or any compile-time-foldable arithmetic over those (matching the
+// `vkisinreg`/constant test in `lparser.c`).
+//
+// Function and table initializers are intentionally not inlined: even
+// `<const>` locals bound to those keep a real register and a debug entry.
+func tryFoldConstScalar(expr ast.Expr) (Value, bool) {
+	switch e := expr.(type) {
+	case *ast.NilExpr:
+		return NilValue(), true
+	case *ast.TrueExpr:
+		return BoolValue(true), true
+	case *ast.FalseExpr:
+		return BoolValue(false), true
+	case *ast.NumberExpr:
+		return IntValue(e.Value), true
+	case *ast.FloatExpr:
+		return FloatValue(e.Value), true
+	case *ast.StringExpr:
+		return StringValue(e.Value), true
+	case *ast.ParenExpr:
+		return tryFoldConstScalar(e.Inner)
+	case *ast.UnopExpr:
+		// Numeric unary folds (-x, ~x).
+		if folded := foldUnaryArith(e); folded != nil {
+			return tryFoldConstScalar(folded)
+		}
+		return Value{}, false
+	case *ast.BinopExpr:
+		// Arithmetic/bitwise binary folds (1+2, 3*4, 0xff&0x0f, ...).
+		if folded := foldArith(e); folded != nil {
+			return tryFoldConstScalar(folded)
+		}
+		return Value{}, false
+	}
+	return Value{}, false
 }
 
 // foldUnaryArith attempts constant folding for unary minus and bitwise not.
