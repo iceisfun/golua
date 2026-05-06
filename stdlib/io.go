@@ -1122,6 +1122,32 @@ func parseReadNumber(data string) vm.Value {
 			if u, err := strconv.ParseUint(hexStr, 16, 64); err == nil {
 				return vm.NewInt(sign * int64(u))
 			}
+			// Overflow: parse digit-by-digit with modular wrapping (Lua 5.5
+			// lexer/tonumber semantics for hex int literals exceeding 2^64).
+			if hexStr != "" {
+				var result uint64
+				valid := true
+				for _, c := range hexStr {
+					var d uint64
+					switch {
+					case c >= '0' && c <= '9':
+						d = uint64(c - '0')
+					case c >= 'a' && c <= 'f':
+						d = uint64(c-'a') + 10
+					case c >= 'A' && c <= 'F':
+						d = uint64(c-'A') + 10
+					default:
+						valid = false
+					}
+					if !valid {
+						break
+					}
+					result = result*16 + d
+				}
+				if valid {
+					return vm.NewInt(sign * int64(result))
+				}
+			}
 		} else {
 			if iv, err := strconv.ParseInt(data, 10, 64); err == nil {
 				return vm.NewInt(iv)
