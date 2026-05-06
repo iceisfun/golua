@@ -286,13 +286,13 @@ assert(io.type(f) == "closed file")
 }
 
 func TestIoReadNegativeCount(t *testing.T) {
-	runLuaExpectError(t, `io.read(-1)`, "not enough memory")
+	runLuaExpectError(t, `io.read(-1)`, "resulting string too large")
 }
 
 func TestFileReadNegativeCount(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "test.txt", "hello")
-	runLuaWithDirExpectError(t, dir, `local f = assert(io.open("test.txt", "r")); f:read(-1)`, "not enough memory")
+	runLuaWithDirExpectError(t, dir, `local f = assert(io.open("test.txt", "r")); f:read(-1)`, "resulting string too large")
 }
 
 func TestFileReadNonIntegralCount(t *testing.T) {

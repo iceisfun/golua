@@ -988,7 +988,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 				fileArgError(v, firstArg+results, "read", "number has no integer representation")
 			}
 			if count < 0 {
-				panic("not enough memory")
+				panic("resulting string too large")
 			}
 			if count == 0 {
 				// Read 0 bytes: test if at EOF
