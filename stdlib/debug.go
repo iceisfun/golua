@@ -716,12 +716,7 @@ func luaDebugSetUserValue(v *vm.VM) int {
 	arg1 := v.Get(1)
 	ud := arg1.AsUserdata()
 	if ud == nil {
-		// Distinguish light userdata from other types
-		typeName := arg1.Type()
-		if arg1.IsLightUserdata() {
-			typeName = "light userdata"
-		}
-		callerArgError(v, 1, "debug.setuservalue", fmt.Sprintf("full userdata expected, got %s", typeName))
+		callerArgError(v, 1, "debug.setuservalue", "userdata expected"+gotDesc(v, 1))
 	}
 	if v.ArgCount() < 2 {
 		callerArgError(v, 2, "debug.setuservalue", "value expected")
