@@ -66,19 +66,29 @@ func (p *FullIoProvider) Open(ctx context.Context, name string, mode string) (Lu
 	}
 
 	var flag int
+	var readable, writable bool
 	switch strings.TrimRight(mode, "b") {
 	case "r":
 		flag = os.O_RDONLY
+		readable = true
 	case "w":
 		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		writable = true
 	case "a":
 		flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+		writable = true
 	case "r+":
 		flag = os.O_RDWR
+		readable = true
+		writable = true
 	case "w+":
 		flag = os.O_RDWR | os.O_CREATE | os.O_TRUNC
+		readable = true
+		writable = true
 	case "a+":
 		flag = os.O_RDWR | os.O_CREATE | os.O_APPEND
+		readable = true
+		writable = true
 	default:
 		return nil, fmt.Errorf("invalid mode: %s", mode)
 	}
@@ -89,9 +99,12 @@ func (p *FullIoProvider) Open(ctx context.Context, name string, mode string) (Lu
 	}
 
 	return &fullFile{
-		file:   f,
-		reader: bufio.NewReader(f),
-		writer: bufio.NewWriter(f),
+		file:     f,
+		reader:   bufio.NewReader(f),
+		writer:   bufio.NewWriter(f),
+		bufMode:  "full",
+		readable: readable,
+		writable: writable,
 	}, nil
 }
 
@@ -144,9 +157,12 @@ func (p *FullIoProvider) TmpFile(ctx context.Context) (LuaFile, error) {
 	// Remove the file immediately so it's cleaned up when closed
 	os.Remove(f.Name())
 	return &fullFile{
-		file:   f,
-		reader: bufio.NewReader(f),
-		writer: bufio.NewWriter(f),
+		file:     f,
+		reader:   bufio.NewReader(f),
+		writer:   bufio.NewWriter(f),
+		bufMode:  "full",
+		readable: true,
+		writable: true,
 	}, nil
 }
 
@@ -165,12 +181,14 @@ func (p *FullIoProvider) Rename(ctx context.Context, oldname, newname string) er
 
 // fullFile wraps an os.File with buffered reading and writing.
 type fullFile struct {
-	file    *os.File
-	reader  *bufio.Reader
-	writer  *bufio.Writer
-	closed  bool
-	bufMode string // "no", "full", "line"
-	bufSize int    // buffer size for "full" mode
+	file     *os.File
+	reader   *bufio.Reader
+	writer   *bufio.Writer
+	closed   bool
+	bufMode  string // "no", "full", "line"
+	bufSize  int    // buffer size for "full" mode
+	readable bool
+	writable bool
 }
 
 func (f *fullFile) Read(ctx context.Context, format string) (string, error) {
@@ -232,7 +250,18 @@ func (f *fullFile) Write(ctx context.Context, data string) error {
 		return fmt.Errorf("attempt to use a closed file")
 	}
 
-	if f.bufMode == "no" || f.bufMode == "" {
+	// Mirror C stdio: writes to a non-writable stream surface the OS error
+	// (EBADF on Linux) immediately rather than getting buffered and only
+	// failing on flush.
+	if !f.writable {
+		_, err := f.file.Write([]byte(data))
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if f.bufMode == "no" {
 		// Unbuffered: write directly
 		_, err := f.file.Write([]byte(data))
 		return err
