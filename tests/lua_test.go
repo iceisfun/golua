@@ -266,6 +266,9 @@ func needsFullIo(filename string) bool {
 	if strings.HasPrefix(base, "io_") {
 		return true
 	}
+	if strings.HasPrefix(base, "test_fuzz_io_") || strings.HasPrefix(base, "broken_fuzz_io_") {
+		return true
+	}
 	// Tests that reference io.stdin/stdout/stderr as values
 	switch base {
 	case "test_next_all_key_types.lua",
