@@ -669,7 +669,13 @@ func luaSelect(v *vm.VM) int {
 
 	i, ok := idx.ToInt()
 	if !ok {
+		// String-encoded numerics that parse as float but lack integer
+		// representation must report "no integer representation", matching
+		// reference Lua's coercion-then-check order.
 		if idx.IsNumber() {
+			callerArgError(v, 1, "select", "number has no integer representation")
+		}
+		if _, isNum := idx.ToNumber(); isNum {
 			callerArgError(v, 1, "select", "number has no integer representation")
 		}
 		typeName := idx.Type()
