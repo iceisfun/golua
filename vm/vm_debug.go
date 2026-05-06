@@ -966,13 +966,17 @@ func (vm *VM) frameStackLimit(stack []callFrame, idx, maxStack int, active bool)
 	}
 
 	// Non-current frame: match C Lua's ci->next->func.p.
-	// For native next frames, stack[idx+1].base is already the CALL
-	// register (frame.base + A), which is correct.
 	// For Lua next frames, base = caller.base + MaxStack (frames don't
-	// overlap in GoLua), which is too large. Derive the correct limit
-	// from the CALL instruction in the current frame's bytecode.
+	// overlap in GoLua), which is too large. For native next frames
+	// reached via OP_CALL, stack[idx+1].base equals the CALL register
+	// and matches; but for TAILCALL->native the native frame is placed
+	// at vm.top (above the caller's call-register temp), so
+	// nextFrame.base would expose the caller's call-temp as a local.
+	// In both cases the right boundary is the call register, which is
+	// the A field of the CALL/TAILCALL instruction in the caller's
+	// bytecode. Derive it from there whenever the caller is a Lua frame.
 	nextFrame := &stack[idx+1]
-	if nextFrame.closure != nil && frame.closure != nil {
+	if frame.closure != nil {
 		limit := frame.base + maxStack
 		proto := frame.closure.Proto
 		pc := frame.pc - 1
