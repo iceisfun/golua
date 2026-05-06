@@ -543,8 +543,10 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 			mode = modeArg.AsString()
 		}
 
-		// Validate mode before calling provider (invalid mode is a hard error)
-		cleanMode := strings.TrimSuffix(mode, "b")
+		// Validate mode before calling provider (invalid mode is a hard error).
+		// Reference Lua's l_checkmode parses mode as r/w/a, optional '+', then
+		// any number of trailing 'b' bytes.
+		cleanMode := strings.TrimRight(mode, "b")
 		switch cleanMode {
 		case "r", "w", "a", "r+", "w+", "a+":
 			// valid
