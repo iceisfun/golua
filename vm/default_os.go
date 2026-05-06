@@ -337,7 +337,10 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 				}
 				result.WriteString(fmt.Sprintf("%02d", (yday+6-wday)/7))
 			default:
-				return "", fmt.Errorf("invalid conversion specifier '%c%c'", '%', format[i])
+				// Match reference Lua: print the substring from this '%'
+				// through end of format (lua_pushfstring("%%%s", conv) where
+				// conv is a C-string starting at the '%').
+				return "", fmt.Errorf("invalid conversion specifier '%%%s'", format[i:])
 			}
 		} else {
 			result.WriteByte(format[i])
