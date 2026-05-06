@@ -303,7 +303,8 @@ func needsFullIo(filename string) bool {
 		"test_io_error_returns.lua",
 		"test_io_read_format_failure.lua",
 		"test_loadfile_binary_comment.lua",
-		"test_fuzz_require_runtime_error_wrap.lua":
+		"test_fuzz_require_runtime_error_wrap.lua",
+		"test_fuzz_require_nonstring_error_coercion.lua":
 		return true
 	}
 	return false
