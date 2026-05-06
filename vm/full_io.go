@@ -66,7 +66,7 @@ func (p *FullIoProvider) Open(ctx context.Context, name string, mode string) (Lu
 	}
 
 	var flag int
-	switch strings.TrimSuffix(mode, "b") {
+	switch strings.TrimRight(mode, "b") {
 	case "r":
 		flag = os.O_RDONLY
 	case "w":
