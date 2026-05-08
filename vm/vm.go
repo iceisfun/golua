@@ -373,6 +373,12 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			if _, isExit := r.(*LuaExitError); isExit {
 				panic(r)
 			}
+			// CoroutineSelfClose (Lua 5.5: coroutine.close on the running
+			// coroutine) propagates through pcall/xpcall — the long-jump
+			// terminates the entire coroutine, not just the protected call.
+			if _, isSelfClose := r.(CoroutineSelfClose); isSelfClose {
+				panic(r)
+			}
 			// When force-closing a coroutine, __close errors must propagate
 			// through pcall/xpcall boundaries to reach coroutine.close.
 			if vm.closingCoroutine {

@@ -24,6 +24,16 @@ func (e *LuaExitError) Error() string {
 	return fmt.Sprintf("os.exit(%d)", e.Code)
 }
 
+// CoroutineSelfClose is the sentinel panic value used by Lua 5.5's
+// coroutine.close(coroutine.running()): the running coroutine longjumps
+// out cleanly, returning (true) to its resumer. The stdlib coroutine
+// runner detects this sentinel in its recover handler and treats it as
+// a normal termination, not an error. coroutine.close runs any pending
+// <close> handlers before panicking with this value.  ProtectedCall
+// propagates the sentinel through pcall/xpcall boundaries (just like
+// LuaExitError), since the long-jump terminates the entire coroutine.
+type CoroutineSelfClose struct{}
+
 // DefaultExitHandler stops VM execution by panicking with a LuaExitError
 // sentinel that propagates through ProtectedCall boundaries.
 type DefaultExitHandler struct{}

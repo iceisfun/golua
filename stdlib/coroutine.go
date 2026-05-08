@@ -47,6 +47,7 @@ const (
 	statusNormal    coroutineStatus = "normal"
 )
 
+
 // Coroutine represents a Lua coroutine
 type Coroutine struct {
 	id             int
@@ -319,6 +320,16 @@ func coResume(v *vm.VM) int {
 func runCoroutine(co *Coroutine) {
 	defer func() {
 		if r := recover(); r != nil {
+			// Lua 5.5: coroutine.close(coroutine.running()) terminates the
+			// coroutine cleanly via the vm.CoroutineSelfClose sentinel. Treat
+			// this as a normal completion, not an error.
+			if _, ok := r.(vm.CoroutineSelfClose); ok {
+				co.mu.Lock()
+				co.status = statusDead
+				co.mu.Unlock()
+				close(co.doneCh)
+				return
+			}
 			co.mu.Lock()
 			// Preserve *LuaError so resume can return the original Lua value
 			if le, ok := r.(*vm.LuaError); ok {
@@ -711,9 +722,14 @@ func coClose(v *vm.VM) int {
 		panic("cannot close a normal coroutine")
 	}
 
-	// Cannot close the currently-running coroutine (from within itself).
+	// Lua 5.5: coroutine.close(coroutine.running()) terminates the running
+	// coroutine cleanly. Run pending <close> handlers on the current call
+	// stack, then long-jump out via vm.CoroutineSelfClose. The recover in
+	// runCoroutine treats this sentinel as a normal completion and the
+	// resumer sees (true, nil).
 	if int(id) == v.CoroutineID() {
-		panic("cannot close a running coroutine")
+		v.CloseAllTBC()
+		panic(vm.CoroutineSelfClose{})
 	}
 
 	reg := getCoRegistry(v)
