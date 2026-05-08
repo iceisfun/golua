@@ -198,25 +198,8 @@ func (vm *VM) tracebackNativeName(frame *callFrame, name, nameWhat string) strin
 		}
 		return name
 	}
-	if nameWhat == "field" {
-		if resolved, ok := vm.lookupNativeFuncName(frame.funcValue); ok && strings.Contains(resolved, ".") {
-			return resolved
-		}
-	}
-	if nameWhat != "field" || name != "traceback" {
-		return name
-	}
-	debugVal := vm.globals.Get(NewString("debug"))
-	if !debugVal.IsTable() {
-		return name
-	}
-	debugTbl := debugVal.AsTable()
-	if debugTbl == nil {
-		return name
-	}
-	if frame.funcValue.RawEqual(debugTbl.Get(NewString("traceback"))) {
-		return "debug.traceback"
-	}
+	// Lua 5.5: keep "field" names unqualified (e.g. "format", not "string.format")
+	// to match the reference traceback "[C]: in field 'format'".
 	return name
 }
 

@@ -55,7 +55,7 @@ func TestRunCLI_TopLevelNativeErrorIncludesTraceback(t *testing.T) {
 	if !strings.Contains(msg, "lua: ") {
 		t.Fatalf("expected program prefix, got: %s", msg)
 	}
-	if !strings.Contains(msg, "[C]: in field 'math.abs'") {
+	if !strings.Contains(msg, "[C]: in field 'abs'") {
 		t.Fatalf("expected native traceback frame, got: %s", msg)
 	}
 	if !strings.Contains(msg, "in main chunk") {

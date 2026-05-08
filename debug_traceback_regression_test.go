@@ -123,7 +123,7 @@ end
 
 local ok, msg = run()
 assert(ok == false, tostring(ok))
-assert(msg:find("[C]: in field 'debug.traceback'", 1, true), msg)
+assert(msg:find("[C]: in field 'traceback'", 1, true), msg)
 `
 	runLuaWithDebug(t, source, "test_debug_traceback_qualified_c_name", provider)
 }
@@ -131,9 +131,9 @@ assert(msg:find("[C]: in field 'debug.traceback'", 1, true), msg)
 func TestDebugTracebackRegression_TopLevelNativeFramesResolveDisplayName(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	source := `local cases = {
-  {fn = function() return math.abs() end, want = "[C]: in field 'math.abs'"},
-  {fn = function() return string.byte() end, want = "[C]: in field 'string.byte'"},
-  {fn = function() return table.insert({}) end, want = "[C]: in field 'table.insert'"},
+  {fn = function() return math.abs() end, want = "[C]: in field 'abs'"},
+  {fn = function() return string.byte() end, want = "[C]: in field 'byte'"},
+  {fn = function() return table.insert({}) end, want = "[C]: in field 'insert'"},
   {fn = function() return pcall() end, want = "[C]: in global 'pcall'"},
 }
 

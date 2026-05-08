@@ -42,7 +42,7 @@ coroutine.close(co)
 	if err != nil {
 		t.Fatalf("GoLua error: %v", err)
 	}
-	re := regexp.MustCompile("(?ms)^TB\\nstack traceback:\\n\\t\\[C\\]: in field 'debug\\.traceback'\\n\\ttest:\\d+: in function <test:\\d+>\\n?$")
+	re := regexp.MustCompile("(?ms)^TB\\nstack traceback:\\n\\t\\[C\\]: in field 'traceback'\\n\\ttest:\\d+: in function <test:\\d+>\\n?$")
 	if !re.MatchString(out) {
 		t.Fatalf("unexpected traceback output: %q", out)
 	}
