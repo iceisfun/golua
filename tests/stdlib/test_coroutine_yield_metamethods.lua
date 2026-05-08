@@ -13,11 +13,12 @@ do
 
   local function run(f, expectedYields)
     local co = coroutine.wrap(f)
-    local results = {}
     local i = 1
     while true do
-      local res = {co()}
-      if #res == 0 then break end
+      -- Use table.pack so a leading-nil yield like (nil, "add") is not
+      -- truncated by Lua 5.5's first-hole # semantics.
+      local res = table.pack(co())
+      if res.n == 0 then break end
       if res[1] == nil and res[2] then
         -- it's a yield
         assert(res[2] == expectedYields[i],

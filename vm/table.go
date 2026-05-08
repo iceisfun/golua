@@ -542,52 +542,106 @@ func (t *Table) rehashToArray() {
 
 // Len returns the length of the table (# operator).
 // It returns a "border": an index n where t[n] is non-nil and t[n+1] is nil,
-// or 0 when t[1] is nil. This matches Lua 5.4's luaH_getn.
+// or 0 when t[1] is nil. This follows Lua 5.5's luaH_getn algorithm: probe
+// near asize/2 (the synthetic hint Lua sets at array allocation time), walk
+// up to 4 entries forward or backward to find a border, otherwise binary
+// search. If the array part is fully populated, probe the hash part with
+// a doubling search.
 func (t *Table) Len() int {
 	if t.weak != nil {
 		return t.weak.length()
 	}
-	n := len(t.array)
-	if n == 0 {
-		return 0
-	}
-	// Fast path: last element is non-nil → the border is at the end.
-	if !t.array[n-1].IsNil() {
-		// Lua 5.4 may extend the border into integer hash keys contiguous
-		// after the array part.
-		if t.GetInt(n + 1).IsNil() {
-			return n
+	asize := len(t.array)
+	if asize > 0 {
+		const maxVicinity = 4
+		// Lua 5.5 sets the initial lenhint to asize/2 when the array part
+		// is allocated. golua does not persist a per-table hint, so we
+		// recompute it here. limit must be at least 1 (a valid 1-based
+		// index in the array part).
+		limit := asize / 2
+		if limit < 1 {
+			limit = 1
 		}
-		lo := n
-		hi := n + 1
-		maxInt := int(^uint(0) >> 1)
-		for !t.GetInt(hi).IsNil() {
-			lo = hi
-			if hi > maxInt/2 {
-				hi = maxInt
+		if t.array[limit-1].IsNil() {
+			// t[limit] empty: there must be a border before 'limit'.
+			// Walk backward up to maxVicinity entries.
+			for i := 0; i < maxVicinity && limit > 1; i++ {
+				limit--
+				if !t.array[limit-1].IsNil() {
+					return limit // 'limit' is a border
+				}
+			}
+			// Still empty; binary search [0, limit) for the border.
+			lo, hi := 0, limit
+			for hi-lo > 1 {
+				mid := (lo + hi) / 2
+				if t.array[mid-1].IsNil() {
+					hi = mid
+				} else {
+					lo = mid
+				}
+			}
+			return lo
+		}
+		// t[limit] is present; walk forward looking for a border.
+		for i := 0; i < maxVicinity && limit < asize; i++ {
+			limit++
+			if t.array[limit-1].IsNil() {
+				return limit - 1 // 'limit - 1' is a border
+			}
+		}
+		if t.array[asize-1].IsNil() {
+			// Last element of array is empty; binary search [limit, asize).
+			lo, hi := limit, asize
+			for hi-lo > 1 {
+				mid := (lo + hi) / 2
+				if t.array[mid-1].IsNil() {
+					hi = mid
+				} else {
+					lo = mid
+				}
+			}
+			return lo
+		}
+		// Array part is fully populated up to asize; check hash part below.
+	}
+
+	// No array part or t[asize] is non-empty; check hash part.
+	if t.GetInt(asize + 1).IsNil() {
+		return asize
+	}
+	// t[asize+1] non-empty: doubling probe + binary search in hash.
+	return hashSearchBorder(t, asize)
+}
+
+// hashSearchBorder finds a border in the hash part starting from a known
+// present index 'i'. Mirrors Lua 5.5's hash_search but skips the random
+// seed (golua does not have luaH_getn's hint state).
+func hashSearchBorder(t *Table, asize int) int {
+	const maxInt = int(^uint(0) >> 1)
+	i := asize + 1 // caller ensures t[i] is present
+	j := i + 1
+	for !t.GetInt(j).IsNil() {
+		i = j
+		if j > maxInt/2 {
+			j = maxInt
+			if t.GetInt(j).IsNil() {
 				break
 			}
-			hi *= 2
+			return j // weird case: maxInt is a boundary
 		}
-		for hi-lo > 1 {
-			mid := lo + (hi-lo)/2
-			if t.GetInt(mid).IsNil() {
-				hi = mid
-			} else {
-				lo = mid
-			}
-		}
-		return lo
+		j *= 2
 	}
-	// Array slots can contain interior nils (e.g. constructors like
-	// {nil, nil, {}, 2.5, nil}). Lua 5.4's behavior in these cases picks
-	// a border near the end; scan backwards for the last non-nil entry.
-	for i := n - 1; i >= 0; i-- {
-		if !t.array[i].IsNil() {
-			return i + 1
+	// i present, j absent; binary search in (i, j].
+	for j-i > 1 {
+		mid := (i + j) / 2
+		if t.GetInt(mid).IsNil() {
+			j = mid
+		} else {
+			i = mid
 		}
 	}
-	return 0
+	return i
 }
 
 // Delete removes a key from the table.

@@ -1,23 +1,20 @@
--- Bug: # operator returns wrong length for tables built with constructors
--- containing leading nils. Lua 5.4's table constructor pre-allocates the
--- array part, so {nil, "a"} has array size 2. GoLua's SetInt refuses to
--- extend the array with nil, so values end up in the hash part and # returns 0.
+-- Lua 5.5 # semantics for sparse-array constructors: walk forward from
+-- index 1 returning the first contiguous run, or 0 when t[1] is nil.
 
--- Constructor with leading nil
-assert(#{nil, "a"} == 2, "#{nil, 'a'} should be 2, got " .. #{nil, "a"})
+-- Constructor with leading nil: t[1] is nil → # is 0.
+assert(#{nil, "a"} == 0, "#{nil, 'a'} should be 0, got " .. #{nil, "a"})
 
--- Constructor with multiple leading nils
-assert(#{nil, nil, 3} == 3, "#{nil, nil, 3} should be 3, got " .. #{nil, nil, 3})
+-- Multiple leading nils: same.
+assert(#{nil, nil, 3} == 0, "#{nil, nil, 3} should be 0, got " .. #{nil, nil, 3})
 
--- Constructor with interior nil
-assert(#{1, nil, 3} == 3, "#{1, nil, 3} should be 3, got " .. #{1, nil, 3})
+-- Interior nil: # stops at the first hole.
+assert(#{1, nil, 3} == 1, "#{1, nil, 3} should be 1, got " .. #{1, nil, 3})
 
--- Guard: normal sequential tables should keep working
+-- Guard: normal sequential tables.
 assert(#{1, 2, 3} == 3)
 assert(#{} == 0)
 assert(#{"a"} == 1)
 
--- table.concat should error on {nil, "a"} with default range
--- (because # returns 2, concat iterates 1..2 and hits nil at index 1)
-local ok, err = pcall(table.concat, {nil, "a"}, ",")
-assert(not ok, "table.concat({nil,'a'}) should error with default range")
+-- table.concat over an empty range produces "".
+assert(table.concat({nil, "a"}, ",") == "",
+  "table.concat({nil,'a'}) should be empty since #t==0")
