@@ -26,3 +26,13 @@ print(err4)
 local ok5, err5 = load("do\ngoto L\nlocal x = 1\n::L::\nprint(x)\nend")
 print(err5)
 --> ~]:5: <goto L> at line 2 jumps into the scope of 'x'
+
+-- goto in inner function: error line prefix is the function's 'end', not chunk EOF
+local ok6, err6 = load("local f = function()\n  do ::inner:: end\n  goto inner\nend")
+print(err6)
+--> ~]:4: no visible label 'inner' for <goto> at line 3
+
+-- goto in main chunk: error line is the line of the last statement
+local ok7, err7 = load("do ::inner:: end\ngoto inner\nprint('hi')")
+print(err7)
+--> ~]:3: no visible label 'inner' for <goto> at line 2
