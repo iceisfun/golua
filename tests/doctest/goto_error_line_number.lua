@@ -25,4 +25,4 @@ print(err4)
 -- The error line prefix is the line of the first statement after the label
 local ok5, err5 = load("do\ngoto L\nlocal x = 1\n::L::\nprint(x)\nend")
 print(err5)
---> ~]:5: <goto L> at line 2 jumps into the scope of local 'x'
+--> ~]:5: <goto L> at line 2 jumps into the scope of 'x'

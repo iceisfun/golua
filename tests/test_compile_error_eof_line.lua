@@ -3,7 +3,7 @@
 -- goto scope error: should report last line of chunk
 local f, err = load("goto skip\nlocal x = 1\n::skip::\nprint(x)")
 assert(f == nil, "should fail to compile")
--- Lua 5.4: [string "goto skip"]:4: <goto skip> at line 1 jumps into the scope of local 'x'
+-- Lua 5.5: [string "goto skip"]:4: <goto skip> at line 1 jumps into the scope of 'x'
 assert(err:find(":4:"), "expected line 4 (EOF line) in error, got: " .. err)
 
 -- break outside loop: "break\n" has EOF at line 2

@@ -26,14 +26,14 @@ do
 
 
   -- undefined label
-  errmsg([[ goto l1; local aa ::l1:: ::l2:: print(3) ]], "local 'aa'")
+  errmsg([[ goto l1; local aa ::l1:: ::l2:: print(3) ]], "scope of 'aa'")
 
   -- jumping over variable definition
   errmsg([[
   do local bb, cc; goto l1; end
   local aa
   ::l1:: print(3)
-  ]], "local 'aa'")
+  ]], "scope of 'aa'")
 
   -- jumping into a block
   errmsg([[ do ::l1:: end goto l1 ]], "label 'l1'")
@@ -46,7 +46,7 @@ do
       local xuxu = 10
       ::cont::
     until xuxu < x
-  ]], "local 'xuxu'")
+  ]], "scope of 'xuxu'")
   print("PASS")
 end
 --> =PASS

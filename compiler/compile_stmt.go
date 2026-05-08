@@ -1579,7 +1579,7 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 				if baseIdx >= 0 && baseIdx < len(fs.locals) {
 					varName = fs.locals[baseIdx].name
 				}
-				c.errorAtLine(afterLine, "<goto %s> at line %d jumps into the scope of local '%s'", pg.name, pg.line, varName)
+				c.errorAtLine(afterLine, "<goto %s> at line %d jumps into the scope of '%s'", pg.name, pg.line, varName)
 				remaining = append(remaining, pg)
 				continue
 			}

@@ -8,11 +8,11 @@ do
     assert(not st and string.find(msg, m))
   end
 
-  errmsg([[ goto l1; local aa ::l1:: ::l2:: print(3) ]], "local 'aa'")
+  errmsg([[ goto l1; local aa ::l1:: ::l2:: print(3) ]], "scope of 'aa'")
 
   errmsg([[
 do local bb, cc; goto l1; end
 local aa
 ::l1:: print(3)
-]], "local 'aa'")
+]], "scope of 'aa'")
 end

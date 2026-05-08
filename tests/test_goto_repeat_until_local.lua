@@ -14,5 +14,5 @@ do
     local xuxu = 10
     ::cont::
   until xuxu < x
-]], "local 'xuxu'")
+]], "scope of 'xuxu'")
 end
