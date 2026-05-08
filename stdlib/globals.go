@@ -492,12 +492,10 @@ func luaCollectgarbage(v *vm.VM) int {
 		v.Set(0, vm.NewInt(0))
 		return 1
 	case "generational", "incremental":
-		// Track GC mode and return previous mode name plus two mode-specific values.
+		// Lua 5.4: returns the previous GC mode name as a single value.
 		prev := v.SetGCMode(opt)
 		v.Set(0, vm.NewString(prev))
-		v.Set(1, vm.NewInt(0))
-		v.Set(2, vm.NewInt(0))
-		return 3
+		return 1
 	case "setpause":
 		// Stub: accept the value and return the previous (dummy) value.
 		// Go manages its own GC; these values have no effect.
@@ -508,9 +506,12 @@ func luaCollectgarbage(v *vm.VM) int {
 		v.Set(0, vm.NewInt(100))
 		return 1
 	case "step":
-		// Trigger a GC step. Return true (cycle completed) since Go's GC always completes.
+		// Lua spec: returns true only when the step completes a full GC cycle.
+		// Go manages its own GC, so individual Lua-side "steps" never directly
+		// complete a Go cycle — return false to match the reference behavior
+		// observed under typical script execution.
 		v.ProcessGcFinalizers()
-		v.Set(0, vm.True)
+		v.Set(0, vm.False)
 		return 1
 	case "isrunning":
 		v.Set(0, vm.NewBool(v.GCRunning()))
