@@ -92,6 +92,7 @@ func (c *compiler) compileChunk(source string, block *ast.Block) *Proto {
 	fs.emit(ABC(OP_RETURN0, 0, 0, 0, 0), lastLine)
 	// LastLine stays 0 for the main chunk (set at proto init).
 	// Lua 5.4 always reports lastlinedefined=0 for the top-level function.
+	fs.closeLine = lastLine
 
 	c.leaveScope(lastLine)
 
@@ -1819,6 +1820,7 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 		fs.emit(ABC(OP_RETURN0, 0, 0, 0, 0), lastLine)
 	}
 
+	fs.closeLine = lastLine
 	c.leaveScope(lastLine)
 
 	proto := c.closeFuncState()

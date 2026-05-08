@@ -190,6 +190,12 @@ type funcState struct {
 	maxReg  int // high-water mark for register allocation
 	nActVar int // number of active local variables
 
+	// closeLine is the line of the last token consumed for this funcState's
+	// body — i.e. the 'end' keyword for inner functions, or the line of the
+	// last statement for the main chunk. Used as the file:line prefix for
+	// post-parse compile errors like unresolved gotos.
+	closeLine int
+
 	locals      []localVar
 	scopes      []scopeInfo
 	labels      []labelInfo
@@ -322,9 +328,17 @@ func (c *compiler) closeFuncState() *Proto {
 	fs := c.fs
 	p := fs.proto
 
-	// Check for unresolved gotos (label not visible)
-	for _, pg := range fs.pendGotos {
-		c.errorAtEOF("no visible label '%s' for <goto> at line %d", pg.name, pg.line)
+	// Check for unresolved gotos (label not visible). Lua reports the line
+	// of the 'end' keyword for inner functions, or the line of the last
+	// statement for the main chunk — captured in fs.closeLine.
+	if len(fs.pendGotos) > 0 {
+		errLine := fs.closeLine
+		if errLine == 0 {
+			errLine = c.endLine
+		}
+		for _, pg := range fs.pendGotos {
+			c.errorAtLine(errLine, "no visible label '%s' for <goto> at line %d", pg.name, pg.line)
+		}
 	}
 
 	// Close all remaining locals (skip inlined <const>: no debug entry)
