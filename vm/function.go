@@ -4,6 +4,13 @@ import (
 	"github.com/iceisfun/golua/v2/compiler"
 )
 
+// closureInlineUpvalues sizes the inline upvalue slot count. Closures with
+// at most this many upvalues skip the make([]*Upvalue) heap allocation by
+// pointing Upvalues at the inline buffer. Most closures in real-world Lua
+// code capture 0–2 upvalues, so 4 covers the long tail without inflating
+// every Closure too much.
+const closureInlineUpvalues = 4
+
 // Closure represents a Lua closure: a function prototype paired with its
 // captured upvalues. Each closure instance shares the same [compiler.Proto]
 // but has its own upvalue bindings, allowing closures created at different
@@ -14,14 +21,23 @@ type Closure struct {
 	Proto       *compiler.Proto // compiled bytecode and metadata
 	Upvalues    []*Upvalue      // captured variables from enclosing scopes
 	constValues []Value         // cached conversion of Proto.Constants to vm.Value
+
+	// inlineUpvalues backs Upvalues for the common small-upvalue-count case.
+	// When len(proto.Upvalues) <= closureInlineUpvalues, NewClosure points
+	// Upvalues at this array instead of allocating a separate slice.
+	inlineUpvalues [closureInlineUpvalues]*Upvalue
 }
 
 // NewClosure creates a new closure from a prototype.
 func NewClosure(proto *compiler.Proto) *Closure {
-	return &Closure{
-		Proto:    proto,
-		Upvalues: make([]*Upvalue, len(proto.Upvalues)),
+	cl := &Closure{Proto: proto}
+	nups := len(proto.Upvalues)
+	if nups <= closureInlineUpvalues {
+		cl.Upvalues = cl.inlineUpvalues[:nups]
+	} else {
+		cl.Upvalues = make([]*Upvalue, nups)
 	}
+	return cl
 }
 
 // ConstValues returns the cached runtime Value conversions of the Proto's constants.
