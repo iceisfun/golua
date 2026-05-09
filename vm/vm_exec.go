@@ -1147,14 +1147,27 @@ func (vm *VM) execute() ([]Value, error) {
 			// Tail call optimization - reuse current frame
 			fn := vm.stack[frame.base+a]
 
-			// Collect arguments
+			// Collect arguments. args lives only within this handler (consumed
+			// by frame setup or the native tail-call path), so a stack-local
+			// buffer for the small-arg-count case avoids a per-tailcall heap
+			// allocation. The __call dispatch loop reassigns args to a heap
+			// slice before re-entering, so this buffer is not aliased there.
+			var tailArgBuf [8]Value
 			var args []Value
+			var nTailArgs int
 			if b == 0 {
-				// Use all values from a+1 to top
-				args = make([]Value, vm.top-(frame.base+a+1))
+				nTailArgs = vm.top - (frame.base + a + 1)
+			} else {
+				nTailArgs = b - 1
+			}
+			if nTailArgs <= len(tailArgBuf) {
+				args = tailArgBuf[:nTailArgs]
+			} else {
+				args = make([]Value, nTailArgs)
+			}
+			if b == 0 {
 				copy(args, vm.stack[frame.base+a+1:vm.top])
 			} else {
-				args = make([]Value, b-1)
 				copy(args, vm.stack[frame.base+a+1:frame.base+a+b])
 			}
 
