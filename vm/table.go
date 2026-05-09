@@ -107,9 +107,15 @@ func (t *Table) EnsureArraySize(n int) {
 }
 
 // ensureStrHash lazily initializes the string hash map.
+// Uses cap(t.keys) as a size hint when available so a constructor like
+// {a=1,b=2,c=3} (NEWTABLE preallocates keys cap=3) creates a right-sized map.
 func (t *Table) ensureStrHash() map[string]Value {
 	if t.strHash == nil {
-		t.strHash = make(map[string]Value)
+		if c := cap(t.keys); c > 0 {
+			t.strHash = make(map[string]Value, c)
+		} else {
+			t.strHash = make(map[string]Value)
+		}
 	}
 	return t.strHash
 }
@@ -117,7 +123,11 @@ func (t *Table) ensureStrHash() map[string]Value {
 // ensureHash lazily initializes the general hash map.
 func (t *Table) ensureHash() map[any]Value {
 	if t.hash == nil {
-		t.hash = make(map[any]Value)
+		if c := cap(t.keys); c > 0 {
+			t.hash = make(map[any]Value, c)
+		} else {
+			t.hash = make(map[any]Value)
+		}
 	}
 	return t.hash
 }
@@ -125,7 +135,11 @@ func (t *Table) ensureHash() map[any]Value {
 // ensureIntHash lazily initializes the integer hash map.
 func (t *Table) ensureIntHash() map[int64]Value {
 	if t.intHash == nil {
-		t.intHash = make(map[int64]Value)
+		if c := cap(t.keys); c > 0 {
+			t.intHash = make(map[int64]Value, c)
+		} else {
+			t.intHash = make(map[int64]Value)
+		}
 	}
 	return t.intHash
 }
