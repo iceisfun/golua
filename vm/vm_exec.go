@@ -1262,8 +1262,14 @@ func (vm *VM) execute() ([]Value, error) {
 					nResults := nf(vm)
 					vm.callStack = vm.callStack[:len(vm.callStack)-1]
 					vm.top = savedTop
-					results := make([]Value, nResults)
-					copy(results, vm.stack[nativeBase:nativeBase+nResults])
+					var results []Value
+					if nResults <= len(vm.retBuf) {
+						copy(vm.retBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
+						results = vm.retBuf[:nResults]
+					} else {
+						results = make([]Value, nResults)
+						copy(results, vm.stack[nativeBase:nativeBase+nResults])
+					}
 					return results, nil
 				} else {
 					// Check for __call metamethod
@@ -1986,8 +1992,18 @@ dispatch:
 		}
 
 		nResults := fn.AsNativeFunc()(vm)
-		results = make([]Value, nResults)
-		copy(results, vm.stack[nativeBase:nativeBase+nResults])
+		// Use vm.retBuf (per-VM 8-slot scratch) for the common small-result
+		// case to avoid a per-call slice allocation. The buffer is safe across
+		// the OP_CALL caller's read loop because no nested call runs between
+		// here and that loop. Falls back to a heap allocation when nResults
+		// exceeds the buffer.
+		if nResults <= len(vm.retBuf) {
+			copy(vm.retBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
+			results = vm.retBuf[:nResults]
+		} else {
+			results = make([]Value, nResults)
+			copy(results, vm.stack[nativeBase:nativeBase+nResults])
+		}
 
 		nf := &vm.callStack[len(vm.callStack)-1]
 		// Re-check hookMask: a native (e.g. debug.sethook) can enable hooks
