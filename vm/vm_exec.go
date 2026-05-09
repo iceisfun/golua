@@ -1888,40 +1888,56 @@ dispatch:
 		// The call hook may mutate arguments via debug.setlocal.
 		vm.fireCallHook()
 
-		// Save arguments after call hook (which may have mutated them)
-		// but before the native function runs — Set(0..N) will overwrite
-		// stack slots starting at nativeBase, clobbering args.
-		savedArgs := make([]Value, len(args))
-		copy(savedArgs, vm.stack[nativeBase+1:nativeBase+1+len(args)])
+		// Save arguments only if hooks are active — the savedArgs copy is
+		// only needed when a return hook will fire (so it can see [args,
+		// results] on the stack). When no hooks are active at entry, the
+		// call hook didn't fire (gated by hookMask), so the `args` slice
+		// captured before the call is still the authoritative pre-call
+		// state and can be reused if the native enables hooks mid-call.
+		hooksActiveBefore := vm.hookMask != 0
+		var savedArgs []Value
+		if hooksActiveBefore {
+			savedArgs = make([]Value, len(args))
+			copy(savedArgs, vm.stack[nativeBase+1:nativeBase+1+len(args)])
+		}
 
 		nResults := fn.AsNativeFunc()(vm)
 		results = make([]Value, nResults)
 		copy(results, vm.stack[nativeBase:nativeBase+nResults])
 
-		// Restore arguments and place return values after them so the
-		// return hook sees [args..., results...] via getlocal, matching
-		// Lua 5.4 semantics.
 		nf := &vm.callStack[len(vm.callStack)-1]
-		copy(vm.stack[nativeBase+1:nativeBase+1+nf.argc], savedArgs)
-		retStart := nativeBase + 1 + nf.argc
-		retEnd := retStart + nResults
-		if retEnd > len(vm.stack) {
-			retEnd = len(vm.stack)
-		}
-		for i := 0; i < retEnd-retStart; i++ {
-			vm.stack[retStart+i] = results[i]
-		}
-		vm.top = retEnd
-		if nResults > 0 {
-			nf.ftransfer = 1 + nf.argc
-			nf.ntransfer = nResults
-		} else {
-			nf.ftransfer = 0
-			nf.ntransfer = 0
-		}
+		// Re-check hookMask: a native (e.g. debug.sethook) can enable hooks
+		// mid-call, in which case the return hook must still fire.
+		if vm.hookMask != 0 {
+			if savedArgs == nil {
+				// No hooks at entry → fireCallHook did nothing → args slice
+				// still matches the pre-call stack state.
+				savedArgs = args
+			}
+			// Restore arguments and place return values after them so the
+			// return hook sees [args..., results...] via getlocal, matching
+			// Lua 5.4 semantics.
+			copy(vm.stack[nativeBase+1:nativeBase+1+nf.argc], savedArgs)
+			retStart := nativeBase + 1 + nf.argc
+			retEnd := retStart + nResults
+			if retEnd > len(vm.stack) {
+				retEnd = len(vm.stack)
+			}
+			for i := 0; i < retEnd-retStart; i++ {
+				vm.stack[retStart+i] = results[i]
+			}
+			vm.top = retEnd
+			if nResults > 0 {
+				nf.ftransfer = 1 + nf.argc
+				nf.ntransfer = nResults
+			} else {
+				nf.ftransfer = 0
+				nf.ntransfer = 0
+			}
 
-		// Fire return hook for native function before popping its frame
-		vm.fireReturnHook()
+			// Fire return hook for native function before popping its frame
+			vm.fireReturnHook()
+		}
 		vm.top = savedTop
 
 		// Pop the native frame
