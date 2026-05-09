@@ -430,6 +430,12 @@ func (t *Table) Set(key, value Value) error {
 					if len(t.array) >= maxTableEntries {
 						return fmt.Errorf("not enough memory")
 					}
+					// First append from an unprealloc'd table: jump straight to
+					// cap=4 to avoid the 0→1→2→4 realloc cascade that dominates
+					// `t={}; for i=1,N do t[i]=v end`-style fills.
+					if cap(t.array) == 0 {
+						t.array = make([]Value, 0, 4)
+					}
 					t.array = append(t.array, value)
 					// If this key previously existed in integer hash, clear it to
 					// avoid dual storage (array + hash) for the same numeric index.
@@ -487,6 +493,10 @@ func (t *Table) SetInt(i int, value Value) {
 		// into a Lua error that pcall can catch.
 		if len(t.array) >= maxTableEntries {
 			panic("not enough memory")
+		}
+		// First append: jump to cap=4 to avoid the 0→1→2→4 realloc cascade.
+		if cap(t.array) == 0 {
+			t.array = make([]Value, 0, 4)
 		}
 		t.array = append(t.array, value)
 		// Clear stale integer-hash entry for this key to prevent duplicate
