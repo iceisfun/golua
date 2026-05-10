@@ -88,6 +88,15 @@ func (vm *VM) ProcessGcFinalizers() {
 	}
 
 	if doGC {
+		// Clear vm.retBuf so any stale result references it still holds
+		// from prior OP_RETURN / native-tailcall paths don't pin objects
+		// against Go's GC. Without this, a Lua script that returns a
+		// __gc-bearing table from a function and then immediately calls
+		// collectgarbage() observes the finalizer never firing, because
+		// vm.retBuf keeps the table reachable across the GC.
+		for i := range vm.retBuf {
+			vm.retBuf[i] = Nil
+		}
 		// Two GC cycles: first identifies unreachable objects and queues
 		// their Go finalizers; second gives the finalizer goroutine a
 		// chance to process them (standard Go pattern).
@@ -118,6 +127,11 @@ func (vm *VM) ProcessGcFinalizers() {
 // any weak table sweeps or ephemeron resolution. Used by the periodic GC step
 // in CheckInterrupt to avoid the overhead of full weak table processing.
 func (vm *VM) processGcFinalizersOnly() {
+	// Clear vm.retBuf so stale references don't keep finalizable objects
+	// alive (see ProcessGcFinalizers for the full rationale).
+	for i := range vm.retBuf {
+		vm.retBuf[i] = Nil
+	}
 	q := vm.gcQueue
 	q.mu.Lock()
 	entries := q.pending
