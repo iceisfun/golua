@@ -1123,7 +1123,11 @@ func (vm *VM) IsValidLevel(level int) bool {
 }
 
 // GetRegistry returns the VM's registry table, creating it on first access.
-// Per Lua 5.4, registry[1] is the main thread and registry[2] is the global table.
+// Per Lua 5.5 (lua.h LUA_RIDX_*), the layout is:
+//
+//	registry[1] = false              (reserved; was MAINTHREAD in 5.4)
+//	registry[2] = _G                 (LUA_RIDX_GLOBALS)
+//	registry[3] = main thread        (LUA_RIDX_MAINTHREAD, moved from 1 in 5.5)
 func (vm *VM) GetRegistry() LuaTable {
 	if vm.registry == nil {
 		vm.registry = NewEmptyTable()
@@ -1138,11 +1142,13 @@ func (vm *VM) GetRegistry() LuaTable {
 		_ = vm.registry.Set(NewString("_HOOKKEY"), NewTable(hookKey))
 	}
 	// Ensure standard entries are populated when available.
-	if !vm.threadObj.IsNil() {
-		_ = vm.registry.Set(NewInt(1), vm.threadObj)
-	}
+	// Slot 1 is reserved in 5.5 (matches lua5.5.0 which stores `false`).
+	_ = vm.registry.Set(NewInt(1), False)
 	if vm.globals != nil {
 		_ = vm.registry.Set(NewInt(2), NewTable(vm.globals))
+	}
+	if !vm.threadObj.IsNil() {
+		_ = vm.registry.Set(NewInt(3), vm.threadObj)
 	}
 	return vm.registry
 }
