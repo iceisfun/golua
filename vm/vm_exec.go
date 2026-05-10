@@ -1921,14 +1921,18 @@ dispatch:
 		}
 
 		nResults := fn.AsNativeFunc()(vm)
-		// Use vm.retBuf (per-VM 8-slot scratch) for the common small-result
-		// case to avoid a per-call slice allocation. The buffer is safe across
-		// the OP_CALL caller's read loop because no nested call runs between
-		// here and that loop. Falls back to a heap allocation when nResults
-		// exceeds the buffer.
-		if nResults <= len(vm.retBuf) {
-			copy(vm.retBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
-			results = vm.retBuf[:nResults]
+		// Copy results into a stack-local buffer rather than vm.retBuf:
+		// nested native calls (debug hooks invoking getlocal/getinfo,
+		// __index/__newindex metamethods, etc.) may clobber vm.retBuf
+		// before this doCall's writeback reads it. The stack-local buffer
+		// also avoids pinning the previous call's results against Go's
+		// GC, which would otherwise prevent __gc finalizers on table
+		// return values from firing across a subsequent collectgarbage()
+		// call. (Heap allocation only when nResults exceeds the buffer.)
+		var localRetBuf [8]Value
+		if nResults <= len(localRetBuf) {
+			copy(localRetBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
+			results = localRetBuf[:nResults]
 		} else {
 			results = make([]Value, nResults)
 			copy(results, vm.stack[nativeBase:nativeBase+nResults])
