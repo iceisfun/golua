@@ -1003,7 +1003,7 @@ Setter: `v.SetLoadLibProvider(...)` | Default: none (returns "absent")
 A common embedder pattern is annotating Lua scripts with host-meaningful metadata in their header — scheduler intervals, scope names, enable/disable flags, registration hints. The `directives` sub-package parses these without involving the lexer, parser, compiler, or VM:
 
 ```go
-import "github.com/iceisfun/golua/v2/directives"
+import "github.com/iceisfun/golua/directives"
 
 f, _ := directives.Parse(source)        // never errors in v1; *File is always non-nil
 if f.Has("disabled") { return }         // flag directives: ("", true)
