@@ -7,6 +7,7 @@
 //   - [github.com/iceisfun/golua/compiler] — compiler from AST to register-based bytecode
 //   - [github.com/iceisfun/golua/vm] — virtual machine, value types, and provider interfaces
 //   - [github.com/iceisfun/golua/stdlib] — standard library (string, table, math, io, os, etc.)
+//   - [github.com/iceisfun/golua/directives] — source-level parser for `-- @key value` header metadata (golua-specific extension)
 //
 // Programs embed GoLua by creating a [vm.VM], optionally registering providers
 // for I/O, OS, channels, and timing, then loading and running Lua source:
