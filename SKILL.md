@@ -42,6 +42,7 @@ SKILLS:
 - vm.ValueToString(val) converts any Value to a printable string.
 - Tables support metatables: tbl.SetMetatable(mt) / tbl.Metatable(). Set __add, __tostring, __index, __newindex, __len, __eq, __lt, __le, __call, __concat etc. as table fields.
 - Table.Get(key) is raw access (like rawget). Use v.TableGet(tbl, key) for __index-aware access (like tbl[key] in Lua). This matters for class instances.
+- Source directives: `directives.Parse(src)` extracts `-- @key value` header metadata for embedder-defined annotations like `-- @tick 30s`. Pure source-level (no lexer/VM coupling), header-only, non-standard Lua (reference Lua sees them as ordinary comments). The host defines what keys mean — the package is policy-free.
 ```
 
 ## What You Usually Need To Know
@@ -1010,6 +1011,48 @@ type LuaLoadLibProvider interface {
 ```
 
 Setter: `v.SetLoadLibProvider(...)` | Default: none (returns "absent")
+
+## Source Directives (Header Metadata)
+
+A common embedder pattern is annotating Lua scripts with host-meaningful metadata in their header — scheduler intervals, scope names, enable/disable flags, registration hints. The `directives` sub-package parses these without involving the lexer, parser, compiler, or VM:
+
+```go
+import "github.com/iceisfun/golua/v2/directives"
+
+f, _ := directives.Parse(source)        // never errors in v1; *File is always non-nil
+if f.Has("disabled") { return }         // flag directives: ("", true)
+tick, _ := f.Get("tick")                // last-wins for repeated keys
+imports := f.Lookup("import")           // every value, in source order
+for k, v := range f.All() { ... }       // range-over-func iterator
+```
+
+```lua
+-- @tick 30s
+-- @scope alias_expander
+-- @disabled
+-- @import shared/util
+-- @import shared/log
+
+local function run() return 42 end
+```
+
+Key rules:
+
+- **Header only.** Parser scans the contiguous prefix of shebang, blank lines, and `--` short comments. Stops at the first code line OR the first long comment (`--[[ ]]`).
+- **Non-directive comments inside the header are ignored** but do not terminate it (so `-- this is a banner` between directives is fine).
+- **Repeated keys:** preserved in order. `Get` returns last; `Lookup` returns all.
+- **Flag directives** (`-- @disabled`): key present with empty value. `Has` is the cleanest test.
+- **Case-sensitive**, no normalization. Identifier charset: `[A-Za-z_][A-Za-z0-9_-]*`.
+- **Malformed `-- @...` lines are silently ignored**, not errors. (A future `ParseStrict` may opt in to errors.)
+- **No policy in the package.** `@tick`, `@scope`, `@disabled` are embedder conventions. The host parses values (e.g. `time.ParseDuration("30s")`) and decides what they mean.
+
+When to recommend it: an embedder is hand-rolling a regex over comments to pick up `@`-tagged metadata. Replace with `directives.Parse`.
+
+When NOT to use it: the metadata needs to bind to specific declarations (`@tick` on `function foo()`). Declaration-bound annotations are an explicit non-goal; the package is header-scoped only.
+
+Non-standard Lua disclosure: directives are encoded in ordinary `--` comments. Reference Lua executes the same source unchanged — only the *interpretation* is golua-specific. Stripped/source-less execution carries no directive data because nothing enters the bytecode pipeline.
+
+See `examples/directives` (minimal demo) and `examples/directive_loader` (realistic directory-scan + policy pattern).
 
 ## Guidance For AI Assistants
 
