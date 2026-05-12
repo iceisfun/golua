@@ -47,6 +47,7 @@ Good fits include plugin systems, user scripting, game logic, automation, and co
 - Modern process execution via [`LuaProcessProvider`](docs/exec.md) (`exec.run`, `exec.spawn` with streaming I/O, stdin, kill, timed waits)
 - Output interception via [`LuaPrintProvider`](docs/print_provider.md) (redirect `print()`/`warn()` to logging, per-VM warn isolation)
 - Context cancellation and execution limits (call depth, stack, instructions)
+- Source-level header directive parser (`directives.Parse`) for embedder metadata like `-- @tick 30s` (non-standard, encoded as ordinary comments so source remains portable to reference Lua)
 - No cgo, no C dependencies, no shared object (.so/.dll) loading
 - Single static binary when compiled
 
@@ -234,6 +235,8 @@ See the `examples/` directory for complete examples:
 - **[editor_advanced](examples/editor_advanced/)** - browser IDE with completion, hover, diagnostics, and execution
 - **[expose_object](examples/expose_object/)** - Go-backed objects with an explicit adapter layer
 - **[context](examples/context/)** - context cancellation stops a runaway Lua script
+- **[directives](examples/directives/)** - parse `@`-prefixed metadata from a Lua source header (non-standard, source-level)
+- **[directive_loader](examples/directive_loader/)** - directive-driven script loader: scan a directory, honor `@disabled`/`@scope`/`@tick`, then run
 
 ## Go Interop
 
@@ -557,6 +560,50 @@ if time.once() then load_resources() end
 | `time.once([name])`     | Returns `true` on the first call for a given key, `false` on all subsequent calls |
 
 `time.tick` and `time.once` are **GoLua extensions** (not part of standard Lua). When `name` is omitted, both functions auto-key by callsite — the VM inspects the calling function's source file and line number (`source:line`) so each call location gets independent state. Pass an explicit `name` string to share state across call locations. The `time` table is **absent by default** and only appears when the host sets a `LuaTimeProvider`.
+
+### Source Directives (Non-Standard)
+
+A common embedder pattern is annotating Lua scripts with host-meaningful metadata in their header — scheduler intervals, scope names, enable/disable flags, registration hints. The `directives` sub-package factors that out into a single source-level parser:
+
+```go
+import "github.com/iceisfun/golua/v2/directives"
+
+f, _ := directives.Parse(source)
+if f.Has("disabled") { return }
+tick, _ := f.Get("tick")           // "30s"
+scope, _ := f.Get("scope")         // "alias_expander"
+imports := f.Lookup("import")      // ["shared/util", "shared/log"]
+```
+
+```lua
+-- @tick 30s
+-- @scope alias_expander
+-- @disabled
+-- @import shared/util
+-- @import shared/log
+
+local function run() return 42 end
+return run()
+```
+
+| Method                | Description                                                                  |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `Parse(src)`          | Returns `*File` with the parsed header (always non-nil)                      |
+| `(*File) Get(k)`      | Last value for key `k` (last-wins for repeated keys); flags return `("", true)` |
+| `(*File) Has(k)`      | Whether key `k` was present at least once                                    |
+| `(*File) Lookup(k)`   | Every value for key `k`, in source order                                     |
+| `(*File) Keys()`      | Distinct keys in first-occurrence order                                      |
+| `(*File) All()`       | Range-over-func iterator over every `(key, value)` pair, including duplicates |
+
+Header directives (`-- @key value`) are a **golua-specific extension** for embedders. They are **not** part of the Lua language as specified by Lua 5.4 / Lua 5.5; the reference Lua interpreter sees them as ordinary comments. This is by design:
+
+1. **Reference Lua executes the same source unchanged.** A `.lua` file with a directive header runs identically under `lua` / `lua5.5.0` and under GoLua.
+2. **The lexer, parser, compiler, and VM are unaffected.** Directives are scanned by a standalone source-level parser; there is no grammar change, no new tokens, no new AST nodes, and no bytecode change.
+3. **Stripped / source-less execution is unaffected.** Directives never enter the bytecode pipeline; a precompiled `*compiler.Proto` carries no directive data.
+
+The `directives` package has no opinion about which keys are valid — `@tick`, `@scope`, `@disabled`, `@import` are **embedder conventions**, not GoLua features. The parser identifies header-position directives only (a contiguous prefix of shebang, blank lines, and `--` short comments); long comments (`--[[ ]]`) terminate the header without being scanned.
+
+See [examples/directives](examples/directives/) for a minimal API demo and [examples/directive_loader](examples/directive_loader/) for the realistic embedder pattern of scanning a directory of scripts and applying policy from their headers.
 
 ### LuaTable Interface
 
