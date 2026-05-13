@@ -1,6 +1,6 @@
 ---
 name: golua
-description: Embed Lua in Go applications using github.com/iceisfun/golua. Covers VM setup, native function binding, table manipulation, metatables, sandboxing, and provider-based capability control.
+description: Embed Lua 5.4.8 in Go applications using github.com/iceisfun/golua (the v1 line). Covers VM setup, native function binding, table manipulation, metatables, sandboxing, and provider-based capability control. A separate v2 / Lua 5.5.0 variant exists at github.com/iceisfun/golua/v2 — check the user's go.mod before applying language-level guidance.
 license: MIT
 compatibility: claude-code, opencode
 metadata:
@@ -10,7 +10,21 @@ metadata:
 
 # GoLua Skill
 
-Use this when helping someone who imported `github.com/iceisfun/golua` and wants to embed Lua in a Go application.
+Use this when helping someone who imported GoLua and wants to embed Lua in a Go application.
+
+> [!IMPORTANT]
+> **This skill targets GoLua v1 — Lua 5.4.8** (`github.com/iceisfun/golua`, branch `lua_5_4_8`).
+>
+> A separate skill copy exists for the v2 line. **Before applying language-level guidance, check the user's `go.mod`:**
+>
+> | Module path | Version | Lua spec | Branch |
+> |---|---|---|---|
+> | `github.com/iceisfun/golua` | v1.x / v0.5.4-golua.x | 5.4.8 | `lua_5_4_8` (this skill) |
+> | `github.com/iceisfun/golua/v2` | v2.x | 5.5.0 | [`master`](https://github.com/iceisfun/golua) (other skill copy) |
+>
+> Note: Go module rules give v0 and v1 the unsuffixed path; only v2+ takes a `/vN` suffix. There is no `github.com/iceisfun/golua/v1`.
+>
+> Both versions share the same provider architecture, sandbox model, and Go interop API — most of this skill applies either way. Lua 5.5-only features (the `global` keyword, named varargs, `local<const>` prefix syntax, `table.create`, `error(nil)` returning `"<no error object>"`; removed math/debug APIs) **do not apply on v1** — the user has 5.4.8 semantics. If you see import path `github.com/iceisfun/golua/v2`, recommend the user install the matching v2 skill copy from the `master` branch.
 
 ## SKILLS
 
@@ -18,7 +32,7 @@ Copy-paste block for an AI assistant:
 
 ```text
 SKILLS:
-- GoLua is an embeddable, sandbox-first Lua runtime for Go.
+- GoLua is an embeddable, sandbox-first Lua runtime for Go. Two versions: v1 = Lua 5.4.8 = `github.com/iceisfun/golua` (this skill, no `/vN` suffix — v0/v1 share one path per Go module rules); v2 = Lua 5.5.0 = `github.com/iceisfun/golua/v2`. Check `go.mod` before applying language-level guidance; this skill's import paths and 5.4-only semantics assume v1.
 - Most hosts only need five steps: parser.Parse -> compiler.Compile -> vm.New -> stdlib.Open -> v.Run.
 - A fresh VM is sandboxed by default. `io`, `os`, `debug`, `time`, `chan`, `exec`, and `http` are not available unless the host enables them.
 - Main host tasks:
