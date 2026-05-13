@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 // openPackage registers the package module and require global.

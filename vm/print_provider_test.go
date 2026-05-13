@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/parser"
+	"github.com/iceisfun/golua/v1/compiler"
+	"github.com/iceisfun/golua/v1/parser"
 )
 
 // capturePrintProvider records all Print and Warn calls for test assertions.

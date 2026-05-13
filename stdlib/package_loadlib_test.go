@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 type testLoadLibProvider struct {

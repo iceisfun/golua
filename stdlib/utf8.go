@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 func openUtf8(v *vm.VM) {

@@ -1,7 +1,7 @@
 package compiler
 
 import (
-	"github.com/iceisfun/golua/ast"
+	"github.com/iceisfun/golua/v1/ast"
 )
 
 // stmtEndLine returns the "end line" of a statement — the line of the closing

@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 // coArgType returns the type name for error messages, using "no value" when argc is insufficient.

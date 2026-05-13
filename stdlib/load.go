@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/parser"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/compiler"
+	"github.com/iceisfun/golua/v1/parser"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 // maxLoadSize is the maximum size (in bytes) that the reader accumulator in

@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/v1/compiler"
 )
 
 // DefaultMaxCallDepth is the default call depth limit. Lua 5.4 uses

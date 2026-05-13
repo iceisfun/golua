@@ -3,7 +3,7 @@ package lexer
 import (
 	"testing"
 
-	"github.com/iceisfun/golua/token"
+	"github.com/iceisfun/golua/v1/token"
 )
 
 // helper to tokenize and check no error

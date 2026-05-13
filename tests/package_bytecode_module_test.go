@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iceisfun/golua/stdlib"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/stdlib"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 func TestRequireLoadsBytecodeModule(t *testing.T) {

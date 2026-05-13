@@ -4,9 +4,9 @@ package session
 import (
 	"sync"
 
-	"github.com/iceisfun/golua/ast"
-	"github.com/iceisfun/golua/examples/editor_advanced/language"
-	"github.com/iceisfun/golua/parser"
+	"github.com/iceisfun/golua/v1/ast"
+	"github.com/iceisfun/golua/v1/examples/editor_advanced/language"
+	"github.com/iceisfun/golua/v1/parser"
 )
 
 // Document holds the current state of an open file.

@@ -3,8 +3,8 @@ package stdlib
 import (
 	"fmt"
 
-	"github.com/iceisfun/golua/glob"
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/glob"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 func openGlob(v *vm.VM) {

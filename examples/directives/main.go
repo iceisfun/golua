@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/iceisfun/golua/directives"
+	"github.com/iceisfun/golua/v1/directives"
 )
 
 const source = `-- @tick 30s

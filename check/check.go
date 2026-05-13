@@ -5,9 +5,9 @@
 package check
 
 import (
-	"github.com/iceisfun/golua/ast"
-	"github.com/iceisfun/golua/parser"
-	"github.com/iceisfun/golua/token"
+	"github.com/iceisfun/golua/v1/ast"
+	"github.com/iceisfun/golua/v1/parser"
+	"github.com/iceisfun/golua/v1/token"
 )
 
 // Severity constants matching Monaco's MarkerSeverity.

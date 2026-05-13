@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/v1/compiler"
 )
 
 // terminalCFuncVal is a singleton native function value representing the

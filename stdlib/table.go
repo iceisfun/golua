@@ -5,7 +5,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 func openTable(v *vm.VM) {

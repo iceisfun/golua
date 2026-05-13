@@ -6,7 +6,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 func openString(v *vm.VM) {

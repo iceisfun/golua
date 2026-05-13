@@ -35,7 +35,7 @@
 package stdlib
 
 import (
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 // Open registers all standard library functions and modules in the VM.

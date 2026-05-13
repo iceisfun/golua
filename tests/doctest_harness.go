@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 // resultKind classifies how a doctest execution ended.

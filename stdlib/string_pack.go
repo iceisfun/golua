@@ -7,7 +7,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 // getPackInt returns an integer argument for string.pack, coercing strings to

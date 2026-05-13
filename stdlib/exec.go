@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 // execState holds per-VM process handle tables created when the exec module is first used.

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iceisfun/golua/vm"
+	"github.com/iceisfun/golua/v1/vm"
 )
 
 // channelHandleMeta is a shared metatable for identifying channel handles.

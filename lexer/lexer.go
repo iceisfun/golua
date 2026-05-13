@@ -14,7 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/iceisfun/golua/token"
+	"github.com/iceisfun/golua/v1/token"
 )
 
 const eof = -1

@@ -5,7 +5,7 @@
 // Internal fields are never exposed.
 package main
 
-import "github.com/iceisfun/golua/vm"
+import "github.com/iceisfun/golua/v1/vm"
 
 // EnemyToLua converts a Go Enemy into a Lua table of closures.
 // The returned table has read-only accessors and explicit mutation methods.

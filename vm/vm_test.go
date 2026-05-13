@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iceisfun/golua/compiler"
-	"github.com/iceisfun/golua/parser"
+	"github.com/iceisfun/golua/v1/compiler"
+	"github.com/iceisfun/golua/v1/parser"
 )
 
 // Helper to compile and run Lua code

@@ -1,6 +1,6 @@
 ---
 name: golua
-description: Embed Lua in Go applications using github.com/iceisfun/golua. Covers VM setup, native function binding, table manipulation, metatables, sandboxing, and provider-based capability control.
+description: Embed Lua in Go applications using github.com/iceisfun/golua/v1. Covers VM setup, native function binding, table manipulation, metatables, sandboxing, and provider-based capability control.
 license: MIT
 compatibility: claude-code, opencode
 metadata:
@@ -10,7 +10,7 @@ metadata:
 
 # GoLua Skill
 
-Use this when helping someone who imported `github.com/iceisfun/golua` and wants to embed Lua in a Go application.
+Use this when helping someone who imported `github.com/iceisfun/golua/v1` and wants to embed Lua in a Go application.
 
 ## SKILLS
 
@@ -64,10 +64,10 @@ import (
     "fmt"
     "log"
 
-    "github.com/iceisfun/golua/compiler"
-    "github.com/iceisfun/golua/parser"
-    "github.com/iceisfun/golua/stdlib"
-    "github.com/iceisfun/golua/vm"
+    "github.com/iceisfun/golua/v1/compiler"
+    "github.com/iceisfun/golua/v1/parser"
+    "github.com/iceisfun/golua/v1/stdlib"
+    "github.com/iceisfun/golua/v1/vm"
 )
 
 func main() {
@@ -693,8 +693,8 @@ The HTTP module lives in a separate package and must be opened explicitly:
 
 ```go
 import (
-    "github.com/iceisfun/golua/stdlib"
-    gohttp "github.com/iceisfun/golua/stdlib/http"
+    "github.com/iceisfun/golua/v1/stdlib"
+    gohttp "github.com/iceisfun/golua/v1/stdlib/http"
 )
 
 v := vm.New()
@@ -1003,7 +1003,7 @@ Setter: `v.SetLoadLibProvider(...)` | Default: none (returns "absent")
 A common embedder pattern is annotating Lua scripts with host-meaningful metadata in their header — scheduler intervals, scope names, enable/disable flags, registration hints. The `directives` sub-package parses these without involving the lexer, parser, compiler, or VM:
 
 ```go
-import "github.com/iceisfun/golua/directives"
+import "github.com/iceisfun/golua/v1/directives"
 
 f, _ := directives.Parse(source)        // never errors in v1; *File is always non-nil
 if f.Has("disabled") { return }         // flag directives: ("", true)

@@ -6,7 +6,7 @@ with positions matching Monaco's 1-based `IMarkerData` interface.
 ## Usage
 
 ```go
-import "github.com/iceisfun/golua/check"
+import "github.com/iceisfun/golua/v1/check"
 
 result := check.Check("editor.lua", sourceText)
 
