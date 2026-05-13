@@ -9,7 +9,7 @@
 > [!IMPORTANT]
 > **You're viewing GoLua v2 — Lua 5.5.0** (branch `master`, the default).
 > - Starting fresh or want the latest Lua language features? → stay here — `github.com/iceisfun/golua/v2`
-> - Need maximum compatibility with existing Lua 5.4 code or bytecode? → **[v1 on `lua_5_4_8`](https://github.com/iceisfun/golua/tree/lua_5_4_8)** — `github.com/iceisfun/golua/v1`
+> - Need maximum compatibility with existing Lua 5.4 code or bytecode? → **[v1 on `lua_5_4_8`](https://github.com/iceisfun/golua/tree/lua_5_4_8)** — `github.com/iceisfun/golua` (no `/vN` suffix; v0/v1 share one path per Go module rules)
 >
 > See [Versions](#versions) for the full comparison.
 
@@ -60,12 +60,12 @@ Good fits include plugin systems, user scripting, game logic, automation, and co
 
 ## Versions
 
-GoLua is published as two Go module major versions, tracked on separate branches:
+GoLua is published as two Go module major versions, tracked on separate branches. Per Go module rules, v0/v1 share the unsuffixed module path; only v2+ takes a `/vN` suffix.
 
 | | **v1 — Lua 5.4.8** (`lua_5_4_8`) | **v2 — Lua 5.5.0** (`master`) |
 |---|---|---|
-| Import | `github.com/iceisfun/golua/v1` | `github.com/iceisfun/golua/v2` |
-| Install | `go get github.com/iceisfun/golua/v1` | `go get github.com/iceisfun/golua/v2` |
+| Import | `github.com/iceisfun/golua` | `github.com/iceisfun/golua/v2` |
+| Install | `go get github.com/iceisfun/golua@v1` | `go get github.com/iceisfun/golua/v2` |
 | Lua compat | PUC-Rio 5.4.8 | PUC-Rio 5.5.0 |
 | Binary format | Lua 5.4 bytecode | Lua 5.5 bytecode |
 
@@ -95,7 +95,7 @@ Both versions share the same provider architecture, sandbox model, and Go intero
 go get github.com/iceisfun/golua/v2
 
 # Lua 5.4.8
-go get github.com/iceisfun/golua/v1
+go get github.com/iceisfun/golua@v1
 ```
 
 ### CLI
@@ -106,8 +106,8 @@ go install github.com/iceisfun/golua/v2/cmd/lua@latest
 go install github.com/iceisfun/golua/v2/cmd/luac@latest
 
 # Lua 5.4.8
-go install github.com/iceisfun/golua/v1/cmd/lua@latest
-go install github.com/iceisfun/golua/v1/cmd/luac@latest
+go install github.com/iceisfun/golua/cmd/lua@v1
+go install github.com/iceisfun/golua/cmd/luac@v1
 ```
 
 GoLua is pure Go and does not require cgo.
