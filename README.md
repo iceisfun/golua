@@ -6,6 +6,13 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/iceisfun/golua/v2.svg)](https://pkg.go.dev/github.com/iceisfun/golua/v2)
 
+> [!IMPORTANT]
+> **You're viewing GoLua v2 — Lua 5.5.0** (branch `master`, the default).
+> - Starting fresh or want the latest Lua language features? → stay here — `github.com/iceisfun/golua/v2`
+> - Need maximum compatibility with existing Lua 5.4 code or bytecode? → **[v1 on `lua_5_4_8`](https://github.com/iceisfun/golua/tree/lua_5_4_8)** — `github.com/iceisfun/golua/v1`
+>
+> See [Versions](#versions) for the full comparison.
+
 An embeddable, sandbox-first Lua 5.5 runtime for Go applications. Pure Go, zero dependencies, no cgo.
 
 Good fits include plugin systems, user scripting, game logic, automation, and controlled configuration runtimes.
@@ -53,23 +60,23 @@ Good fits include plugin systems, user scripting, game logic, automation, and co
 
 ## Versions
 
-GoLua is available in two variants, published as separate Go module versions:
+GoLua is published as two Go module major versions, tracked on separate branches:
 
-| | **v1 — Lua 5.4.8** (`master`) | **v2 — Lua 5.5.0** (`lua_5_5_0`) |
+| | **v1 — Lua 5.4.8** (`lua_5_4_8`) | **v2 — Lua 5.5.0** (`master`) |
 |---|---|---|
-| Import | `github.com/iceisfun/golua` | `github.com/iceisfun/golua/v2` |
-| Install | `go get github.com/iceisfun/golua` | `go get github.com/iceisfun/golua/v2` |
+| Import | `github.com/iceisfun/golua/v1` | `github.com/iceisfun/golua/v2` |
+| Install | `go get github.com/iceisfun/golua/v1` | `go get github.com/iceisfun/golua/v2` |
 | Lua compat | PUC-Rio 5.4.8 | PUC-Rio 5.5.0 |
 | Binary format | Lua 5.4 bytecode | Lua 5.5 bytecode |
 
-### v1 — Lua 5.4.8 (recommended for most users)
+### v1 — Lua 5.4.8
 
 - Battle-tested language spec with the widest ecosystem of Lua libraries and documentation
 - Binary chunk format matches PUC-Rio 5.4.8
 - Stable API — no breaking changes planned
-- Best choice when you need maximum compatibility with existing Lua code
+- Best choice when you need maximum compatibility with existing Lua code or bytecode
 
-### v2 — Lua 5.5.0
+### v2 — Lua 5.5.0 (this branch)
 
 - Latest language features: `global` declarations, named varargs (`... name`), `local<const>`/`local<close>` prefix syntax, `table.create`, `debug.getinfo` `extraargs` field
 - Stricter compile-time checking (undeclared globals are errors unless opted out)
@@ -77,30 +84,30 @@ GoLua is available in two variants, published as separate Go module versions:
 - `LUA_PATH_5_5` / `LUA_CPATH_5_5` env var precedence for module paths
 - Best choice for new projects that don't need to load existing 5.4 bytecode or libraries that depend on removed APIs
 
-Both versions share the same provider architecture, sandbox model, and Go interop patterns. Code using the embedding API migrates between versions with only import path changes.
+Both versions share the same provider architecture, sandbox model, and Go interop patterns. Code using the embedding API migrates between versions with only import-path changes.
 
 ## Installation
 
 ### Library
 
 ```bash
-# Lua 5.4.8
-go get github.com/iceisfun/golua
-
-# Lua 5.5.0
+# Lua 5.5.0 (this branch)
 go get github.com/iceisfun/golua/v2
+
+# Lua 5.4.8
+go get github.com/iceisfun/golua/v1
 ```
 
 ### CLI
 
 ```bash
-# Lua 5.5.0
+# Lua 5.5.0 (this branch)
 go install github.com/iceisfun/golua/v2/cmd/lua@latest
 go install github.com/iceisfun/golua/v2/cmd/luac@latest
 
 # Lua 5.4.8
-go install github.com/iceisfun/golua/cmd/lua@latest
-go install github.com/iceisfun/golua/cmd/luac@latest
+go install github.com/iceisfun/golua/v1/cmd/lua@latest
+go install github.com/iceisfun/golua/v1/cmd/luac@latest
 ```
 
 GoLua is pure Go and does not require cgo.
