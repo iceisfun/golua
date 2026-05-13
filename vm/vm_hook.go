@@ -3,7 +3,7 @@ package vm
 import (
 	"fmt"
 
-	"github.com/iceisfun/golua/v1/compiler"
+	"github.com/iceisfun/golua/compiler"
 )
 
 // luaHookError wraps a panic from a debug hook function. In Lua 5.4, hook

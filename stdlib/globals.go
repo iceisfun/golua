@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/iceisfun/golua/v1/vm"
+	"github.com/iceisfun/golua/vm"
 )
 
 // gotDesc returns "got TYPE" or "got no value" for arg error messages.

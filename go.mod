@@ -1,3 +1,3 @@
-module github.com/iceisfun/golua/v1
+module github.com/iceisfun/golua
 
 go 1.24

@@ -1,8 +1,8 @@
 package parser
 
 import (
-	"github.com/iceisfun/golua/v1/ast"
-	"github.com/iceisfun/golua/v1/token"
+	"github.com/iceisfun/golua/ast"
+	"github.com/iceisfun/golua/token"
 )
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ import (
 	"math/bits"
 	"time"
 
-	"github.com/iceisfun/golua/v1/vm"
+	"github.com/iceisfun/golua/vm"
 )
 
 // xoshiro256ss implements the xoshiro256** pseudo-random number generator

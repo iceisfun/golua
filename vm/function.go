@@ -1,7 +1,7 @@
 package vm
 
 import (
-	"github.com/iceisfun/golua/v1/compiler"
+	"github.com/iceisfun/golua/compiler"
 )
 
 // closureInlineUpvalues sizes the inline upvalue slot count. Closures with

@@ -8,9 +8,9 @@ The module is not available by default. The host application must explicitly ena
 
 ```go
 import (
-    "github.com/iceisfun/golua/v1/stdlib"
-    gohttp "github.com/iceisfun/golua/v1/stdlib/http"
-    "github.com/iceisfun/golua/v1/vm"
+    "github.com/iceisfun/golua/stdlib"
+    gohttp "github.com/iceisfun/golua/stdlib/http"
+    "github.com/iceisfun/golua/vm"
 )
 
 v := vm.New()

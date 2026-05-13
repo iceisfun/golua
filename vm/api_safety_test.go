@@ -5,8 +5,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/iceisfun/golua/v1/compiler"
-	"github.com/iceisfun/golua/v1/parser"
+	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/parser"
 )
 
 // These tests verify that exported Go API methods never panic.

@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/iceisfun/golua/v1/vm"
+	"github.com/iceisfun/golua/vm"
 )
 
 type generatedFormatArg struct {

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iceisfun/golua/v1/compiler"
-	"github.com/iceisfun/golua/v1/parser"
+	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/parser"
 )
 
 // runWithVM compiles and runs Lua code on a given VM, returning results.

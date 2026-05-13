@@ -12,7 +12,7 @@
 // Lua 5.4 Reference: §3 – The Language (§3.3 Statements, §3.4 Expressions).
 package ast
 
-import "github.com/iceisfun/golua/v1/token"
+import "github.com/iceisfun/golua/token"
 
 // ---------------------------------------------------------------------------
 // Interfaces

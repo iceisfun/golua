@@ -4,14 +4,7 @@
 
 # GoLua
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/iceisfun/golua/v1.svg)](https://pkg.go.dev/github.com/iceisfun/golua/v1)
-
-> [!IMPORTANT]
-> **You're viewing GoLua v1 — Lua 5.4.8** (branch `lua_5_4_8`).
-> - Want the latest language features (`global`, named varargs, `local<const>` prefix, `table.create`, …)? → **[v2 on `master`](https://github.com/iceisfun/golua)** — `github.com/iceisfun/golua/v2`
-> - Need maximum compatibility with existing Lua 5.4 code or bytecode? → stay here — `github.com/iceisfun/golua/v1`
->
-> See [Versions](#versions) for the full comparison.
+[![Go Reference](https://pkg.go.dev/badge/github.com/iceisfun/golua.svg)](https://pkg.go.dev/github.com/iceisfun/golua)
 
 An embeddable, sandbox-first Lua 5.4 runtime for Go applications, with a small set of experimental 5.5 features. Pure Go, zero dependencies, no cgo.
 
@@ -49,21 +42,21 @@ Good fits include plugin systems, user scripting, game logic, automation, and co
 
 ## Versions
 
-GoLua is published as two Go module major versions, tracked on separate branches:
+GoLua is available in two variants, published as separate Go module versions:
 
-| | **v1 — Lua 5.4.8** (`lua_5_4_8`) | **v2 — Lua 5.5.0** (`master`) |
+| | **v1 — Lua 5.4.8** (`master`) | **v2 — Lua 5.5.0** (`lua_5_5_0`) |
 |---|---|---|
-| Import | `github.com/iceisfun/golua/v1` | `github.com/iceisfun/golua/v2` |
-| Install | `go get github.com/iceisfun/golua/v1` | `go get github.com/iceisfun/golua/v2` |
+| Import | `github.com/iceisfun/golua` | `github.com/iceisfun/golua/v2` |
+| Install | `go get github.com/iceisfun/golua` | `go get github.com/iceisfun/golua/v2` |
 | Lua compat | PUC-Rio 5.4.8 | PUC-Rio 5.5.0 |
 | Binary format | Lua 5.4 bytecode | Lua 5.5 bytecode |
 
-### v1 — Lua 5.4.8
+### v1 — Lua 5.4.8 (recommended for most users)
 
 - Battle-tested language spec with the widest ecosystem of Lua libraries and documentation
 - Binary chunk format matches PUC-Rio 5.4.8
 - Stable API — no breaking changes planned
-- Best choice when you need maximum compatibility with existing Lua code or bytecode
+- Best choice when you need maximum compatibility with existing Lua code
 
 ### v2 — Lua 5.5.0
 
@@ -73,15 +66,15 @@ GoLua is published as two Go module major versions, tracked on separate branches
 - `LUA_PATH_5_5` / `LUA_CPATH_5_5` env var precedence for module paths
 - Best choice for new projects that don't need to load existing 5.4 bytecode or libraries that depend on removed APIs
 
-Both versions share the same provider architecture, sandbox model, and Go interop patterns. Code using the embedding API migrates between versions with only import-path changes.
+Both versions share the same provider architecture, sandbox model, and Go interop patterns. Code using the embedding API migrates between versions with only import path changes.
 
 ## Installation
 
 ### Library
 
 ```bash
-# Lua 5.4.8 (this branch)
-go get github.com/iceisfun/golua/v1
+# Lua 5.4.8
+go get github.com/iceisfun/golua
 
 # Lua 5.5.0
 go get github.com/iceisfun/golua/v2
@@ -90,9 +83,9 @@ go get github.com/iceisfun/golua/v2
 ### CLI
 
 ```bash
-# Lua 5.4.8 (this branch)
-go install github.com/iceisfun/golua/v1/cmd/lua@latest
-go install github.com/iceisfun/golua/v1/cmd/luac@latest
+# Lua 5.4.8
+go install github.com/iceisfun/golua/cmd/lua@latest
+go install github.com/iceisfun/golua/cmd/luac@latest
 
 # Lua 5.5.0
 go install github.com/iceisfun/golua/v2/cmd/lua@latest
@@ -110,10 +103,10 @@ import (
     "fmt"
     "log"
 
-    "github.com/iceisfun/golua/v1/compiler"
-    "github.com/iceisfun/golua/v1/parser"
-    "github.com/iceisfun/golua/v1/stdlib"
-    "github.com/iceisfun/golua/v1/vm"
+    "github.com/iceisfun/golua/compiler"
+    "github.com/iceisfun/golua/parser"
+    "github.com/iceisfun/golua/stdlib"
+    "github.com/iceisfun/golua/vm"
 )
 
 func main() {
@@ -557,7 +550,7 @@ if time.once() then load_resources() end
 A common embedder pattern is annotating Lua scripts with host-meaningful metadata in their header — scheduler intervals, scope names, enable/disable flags, registration hints. The `directives` sub-package factors that out into a single source-level parser:
 
 ```go
-import "github.com/iceisfun/golua/v1/directives"
+import "github.com/iceisfun/golua/directives"
 
 f, _ := directives.Parse(source)
 if f.Has("disabled") { return }

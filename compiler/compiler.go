@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/iceisfun/golua/v1/ast"
+	"github.com/iceisfun/golua/ast"
 )
 
 // shortSrc returns a display-friendly source name, matching Lua 5.4's luaO_chunkid.

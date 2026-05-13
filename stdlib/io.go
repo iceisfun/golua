@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/iceisfun/golua/v1/vm"
+	"github.com/iceisfun/golua/vm"
 )
 
 // maxArgLine is the maximum number of format arguments for f:lines()/io.lines().

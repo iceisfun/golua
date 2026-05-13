@@ -21,12 +21,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/iceisfun/golua/v1/ast"
-	astpkg "github.com/iceisfun/golua/v1/ast"
-	"github.com/iceisfun/golua/v1/compiler"
-	"github.com/iceisfun/golua/v1/lexer"
-	"github.com/iceisfun/golua/v1/parser"
-	"github.com/iceisfun/golua/v1/token"
+	"github.com/iceisfun/golua/ast"
+	astpkg "github.com/iceisfun/golua/ast"
+	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/lexer"
+	"github.com/iceisfun/golua/parser"
+	"github.com/iceisfun/golua/token"
 )
 
 var (

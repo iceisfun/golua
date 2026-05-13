@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/iceisfun/golua/v1/ast"
-	"github.com/iceisfun/golua/v1/check"
+	"github.com/iceisfun/golua/ast"
+	"github.com/iceisfun/golua/check"
 )
 
 func main() {

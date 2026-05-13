@@ -3,7 +3,7 @@ package vm
 import (
 	"math"
 
-	"github.com/iceisfun/golua/v1/compiler"
+	"github.com/iceisfun/golua/compiler"
 )
 
 // decodeBytecodeMetamethodTag returns the MetamethodTag stored in the C field
