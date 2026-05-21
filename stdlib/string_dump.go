@@ -3,7 +3,6 @@ package stdlib
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 
 	"github.com/iceisfun/golua/v2/compiler"
 	"github.com/iceisfun/golua/v2/vm"
@@ -12,15 +11,11 @@ import (
 // string.dump(function [, strip])
 func stringDump(v *vm.VM) int {
 	val := v.Get(1)
-	if !val.IsFunction() && !val.IsNativeFunc() {
-		got := val.Type()
-		if v.ArgCount() < 1 {
-			got = "no value"
-		}
-		callerArgError(v, 1, "string.dump", fmt.Sprintf("function expected, got %s", got))
-	}
-	if val.IsNativeFunc() {
-		panic("unable to dump given function")
+	// Lua 5.5's str_dump uses a single luaL_argcheck: the argument must be a
+	// Lua function (not a C/native function). A native function, wrong type,
+	// or missing argument all produce the same "Lua function expected" error.
+	if !val.IsFunction() {
+		callerArgError(v, 1, "string.dump", "Lua function expected")
 	}
 	cl := val.AsClosure()
 	strip := false

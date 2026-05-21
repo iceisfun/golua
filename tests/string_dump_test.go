@@ -87,10 +87,13 @@ func TestStringDumpCrossLoadToRefLua(t *testing.T) {
 }
 
 func TestStringDumpNativeError(t *testing.T) {
+	// Lua 5.5's str_dump uses a single luaL_argcheck("Lua function
+	// expected") — a C/native function is rejected with that message,
+	// not the old "unable to dump given function".
 	code := `
 local ok, err = pcall(string.dump, print)
 print(ok)
-print(err:find("unable to dump") ~= nil)
+print(err:find("Lua function expected") ~= nil)
 `
 	out, err := runGoLua(t, code)
 	if err != nil {
