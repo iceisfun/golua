@@ -234,33 +234,38 @@ func (t *Table) setHash(keyValue Value, hk any, value Value) {
 
 // setStrHash inserts, updates, or deletes a string hash entry while keeping
 // the ordered keys slice in sync.
+//
+// Both the insert and delete paths detect key novelty with a len() compare
+// around the map operation rather than a separate hashed probe: the common
+// case — updating a key that already exists — then costs a single map assign
+// instead of an assign plus a lookup.
 func (t *Table) setStrHash(s string, value Value) {
 	if value.IsNil() {
 		if t.strHash != nil {
-			if _, exists := t.strHash[s]; exists {
-				delete(t.strHash, s)
+			oldLen := len(t.strHash)
+			delete(t.strHash, s)
+			if len(t.strHash) != oldLen {
 				t.deadKeys++
 			}
 		}
 		return
 	}
 	sh := t.ensureStrHash()
-	if _, exists := sh[s]; !exists {
-		revived := false
-		if t.deadKeys > 0 {
-			for _, hk := range t.keys {
-				if hk.typ == typeString && hk.ptr.(string) == s {
-					t.deadKeys--
-					revived = true
-					break
-				}
+	oldLen := len(sh)
+	sh[s] = value
+	if len(sh) == oldLen {
+		return // updated an existing key — no ordered-keys bookkeeping needed
+	}
+	// s is a new key: revive its dead-key tombstone, or append it to t.keys.
+	if t.deadKeys > 0 {
+		for _, hk := range t.keys {
+			if hk.typ == typeString && hk.ptr.(string) == s {
+				t.deadKeys--
+				return
 			}
 		}
-		if !revived {
-			t.reuseOrAppendKey(Value{typ: typeString, ptr: s})
-		}
 	}
-	sh[s] = value
+	t.reuseOrAppendKey(Value{typ: typeString, ptr: s})
 }
 
 // reuseOrAppendKey inserts a new key into the ordered keys slice. If there is
