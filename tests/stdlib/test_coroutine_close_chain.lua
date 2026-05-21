@@ -1,11 +1,14 @@
 -- Test: cstack.lua - Chain of coroutine.close
 -- From: cstack.lua
--- What: Tests stack overflow when closing a chain of 1000 coroutines (bug since 5.4.0)
+-- What: closing a deep chain of coroutines must produce a *catchable* stack
+-- overflow, never crash the host. The chain length must exceed the VM's
+-- DefaultMaxCallDepth (10000); reference Lua overflows much sooner via its
+-- separate LUAI_MAXCCALLS C-call limit, but golua uses one unified depth.
 
 do
   local count = 0
   local coro = false
-  for i = 1, 1000 do
+  for i = 1, 25000 do
     local previous = coro
     coro = coroutine.create(function()
       local cc <close> = setmetatable({}, {__close=function()
