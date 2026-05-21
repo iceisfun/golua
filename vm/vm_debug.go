@@ -91,6 +91,8 @@ func (vm *VM) Traceback(msg string, level int) string {
 			switch {
 			case nameWhat == "metamethod":
 				fmt.Fprintf(&b, "[C]: in metamethod '%s'", name)
+			case nameWhat == "for iterator":
+				fmt.Fprintf(&b, "[C]: in for iterator '%s'", name)
 			case name != "":
 				fmt.Fprintf(&b, "[C]: in function '%s'", name)
 			default:
@@ -165,7 +167,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 			} else if len(name) > 0 && name[0] == '<' {
 				// Anonymous function: "in function <file:line>" (no quotes)
 				fmt.Fprintf(&b, "%s:%d: in function %s", source, line, name)
-			} else if nameWhat == "local" || nameWhat == "field" || nameWhat == "upvalue" || nameWhat == "method" {
+			} else if nameWhat == "local" || nameWhat == "field" || nameWhat == "upvalue" || nameWhat == "method" || nameWhat == "for iterator" {
 				fmt.Fprintf(&b, "%s:%d: in %s '%s'", source, line, nameWhat, name)
 			} else {
 				fmt.Fprintf(&b, "%s:%d: in function '%s'", source, line, name)
