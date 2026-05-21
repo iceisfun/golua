@@ -661,6 +661,31 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 	for i := pc - 1; i >= 0; i-- {
 		prev := proto.Code[i]
 		prevOp := prev.OpCode()
+
+		// Skip opcodes whose A operand is not a destination register —
+		// jumps, comparisons, the SET* family, returns, etc. Their A bits
+		// encode something else (a jump offset, a source operand) and can
+		// spuriously alias `reg`. In particular a JMP emitted for a
+		// comparison-expression argument sits between the callee load and
+		// the CALL; without this skip its offset bits could be mistaken
+		// for the instruction that defined the callee, losing the name.
+		switch prevOp {
+		case compiler.OP_JMP,
+			compiler.OP_EQ, compiler.OP_LT, compiler.OP_LE,
+			compiler.OP_EQK, compiler.OP_EQI, compiler.OP_LTI,
+			compiler.OP_LEI, compiler.OP_GTI, compiler.OP_GEI,
+			compiler.OP_TEST,
+			compiler.OP_SETTABUP, compiler.OP_SETTABLE,
+			compiler.OP_SETI, compiler.OP_SETFIELD,
+			compiler.OP_SETLIST, compiler.OP_SETUPVAL,
+			compiler.OP_RETURN, compiler.OP_RETURN0, compiler.OP_RETURN1,
+			compiler.OP_CLOSE, compiler.OP_TBC,
+			compiler.OP_MMBIN, compiler.OP_MMBINI, compiler.OP_MMBINK,
+			compiler.OP_TFORCALL,
+			compiler.OP_VARARGPREP, compiler.OP_EXTRAARG:
+			continue
+		}
+
 		prevA := prev.A()
 
 		// Skip instructions that don't write to our target register.
