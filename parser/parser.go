@@ -676,10 +676,16 @@ func (p *parser) parseAttrib() string {
 		if err != nil {
 			return ""
 		}
+		// Lua 5.5's getvarattribute requires '>' BEFORE validating the
+		// attribute name. So `local x<weird>=5` reports the missing '>'
+		// (the lexer reads `>=` as a single token) rather than the unknown
+		// attribute name.
+		if _, err := p.expect(token.Type('>')); err != nil {
+			return ""
+		}
 		if tok.Literal != "const" && tok.Literal != "close" {
 			p.err = &token.PosError{Pos: tok.Pos, Msg: fmt.Sprintf("unknown attribute '%s'", tok.Literal)}
 		}
-		p.expect(token.Type('>'))
 		return tok.Literal
 	}
 	return ""
