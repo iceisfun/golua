@@ -36,6 +36,23 @@ func getPackInt(v *vm.VM, idx int) int64 {
 	return 0 // unreachable
 }
 
+// getPackString returns a string argument for string.pack, coercing numbers.
+// Unlike the generic getString, an absent argument is reported as "got nil"
+// rather than "got no value": Lua 5.5's str_pack pushes a nil marker onto the
+// stack after the format string, so a missing pack value reads back as nil.
+// This mirrors getPackInt's handling of missing integer arguments.
+func getPackString(v *vm.VM, idx int) string {
+	val := v.Get(idx)
+	if val.IsString() {
+		return val.AsString()
+	}
+	if val.IsNumber() {
+		return val.String()
+	}
+	callerArgError(v, idx, "string.pack", fmt.Sprintf("string expected, got %s", v.ObjTypeName(val)))
+	return "" // unreachable
+}
+
 // packDirective describes a single parsed format directive.
 type packDirective struct {
 	kind     byte // 'i','I','f','d','n','c','z','s','x','X','<','>','=','!',' '
@@ -347,9 +364,13 @@ func packInt(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, size int, 
 			buf.Write(tmp[8-size:])
 		}
 	} else {
-		// size > 8: write 8-byte encoding + sign extension
+		// size > 8: write the 8-byte two's-complement value, then extend.
+		// Signed formats ('i') sign-extend a negative value with 0xFF;
+		// unsigned formats ('I') always zero-extend. This mirrors Lua 5.5's
+		// packint, which is called with neg=0 for the Kuint case — e.g.
+		// string.pack("I16", -1) is ff*8 00*8, not ff*16.
 		var ext byte
-		if val < 0 {
+		if signed && val < 0 {
 			ext = 0xFF
 		}
 		if fs.byteOrder == binary.LittleEndian {
@@ -409,7 +430,7 @@ func packFloat64(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, argIdx
 }
 
 func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int, argIdx *int) {
-	s := getString(v, *argIdx, "string.pack")
+	s := getPackString(v, *argIdx)
 	*argIdx++
 
 	if len(s) > size {
@@ -423,7 +444,7 @@ func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int, arg
 }
 
 func packZeroTermString(v *vm.VM, buf *bytes.Buffer, argIdx *int) {
-	s := getString(v, *argIdx, "string.pack")
+	s := getPackString(v, *argIdx)
 	*argIdx++
 
 	if strings.ContainsRune(s, '\x00') {
@@ -434,7 +455,7 @@ func packZeroTermString(v *vm.VM, buf *bytes.Buffer, argIdx *int) {
 }
 
 func packSizedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, prefixSize int, argIdx *int) {
-	s := getString(v, *argIdx, "string.pack")
+	s := getPackString(v, *argIdx)
 	*argIdx++
 
 	// Alignment for the prefix
@@ -717,17 +738,10 @@ func unpackInt(data string, offset *int, fs *formatState, kind byte, size int, s
 				if raw[j] != ext {
 					panic(fmt.Sprintf("%d-byte integer does not fit into Lua Integer", size))
 				}
-			} else {
-				if raw[j] != 0 {
-					// For unsigned: check that extra bytes are 0 (positive) or
-					// that they're 0xFF when the 8-byte value has high bit set (negative in int64)
-					if val < 0 && raw[j] == 0 {
-						// This is the unsigned interpretation of a "negative" int64
-						// Extra bytes must be 0 for unsigned
-						panic(fmt.Sprintf("%d-byte integer does not fit into Lua Integer", size))
-					}
-					panic(fmt.Sprintf("%d-byte integer does not fit into Lua Integer", size))
-				}
+			} else if raw[j] != 0 {
+				// Unsigned: every surplus high byte must be zero (Lua 5.5
+				// unpackint uses mask=0 for the unsigned case).
+				panic(fmt.Sprintf("%d-byte integer does not fit into Lua Integer", size))
 			}
 		}
 	} else {
