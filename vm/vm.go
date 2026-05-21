@@ -400,9 +400,20 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 			var locatedMsg string
 			if le, ok := r.(*LuaError); ok {
 				err = le
+			} else if e, ok := r.(error); ok {
+				// A Go error value is a runtime error (raised via runtimeError)
+				// that was already positioned at raise time from the frame
+				// current then — a native function's runtime error is bare,
+				// matching Lua's luaG_runerror on a C frame. Adding the
+				// caller's location here would wrongly prefix e.g. a C
+				// iterator's "attempt to index a nil value" with the
+				// for-loop's source:line.
+				locatedMsg = e.Error()
+				err = e
 			} else {
-				// For string panics from native functions, add the calling
-				// Lua frame's source:line: prefix (like Lua 5.4's luaG_addinfo).
+				// A string panic is a luaL_error-style error from a stdlib
+				// arg check; add the calling Lua frame's source:line: prefix
+				// (like Lua 5.4's luaL_where(L,1) / luaG_addinfo).
 				msg := fmt.Sprintf("%v", r)
 				locatedMsg = vm.AddCallerLocation(msg)
 				err = fmt.Errorf("%s", locatedMsg)
