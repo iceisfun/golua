@@ -31,6 +31,7 @@ type Table struct {
 	array     []Value          // sequential integer-keyed part (indices 1..n)
 	hash      map[any]Value    // associative part for non-string, non-integer, non-sequential keys
 	strHash   map[string]Value // associative part for string keys (avoids any boxing)
+	sstr      *smallStrStore   // inline string-key store; nil once migrated to strHash
 	intHash   map[int64]Value  // associative part for integer keys outside array range (avoids any boxing)
 	keys      []Value          // insertion-ordered hash keys (may contain dead keys)
 	deadKeys  int              // count of keys in t.keys not in t.hash/strHash/intHash
@@ -41,6 +42,34 @@ type Table struct {
 	vmRef     *VM              // reference to coroutine VM (only set for thread tables)
 	weakMode  weakTableMode    // controls whether table has weak keys, values, or both
 	weak      *weakStore       // non-nil when weakMode != 0; replaces normal storage
+}
+
+// skInline is the capacity of a table's inline string-key store. A table with
+// up to skInline string keys holds them in a smallStrStore (linear-scanned, no
+// hashing); the (skInline+1)-th distinct string key migrates the whole set to
+// the strHash map. 8 covers struct/record-shaped tables — e.g. an n-body body
+// has 7 fields — without ever allocating a Go map for them.
+const skInline = 8
+
+// smallStrStore is a table's inline store for its first few string keys. It is
+// a value-lookup accelerator only: the table's ordered keys slice (t.keys)
+// still records every string key for deterministic next()/pairs iteration,
+// exactly as it does for map-backed keys. Entries here are unordered (iteration
+// order comes from t.keys), so deletion is an O(1) swap-remove.
+type smallStrStore struct {
+	names [skInline]string
+	vals  [skInline]Value
+	n     uint8
+}
+
+// find returns the index of name in the store, or -1 if absent.
+func (s *smallStrStore) find(name string) int {
+	for i := 0; i < int(s.n); i++ {
+		if s.names[i] == name {
+			return i
+		}
+	}
+	return -1
 }
 
 // SetThread marks this table as a coroutine thread.
@@ -232,15 +261,30 @@ func (t *Table) setHash(keyValue Value, hk any, value Value) {
 	}
 }
 
-// setStrHash inserts, updates, or deletes a string hash entry while keeping
-// the ordered keys slice in sync.
+// setStrHash inserts, updates, or deletes a string key, keeping the ordered
+// keys slice in sync. String keys live in the inline smallStrStore until the
+// (skInline+1)-th distinct key arrives, at which point the whole set migrates
+// to the strHash map. t.keys — the ordered key list next()/pairs depend on —
+// is maintained identically in both modes.
 //
-// Both the insert and delete paths detect key novelty with a len() compare
-// around the map operation rather than a separate hashed probe: the common
-// case — updating a key that already exists — then costs a single map assign
-// instead of an assign plus a lookup.
+// On the map path, both insert and delete detect key novelty with a len()
+// compare around the single map operation rather than a separate hashed probe.
 func (t *Table) setStrHash(s string, value Value) {
 	if value.IsNil() {
+		// Delete. The key stays in t.keys as a dead tombstone so an
+		// in-progress next() keeps its position; deadKeys is bumped.
+		if t.sstr != nil {
+			if i := t.sstr.find(s); i >= 0 {
+				last := int(t.sstr.n) - 1
+				t.sstr.names[i] = t.sstr.names[last]
+				t.sstr.vals[i] = t.sstr.vals[last]
+				t.sstr.names[last] = ""
+				t.sstr.vals[last] = Nil
+				t.sstr.n--
+				t.deadKeys++
+			}
+			return
+		}
 		if t.strHash != nil {
 			oldLen := len(t.strHash)
 			delete(t.strHash, s)
@@ -250,13 +294,43 @@ func (t *Table) setStrHash(s string, value Value) {
 		}
 		return
 	}
-	sh := t.ensureStrHash()
-	oldLen := len(sh)
-	sh[s] = value
-	if len(sh) == oldLen {
-		return // updated an existing key — no ordered-keys bookkeeping needed
+
+	// Insert or update.
+	if t.sstr != nil {
+		if i := t.sstr.find(s); i >= 0 {
+			t.sstr.vals[i] = value // update in place
+			return
+		}
+		if int(t.sstr.n) < skInline {
+			t.sstr.names[t.sstr.n] = s
+			t.sstr.vals[t.sstr.n] = value
+			t.sstr.n++
+			t.addStrKey(s)
+			return
+		}
+		// Inline store full and s is new: migrate to the map, then fall
+		// through to the map-insert path below.
+		t.migrateStrStoreToMap()
 	}
-	// s is a new key: revive its dead-key tombstone, or append it to t.keys.
+	if t.strHash != nil {
+		oldLen := len(t.strHash)
+		t.strHash[s] = value
+		if len(t.strHash) != oldLen {
+			t.addStrKey(s)
+		}
+		return
+	}
+	// First string key on this table: create the inline store.
+	t.sstr = &smallStrStore{}
+	t.sstr.names[0] = s
+	t.sstr.vals[0] = value
+	t.sstr.n = 1
+	t.addStrKey(s)
+}
+
+// addStrKey records a newly-inserted string key in the ordered keys slice,
+// reviving its dead-key tombstone if one already exists there.
+func (t *Table) addStrKey(s string) {
 	if t.deadKeys > 0 {
 		for _, hk := range t.keys {
 			if hk.typ == typeString && hk.ptr.(string) == s {
@@ -266,6 +340,16 @@ func (t *Table) setStrHash(s string, value Value) {
 		}
 	}
 	t.reuseOrAppendKey(Value{typ: typeString, ptr: s})
+}
+
+// migrateStrStoreToMap moves every entry from the inline string store into the
+// strHash map and frees the store. Called when the inline store overflows.
+func (t *Table) migrateStrStoreToMap() {
+	sh := t.ensureStrHash()
+	for i := 0; i < int(t.sstr.n); i++ {
+		sh[t.sstr.names[i]] = t.sstr.vals[i]
+	}
+	t.sstr = nil
 }
 
 // reuseOrAppendKey inserts a new key into the ordered keys slice. If there is
@@ -304,10 +388,17 @@ func (t *Table) removeKey(k Value) {
 func (t *Table) getKeyValue(k Value) (Value, bool) {
 	switch k.typ {
 	case typeString:
+		s := k.ptr.(string)
+		if t.sstr != nil {
+			if i := t.sstr.find(s); i >= 0 {
+				return t.sstr.vals[i], true
+			}
+			return Nil, false
+		}
 		if t.strHash == nil {
 			return Nil, false
 		}
-		v, exists := t.strHash[k.ptr.(string)]
+		v, exists := t.strHash[s]
 		return v, exists
 	case typeInt:
 		if t.intHash == nil {
@@ -349,10 +440,17 @@ func (t *Table) Get(key Value) Value {
 		}
 	}
 
-	// String keys use the dedicated string hash map
+	// String keys: inline store first, then the string hash map.
 	if key.typ == typeString {
+		s := key.ptr.(string)
+		if t.sstr != nil {
+			if i := t.sstr.find(s); i >= 0 {
+				return t.sstr.vals[i]
+			}
+			return Nil
+		}
 		if t.strHash != nil {
-			if v, ok := t.strHash[key.ptr.(string)]; ok {
+			if v, ok := t.strHash[s]; ok {
 				return v
 			}
 		}
@@ -389,6 +487,12 @@ func (t *Table) GetInt(i int) Value {
 func (t *Table) GetString(s string) Value {
 	if t.weak != nil {
 		return t.weak.get(NewString(s))
+	}
+	if t.sstr != nil {
+		if i := t.sstr.find(s); i >= 0 {
+			return t.sstr.vals[i]
+		}
+		return Nil
 	}
 	if t.strHash != nil {
 		if v, ok := t.strHash[s]; ok {
@@ -756,6 +860,7 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 			ws.set(k, v)
 		}
 	}
+	t.sstr = nil
 	t.strHash = nil
 	t.intHash = nil
 	t.hash = nil
