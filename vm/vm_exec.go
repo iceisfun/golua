@@ -1485,7 +1485,10 @@ func (vm *VM) execute() ([]Value, error) {
 							// Limit too negative, loop never runs
 							frame.pc += bx + 1
 							break
-						} else if fl > float64(math.MaxInt64) {
+						} else if fl >= float64(math.MaxInt64) {
+							// >= not >: float64(math.MaxInt64) rounds up to 2^63,
+							// so fl == 2^63 must clamp here. Otherwise int64(fl)
+							// below overflows to MinInt64 and skips the loop.
 							limitI = math.MaxInt64
 						} else {
 							limitI = int64(fl)
@@ -1493,8 +1496,11 @@ func (vm *VM) execute() ([]Value, error) {
 						limitIsInt = true
 					} else {
 						cl := math.Ceil(limitF)
-						if cl > float64(math.MaxInt64) {
-							// Limit too positive, loop never runs
+						if cl >= float64(math.MaxInt64) {
+							// >= not >: float64(math.MaxInt64) rounds up to 2^63,
+							// so cl == 2^63 must take this branch — with a
+							// negative step a limit of +2^63 means the loop
+							// never runs.
 							frame.pc += bx + 1
 							break
 						} else if cl < float64(math.MinInt64) {
