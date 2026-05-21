@@ -188,7 +188,7 @@ type callFrame struct {
 	isTailCall            bool     // True if this was a tail call
 	argc                  int      // Argument count for native functions (UseVMTop = use vm.top)
 	callName              string   // Override name for debug.getinfo (e.g., "close" for __close)
-	callNameWhat          string   // Override nameWhat (e.g., "metamethod")
+	callNameWhat          string   // Override nameWhat (e.g., nwMetamethod)
 	suppressTracebackName bool
 	ftransfer             int // First "transfer" index for debug hooks (1-based, 0 = unavailable)
 	ntransfer             int // Number of transfer values for debug hooks
@@ -645,7 +645,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 
 		if mm.IsNativeFunc() || mm.IsFunction() {
 			vm.pendingCallName = "call"
-			vm.pendingCallNameWhat = "metamethod"
+			vm.pendingCallNameWhat = nwMetamethod
 			fn = mm
 			break
 		}
@@ -1121,7 +1121,7 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 
 	if fn.IsFunction() {
 		vm.pendingCallName = name
-		vm.pendingCallNameWhat = "metamethod"
+		vm.pendingCallNameWhat = nwMetamethod
 		// Some __close contexts should retain getinfo() naming but suppress the
 		// synthetic "in metamethod 'close'" label in traceback output.
 		results, err := vm.call(fn.AsClosure(), []Value{arg1, arg2}, 1)
@@ -1150,7 +1150,7 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 			argc:                  2,
 			funcValue:             fn,
 			callName:              name,
-			callNameWhat:          "metamethod",
+			callNameWhat:          nwMetamethod,
 			suppressTracebackName: vm.pendingSuppressTracebackName,
 		}
 		vm.pendingSuppressTracebackName = false
@@ -1189,7 +1189,7 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 
 	if fn.IsFunction() {
 		vm.pendingCallName = name
-		vm.pendingCallNameWhat = "metamethod"
+		vm.pendingCallNameWhat = nwMetamethod
 		results, err := vm.call(fn.AsClosure(), []Value{arg1, arg2, arg3}, 0)
 		if err != nil {
 			return Nil, err
@@ -1216,7 +1216,7 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 			argc:                  3,
 			funcValue:             fn,
 			callName:              name,
-			callNameWhat:          "metamethod",
+			callNameWhat:          nwMetamethod,
 			suppressTracebackName: vm.pendingSuppressTracebackName,
 		}
 		vm.pendingSuppressTracebackName = false
@@ -1269,7 +1269,7 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 
 		if mm.IsFunction() {
 			vm.pendingCallName = name
-			vm.pendingCallNameWhat = "metamethod"
+			vm.pendingCallNameWhat = nwMetamethod
 			results, err := vm.call(mm.AsClosure(), args, 1)
 			if err != nil {
 				return Nil, err
@@ -1292,7 +1292,7 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 				argc:         len(args),
 				funcValue:    mm,
 				callName:     name,
-				callNameWhat: "metamethod",
+				callNameWhat: nwMetamethod,
 			}
 			vm.callStack = append(vm.callStack, nativeFrame)
 			vm.top = nativeBase + 1 + len(args)

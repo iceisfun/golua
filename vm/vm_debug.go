@@ -12,6 +12,35 @@ import (
 // Lua 5.4 exposes this via debug.getinfo's "f" option on the outermost level.
 var terminalCFuncVal = NewNativeFunc(func(v *VM) int { return 0 })
 
+// Function-name "what" categories, mirroring Lua's lua_Debug.namewhat.
+// funcNameFromCall returns one of these (or "" when the name is unknown);
+// the traceback formatter and debug.getinfo render frames accordingly.
+// They are plain string constants — kept untyped so they interoperate with
+// the public DebugInfo.NameWhat field and the (string, string) name-resolver
+// signatures without a package-wide type change.
+const (
+	nwGlobal      = "global"
+	nwLocal       = "local"
+	nwField       = "field"
+	nwUpvalue     = "upvalue"
+	nwMethod      = "method"
+	nwMetamethod  = "metamethod"
+	nwHook        = "hook"
+	nwForIterator = "for iterator"
+)
+
+// rendersAsQualified reports whether a namewhat is rendered as
+// "in <namewhat> '<name>'" in a traceback frame, as opposed to the bare
+// "in function '<name>'" fallback. nwMetamethod and nwHook have their own
+// dedicated rendering and are intentionally excluded.
+func rendersAsQualified(nameWhat string) bool {
+	switch nameWhat {
+	case nwGlobal, nwLocal, nwField, nwUpvalue, nwMethod, nwForIterator:
+		return true
+	}
+	return false
+}
+
 // terminalCFunc returns the synthetic [C] function value for the main VM's
 // outermost stack frame.
 func (vm *VM) terminalCFunc() Value {
@@ -89,9 +118,9 @@ func (vm *VM) Traceback(msg string, level int) string {
 			}
 			name = vm.tracebackNativeName(frame, name, nameWhat)
 			switch {
-			case nameWhat == "metamethod":
+			case nameWhat == nwMetamethod:
 				fmt.Fprintf(&b, "[C]: in metamethod '%s'", name)
-			case name != "" && (nameWhat == "global" || nameWhat == "local" || nameWhat == "field" || nameWhat == "upvalue" || nameWhat == "method" || nameWhat == "for iterator"):
+			case name != "" && rendersAsQualified(nameWhat):
 				fmt.Fprintf(&b, "[C]: in %s '%s'", nameWhat, name)
 			case name != "":
 				fmt.Fprintf(&b, "[C]: in function '%s'", name)
@@ -122,10 +151,10 @@ func (vm *VM) Traceback(msg string, level int) string {
 			name := ""
 			nameWhat := ""
 			// Hook functions are called by the VM, not by a CALL instruction.
-			// Skip caller-based name resolution and use "hook" directly.
+			// Skip caller-based name resolution and use nwHook directly.
 			if vm.inHook && frame.funcValue.RawEqual(vm.hookFunc) {
 				name = "?"
-				nameWhat = "hook"
+				nameWhat = nwHook
 			} else {
 				suppressCallName := suppressLuaFrameCallName(frame, hasHigherLuaFrame(vm.callStack, i, start))
 				if i > 0 && !frame.isTailCall {
@@ -137,7 +166,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 						name, nameWhat = vm.funcNameFromCall(&vm.callStack[callerIdx])
 					}
 				}
-				if suppressCallName && nameWhat == "metamethod" && name == "close" {
+				if suppressCallName && nameWhat == nwMetamethod && name == "close" {
 					name = ""
 					nameWhat = ""
 				}
@@ -160,14 +189,14 @@ func (vm *VM) Traceback(msg string, level int) string {
 			if name == "" {
 				name = vm.frameFuncName(frame)
 			}
-			if nameWhat == "metamethod" {
+			if nameWhat == nwMetamethod {
 				fmt.Fprintf(&b, "%s:%d: in metamethod '%s'", source, line, name)
-			} else if nameWhat == "hook" {
+			} else if nameWhat == nwHook {
 				fmt.Fprintf(&b, "%s:%d: in hook '%s'", source, line, name)
 			} else if len(name) > 0 && name[0] == '<' {
 				// Anonymous function: "in function <file:line>" (no quotes)
 				fmt.Fprintf(&b, "%s:%d: in function %s", source, line, name)
-			} else if nameWhat == "global" || nameWhat == "local" || nameWhat == "field" || nameWhat == "upvalue" || nameWhat == "method" || nameWhat == "for iterator" {
+			} else if rendersAsQualified(nameWhat) {
 				fmt.Fprintf(&b, "%s:%d: in %s '%s'", source, line, nameWhat, name)
 			} else {
 				fmt.Fprintf(&b, "%s:%d: in function '%s'", source, line, name)
@@ -198,7 +227,7 @@ func (vm *VM) tracebackNativeName(frame *callFrame, name, nameWhat string) strin
 		}
 		return name
 	}
-	// Lua 5.5: keep "field" names unqualified (e.g. "format", not "string.format")
+	// Lua 5.5: keep nwField names unqualified (e.g. "format", not "string.format")
 	// to match the reference traceback "[C]: in field 'format'".
 	return name
 }
@@ -302,7 +331,7 @@ func suppressLuaFrameCallName(frame *callFrame, hasHigherLuaFrame bool) bool {
 	if frame.suppressTracebackName {
 		return true
 	}
-	if frame.callNameWhat != "metamethod" || frame.callName != "close" {
+	if frame.callNameWhat != nwMetamethod || frame.callName != "close" {
 		return false
 	}
 	return hasHigherLuaFrame
@@ -486,11 +515,11 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	// mechanism, not by a CALL instruction. The caller frame's bytecode
 	// at the current PC is the hooked instruction, not a CALL that invoked
 	// the hook. Looking up a name from that bytecode would produce wrong
-	// results (e.g., "metamethod" for GETTABUP near an MMBIN).
+	// results (e.g., nwMetamethod for GETTABUP near an MMBIN).
 	// Check this FIRST, before attempting caller-based name resolution.
 	if active && vm.inHook && info.Func.RawEqual(vm.hookFunc) {
 		info.Name = "?"
-		info.NameWhat = "hook"
+		info.NameWhat = nwHook
 	} else if !frame.isTailCall {
 		// Name inference: look at the caller frame's bytecode.
 		// For tail calls, the original caller frame is gone, so name resolution
@@ -624,9 +653,9 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 	inst := proto.Code[pc]
 	op := inst.OpCode()
 
-	// For-in iterator call (OP_TFORCALL): name is "for iterator"
+	// For-in iterator call (OP_TFORCALL): name is nwForIterator
 	if op == compiler.OP_TFORCALL {
-		return "for iterator", "for iterator"
+		return nwForIterator, nwForIterator
 	}
 
 	// Metamethod calls: detect arithmetic/comparison/index metamethods.
@@ -634,7 +663,7 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 	// so pc-1 points to the triggering instruction. For arithmetic ops, the
 	// next instruction (at pc+1) is OP_MMBIN/MMBINI/MMBINK with the tag.
 	if mmName := vm.metamethodNameFromOp(proto, pc); mmName != "" {
-		return mmName, "metamethod"
+		return mmName, nwMetamethod
 	}
 
 	if op != compiler.OP_CALL && op != compiler.OP_TAILCALL {
@@ -694,13 +723,13 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			c := prev.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
 				if isUpvalIdx_ENV(proto, prev.B()) {
-					return proto.Constants[c].SVal, "global"
+					return proto.Constants[c].SVal, nwGlobal
 				}
-				return proto.Constants[c].SVal, "field"
+				return proto.Constants[c].SVal, nwField
 			}
 			return "", ""
 		case compiler.OP_GETI:
-			return "integer index", "field"
+			return "integer index", nwField
 		case compiler.OP_GETTABLE:
 			// R[A] = R[B][R[C]] — resolve key name from register C.
 			b := prev.B()
@@ -709,26 +738,26 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			// Check if table is _ENV (global access with high constant index).
 			if localName(proto, b, i) == "_ENV" || isUpvalEnv(proto, i, b) {
 				if kn != "" {
-					return kn, "global"
+					return kn, nwGlobal
 				}
-				return "?", "global"
+				return "?", nwGlobal
 			}
 			// Detect SELF fallback pattern: MOVE base+1,obj + LOADK + GETTABLE base,obj,key.
 			// If the previous instruction wrote obj to base+1 (self), this is a method call.
 			if kn != "" && isSelfFallback(proto, i, reg, b) {
-				return kn, "method"
+				return kn, nwMethod
 			}
 			if kn != "" {
-				return kn, "field"
+				return kn, nwField
 			}
-			return "?", "field"
+			return "?", nwField
 		case compiler.OP_GETFIELD:
 			// R[A] := R[B][K[C]:string]
 			c := prev.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
-				what := "field"
+				what := nwField
 				if localName(proto, prev.B(), i) == "_ENV" || isUpvalEnv(proto, i, prev.B()) {
-					what = "global"
+					what = nwGlobal
 				}
 				return proto.Constants[c].SVal, what
 			}
@@ -737,21 +766,21 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			// R[A+1] := R[B]; R[A] := R[B][K[C]:string]
 			c := prev.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
-				return proto.Constants[c].SVal, "method"
+				return proto.Constants[c].SVal, nwMethod
 			}
 			return "", ""
 		case compiler.OP_MOVE:
 			// R[A] := R[B] — try to get the local variable name
 			name := localName(proto, prev.B(), i)
 			if name != "?" {
-				return name, "local"
+				return name, nwLocal
 			}
 			return "", ""
 		case compiler.OP_GETUPVAL:
 			// R[A] := UpValue[B]
 			idx := prev.B()
 			if idx < len(proto.Upvalues) {
-				return proto.Upvalues[idx].Name, "upvalue"
+				return proto.Upvalues[idx].Name, nwUpvalue
 			}
 			return "", ""
 		default:
@@ -1188,7 +1217,7 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 	// initialises register 0 occurs before the local's StartPC.
 	name := localName(proto, reg, pc)
 	if name != "" && name != "?" && !isInternalName(name) {
-		return name, "local"
+		return name, nwLocal
 	}
 
 	for i := pc - 1; i >= 0; i-- {
@@ -1222,9 +1251,9 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 		case compiler.OP_GETFIELD:
 			c := inst.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
-				what := "field"
+				what := nwField
 				if localName(proto, inst.B(), i) == "_ENV" || isUpvalEnv(proto, i, inst.B()) {
-					what = "global"
+					what = nwGlobal
 				}
 				return proto.Constants[c].SVal, what
 			}
@@ -1233,9 +1262,9 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 			c := inst.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
 				if isUpvalIdx_ENV(proto, inst.B()) {
-					return proto.Constants[c].SVal, "global"
+					return proto.Constants[c].SVal, nwGlobal
 				}
-				return proto.Constants[c].SVal, "field"
+				return proto.Constants[c].SVal, nwField
 			}
 			return "", ""
 		case compiler.OP_MOVE:
@@ -1243,23 +1272,23 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 			// After following OP_MOVE, check if the new register is a local.
 			ln := localName(proto, reg, i)
 			if ln != "" && ln != "?" && !isInternalName(ln) {
-				return ln, "local"
+				return ln, nwLocal
 			}
 			continue
 		case compiler.OP_GETUPVAL:
 			b := inst.B()
 			if b < len(proto.Upvalues) && proto.Upvalues[b].Name != "" {
-				return proto.Upvalues[b].Name, "upvalue"
+				return proto.Upvalues[b].Name, nwUpvalue
 			}
 			return "", ""
 		case compiler.OP_SELF:
 			c := inst.C()
 			if c < len(proto.Constants) && proto.Constants[c].Type == compiler.ValString {
-				return proto.Constants[c].SVal, "method"
+				return proto.Constants[c].SVal, nwMethod
 			}
 			return "", ""
 		case compiler.OP_GETI:
-			return "integer index", "field"
+			return "integer index", nwField
 		case compiler.OP_GETTABLE:
 			// R[A] = R[B][R[C]] — resolve key name from register C.
 			b := inst.B()
@@ -1268,22 +1297,22 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 			// Check if table is _ENV (global access with high constant index).
 			if localName(proto, b, i) == "_ENV" || isUpvalEnv(proto, i, b) {
 				if kn != "" {
-					return kn, "global"
+					return kn, nwGlobal
 				}
-				return "?", "global"
+				return "?", nwGlobal
 			}
 			// Detect SELF fallback pattern (MOVE base+1,obj + LOADK + GETTABLE).
 			if kn != "" && isSelfFallback(proto, i, reg, b) {
-				return kn, "method"
+				return kn, nwMethod
 			}
 			if kn != "" {
-				return kn, "field"
+				return kn, nwField
 			}
-			return "?", "field"
+			return "?", nwField
 		default:
 			ln := localName(proto, reg, i)
 			if ln != "" && ln != "?" && !isInternalName(ln) {
-				return ln, "local"
+				return ln, nwLocal
 			}
 			return "", ""
 		}
@@ -1324,7 +1353,7 @@ func isUpvalIdx_ENV(proto *compiler.Proto, idx int) bool {
 }
 
 // isUpvalEnv checks whether the register at the given PC was loaded via
-// GETUPVAL from _ENV. Used to distinguish "global" from "field"
+// GETUPVAL from _ENV. Used to distinguish nwGlobal from nwField
 // when GETTABLE is the fallback for GETTABUP with large constant indices.
 func isUpvalEnv(proto *compiler.Proto, pc int, reg int) bool {
 	for i := pc - 1; i >= 0; i-- {
