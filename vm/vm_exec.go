@@ -1128,11 +1128,9 @@ func (vm *VM) execute() ([]Value, error) {
 				return nil, err
 			}
 			a, b, c := inst.A(), inst.B(), inst.C()
-			results, err := vm.doCall(frame, a, b, c)
-			if err != nil {
+			if err := vm.doCall(frame, a, b, c); err != nil {
 				return nil, err
 			}
-			_ = results
 
 		case compiler.OP_TAILCALL:
 			if err := vm.CheckInterrupt(); err != nil {
@@ -1506,7 +1504,10 @@ func (vm *VM) execute() ([]Value, error) {
 							// Limit too negative, loop never runs
 							frame.pc += bx + 1
 							break
-						} else if fl > float64(math.MaxInt64) {
+						} else if fl >= float64(math.MaxInt64) {
+							// >= not >: float64(math.MaxInt64) rounds up to 2^63,
+							// so fl == 2^63 must clamp here. Otherwise int64(fl)
+							// below overflows to MinInt64 and skips the loop.
 							limitI = math.MaxInt64
 						} else {
 							limitI = int64(fl)
@@ -1514,8 +1515,11 @@ func (vm *VM) execute() ([]Value, error) {
 						limitIsInt = true
 					} else {
 						cl := math.Ceil(limitF)
-						if cl > float64(math.MaxInt64) {
-							// Limit too positive, loop never runs
+						if cl >= float64(math.MaxInt64) {
+							// >= not >: float64(math.MaxInt64) rounds up to 2^63,
+							// so cl == 2^63 must take this branch — with a
+							// negative step a limit of +2^63 means the loop
+							// never runs.
 							frame.pc += bx + 1
 							break
 						} else if cl < float64(math.MinInt64) {
@@ -1908,8 +1912,10 @@ func (vm *VM) getRK(frame *callFrame, c, k int) Value {
 
 // doCall dispatches an OP_CALL instruction. It collects arguments from the
 // stack, calls the target (closure, native, or __call metamethod), and stores
-// the results back into the caller's registers.
-func (vm *VM) doCall(frame *callFrame, a, b, c int) ([]Value, error) {
+// the results back into the caller's registers. It returns only an error: the
+// results are written directly into registers, so returning the result slice
+// would force the stack-local result buffer to escape to the heap.
+func (vm *VM) doCall(frame *callFrame, a, b, c int) error {
 	fn := vm.stack[frame.base+a]
 
 	// Collect arguments using a stack-allocated buffer for the common case
@@ -2005,56 +2011,77 @@ dispatch:
 		}
 
 		nResults := fn.AsNativeFunc()(vm)
-		// Copy results into a stack-local buffer rather than vm.retBuf:
-		// nested native calls (debug hooks invoking getlocal/getinfo,
-		// __index/__newindex metamethods, etc.) may clobber vm.retBuf
-		// before this doCall's writeback reads it. The stack-local buffer
-		// also avoids pinning the previous call's results against Go's
-		// GC, which would otherwise prevent __gc finalizers on table
-		// return values from firing across a subsequent collectgarbage()
-		// call. (Heap allocation only when nResults exceeds the buffer.)
-		var localRetBuf [8]Value
-		if nResults <= len(localRetBuf) {
-			copy(localRetBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
-			results = localRetBuf[:nResults]
-		} else {
-			results = make([]Value, nResults)
-			copy(results, vm.stack[nativeBase:nativeBase+nResults])
-		}
 
-		nf := &vm.callStack[len(vm.callStack)-1]
 		// Re-check hookMask: a native (e.g. debug.sethook) can enable hooks
 		// mid-call, in which case the return hook must still fire.
-		if vm.hookMask != 0 {
-			if savedArgs == nil {
-				// No hooks at entry → fireCallHook did nothing → args slice
-				// still matches the pre-call stack state.
-				savedArgs = args
-			}
-			// Restore arguments and place return values after them so the
-			// return hook sees [args..., results...] via getlocal, matching
-			// Lua 5.4 semantics.
-			copy(vm.stack[nativeBase+1:nativeBase+1+nf.argc], savedArgs)
-			retStart := nativeBase + 1 + nf.argc
-			retEnd := retStart + nResults
-			if retEnd > len(vm.stack) {
-				retEnd = len(vm.stack)
-			}
-			for i := 0; i < retEnd-retStart; i++ {
-				vm.stack[retStart+i] = results[i]
-			}
-			vm.top = retEnd
-			if nResults > 0 {
-				nf.ftransfer = 1 + nf.argc
-				nf.ntransfer = nResults
-			} else {
-				nf.ftransfer = 0
-				nf.ntransfer = 0
-			}
+		if vm.hookMask == 0 {
+			// Fast path — no debug hooks. The native function wrote its
+			// nResults return values into vm.stack[nativeBase..nativeBase+
+			// nResults], and the caller's result registers begin at
+			// nativeBase (== frame.base+a), so the results are already in
+			// their final position: no buffer copy or relocation needed.
+			// This keeps the result buffer off the heap entirely (the hot
+			// path for any native-call-heavy Lua workload).
+			vm.top = savedTop
+			vm.callStack = vm.callStack[:len(vm.callStack)-1]
 
-			// Fire return hook for native function before popping its frame
-			vm.fireReturnHook()
+			nWanted := c - 1
+			if c == 0 {
+				nWanted = nResults
+				vm.top = frame.base + a + nResults
+			}
+			if needed := frame.base + a + nWanted; needed > len(vm.stack) {
+				vm.ensureStack(needed)
+			}
+			// Pad with Nil when the caller wants more results than produced.
+			for i := nResults; i < nWanted; i++ {
+				vm.stack[frame.base+a+i] = Nil
+			}
+			// Clear dead registers above the result area so Go's GC does not
+			// retain values referenced only by stale temporaries.
+			for i := frame.base + a + nWanted; i < frameTop && i < len(vm.stack); i++ {
+				vm.stack[i] = Nil
+			}
+			return nil
 		}
+
+		// Slow path — debug hooks are active. Copy the results into a heap
+		// buffer so the relocation below (which rewrites the stack so the
+		// return hook sees [args..., results...]) does not lose them. The
+		// allocation is acceptable here: this path only runs under an active
+		// debug hook.
+		results = make([]Value, nResults)
+		copy(results, vm.stack[nativeBase:nativeBase+nResults])
+
+		nf := &vm.callStack[len(vm.callStack)-1]
+		if savedArgs == nil {
+			// No hooks at entry → fireCallHook did nothing → args slice
+			// still matches the pre-call stack state.
+			savedArgs = args
+		}
+		// Restore arguments and place return values after them so the
+		// return hook sees [args..., results...] via getlocal, matching
+		// Lua 5.4 semantics.
+		copy(vm.stack[nativeBase+1:nativeBase+1+nf.argc], savedArgs)
+		retStart := nativeBase + 1 + nf.argc
+		retEnd := retStart + nResults
+		if retEnd > len(vm.stack) {
+			retEnd = len(vm.stack)
+		}
+		for i := 0; i < retEnd-retStart; i++ {
+			vm.stack[retStart+i] = results[i]
+		}
+		vm.top = retEnd
+		if nResults > 0 {
+			nf.ftransfer = 1 + nf.argc
+			nf.ntransfer = nResults
+		} else {
+			nf.ftransfer = 0
+			nf.ntransfer = 0
+		}
+
+		// Fire return hook for native function before popping its frame
+		vm.fireReturnHook()
 		vm.top = savedTop
 
 		// Pop the native frame
@@ -2063,12 +2090,12 @@ dispatch:
 		// Check for __call metamethod
 		mm := vm.getMetafield(fn, "__call")
 		if mm.IsNil() {
-			return nil, vm.runtimeError("attempt to call a %s value%s", vm.ObjTypeName(fn), vm.varInfo(a))
+			return vm.runtimeError("attempt to call a %s value%s", vm.ObjTypeName(fn), vm.varInfo(a))
 		}
 
 		callChainDepth++
 		if callChainDepth > MaxCallChainDepth {
-			return nil, vm.runtimeError("'__call' chain too long")
+			return vm.runtimeError("'__call' chain too long")
 		}
 
 		// Build new args: prepend fn (self) so the call becomes mm(fn, args...)
@@ -2091,7 +2118,7 @@ dispatch:
 	}
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Store results
@@ -2124,7 +2151,7 @@ dispatch:
 		vm.stack[i] = Nil
 	}
 
-	return results, nil
+	return nil
 }
 
 // localName returns the name of the local variable occupying register reg
