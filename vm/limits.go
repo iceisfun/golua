@@ -9,11 +9,15 @@ import (
 	"github.com/iceisfun/golua/v2/compiler"
 )
 
-// DefaultMaxCallDepth is the default call depth limit. Lua 5.4 uses
-// LUAI_MAXCCALLS=200 but only counts C-level transitions, allowing 500+
-// pure Lua recursion. We count all frames, so we use a higher default
-// to avoid artificial limits on pure Lua recursion.
-const DefaultMaxCallDepth = 800
+// DefaultMaxCallDepth is the default call depth limit. It produces a
+// catchable Lua "stack overflow" error before recursion can exhaust the
+// Go goroutine stack (golua's interpreter recurses the Go stack once per
+// Lua call). Empirically the uncatchable Go-stack crash sits at ~120k
+// frames safe / ~250k fatal; reference Lua handles ~200k. 10000 covers
+// essentially all real recursive code with a ~12x safety margin against
+// a process crash. Embedders whose workload needs deeper recursion can
+// raise Limits.MaxCallDepth per-VM (a true fix is a trampolined VM loop).
+const DefaultMaxCallDepth = 10000
 
 // DefaultMaxStackSlots is the default stack slot limit, matching Lua 5.4's
 // LUAI_MAXSTACK. Prevents a single unpack or deep call chain from allocating
