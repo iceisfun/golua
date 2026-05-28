@@ -370,10 +370,10 @@ func TestMalformedNumber(t *testing.T) {
 
 func TestMalformedBinaryNumber(t *testing.T) {
 	cases := []string{
-		"0b",     // no digits after prefix
-		"0B",     // no digits after prefix (uppercase)
-		"0b102",  // non-binary digit
-		"0b2",    // non-binary digit immediately
+		"0b",      // no digits after prefix
+		"0B",      // no digits after prefix (uppercase)
+		"0b102",   // non-binary digit
+		"0b2",     // non-binary digit immediately
 		"0b10abc", // trailing letters
 	}
 	for _, input := range cases {
@@ -402,8 +402,8 @@ func TestShortStrings(t *testing.T) {
 		{`"back\\"`, "back\\"},
 		{`"\a\b\f\r\v"`, "\a\b\f\r\v"},
 		{`"\x41\x42"`, "AB"},
-		{`"\65\66"`, "AB"},    // decimal escapes
-		{`"\u{41}"`, "A"},     // UTF-8 escape
+		{`"\65\66"`, "AB"},   // decimal escapes
+		{`"\u{41}"`, "A"},    // UTF-8 escape
 		{`"\u{1F600}"`, "😀"}, // emoji
 	}
 	for _, tc := range cases {

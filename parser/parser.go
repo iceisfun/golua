@@ -99,15 +99,15 @@ type funcScope struct {
 }
 
 type parser struct {
-	lex        *lexer.Lexer
-	tok        token.Token // current (lookahead) token
-	lookahead  token.Token // second lookahead token (valid when hasLookahead)
+	lex          *lexer.Lexer
+	tok          token.Token // current (lookahead) token
+	lookahead    token.Token // second lookahead token (valid when hasLookahead)
 	hasLookahead bool
-	source     string
-	err        error
-	depth      int         // recursion depth counter
-	funcs      []funcScope // stack of function scopes for local var limit checking
-	maxVars    int         // maximum local variables per function (0 = maxLocalVars)
+	source       string
+	err          error
+	depth        int         // recursion depth counter
+	funcs        []funcScope // stack of function scopes for local var limit checking
+	maxVars      int         // maximum local variables per function (0 = maxLocalVars)
 }
 
 func (p *parser) maxVarsLimit() int {
@@ -762,4 +762,3 @@ func (p *parser) parseExprStat() ast.Stmt {
 		return nil
 	}
 }
-

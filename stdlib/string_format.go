@@ -1138,4 +1138,3 @@ func luaQuote(v *vm.VM, val vm.Value, argIdx int) string {
 	b.WriteByte('"')
 	return b.String()
 }
-

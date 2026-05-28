@@ -562,9 +562,11 @@ func parseCharSetElems(set string) []patternElem {
 	return elems
 }
 
-func isLetter(b byte) bool  { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
-func isDigit(b byte) bool   { return b >= '0' && b <= '9' }
-func isSpace(b byte) bool   { return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f' || b == '\v' }
+func isLetter(b byte) bool { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
+func isDigit(b byte) bool  { return b >= '0' && b <= '9' }
+func isSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f' || b == '\v'
+}
 func isLower(b byte) bool   { return b >= 'a' && b <= 'z' }
 func isUpper(b byte) bool   { return b >= 'A' && b <= 'Z' }
 func isControl(b byte) bool { return b < 32 || b == 127 }
@@ -574,5 +576,5 @@ func isPunct(b byte) bool {
 		(b >= 0x5B && b <= 0x60) || // [\]^_`
 		(b >= 0x7B && b <= 0x7E) // {|}~
 }
-func isGraph(b byte) bool   { return b > ' ' && b < 127 } // printable non-space
-func isHex(b byte) bool     { return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') }
+func isGraph(b byte) bool { return b > ' ' && b < 127 } // printable non-space
+func isHex(b byte) bool   { return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') }

@@ -46,19 +46,19 @@ func TestErrorNilReplacedByString(t *testing.T) {
 			output: "false",
 		},
 		{
-			name:   "xpcall_handler_sees_nil",
+			name: "xpcall_handler_sees_nil",
 			code: `local ok, msg = xpcall(function() error(nil) end, function(e) return type(e) end)
 print(ok, msg)`,
 			output: "false\tnil",
 		},
 		{
-			name:   "xpcall_handler_returns_nil_replaced",
+			name: "xpcall_handler_returns_nil_replaced",
 			code: `local ok, msg = xpcall(function() error(nil) end, function(e) return nil end)
 print(ok, type(msg), msg)`,
 			output: "false\tstring\t<no error object>",
 		},
 		{
-			name:   "xpcall_handler_returns_value_kept",
+			name: "xpcall_handler_returns_value_kept",
 			code: `local ok, msg = xpcall(function() error(nil) end, function(e) return "custom" end)
 print(ok, msg)`,
 			output: "false\tcustom",

@@ -309,4 +309,3 @@ func formatLuaValue(val vm.Value) string {
 	}
 	return val.String()
 }
-

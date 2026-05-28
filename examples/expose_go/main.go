@@ -43,7 +43,7 @@ func main() {
 		b := v.Get(2).AsInt()
 		v.Set(0, vm.NewInt(a/b)) // quotient
 		v.Set(1, vm.NewInt(a%b)) // remainder
-		return 2 // return 2 values
+		return 2                 // return 2 values
 	}))
 
 	// Example 4: Function that returns a table

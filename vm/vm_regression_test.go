@@ -478,7 +478,7 @@ func TestProtectedCallNativeCompareLT(t *testing.T) {
 				panic(&LuaError{Value: NewString("arg clobbered at index " + string(rune('0'+i)))})
 			}
 			lt, _ := v.CompareLT(best, candidate)
-		if lt {
+			if lt {
 				best = candidate
 			}
 		}

@@ -19,23 +19,23 @@ func (p *capProvider) Capabilities(context.Context) vm.LuaDebugCaps { return p.c
 // allCaps returns a LuaDebugCaps with every field set to true.
 func allCaps() vm.LuaDebugCaps {
 	return vm.LuaDebugCaps{
-		AllowTraceback:      true,
-		AllowStackDepth:     true,
-		AllowWhere:          true,
-		AllowGetInfo:        true,
-		AllowGetUpvalue:     true,
-		AllowSetUpvalue:     true,
-		AllowUpvalueID:      true,
-		AllowGetLocal:       true,
-		AllowSetLocal:       true,
-		AllowGetRegistry:    true,
-		AllowGetMetatable:   true,
-		AllowSetMetatable:   true,
-		AllowSetHook:        true,
-		AllowGetHook:        true,
+		AllowTraceback:    true,
+		AllowStackDepth:   true,
+		AllowWhere:        true,
+		AllowGetInfo:      true,
+		AllowGetUpvalue:   true,
+		AllowSetUpvalue:   true,
+		AllowUpvalueID:    true,
+		AllowGetLocal:     true,
+		AllowSetLocal:     true,
+		AllowGetRegistry:  true,
+		AllowGetMetatable: true,
+		AllowSetMetatable: true,
+		AllowSetHook:      true,
+		AllowGetHook:      true,
 		AllowUpvalueJoin:  true,
 		AllowGetUserValue: true,
-		AllowSetUserValue:   true,
+		AllowSetUserValue: true,
 	}
 }
 

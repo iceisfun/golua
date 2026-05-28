@@ -109,8 +109,8 @@ type LocalVar struct {
 // with a single upvalue (_ENV).
 type Proto struct {
 	Source   string // source file name (for error messages and debug info)
-	LineDef  int   // first line of the function definition
-	LastLine int   // last line of the function definition
+	LineDef  int    // first line of the function definition
+	LastLine int    // last line of the function definition
 
 	NumParams      int  // number of fixed (named) parameters
 	IsVarArg       bool // true if the function accepts varargs (...)

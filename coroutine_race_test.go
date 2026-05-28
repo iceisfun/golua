@@ -66,9 +66,9 @@ func TestCoroutineResumeCloseRace(t *testing.T) {
 
 		// Race: v1 resumes while v2 closes the same coroutine.
 		var (
-			wg         sync.WaitGroup
-			resumeErr  error
-			closeErr   error
+			wg          sync.WaitGroup
+			resumeErr   error
+			closeErr    error
 			resumePanic any
 			closePanic  any
 		)

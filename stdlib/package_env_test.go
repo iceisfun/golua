@@ -12,11 +12,11 @@ type testOsProvider struct {
 	envVars map[string]string
 }
 
-func (p *testOsProvider) Clock(context.Context) float64                          { return 0 }
+func (p *testOsProvider) Clock(context.Context) float64 { return 0 }
 func (p *testOsProvider) Time(context.Context, *vm.LuaTimeInput) (int64, *vm.LuaDateTime, error) {
 	return 0, nil, nil
 }
-func (p *testOsProvider) Date(context.Context, string, int64) (string, error) { return "", nil }
+func (p *testOsProvider) Date(context.Context, string, int64) (string, error)    { return "", nil }
 func (p *testOsProvider) DateTable(context.Context, int64, bool) *vm.LuaDateTime { return nil }
 func (p *testOsProvider) SetLocale(context.Context, string, string) (string, bool) {
 	return "C", true

@@ -523,4 +523,3 @@ func (l *Lexer) scanDot(pos token.Pos) (token.Token, error) {
 	}
 	return token.Token{Type: token.Type('.'), Literal: ".", Pos: pos}, nil
 }
-

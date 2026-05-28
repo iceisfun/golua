@@ -47,7 +47,6 @@ const (
 	statusNormal    coroutineStatus = "normal"
 )
 
-
 // Coroutine represents a Lua coroutine
 type Coroutine struct {
 	id             int
@@ -58,9 +57,9 @@ type Coroutine struct {
 	vm             *vm.VM          // Reference to the VM
 	coVM           *vm.VM          // The coroutine's own VM (set after first resume)
 	thread         vm.Value        // Thread object (table) for coroutine.running
-	resumeCh       chan []vm.Value  // Channel to send resume args
-	yieldCh        chan []vm.Value  // Channel to receive yield values
-	doneCh         chan struct{}    // Channel to signal completion
+	resumeCh       chan []vm.Value // Channel to send resume args
+	yieldCh        chan []vm.Value // Channel to receive yield values
+	doneCh         chan struct{}   // Channel to signal completion
 	result         []vm.Value      // Final return values
 	err            error           // Error if panicked
 	mu             sync.Mutex

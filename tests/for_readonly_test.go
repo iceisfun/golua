@@ -67,9 +67,9 @@ func TestForReadonly(t *testing.T) {
 			errSubstr: "attempt to assign to const variable 'i'",
 		},
 		{
-			name:    "generic for single var assign",
-			code:    "for k in pairs({}) do k = 1 end",
-			wantErr: true,
+			name:      "generic for single var assign",
+			code:      "for k in pairs({}) do k = 1 end",
+			wantErr:   true,
 			errSubstr: "attempt to assign to const variable 'k'",
 		},
 	}

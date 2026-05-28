@@ -14,7 +14,7 @@ type Document struct {
 	URI     string
 	Text    string
 	Version int
-	AST     *ast.Block           // from ParsePartial, never nil
+	AST     *ast.Block            // from ParsePartial, never nil
 	Symbols *language.SymbolTable // scope analysis result
 }
 

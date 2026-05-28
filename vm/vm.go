@@ -119,9 +119,9 @@ type VM struct {
 	// Message handler for xpcall: called inside ProtectedCall's recovery
 	// BEFORE the call stack is truncated, so debug.traceback can see
 	// the full stack. Set by xpcall and cleared after use.
-	msgHandler       Value
-	msgHandlerResult Value
-	msgHandlerUsed   bool
+	msgHandler         Value
+	msgHandlerResult   Value
+	msgHandlerUsed     bool
 	lastErrorCallStack []callFrame // saved call stack from the last error
 
 	// inMsgHandler tracks whether we're inside an xpcall message handler.

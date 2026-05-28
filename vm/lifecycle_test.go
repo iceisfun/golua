@@ -114,7 +114,7 @@ func TestShutdownableReturnsFirstError(t *testing.T) {
 }
 
 // Implement LuaTimeProvider so p2 can be used with SetTimeProvider.
-func (p *trackingProvider) Now(ctx context.Context) int64    { return 0 }
+func (p *trackingProvider) Now(ctx context.Context) int64                       { return 0 }
 func (p *trackingProvider) Tick(ctx context.Context, key string, ms int64) bool { return false }
 func (p *trackingProvider) Once(ctx context.Context, key string) bool           { return false }
 

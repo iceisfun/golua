@@ -152,4 +152,3 @@ func (vm *VM) runtimeErrorForNumber(reg int) error {
 	}
 	return vm.runtimeError("number has no integer representation")
 }
-

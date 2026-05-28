@@ -371,7 +371,7 @@ func (a *analyzer) walkStmt(s ast.Stmt, scope *Scope, siblings []ast.Stmt, idx i
 	case *ast.ExprStmt:
 		a.walkExpr(s.Expr, scope)
 
-	// BreakStmt, GotoStmt, LabelStmt, EmptyStmt — no scope effects.
+		// BreakStmt, GotoStmt, LabelStmt, EmptyStmt — no scope effects.
 	}
 }
 
