@@ -673,6 +673,16 @@ func (vm *VM) execute() ([]Value, error) {
 					proto = frame.closure.Proto
 					code = proto.Code
 					consts = frame.closure.ConstValues()
+					// ADDI has fully handled the arithmetic metamethod (result
+					// written to the destination register a). Skip the follow-up
+					// OP_MMBINI so it does not invoke the metamethod a second
+					// time — its operand register still holds the original
+					// non-numeric value, so its skip guard would not fire.
+					// (Bitwise-immediate ops SHLI/SHRI do NOT pre-handle their
+					// metamethod and correctly fall through to MMBINI.)
+					if frame.pc < len(code) && code[frame.pc].OpCode() == compiler.OP_MMBINI {
+						frame.pc++
+					}
 				} else {
 					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value%s", vm.ObjTypeName(v), vm.varInfo(b))
 				}
