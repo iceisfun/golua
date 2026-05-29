@@ -324,7 +324,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		if !v.Get(2).IsNil() {
 			ts, ok := v.Get(2).ToInt()
 			if !ok {
-				panic(fmt.Sprintf("bad argument #2 to 'os.date' (number expected, got %s)", v.Get(2).Type()))
+				callerArgError(v, 2, "os.date", fmt.Sprintf("number expected, got %s", v.Get(2).Type()))
 			}
 			timestamp = ts
 		} else {
@@ -368,7 +368,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 				panic(errMsg)
 			}
 			// Format specifier error: Lua 5.4 uses luaL_argerror
-			panic(fmt.Sprintf("bad argument #1 to 'os.date' (%s)", errMsg))
+			callerArgError(v, 1, "os.date", errMsg)
 		}
 		v.Set(0, vm.NewString(result))
 		return 1
