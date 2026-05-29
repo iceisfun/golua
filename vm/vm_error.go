@@ -26,45 +26,58 @@ func (vm *VM) runtimeError(format string, args ...any) error {
 	return fmt.Errorf("%s", msg)
 }
 
-// AddCallerLocation prepends the calling Lua frame's source:line: prefix
-// to a plain error message from a native function. This mirrors Lua 5.4's
-// luaG_addinfo / luaL_where(L, 1) which adds the caller location to stdlib errors.
-// Only adds the prefix if the immediate caller of the erroring native function
-// is a Lua frame (not another native function like pcall).
-func (vm *VM) AddCallerLocation(msg string) string {
-	// Find the topmost native frame (the erroring function), then check
-	// if the frame directly below it is a Lua frame.
+// callerLocationPrefix returns the "source:line: " prefix for the Lua frame
+// that called the current (top-of-stack) native function, mirroring Lua's
+// luaL_where(L, 1). Returns "" when there is no such caller, the caller is
+// itself a native frame, or the caller has no source info.
+func (vm *VM) callerLocationPrefix() string {
+	// The top frame is the native function that panicked; the frame below it
+	// is its caller. If that caller is also native (e.g., pcall calling type),
+	// luaL_where adds nothing.
 	n := len(vm.callStack)
 	if n < 2 {
-		return msg
+		return ""
 	}
-	// The top frame is the native function that panicked.
-	// The frame below it should be the Lua frame that called it.
-	// If the frame below is also native (e.g., pcall calling type),
-	// no prefix is added, matching Lua 5.4's behavior.
 	callerFrame := &vm.callStack[n-2]
 	if callerFrame.closure == nil {
-		return msg // caller is also native — no prefix
+		return ""
 	}
 	proto := callerFrame.closure.Proto
 	pc := callerFrame.pc - 1
 	if pc >= 0 && pc < len(proto.Lines) {
-		prefix := fmt.Sprintf("%s:%d: ", shortSrc(proto.Source), proto.Lines[pc])
-		if strings.HasPrefix(msg, prefix) {
-			return msg
-		}
-		return prefix + msg
+		return fmt.Sprintf("%s:%d: ", shortSrc(proto.Source), proto.Lines[pc])
 	}
 	if proto.Source != "" {
 		// Stripped functions have no line info; use "?" per Lua 5.5
 		// (Lua 5.4 used -1; 5.5 changed to "?").
-		prefix := fmt.Sprintf("%s:?: ", shortSrc(proto.Source))
-		if strings.HasPrefix(msg, prefix) {
-			return msg
-		}
-		return prefix + msg
+		return fmt.Sprintf("%s:?: ", shortSrc(proto.Source))
 	}
-	return msg
+	return ""
+}
+
+// AddCallerLocation prepends the calling Lua frame's source:line: prefix
+// to a plain error message from a native function. This mirrors Lua 5.4's
+// luaG_addinfo / luaL_where(L, 1) which adds the caller location to stdlib errors.
+// Only adds the prefix if the immediate caller of the erroring native function
+// is a Lua frame (not another native function like pcall). If the message
+// already carries that exact prefix it is not duplicated — guarding against
+// re-prefixing an error that was already positioned at its origin.
+func (vm *VM) AddCallerLocation(msg string) string {
+	prefix := vm.callerLocationPrefix()
+	if prefix == "" || strings.HasPrefix(msg, prefix) {
+		return msg
+	}
+	return prefix + msg
+}
+
+// PrependCallerLocation unconditionally prepends the caller's source:line:
+// prefix (luaL_where(L, 1)) to msg, even when msg already begins with that
+// exact prefix. coroutine.wrap re-raises string errors this way: Lua's
+// luaB_auxwrap concatenates luaL_where(L, 1) onto the propagated error
+// unconditionally, so an error whose origin line matches the wrap call site
+// legitimately shows the prefix twice.
+func (vm *VM) PrependCallerLocation(msg string) string {
+	return vm.callerLocationPrefix() + msg
 }
 
 // CallerFuncName inspects the calling Lua frame's bytecode to determine the
