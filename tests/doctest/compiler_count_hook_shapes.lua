@@ -13,7 +13,9 @@ do
 end
 
 -- Numeric for with a captured loop variable: GoLua emits more close work
--- than Lua 5.4 (15 vs 12), a known architectural difference.
+-- than Lua 5.4 (13 vs 12), a known architectural difference. The indexed
+-- store `fs[i] = ...` references the live local table/key registers directly
+-- (matching reference assignment eval order), saving two MOVEs.
 do
     local n = 0
     debug.sethook(function() n = n + 1 end, "", 1)
@@ -23,7 +25,7 @@ do
     end
     debug.sethook()
     print(n, fs[1]())
-    --> =15	1
+    --> =13	1
 end
 
 -- Generic for: GoLua emits more instructions than Lua 5.4 (43 vs 19),

@@ -503,10 +503,13 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 
 	// General case: evaluate all values into temp regs, then assign.
 	//
-	// For correctness, LHS table/key sub-expressions (e.g. a[i]) must be
-	// evaluated before any assignment occurs, because a later assignment
-	// might overwrite a variable used in an earlier LHS index expression.
-	// Example: i, a[i], a = j, i, i  — a[i] must use the original a and i.
+	// LHS table/key sub-expressions of indexed targets are resolved before the
+	// RHS. A bare-local table/key operand uses its live register directly
+	// (matching reference Lua), EXCEPT when a later target reassigns that local
+	// — then it is snapshotted into a temp to preserve its original value
+	// (reference's check_conflict). Example: i, a[i], a = j, i, i  — a[i]'s
+	// table 'a' is reassigned by the third target, so it must use a snapshot of
+	// the original 'a'.
 
 	// Phase 0: Pre-register upvalues referenced by LHS targets in
 	// left-to-right order. This ensures upvalue indices match Lua 5.4's
@@ -515,10 +518,33 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		c.preRegisterUpvalues(fs, s.Targets[i])
 	}
 
-	// Phase 1: Pre-evaluate LHS indexed targets into temp registers.
+	// assignedReg[i] is the local register a bare-local target reassigns, or -1.
+	// Used to detect check_conflict-style conflicts with earlier indexed
+	// targets' live local table/key operands.
+	assignedReg := make([]int, nTargets)
+	for i := 0; i < nTargets; i++ {
+		assignedReg[i] = -1
+		if ne, ok := s.Targets[i].(*ast.NameExpr); ok {
+			if _, inlined := lookupInlinedAny(fs, ne.Name); !inlined {
+				if reg, ok := fs.lookupLocal(ne.Name); ok {
+					assignedReg[i] = reg
+				}
+			}
+		}
+	}
+	conflictsLaterThan := func(after, reg int) bool {
+		for j := after + 1; j < nTargets; j++ {
+			if assignedReg[j] == reg {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Phase 1: Resolve LHS indexed targets' table/key operands.
 	type precomputedTarget struct {
-		tableReg int // temp reg holding table reference
-		keyReg   int // temp reg holding key (-1 for field/intKey targets)
+		tableReg int // reg holding table reference (live local or temp)
+		keyReg   int // reg holding key (-1 for field/intKey targets)
 		fieldK   int // constant index for field targets (-1 otherwise)
 		intKey   int // constant integer key for SETI (-1 if not applicable)
 	}
@@ -526,20 +552,19 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	tempBase := fs.freeReg
 
 	for i := 0; i < nTargets; i++ {
+		i := i // capture for the conflict closure below
+		conflict := func(reg int) bool { return conflictsLaterThan(i, reg) }
 		switch t := s.Targets[i].(type) {
 		case *ast.IndexExpr:
-			tReg := fs.reserveReg()
-			c.compileExprToReg(t.Table, tReg)
+			tReg := c.indexAssignOperand(t.Table, conflict)
 			if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
 				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: -1, intKey: int(n.Value)}
 			} else {
-				kReg := fs.reserveReg()
-				c.compileExprToReg(t.Key, kReg)
+				kReg := c.indexAssignOperand(t.Key, conflict)
 				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1, intKey: -1}
 			}
 		case *ast.FieldExpr:
-			tReg := fs.reserveReg()
-			c.compileExprToReg(t.Table, tReg)
+			tReg := c.indexAssignOperand(t.Table, conflict)
 			fK := fs.stringConstant(t.Field)
 			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK, intKey: -1}
 		default:
@@ -667,33 +692,68 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		c.compileSetGlobal(t.Name, value, line)
 
 	case *ast.FieldExpr:
-		tableReg := fs.reserveReg()
-		c.compileExprToReg(t.Table, tableReg)
+		// Reference Lua references the live register of a bare-local table
+		// operand in the store instruction (luaK_indexed does not copy a
+		// local), so an RHS reassignment of that local is observed by the
+		// store. Mirror that by using the local register directly; otherwise
+		// snapshot the operand into a temp before the RHS.
+		startReg := fs.freeReg
+		tableReg := c.indexAssignOperand(t.Table, nil)
 		valReg := fs.reserveReg()
 		c.compileExprToReg(value, valReg)
 		fieldK := fs.stringConstant(t.Field)
 		fs.emitSetField(tableReg, fieldK, valReg, line)
-		fs.freeReg = tableReg
+		fs.freeReg = startReg
 
 	case *ast.IndexExpr:
-		tableReg := fs.reserveReg()
-		c.compileExprToReg(t.Table, tableReg)
+		startReg := fs.freeReg
+		tableReg := c.indexAssignOperand(t.Table, nil)
 		if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
 			valReg := fs.reserveReg()
 			c.compileExprToReg(value, valReg)
 			fs.emit(ABC(OP_SETI, tableReg, int(n.Value), valReg, 0), line)
 		} else {
-			keyReg := fs.reserveReg()
-			c.compileExprToReg(t.Key, keyReg)
+			keyReg := c.indexAssignOperand(t.Key, nil)
 			valReg := fs.reserveReg()
 			c.compileExprToReg(value, valReg)
 			fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, valReg, 0), line)
 		}
-		fs.freeReg = tableReg
+		fs.freeReg = startReg
 
 	default:
 		c.error(target, "invalid assignment target")
 	}
+}
+
+// indexAssignOperand returns the register to use for the table or key operand
+// of an indexed/field assignment target. If the operand is a bare local
+// variable, its live register is returned directly (no copy) — matching
+// reference Lua, where the store instruction references the local's register so
+// a reassignment of that local while evaluating the RHS is observed by the
+// store. Any other operand is compiled into a freshly reserved temp (pinned
+// before the RHS, as reference does for non-local operands).
+//
+// For multiple assignment, conflictsLater reports whether a later target in the
+// same statement reassigns the given local register; if so the operand is
+// snapshotted into a temp to preserve its original value, mirroring reference
+// Lua's check_conflict(). It is nil for single assignment (no conflict
+// possible).
+func (c *compiler) indexAssignOperand(e ast.Expr, conflictsLater func(reg int) bool) int {
+	fs := c.fs
+	if ne, ok := e.(*ast.NameExpr); ok {
+		// Inlined consts are scalar literals, not live locals — fall through
+		// to load them into a temp.
+		if _, inlined := lookupInlinedAny(fs, ne.Name); !inlined {
+			if reg, ok := fs.lookupLocal(ne.Name); ok {
+				if conflictsLater == nil || !conflictsLater(reg) {
+					return reg
+				}
+			}
+		}
+	}
+	reg := fs.reserveReg()
+	c.compileExprToReg(e, reg)
+	return reg
 }
 
 // assignToTarget stores the value in srcReg into an assignment target
