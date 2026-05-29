@@ -734,11 +734,73 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v1 := vm.stack[frame.base+b]
 			v2 := vm.stack[frame.base+c]
-			result, err := vm.arith(op, v1, v2, b, c)
-			if err != nil {
-				return nil, err
+			// Inline the number fast paths to avoid passing two 40-byte Value
+			// structs by value to arith() on the hot arithmetic path. These
+			// mirror arith()'s fast paths exactly; mixed-number, string,
+			// metamethod and error reporting fall through to vm.arith.
+			if v1.typ == typeFloat && v2.typ == typeFloat {
+				n1, n2 := v1.num, v2.num
+				var r float64
+				switch op {
+				case compiler.OP_ADD:
+					r = n1 + n2
+				case compiler.OP_SUB:
+					r = n1 - n2
+				case compiler.OP_MUL:
+					r = n1 * n2
+				case compiler.OP_DIV:
+					r = n1 / n2
+				case compiler.OP_IDIV:
+					r = math.Floor(n1 / n2)
+				case compiler.OP_MOD:
+					r = luaNumMod(n1, n2)
+				default: // OP_POW
+					r = PowWithSubnormalFix(n1, n2)
+				}
+				vm.stack[frame.base+a] = NewFloat(r)
+			} else if v1.typ == typeInt && v2.typ == typeInt && op != compiler.OP_DIV && op != compiler.OP_POW {
+				i1, i2 := v1.integer, v2.integer
+				var r int64
+				switch op {
+				case compiler.OP_ADD:
+					r = i1 + i2
+				case compiler.OP_SUB:
+					r = i1 - i2
+				case compiler.OP_MUL:
+					r = i1 * i2
+				case compiler.OP_IDIV:
+					if i2 == 0 {
+						return nil, vm.runtimeError("attempt to divide by zero")
+					}
+					if i2 == -1 {
+						r = -i1 // avoid MinInt64/-1 overflow panic
+					} else {
+						r = i1 / i2
+						if (i1^i2) < 0 && r*i2 != i1 {
+							r-- // floor toward negative infinity
+						}
+					}
+				default: // OP_MOD
+					if i2 == 0 {
+						return nil, vm.runtimeError("attempt to perform 'n%%0'")
+					}
+					if i2 == -1 {
+						r = 0
+					} else {
+						r = i1 % i2
+						if r != 0 && (r^i2) < 0 {
+							r += i2
+						}
+					}
+				}
+				vm.stack[frame.base+a] = NewInt(r)
+			} else {
+				result, err := vm.arith(op, v1, v2, b, c)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = result
 			}
-			vm.stack[frame.base+a] = result
 
 		case compiler.OP_BAND, compiler.OP_BOR, compiler.OP_BXOR,
 			compiler.OP_SHL, compiler.OP_SHR:
