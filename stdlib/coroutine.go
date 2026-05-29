@@ -57,9 +57,9 @@ type Coroutine struct {
 	vm             *vm.VM          // Reference to the VM
 	coVM           *vm.VM          // The coroutine's own VM (set after first resume)
 	thread         vm.Value        // Thread object (table) for coroutine.running
-	resumeCh       chan []vm.Value  // Channel to send resume args
-	yieldCh        chan []vm.Value  // Channel to receive yield values
-	doneCh         chan struct{}    // Channel to signal completion
+	resumeCh       chan []vm.Value // Channel to send resume args
+	yieldCh        chan []vm.Value // Channel to receive yield values
+	doneCh         chan struct{}   // Channel to signal completion
 	result         []vm.Value      // Final return values
 	err            error           // Error if panicked
 	mu             sync.Mutex
@@ -628,18 +628,22 @@ func coWrap(v *vm.VM) int {
 						err = closeErr
 					}
 				}
-				// Lua 5.4: coroutine.wrap adds caller location to string
-				// errors via luaL_where(L,1) before re-raising. For string
-				// errors, use a plain string panic so the VM's panic handler
-				// adds the caller prefix via addCallerLocation. For non-string
-				// errors (tables, etc.), preserve as *LuaError.
+				// coroutine.wrap adds the caller location to string errors
+				// via luaL_where(L,1) before re-raising (Lua's luaB_auxwrap).
+				// This prepend is UNCONDITIONAL — if the inner error already
+				// begins with the same source:line: (its origin line equals the
+				// wrap call site), the prefix legitimately appears twice. Wrap
+				// the result as *LuaError so the VM panic handler does not run
+				// its deduping AddCallerLocation over it again. Non-string
+				// errors (tables, etc.) propagate unchanged.
 				if le, ok := err.(*vm.LuaError); ok {
 					if le.Value.IsString() {
-						panic(le.Value.AsString())
+						msg := v.PrependCallerLocation(le.Value.AsString())
+						panic(&vm.LuaError{Value: vm.NewString(msg)})
 					}
 					panic(le)
 				}
-				panic(err.Error())
+				panic(&vm.LuaError{Value: vm.NewString(v.PrependCallerLocation(err.Error()))})
 			}
 
 			needed := v.Base() + len(result)
