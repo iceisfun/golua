@@ -1476,7 +1476,9 @@ func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 	fs := c.fs
 	scope := fs.findLoopScope()
 	if scope == nil {
-		c.errorAtEOF("break outside loop at line %d", s.Pos().Line)
+		// Lua 5.5: error is anchored at the break statement's own line and
+		// uses "near 'break'" wording (5.4 used "at line N" at the EOF line).
+		c.error(s, "break outside loop near 'break'")
 		return
 	}
 	// Emit OP_CLOSE if there are close/captured locals being exited

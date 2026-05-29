@@ -275,13 +275,6 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 	}
 }
 
-// errorAtEOF records a compilation error using the EOF line number for the
-// file:line prefix, matching Lua 5.4's behavior for errors detected after
-// parsing (e.g., goto scope violations, unresolved labels).
-func (c *compiler) errorAtEOF(format string, args ...interface{}) {
-	c.errorAtLine(c.endLine, format, args...)
-}
-
 // errorAtLine records a compilation error using the given line number for
 // the file:line prefix.
 func (c *compiler) errorAtLine(line int, format string, args ...interface{}) {
