@@ -238,7 +238,9 @@ func mathCosh(v *vm.VM) int {
 
 func mathDeg(v *vm.VM) int {
 	n := getNumber(v, 1, "math.deg")
-	v.Set(0, vm.NewFloat(n*180/math.Pi))
+	// Match C's math_deg: x * (180/PI), so the constant folds first and a
+	// large x scales without the intermediate x*180 overflowing to +Inf.
+	v.Set(0, vm.NewFloat(n*(180/math.Pi)))
 	return 1
 }
 
