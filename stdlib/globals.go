@@ -610,25 +610,31 @@ func luaPairs(v *vm.VM) int {
 	arg := v.Get(1)
 
 	if mp := v.GetMetafield(arg, "__pairs"); !mp.IsNil() {
+		// Lua 5.5 luaB_pairs calls __pairs(self) for exactly 4 results
+		// (iterator, state, control, to-be-closed). The generic-for uses
+		// the 4th as its to-be-closed variable, so it must be propagated
+		// here — padding/truncating the metamethod's returns to 4.
 		results, err := v.ProtectedCall(mp, []vm.Value{arg})
 		if err != nil {
 			panic(err)
 		}
-		for i := 0; i < 3; i++ {
+		for i := 0; i < 4; i++ {
 			if i < len(results) {
 				v.Set(i, results[i])
 			} else {
 				v.Set(i, vm.Nil)
 			}
 		}
-		return 3
+		return 4
 	}
 
-	// Return next, t, nil — next will validate the table arg when called
+	// Return next, t, nil, nil — next will validate the table arg when called.
+	// The trailing nil is the (empty) to-be-closed slot, matching Lua 5.5.
 	v.Set(0, nextFunc)
 	v.Set(1, arg)
 	v.Set(2, vm.Nil)
-	return 3
+	v.Set(3, vm.Nil)
+	return 4
 }
 
 // nextFunc is the shared native function for next(), reused by pairs()
