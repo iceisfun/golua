@@ -142,13 +142,67 @@ func mathAsin(v *vm.VM) int {
 	return 1
 }
 
+// smallestNormal is the smallest positive normal float64 (2**-1022). Values
+// strictly below it are subnormal, where Go's math.Log/math.Log10 lose
+// precision relative to C's libm (which Lua uses).
+const smallestNormal = 2.2250738585072014e-308
+
+// twoP54 is 2**54, the scale fdlibm uses to lift a subnormal into the normal
+// range before taking a logarithm.
+const twoP54 = 1 << 54
+
+// cLog matches C's log() for subnormal inputs, which Go's math.Log computes
+// inaccurately. fdlibm scales a subnormal up by 2**54 and corrects the result
+// by 54*ln2; this reproduces reference Lua's natural-log output bit-for-bit on
+// the subnormal range.
+func cLog(x float64) float64 {
+	if x > 0 && x < smallestNormal {
+		return math.Log(x*twoP54) - 54*math.Ln2
+	}
+	return math.Log(x)
+}
+
+// cLog10 is the base-10 analogue of cLog: Go's math.Log10 is similarly
+// inaccurate for subnormals (e.g. log10(1e-308) yields -307.79 instead of
+// -308). Go's math.Log2, by contrast, is already accurate, so no log2 fixup.
+func cLog10(x float64) float64 {
+	if x > 0 && x < smallestNormal {
+		return math.Log10(x*twoP54) - 54*math.Log10(2)
+	}
+	return math.Log10(x)
+}
+
+// cAtan2 matches C/libm atan2 semantics, which differ from Go's math.Atan2 in
+// the quadrant decision when y/x underflows to zero with x < 0: Go picks the
+// ±Pi offset from the sign of atan(y/x) (which collapses to +0 for a tiny
+// negative-over-negative ratio and yields +Pi), whereas libm uses the sign of
+// y and yields -Pi. Lua delegates to C's atan2, so a tiny negative y in
+// quadrant III must produce -Pi. For every non-underflowing finite case this
+// agrees with math.Atan2, and infinity/zero cases are deferred to it.
+func cAtan2(y, x float64) float64 {
+	switch {
+	case math.IsNaN(y) || math.IsNaN(x):
+		return math.NaN()
+	case y == 0 || x == 0 || math.IsInf(y, 0) || math.IsInf(x, 0):
+		return math.Atan2(y, x)
+	}
+	q := math.Atan(y / x)
+	if x < 0 {
+		if math.Signbit(y) {
+			return q - math.Pi
+		}
+		return q + math.Pi
+	}
+	return q
+}
+
 func mathAtan(v *vm.VM) int {
 	y := getNumber(v, 1, "math.atan")
 	x := 1.0
 	if !v.Get(2).IsNil() {
 		x = getNumber(v, 2, "math.atan")
 	}
-	result := math.Atan2(y, x)
+	result := cAtan2(y, x)
 	if math.IsNaN(result) {
 		result = math.Copysign(result, -1)
 	}
@@ -258,16 +312,16 @@ func mathLog(v *vm.VM) int {
 	var result float64
 	base10 := false
 	if v.Get(2).IsNil() {
-		result = math.Log(x)
+		result = cLog(x)
 	} else {
 		base := getNumber(v, 2, "math.log")
 		if base == 10.0 {
 			base10 = true
-			result = math.Log10(x)
+			result = cLog10(x)
 		} else if base == 2.0 {
 			result = math.Log2(x)
 		} else {
-			result = math.Log(x) / math.Log(base)
+			result = cLog(x) / cLog(base)
 		}
 	}
 	if math.IsNaN(result) {
@@ -295,7 +349,7 @@ func mathLdexp(v *vm.VM) int {
 
 func mathLog10(v *vm.VM) int {
 	x := getNumber(v, 1, "math.log10")
-	v.Set(0, vm.NewFloat(math.Log10(x)))
+	v.Set(0, vm.NewFloat(cLog10(x)))
 	return 1
 }
 
@@ -378,7 +432,9 @@ func mathModf(v *vm.VM) int {
 
 func mathRad(v *vm.VM) int {
 	n := getNumber(v, 1, "math.rad")
-	v.Set(0, vm.NewFloat(n*math.Pi/180))
+	// Match C's math_rad: x * (PI/180), so the constant folds first and a
+	// huge x scales without the intermediate x*PI overflowing to +Inf.
+	v.Set(0, vm.NewFloat(n*(math.Pi/180)))
 	return 1
 }
 
