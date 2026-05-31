@@ -457,6 +457,13 @@ func luaUtf8Offset(v *vm.VM) int {
 	// For multi-byte characters, skip continuation bytes.
 	endPos := p
 	if p < slen && s[p]&0x80 != 0 {
+		// Lua 5.5 (lutf8lib.c:230-231) re-checks the resolved start byte:
+		// if it is itself a continuation byte, the position is rejected.
+		// This catches a negative/positive offset that lands on a lone
+		// continuation byte (e.g. utf8.offset("\128", -1)).
+		if s[p]&0xC0 == 0x80 {
+			panic("initial position is a continuation byte")
+		}
 		// Multi-byte character: advance past continuation bytes
 		for endPos+1 < slen && s[endPos+1]&0xC0 == 0x80 {
 			endPos++

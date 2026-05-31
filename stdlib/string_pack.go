@@ -36,6 +36,20 @@ func getPackInt(v *vm.VM, idx int) int64 {
 	return 0 // unreachable
 }
 
+// getPackNumber returns a float64 argument for string.pack's 'f'/'d'/'n'
+// directives, coercing integers and numeric strings. Like getPackInt and
+// getPackString, a missing argument is reported as "got nil" rather than
+// "got no value": str_pack pushes a nil marker after the format string, so a
+// missing pack value reads back as nil (not as an absent argument).
+func getPackNumber(v *vm.VM, idx int) float64 {
+	val := v.Get(idx)
+	if n, ok := val.ToNumber(); ok {
+		return n
+	}
+	callerArgError(v, idx, "string.pack", fmt.Sprintf("number expected, got %s", v.ObjTypeName(val)))
+	return 0 // unreachable
+}
+
 // getPackString returns a string argument for string.pack, coercing numbers.
 // Unlike the generic getString, an absent argument is reported as "got nil"
 // rather than "got no value": Lua 5.5's str_pack pushes a nil marker onto the
@@ -407,7 +421,7 @@ func packFloat32(v *vm.VM, buf *bytes.Buffer, fs *formatState, argIdx *int) {
 		buf.WriteByte(0)
 	}
 
-	val := getNumber(v, *argIdx, "string.pack")
+	val := getPackNumber(v, *argIdx)
 	*argIdx++
 
 	bits := math.Float32bits(float32(val))
@@ -428,7 +442,7 @@ func packFloat64(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, argIdx
 		buf.WriteByte(0)
 	}
 
-	val := getNumber(v, *argIdx, "string.pack")
+	val := getPackNumber(v, *argIdx)
 	*argIdx++
 
 	bits := math.Float64bits(val)
