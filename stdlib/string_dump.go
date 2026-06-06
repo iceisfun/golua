@@ -37,11 +37,16 @@ func dumpProto(p *compiler.Proto, strip bool) []byte {
 	buf.WriteByte(0x55)                     // version 5.5
 	buf.WriteByte(0)                        // format
 	buf.Write([]byte("\x19\x93\r\n\x1a\n")) // LUAC_DATA
-	buf.WriteByte(4)                        // instruction size
-	buf.WriteByte(8)                        // integer size
-	buf.WriteByte(8)                        // number (float) size
-	d.writeInt(0x5678)                      // LUAC_INT check
-	d.writeFloat(370.5)                     // LUAC_NUM check
+	// Lua 5.5 num-info entries: each is sizeof(T) byte followed by a sample
+	// value of type T (dumpNumInfo). See ldump.c dumpHeader.
+	buf.WriteByte(4)          // sizeof(int)
+	d.writeUint32(0xFFFFA988) // (int) LUAC_INT = -0x5678
+	buf.WriteByte(4)          // sizeof(Instruction)
+	d.writeUint32(0x12345678) // (Instruction) LUAC_INST
+	buf.WriteByte(8)          // sizeof(lua_Integer)
+	d.writeInt(-0x5678)       // (lua_Integer) LUAC_INT
+	buf.WriteByte(8)          // sizeof(lua_Number)
+	d.writeFloat(-370.5)      // (lua_Number) LUAC_NUM
 
 	// One upvalue for the top-level function
 	buf.WriteByte(byte(len(p.Upvalues)))

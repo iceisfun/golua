@@ -143,24 +143,34 @@ func (u *undumper) checkHeader() error {
 	if string(luacData) != "\x19\x93\r\n\x1a\n" {
 		return u.error("corrupted chunk")
 	}
-	// Instruction size
+	// Lua 5.5 num-info entries (ldump.c dumpHeader): each is a sizeof byte
+	// followed by a sample value of that type.
+	// (int) LUAC_INT == -0x5678
+	if u.readByte() != 4 {
+		return u.error("int size mismatch")
+	}
+	if int32(binary.LittleEndian.Uint32(u.readBytes(4))) != -0x5678 {
+		return u.error("integer format mismatch")
+	}
+	// (Instruction) LUAC_INST == 0x12345678
 	if u.readByte() != 4 {
 		return u.error("Instruction size mismatch")
 	}
-	// Integer size
+	if binary.LittleEndian.Uint32(u.readBytes(4)) != 0x12345678 {
+		return u.error("instruction format mismatch")
+	}
+	// (lua_Integer) LUAC_INT == -0x5678
 	if u.readByte() != 8 {
 		return u.error("lua_Integer size mismatch")
 	}
-	// Number size
+	if u.readInteger() != -0x5678 {
+		return u.error("integer format mismatch")
+	}
+	// (lua_Number) LUAC_NUM == -370.5
 	if u.readByte() != 8 {
 		return u.error("lua_Number size mismatch")
 	}
-	// LUAC_INT check
-	if u.readInteger() != 0x5678 {
-		return u.error("integer format mismatch")
-	}
-	// LUAC_NUM check
-	if u.readNumber() != 370.5 {
+	if u.readNumber() != -370.5 {
 		return u.error("float format mismatch")
 	}
 	return nil
