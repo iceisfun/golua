@@ -28,8 +28,8 @@ func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 		// Compile remaining branches (they're dead code but must be valid)
 		for _, elif := range s.ElseIfs {
 			eline := elif.P.Line
-			c.compileCondJump(elif.Cond, false, eline)
-			elifJump := fs.emitJump(eline)
+			eCondLine := c.compileCondJump(elif.Cond, false, eline)
+			elifJump := fs.emitJump(eCondLine)
 			fs.enterScope(false)
 			c.compileBlock(elif.Then)
 			c.leaveScope(eline)
@@ -63,8 +63,8 @@ func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 
 		for _, elif := range s.ElseIfs {
 			eline := elif.P.Line
-			c.compileCondJump(elif.Cond, false, eline)
-			elifJump := fs.emitJump(eline)
+			eCondLine := c.compileCondJump(elif.Cond, false, eline)
+			elifJump := fs.emitJump(eCondLine)
 			fs.enterScope(false)
 			c.compileBlock(elif.Then)
 			c.leaveScope(eline)
@@ -85,8 +85,8 @@ func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 
 	// General case: emit TEST + JMP
 	thenLine := s.ThenLine
-	c.compileCondJump(s.Cond, false, thenLine)
-	thenJump := fs.emitJump(thenLine) // jump past then-block if false
+	condLine := c.compileCondJump(s.Cond, false, thenLine)
+	thenJump := fs.emitJump(condLine) // jump past then-block if false
 	fs.enterScope(false)
 	c.compileBlock(s.Then)
 	c.leaveScope(thenLine)
@@ -103,8 +103,8 @@ func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 	// elseif branches
 	for _, elif := range s.ElseIfs {
 		eiThenLine := elif.ThenLine
-		c.compileCondJump(elif.Cond, false, eiThenLine)
-		elifJump := fs.emitJump(eiThenLine)
+		eiCondLine := c.compileCondJump(elif.Cond, false, eiThenLine)
+		elifJump := fs.emitJump(eiCondLine)
 		fs.enterScope(false)
 		c.compileBlock(elif.Then)
 		c.leaveScope(eiThenLine)
@@ -128,10 +128,26 @@ func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 
 // compileCondJump compiles an expression and emits a conditional jump.
 // If jumpOnFalse is true, it jumps when the condition is false.
-func (c *compiler) compileCondJump(cond ast.Expr, jumpOnFalse bool, line int) {
+//
+// The returned line is the source line that the emitted TEST is attributed
+// to. Reference Lua attributes the condition's test/jump to the line of the
+// *last token of the condition expression*, not the line of the trailing
+// `then`/`do` keyword (which is what `fallbackLine` carries). Callers should
+// use the returned line for the JMP they emit immediately after, so the
+// whole condition test forms a single contiguous line run (matching the
+// line-hook trace produced by reference Lua).
+func (c *compiler) compileCondJump(cond ast.Expr, jumpOnFalse bool, fallbackLine int) int {
 	fs := c.fs
 	reg := fs.freeReg
 	c.compileExprToReg(cond, reg)
+	// Use the line of the last instruction emitted while materializing the
+	// condition. This is the condition's own end line, matching reference
+	// Lua, rather than the keyword (`then`/`do`) line. If the condition
+	// emitted no instruction (e.g. an empty proto), fall back to the keyword.
+	line := fallbackLine
+	if l := c.lastEmittedLine(); l > 0 {
+		line = l
+	}
 	k := 1 // skip if truthy (jump on false)
 	if !jumpOnFalse {
 		k = 0 // skip if falsy (jump on true means we fall through on true)
@@ -143,6 +159,7 @@ func (c *compiler) compileCondJump(cond ast.Expr, jumpOnFalse bool, line int) {
 	// registers, causing debug.getlocal to return wrong values (the local
 	// name maps to the condition's register instead of the local's actual one).
 	fs.freeReg = reg
+	return line
 }
 
 // ---------------------------------------------------------------------------
@@ -206,8 +223,8 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	fs.enterScope(true)
 
 	// Test condition
-	c.compileCondJump(s.Cond, false, line)
-	exitJump := fs.emitJump(line)
+	condLine := c.compileCondJump(s.Cond, false, line)
+	exitJump := fs.emitJump(condLine)
 
 	// Body
 	c.compileBlock(s.Body)

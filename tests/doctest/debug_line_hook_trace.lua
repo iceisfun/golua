@@ -15,7 +15,9 @@ local function test(s, expected)
     "wrong trace: expected={" .. expected .. "} got={" .. got .. "}")
 end
 
--- if/else with multi-line condition
+-- if/else with multi-line condition. The condition's TEST/JMP are attributed
+-- to the last line of the condition expression (2), not the 'then' line (3),
+-- matching reference Lua 5.5 (and 5.4): trace is 2,4,7, not 2,3,4,7.
 test([[if
 math.sin(1)
 then
@@ -23,7 +25,7 @@ then
 else
   a=2
 end
-]], "2,3,4,7")
+]], "2,4,7")
 -->
 
 -- local function definition (CLOSURE on 'end' line)
