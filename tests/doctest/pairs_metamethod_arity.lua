@@ -1,4 +1,6 @@
--- pairs(__pairs) must always return exactly three values.
+-- Lua 5.5: pairs returns four values -- the fourth is the to-be-closed
+-- value for the generic-for loop. Values from __pairs beyond the fourth
+-- are dropped.
 
 do
     local t = setmetatable({}, {
@@ -7,7 +9,7 @@ do
         end
     })
     print(pcall(pairs, t))
-    --> =true	nil	nil	nil
+    --> =true	nil	nil	nil	nil
 end
 
 do
@@ -17,7 +19,7 @@ do
         end
     })
     print(pairs(t))
-    --> =1	nil	nil
+    --> =1	nil	nil	nil
 end
 
 do
@@ -27,5 +29,5 @@ do
         end
     })
     print(pairs(t))
-    --> =1	2	3
+    --> =1	2	3	4
 end
