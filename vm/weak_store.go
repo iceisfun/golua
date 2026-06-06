@@ -26,6 +26,13 @@ const (
 // a single ordered entries list with a lookup index. This trades some
 // normal-path performance for correct weak semantics.
 type weakStore struct {
+	// mu guards all fields. A weakStore is normally accessed only by its owning
+	// VM (whose coroutines run serialized via channel handoff), but the global
+	// sweepAllWeakTables() runs from whichever VM happens to call collectgarbage
+	// and may touch a store owned by a *different*, concurrently-running VM.
+	// mu makes that cross-VM access race-free.
+	mu sync.Mutex
+
 	mode weakTableMode
 
 	entries []weakEntry
@@ -87,6 +94,8 @@ func (ws *weakStore) get(key Value) Value {
 	if key.IsNil() {
 		return Nil
 	}
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 
 	wk := ws.weakKeyFor(key)
 	idx, ok := ws.index[wk]
@@ -117,6 +126,8 @@ func (ws *weakStore) set(key, value Value) error {
 	if key.IsFloat() && key.num != key.num {
 		return fmt.Errorf("table index is NaN")
 	}
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 
 	wk := ws.weakKeyFor(key)
 
@@ -227,6 +238,8 @@ func (ws *weakStore) killEntry(idx int) {
 
 // next implements the pairs() iterator for weak tables.
 func (ws *weakStore) next(key Value) (Value, Value, error) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 	if key.IsNil() {
 		// Start iteration.
 		ws.iterBound = len(ws.entries)
@@ -283,6 +296,8 @@ func (ws *weakStore) nextAliveFrom(start int) (Value, Value, error) {
 
 // length returns the sequence length (# operator) for the weak table.
 func (ws *weakStore) length() int {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 	n := 0
 	for {
 		nextKey := int64(n + 1)
@@ -306,7 +321,14 @@ func (ws *weakStore) length() int {
 }
 
 // forEach calls fn for each live key-value pair in insertion order.
+//
+// The live pairs are snapshotted under the lock and fn is invoked outside it,
+// because fn runs arbitrary Lua code that may re-enter this same weakStore
+// (which would deadlock the non-reentrant mutex).
 func (ws *weakStore) forEach(fn func(key, value Value) bool) {
+	ws.mu.Lock()
+	type kv struct{ k, v Value }
+	pairs := make([]kv, 0, len(ws.entries)-ws.dead)
 	for i := range ws.entries {
 		e := &ws.entries[i]
 		if !e.alive {
@@ -324,15 +346,23 @@ func (ws *weakStore) forEach(fn func(key, value Value) bool) {
 			ws.killEntry(i)
 			continue
 		}
+		pairs = append(pairs, kv{k, v})
+	}
+	ws.mu.Unlock()
 
-		if !fn(k, v) {
+	for _, p := range pairs {
+		if !fn(p.k, p.v) {
 			return
 		}
 	}
 }
 
-// sweep removes all dead entries whose weak references have been collected.
-func (ws *weakStore) sweep() {
+// sweep removes all dead entries whose weak references have been collected and
+// returns the number of live entries it killed.
+func (ws *weakStore) sweep() int {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	before := len(ws.entries) - ws.dead
 	for i := range ws.entries {
 		e := &ws.entries[i]
 		if !e.alive {
@@ -348,11 +378,14 @@ func (ws *weakStore) sweep() {
 			ws.killEntry(i)
 		}
 	}
+	return before - (len(ws.entries) - ws.dead)
 }
 
 // migrate copies all live entries out as key-value pairs for transfer back
 // to normal table storage.
 func (ws *weakStore) migrate() []struct{ k, v Value } {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
 	var pairs []struct{ k, v Value }
 	for i := range ws.entries {
 		e := &ws.entries[i]
@@ -401,10 +434,7 @@ func sweepAllWeakTables() int {
 		if ws == nil {
 			continue
 		}
-		before := len(ws.entries) - ws.dead
-		ws.sweep()
-		after := len(ws.entries) - ws.dead
-		removed += before - after
+		removed += ws.sweep()
 	}
 	for i := j; i < len(weakTablePtrs); i++ {
 		weakTablePtrs[i] = weak.Pointer[Table]{}
