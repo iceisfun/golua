@@ -582,6 +582,16 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 			if isMultiRet(s.Values[i]) {
 				lastIsMultiRet = true
 				c.compileExprMultiRet(s.Values[i], nTargets-i)
+				// Reserve the result registers (valBase+i .. valBase+nTargets-1).
+				// compileExprMultiRet emits the CALL/VARARG but does not bump
+				// freeReg, so without this the high-water mark (MaxStack) omits
+				// these slots. A store that triggers a metamethod (e.g.
+				// __newindex) would then place its call frame on top of the
+				// still-pending value registers and clobber them.
+				fs.freeReg = valBase + nTargets
+				if fs.freeReg > fs.maxReg {
+					fs.maxReg = fs.freeReg
+				}
 			} else {
 				reg := valBase + i
 				c.compileExprToReg(s.Values[i], reg)
