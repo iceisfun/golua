@@ -8,6 +8,28 @@ import (
 	"github.com/iceisfun/golua/v2/ast"
 )
 
+// Local-variable attribute values. These mirror the strings carried in
+// ast.LocalStmt.Attribs (produced by the parser from `<const>` / `<close>`).
+const (
+	attribNone  = ""      // a plain local with no attribute
+	attribConst = "const" // `<const>`: read-only local
+	attribClose = "close" // `<close>`: to-be-closed local
+)
+
+// envUpvalueName is the implicit upvalue holding the global environment (_ENV).
+const envUpvalueName = "_ENV"
+
+// forStateVarName is the debug name given to the hidden control registers of a
+// for loop (the internal state/limit/step slots, not user-visible variables).
+const forStateVarName = "(for state)"
+
+// Repeated compiler diagnostics.
+const (
+	errControlStructureTooLong = "control structure too long"
+	errAssignToConst           = "attempt to assign to const variable '%s'"
+	errVarNotDeclared          = "variable '%s' not declared"
+)
+
 // shortSrc returns a display-friendly source name, matching Lua 5.4's luaO_chunkid.
 func shortSrc(source string) string {
 	if len(source) == 0 {
@@ -742,7 +764,7 @@ func (fs *funcState) needsClose(fromLocal int) bool {
 		start = 0
 	}
 	for i := start; i < len(fs.locals); i++ {
-		if fs.locals[i].attrib == "close" || fs.locals[i].captured {
+		if fs.locals[i].attrib == attribClose || fs.locals[i].captured {
 			return true
 		}
 	}
@@ -759,7 +781,7 @@ func (fs *funcState) needsCloseTBC(fromLocal int) bool {
 		start = 0
 	}
 	for i := start; i < len(fs.locals); i++ {
-		if fs.locals[i].attrib == "close" {
+		if fs.locals[i].attrib == attribClose {
 			return true
 		}
 	}
@@ -775,7 +797,7 @@ func (fs *funcState) isConst(name string) bool {
 			if fs.locals[i].inlined {
 				return true
 			}
-			return fs.locals[i].attrib == "const" || fs.locals[i].attrib == "close"
+			return fs.locals[i].attrib == attribConst || fs.locals[i].attrib == attribClose
 		}
 	}
 	return false
@@ -894,7 +916,7 @@ func (c *compiler) leaveScope(line int) {
 		needClose := false
 		start := len(fs.locals) - (fs.nActVar - scope.nLocals)
 		for i := start; i < len(fs.locals); i++ {
-			if fs.locals[i].attrib == "close" || fs.locals[i].captured {
+			if fs.locals[i].attrib == attribClose || fs.locals[i].captured {
 				needClose = true
 				break
 			}
@@ -981,7 +1003,7 @@ func (c *compiler) patchJump(jpc int) {
 	fs := c.fs
 	offset := fs.pc() - (jpc + 1) // target - (jpc + 1)
 	if offset > MaxSJ || offset < MinSJ {
-		c.error(nil, "control structure too long")
+		c.error(nil, errControlStructureTooLong)
 		return
 	}
 	fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
@@ -1004,7 +1026,7 @@ func (c *compiler) checkGlobalRead(name string, node ast.Node) {
 	if ge.star {
 		return
 	}
-	c.error(node, "variable '%s' not declared", name)
+	c.error(node, errVarNotDeclared, name)
 }
 
 // checkGlobalWrite verifies that a global name is allowed to be written under
@@ -1015,27 +1037,27 @@ func (c *compiler) checkGlobalWrite(name string, node ast.Node) {
 		return
 	}
 	if attrib, ok := ge.names[name]; ok {
-		if attrib == "const" {
-			c.error(node, "attempt to assign to const variable '%s'", name)
+		if attrib == attribConst {
+			c.error(node, errAssignToConst, name)
 		}
 		return
 	}
 	if ge.star {
-		if ge.starAttr == "const" {
-			c.error(node, "attempt to assign to const variable '%s'", name)
+		if ge.starAttr == attribConst {
+			c.error(node, errAssignToConst, name)
 		}
 		return
 	}
-	c.error(node, "variable '%s' not declared", name)
+	c.error(node, errVarNotDeclared, name)
 }
 
 // resolveEnv returns the upvalue index for _ENV (the global environment table).
 func (c *compiler) resolveEnv() int {
 	fs := c.fs
-	if idx, ok := fs.lookupUpvalue("_ENV"); ok {
+	if idx, ok := fs.lookupUpvalue(envUpvalueName); ok {
 		return idx
 	}
-	idx, _ := c.resolveUpvalue(fs, "_ENV")
+	idx, _ := c.resolveUpvalue(fs, envUpvalueName)
 	return idx
 }
 

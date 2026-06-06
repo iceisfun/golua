@@ -69,7 +69,7 @@ func (c *compiler) compileChunk(source string, block *ast.Block) *Proto {
 	fs.proto.LastLine = 0
 
 	// _ENV is upvalue[0] for the top-level chunk
-	fs.addUpvalue("_ENV", true, 0)
+	fs.addUpvalue(envUpvalueName, true, 0)
 
 	fs.enterScope(false)
 
@@ -349,10 +349,10 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 		// `name = v` indexes the inlined constant), but plumbing the
 		// inlined value through every global access site here would
 		// touch many call sites for negligible benefit. We keep _ENV
-		// allocated to a register so the existing `lookupLocal("_ENV")`
+		// allocated to a register so the existing `lookupLocal(envUpvalueName)`
 		// fallback paths continue to work; runtime semantics still
 		// match (assigning a global indexes the local _ENV value).
-		if lastAttrib == "const" && s.Names[lastIdx].Name != "_ENV" {
+		if lastAttrib == attribConst && s.Names[lastIdx].Name != envUpvalueName {
 			if v, ok := tryFoldConstScalar(s.Values[lastIdx]); ok {
 				inlineLast = true
 				inlineVal = v
@@ -467,7 +467,7 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 
 	// Emit OP_TBC for <close> variables
 	for i := 0; i < nNames; i++ {
-		if fs.locals[baseIdx+i].attrib == "close" {
+		if fs.locals[baseIdx+i].attrib == attribClose {
 			fs.emit(ABC(OP_TBC, base+i, 0, 0, 0), line)
 		}
 	}
@@ -652,13 +652,13 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		// Inlined `<const>` local in any enclosing scope — error before
 		// any other resolution so the message matches a regular const.
 		if _, ok := lookupInlinedAny(fs, t.Name); ok {
-			c.error(target, "attempt to assign to const variable '%s'", t.Name)
+			c.error(target, errAssignToConst, t.Name)
 			return
 		}
 		// Local?
 		if reg, ok := fs.lookupLocal(t.Name); ok {
 			if fs.isConst(t.Name) {
-				c.error(target, "attempt to assign to const variable '%s'", t.Name)
+				c.error(target, errAssignToConst, t.Name)
 				return
 			}
 			// compileExprToReg handles clobber protection for function/method
@@ -670,7 +670,7 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		if idx, ok := c.resolveUpvalue(fs, t.Name); ok {
 			_ = idx
 			if c.isConstUpvalue(fs, t.Name) {
-				c.error(target, "attempt to assign to const variable '%s'", t.Name)
+				c.error(target, errAssignToConst, t.Name)
 				return
 			}
 			tempReg := fs.reserveReg()
@@ -680,7 +680,7 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 			return
 		}
 		// Local _ENV: _ENV[name] via SETFIELD on local
-		if envReg, ok := fs.lookupLocal("_ENV"); ok {
+		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 			c.checkGlobalWrite(t.Name, target)
 			nameK := fs.stringConstant(t.Name)
 			tempReg := fs.reserveReg()
@@ -767,12 +767,12 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 	case *ast.NameExpr:
 		// Inlined `<const>` local in any enclosing scope — error first.
 		if _, ok := lookupInlinedAny(fs, t.Name); ok {
-			c.error(target, "attempt to assign to const variable '%s'", t.Name)
+			c.error(target, errAssignToConst, t.Name)
 			return
 		}
 		if reg, ok := fs.lookupLocal(t.Name); ok {
 			if fs.isConst(t.Name) {
-				c.error(target, "attempt to assign to const variable '%s'", t.Name)
+				c.error(target, errAssignToConst, t.Name)
 				return
 			}
 			if reg != srcReg {
@@ -782,14 +782,14 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 		}
 		if idx, ok := c.resolveUpvalue(fs, t.Name); ok {
 			if c.isConstUpvalue(fs, t.Name) {
-				c.error(target, "attempt to assign to const variable '%s'", t.Name)
+				c.error(target, errAssignToConst, t.Name)
 				return
 			}
 			fs.emit(ABC(OP_SETUPVAL, srcReg, idx, 0, 0), line)
 			return
 		}
 		// Local _ENV: _ENV[name] via SETFIELD on local
-		if envReg, ok := fs.lookupLocal("_ENV"); ok {
+		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 			c.checkGlobalWrite(t.Name, target)
 			nameK := fs.stringConstant(t.Name)
 			fs.emitSetField(envReg, nameK, srcReg, line)
@@ -836,7 +836,7 @@ func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 	// multi-line expressions, this is the last line of the expression,
 	// not the assignment target's line.
 	storeLine := exprEndLine(value)
-	if envReg, ok := fs.lookupLocal("_ENV"); ok {
+	if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 		fs.emitSetField(envReg, nameK, tempReg, storeLine)
 	} else {
 		envUV := c.resolveEnv()
@@ -1135,7 +1135,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 		backJump := fs.emitJump(backLine)
 		offset := loopStart - (fs.pc()) // negative
 		if offset > MaxSJ || offset < MinSJ {
-			c.error(nil, "control structure too long")
+			c.error(nil, errControlStructureTooLong)
 		} else {
 			fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 		}
@@ -1168,7 +1168,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	backJump := fs.emitJump(backLine)
 	offset := loopStart - (fs.pc()) // negative
 	if offset > MaxSJ || offset < MinSJ {
-		c.error(nil, "control structure too long")
+		c.error(nil, errControlStructureTooLong)
 	} else {
 		fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 	}
@@ -1208,7 +1208,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		backJump := fs.emitJump(c.lastEmittedLine())
 		offset := loopStart - fs.pc()
 		if offset > MaxSJ || offset < MinSJ {
-			c.error(nil, "control structure too long")
+			c.error(nil, errControlStructureTooLong)
 		} else {
 			fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 		}
@@ -1233,7 +1233,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	backJump := fs.emitJump(condLine)             // jump back (cond is false)
 	offset := loopStart - fs.pc()
 	if offset > MaxSJ || offset < MinSJ {
-		c.error(nil, "control structure too long")
+		c.error(nil, errControlStructureTooLong)
 	} else {
 		fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 	}
@@ -1309,9 +1309,9 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	// This ensures freeReg won't be reset below base+4 during the loop body
 	fs.checkVarLimitAt(4, line, "for")
 	fs.locals = append(fs.locals,
-		localVar{name: "(for state)", reg: base, startPC: fs.pc()},
-		localVar{name: "(for state)", reg: base + 1, startPC: fs.pc()},
-		localVar{name: "(for state)", reg: base + 2, startPC: fs.pc()},
+		localVar{name: forStateVarName, reg: base, startPC: fs.pc()},
+		localVar{name: forStateVarName, reg: base + 1, startPC: fs.pc()},
+		localVar{name: forStateVarName, reg: base + 2, startPC: fs.pc()},
 	)
 	fs.nActVar += 3
 
@@ -1320,7 +1320,7 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 		name:    s.Name.Name,
 		reg:     base + 3,
 		startPC: fs.pc(),
-		attrib:  "const",
+		attrib:  attribConst,
 	})
 	fs.nActVar++
 
@@ -1336,7 +1336,7 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 		if fs.locals[i].reg < base+3 {
 			break
 		}
-		if fs.locals[i].captured || fs.locals[i].attrib == "close" {
+		if fs.locals[i].captured || fs.locals[i].attrib == attribClose {
 			needClose = true
 			break
 		}
@@ -1351,7 +1351,7 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	// Patch FORPREP to jump to FORLOOP
 	bodyLen := loopPC - forPrepPC - 1
 	if bodyLen > MaxArgBx {
-		c.error(nil, "control structure too long")
+		c.error(nil, errControlStructureTooLong)
 	}
 	fs.proto.Code[forPrepPC] = fs.proto.Code[forPrepPC].SetBx(bodyLen)
 
@@ -1435,10 +1435,10 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	localStartPC := fs.pc()
 	fs.checkVarLimitAt(4+len(s.Names), line, "in")
 	fs.locals = append(fs.locals,
-		localVar{name: "(for state)", reg: base, startPC: localStartPC},
-		localVar{name: "(for state)", reg: base + 1, startPC: localStartPC},
-		localVar{name: "(for state)", reg: base + 2, startPC: localStartPC},
-		localVar{name: "(for state)", reg: base + 3, startPC: localStartPC, attrib: "close"},
+		localVar{name: forStateVarName, reg: base, startPC: localStartPC},
+		localVar{name: forStateVarName, reg: base + 1, startPC: localStartPC},
+		localVar{name: forStateVarName, reg: base + 2, startPC: localStartPC},
+		localVar{name: forStateVarName, reg: base + 3, startPC: localStartPC, attrib: attribClose},
 	)
 	fs.nActVar += 4
 
@@ -1459,7 +1459,7 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		// Lua 5.5: the first loop variable (control variable) is read-only
 		attrib := ""
 		if i == 0 {
-			attrib = "const"
+			attrib = attribConst
 		}
 		fs.locals = append(fs.locals, localVar{
 			name:    name.Name,
@@ -1496,14 +1496,14 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// Patch TFORPREP to jump to TFORCALL
 	bodyLen := tforCallPC - tforPrepPC - 1
 	if bodyLen > MaxArgBx {
-		c.error(nil, "control structure too long")
+		c.error(nil, errControlStructureTooLong)
 	}
 	fs.proto.Code[tforPrepPC] = fs.proto.Code[tforPrepPC].SetBx(bodyLen)
 
 	// Patch TFORLOOP to jump back to loop body (after TFORPREP)
 	backLen := tforLoopPC - tforPrepPC - 1
 	if backLen > MaxArgBx {
-		c.error(nil, "control structure too long")
+		c.error(nil, errControlStructureTooLong)
 	}
 	fs.proto.Code[tforLoopPC] = fs.proto.Code[tforLoopPC].SetBx(backLen)
 
@@ -1565,7 +1565,7 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 			jpc := fs.emitJump(line)
 			offset := lbl.pc - (jpc + 1)
 			if offset > MaxSJ || offset < MinSJ {
-				c.error(nil, "control structure too long")
+				c.error(nil, errControlStructureTooLong)
 			} else {
 				fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
 			}
@@ -1652,7 +1652,7 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 			}
 			offset := fs.pc() - (pg.pc + 1)
 			if offset > MaxSJ || offset < MinSJ {
-				c.error(nil, "control structure too long")
+				c.error(nil, errControlStructureTooLong)
 			} else {
 				fs.proto.Code[pg.pc] = fs.proto.Code[pg.pc].SetSJ(offset)
 			}
@@ -1688,26 +1688,26 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 	case *ast.NameExpr:
 		// Inlined `<const>` local — assignment is an error.
 		if _, ok := lookupInlinedAny(fs, name.Name); ok {
-			c.error(s.Name, "attempt to assign to const variable '%s'", name.Name)
+			c.error(s.Name, errAssignToConst, name.Name)
 			fs.freeReg = reg
 			return
 		}
 		// Simple name: could be local, upvalue, or global
 		if localReg, ok := fs.lookupLocal(name.Name); ok {
 			if fs.isConst(name.Name) {
-				c.error(s.Name, "attempt to assign to const variable '%s'", name.Name)
+				c.error(s.Name, errAssignToConst, name.Name)
 				fs.freeReg = reg
 				return
 			}
 			fs.emit(ABC(OP_MOVE, localReg, reg, 0, 0), line)
 		} else if uvIdx, ok := c.resolveUpvalue(fs, name.Name); ok {
 			if c.isConstUpvalue(fs, name.Name) {
-				c.error(s.Name, "attempt to assign to const variable '%s'", name.Name)
+				c.error(s.Name, errAssignToConst, name.Name)
 				fs.freeReg = reg
 				return
 			}
 			fs.emit(ABC(OP_SETUPVAL, reg, uvIdx, 0, 0), line)
-		} else if envReg, ok := fs.lookupLocal("_ENV"); ok {
+		} else if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 			c.checkGlobalWrite(name.Name, s.Name)
 			nameK := fs.stringConstant(name.Name)
 			fs.emitSetField(envReg, nameK, reg, line)
@@ -1791,7 +1791,7 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 		if i < len(s.Attribs) {
 			attrib = s.Attribs[i]
 		}
-		if attrib == "close" {
+		if attrib == attribClose {
 			c.error(s, "global variables cannot be to-be-closed")
 			return
 		}
@@ -1807,7 +1807,7 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 			c.compileExprToReg(s.Values[i], reg)
 			// Runtime check: error if _ENV[name] is already non-nil.
 			chkReg := fs.reserveReg()
-			if envReg, ok := fs.lookupLocal("_ENV"); ok {
+			if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 				fs.emitGetField(chkReg, envReg, nameK, line)
 			} else {
 				envUV := c.resolveEnv()
@@ -1819,7 +1819,7 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 			}
 			fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
 			fs.freeReg = reg + 1 // free the check register
-			if envReg, ok := fs.lookupLocal("_ENV"); ok {
+			if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 				fs.emitSetField(envReg, nameK, reg, line)
 			} else {
 				envUV := c.resolveEnv()
@@ -1856,7 +1856,7 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	nameK := fs.stringConstant(s.Name.Name)
 	// Runtime check: error if _ENV[name] is already non-nil.
 	chkReg := fs.reserveReg()
-	if envReg, ok := fs.lookupLocal("_ENV"); ok {
+	if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 		fs.emitGetField(chkReg, envReg, nameK, line)
 	} else {
 		envUV := c.resolveEnv()
@@ -1868,7 +1868,7 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	}
 	fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
 	fs.freeReg = reg + 1 // free the check register
-	if envReg, ok := fs.lookupLocal("_ENV"); ok {
+	if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 		fs.emitSetField(envReg, nameK, reg, line)
 	} else {
 		envUV := c.resolveEnv()
@@ -1941,7 +1941,7 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 				name:    fe.VarArgName,
 				reg:     reg,
 				startPC: 0,
-				attrib:  "const",
+				attrib:  attribConst,
 			})
 			fs.nActVar++
 			fs.freeReg++
