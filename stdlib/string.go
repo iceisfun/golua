@@ -130,15 +130,32 @@ func stringRep(v *vm.VM) int {
 		return 1
 	}
 
-	// Check for overflow: total = len(s)*n + len(sep)*(n-1)
-	// Use a limit well below Go's allocation ceiling to prevent unrecoverable
-	// runtime OOM panics that bypass pcall/recover.
+	// total = len(s)*n + len(sep)*(n-1). Reference Lua distinguishes two
+	// failure modes here:
+	//   - "resulting string too large" when this size computation overflows
+	//     the maximum representable size (LUA_MAXINTEGER).
+	//   - "not enough memory" when the size is representable but the
+	//     allocation cannot be satisfied.
+	// We mirror that distinction. We also keep a sandbox cap well below Go's
+	// allocation ceiling to avoid unrecoverable runtime OOM panics that bypass
+	// pcall/recover; sizes above the cap (but representable) report the same
+	// "not enough memory" reference would give for an unsatisfiable allocation.
 	const maxSize int64 = 1<<30 - 1 // ~1GB, must reject before Go allocator fails
 	sLen := int64(len(s))
 	sepLen := int64(len(sep))
-	totalSize := sLen*n + sepLen*(n-1)
-	if totalSize < 0 || totalSize > maxSize || (sLen > 0 && n > maxSize/sLen) {
+	unit := sLen + sepLen // bytes contributed per repetition (sep counted n times)
+	// Reference Lua's overflow guard: l + lsep > MAXSIZE / n. When this holds
+	// the size computation would overflow the maximum representable size, so
+	// report "resulting string too large". (math.MaxInt64 stands in for
+	// LUA_MAXINTEGER / MAXSIZE.)
+	if unit > 0 && unit > math.MaxInt64/n {
 		panic("resulting string too large")
+	}
+	// The size is representable but may exceed the sandbox cap (or be
+	// unallocatable in reference Lua); mirror reference's "not enough memory".
+	totalSize := sLen*n + sepLen*(n-1)
+	if totalSize > maxSize {
+		panic("not enough memory")
 	}
 
 	var result strings.Builder

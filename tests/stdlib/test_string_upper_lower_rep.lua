@@ -16,10 +16,14 @@ assert(string.rep('teste', 0) == '')
 assert(string.rep('t\xE3s\00t\xE3', 2) == 't\xE3s\0t\xE3t\xE3s\000t\xE3')
 assert(string.rep('', 10) == '')
 
-if string.packsize("i") == 4 then
-  -- result length would be 2^31 (int overflow)
-  checkerror("too large", string.rep, 'aa', (1 << 30))
-  checkerror("too large", string.rep, 'a', (1 << 30), ',')
+do
+  -- Lua 5.5 uses size_t (not 32-bit int) for the result length, so a 2^31-byte
+  -- request no longer overflows: reference Lua allocates it when memory allows.
+  -- golua's sandbox caps allocation and rejects with "not enough memory" (the
+  -- same message reference gives for a representable-but-unallocatable size);
+  -- "resulting string too large" is reserved for a genuine size overflow.
+  checkerror("not enough memory", string.rep, 'aa', (1 << 30))
+  checkerror("not enough memory", string.rep, 'a', (1 << 30), ',')
 end
 
 -- repetitions with separator
