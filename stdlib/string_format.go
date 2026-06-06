@@ -94,7 +94,9 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 
 			// Validate flag/conversion combinations (Lua 5.4 restrictions).
 			// For integer conversions, Lua checks argument availability/type first.
-			if specChar != 'd' && specChar != 'i' && specChar != 'u' && specChar != 'o' && specChar != 'x' && specChar != 'X' {
+			// For 's', Lua checks the "string contains zeros" condition before the
+			// flag/conversion check, so defer validateConversion to the 's' case.
+			if specChar != 'd' && specChar != 'i' && specChar != 'u' && specChar != 'o' && specChar != 'x' && specChar != 'X' && specChar != 's' {
 				validateConversion(spec, specChar)
 			}
 		}
@@ -222,8 +224,15 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			panic(fmt.Sprintf("invalid conversion '%sF' to 'format'", spec))
 		case 's':
 			str := tolstring(v, val)
-			if spec != "%" && strings.ContainsRune(str, 0) {
-				callerArgError(v, argIdx+1, "string.format", "string contains zeros")
+			if spec != "%" {
+				// Lua checks for embedded zeros before validating the flag/
+				// conversion combination (matches reference order: a "% s" with
+				// a zero-containing argument reports "string contains zeros",
+				// not "invalid conversion specification").
+				if strings.ContainsRune(str, 0) {
+					callerArgError(v, argIdx+1, "string.format", "string contains zeros")
+				}
+				validateConversion(spec, specChar)
 			}
 			if spec == "%" {
 				// No modifiers: embed string directly (preserving null bytes)
