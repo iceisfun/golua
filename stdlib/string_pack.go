@@ -89,13 +89,18 @@ type packDirective struct {
 
 // parsePackSize reads an optional digit sequence after a format character.
 // Returns the parsed size and updated index. If no digits, returns dflt.
-func parsePackSize(fmt string, pos int, dflt int) (int, int) {
+//
+// Sizes are accumulated as int64 to match Lua 5.5, where pack sizes are
+// size_t/lua_Integer (64-bit). The digit loop stops accumulating once the value
+// exceeds (MAX_SIZE-9)/10 (mirroring C getnum); a further digit overflows and
+// raises "invalid format".
+func parsePackSize(fmt string, pos int, dflt int64) (int64, int) {
 	if pos >= len(fmt) || fmt[pos] < '0' || fmt[pos] > '9' {
 		return dflt, pos
 	}
-	n := 0
+	var n int64
 	for pos < len(fmt) && fmt[pos] >= '0' && fmt[pos] <= '9' {
-		d := int(fmt[pos] - '0')
+		d := int64(fmt[pos] - '0')
 		if n > (maxPackSize-d)/10 {
 			panic(luaFmtErr("invalid format"))
 		}
@@ -105,7 +110,9 @@ func parsePackSize(fmt string, pos int, dflt int) (int, int) {
 	return n, pos
 }
 
-const maxPackSize = 0x7fffffff
+// maxPackSize mirrors Lua 5.5's MAX_SIZE, which on a 64-bit build equals
+// LUA_MAXINTEGER (the largest size representable as both size_t and lua_Integer).
+const maxPackSize = int64(math.MaxInt64)
 
 func luaFmtErr(msg string) string {
 	return fmt.Sprintf("bad argument #1 to 'string.pack' (string expected): %s", msg)
@@ -203,12 +210,12 @@ func stringPack(v *vm.VM) int {
 			fs.byteOrder = binary.LittleEndian // native
 			continue
 		case '!':
-			var align int
+			var align int64
 			align, i = parsePackSize(format, i, 8) // default max alignment = 8
 			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
 			}
-			fs.maxAlign = align
+			fs.maxAlign = int(align)
 			continue
 		}
 
@@ -224,18 +231,18 @@ func stringPack(v *vm.VM) int {
 		case 'T':
 			packInt(v, &buf, fs, ch, 8, false, &argIdx)
 		case 'i', 'I':
-			var size int
+			var size int64
 			size, i = parsePackSize(format, i, 4)
 			if size < 1 || size > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
-			packInt(v, &buf, fs, ch, size, ch == 'i', &argIdx)
+			packInt(v, &buf, fs, ch, int(size), ch == 'i', &argIdx)
 		case 'f':
 			packFloat32(v, &buf, fs, &argIdx)
 		case 'd', 'n':
 			packFloat64(v, &buf, fs, ch, &argIdx)
 		case 'c':
-			var size int
+			var size int64
 			if i >= len(format) || format[i] < '0' || format[i] > '9' {
 				panic("missing size for format option 'c'")
 			}
@@ -244,12 +251,12 @@ func stringPack(v *vm.VM) int {
 		case 'z':
 			packZeroTermString(v, &buf, &argIdx, fs)
 		case 's':
-			var size int
+			var size int64
 			size, i = parsePackSize(format, i, 8)
 			if size < 1 || size > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
-			packSizedString(v, &buf, fs, size, &argIdx)
+			packSizedString(v, &buf, fs, int(size), &argIdx)
 		case 'x':
 			pad := addPadding(buf.Len(), fs.effectiveAlign(1))
 			for p := 0; p < pad; p++ {
@@ -287,12 +294,12 @@ func getXAlign(format string, i *int, fs *formatState) int {
 	case 'l', 'L', 'j', 'J', 'T':
 		return 8
 	case 'i', 'I':
-		var size int
+		var size int64
 		size, *i = parsePackSize(format, *i, 4)
 		if size < 1 || size > 16 {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
-		return size
+		return int(size)
 	case 'f':
 		return 4
 	case 'd', 'n':
@@ -300,12 +307,12 @@ func getXAlign(format string, i *int, fs *formatState) int {
 	case 'x':
 		return 1
 	case 's':
-		var size int
+		var size int64
 		size, *i = parsePackSize(format, *i, 8)
 		if size < 1 || size > 16 {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
-		return size
+		return int(size)
 	case 'c', 'z', '<', '>', '=', '!', 'X':
 		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
 	case ' ':
@@ -430,16 +437,22 @@ func packFloat64(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, argIdx
 	buf.Write(tmp[:])
 }
 
-func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int, argIdx *int) {
+func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int64, argIdx *int) {
+	// Match Lua 5.5: a directive whose declared size would push the result past
+	// MAX_SIZE is rejected with "result too long" before the value is even read.
+	if size > maxPackSize-int64(buf.Len()) {
+		panic(fmt.Sprintf("bad argument #1 to '%s' (result too long)", fs.funcName))
+	}
+
 	s := getPackString(v, *argIdx)
 	*argIdx++
 
-	if len(s) > size {
+	if int64(len(s)) > size {
 		panic(fmt.Sprintf("bad argument #%d to '%s' (string longer than given size)", *argIdx-1, fs.funcName))
 	}
 	buf.WriteString(s)
 	// pad with zeros
-	for j := len(s); j < size; j++ {
+	for j := int64(len(s)); j < size; j++ {
 		buf.WriteByte(0)
 	}
 }
@@ -549,12 +562,12 @@ func stringUnpack(v *vm.VM) int {
 			fs.byteOrder = binary.LittleEndian
 			continue
 		case '!':
-			var align int
+			var align int64
 			align, i = parsePackSize(format, i, 8)
 			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
 			}
-			fs.maxAlign = align
+			fs.maxAlign = int(align)
 			continue
 		}
 
@@ -580,12 +593,12 @@ func stringUnpack(v *vm.VM) int {
 			v.Set(nret, val)
 			nret++
 		case 'i', 'I':
-			var size int
+			var size int64
 			size, i = parsePackSize(format, i, 4)
 			if size < 1 || size > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
-			val := unpackInt(data, &offset, fs, ch, size, ch == 'i')
+			val := unpackInt(data, &offset, fs, ch, int(size), ch == 'i')
 			v.Set(nret, val)
 			nret++
 		case 'f':
@@ -600,7 +613,7 @@ func stringUnpack(v *vm.VM) int {
 			if i >= len(format) || format[i] < '0' || format[i] > '9' {
 				panic("missing size for format option 'c'")
 			}
-			var size int
+			var size int64
 			size, i = parsePackSize(format, i, 0)
 			val := unpackFixedString(data, &offset, size, fs)
 			v.Set(nret, val)
@@ -610,12 +623,12 @@ func stringUnpack(v *vm.VM) int {
 			v.Set(nret, val)
 			nret++
 		case 's':
-			var size int
+			var size int64
 			size, i = parsePackSize(format, i, 8)
 			if size < 1 || size > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
-			val := unpackSizedString(data, &offset, fs, size)
+			val := unpackSizedString(data, &offset, fs, int(size))
 			v.Set(nret, val)
 			nret++
 		case 'x':
@@ -654,12 +667,12 @@ func getXAlignUnpack(format string, i *int, fs *formatState) int {
 	case 'l', 'L', 'j', 'J', 'T':
 		return 8
 	case 'i', 'I':
-		var size int
+		var size int64
 		size, *i = parsePackSize(format, *i, 4)
 		if size < 1 || size > 16 {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
-		return size
+		return int(size)
 	case 'f':
 		return 4
 	case 'd', 'n':
@@ -667,12 +680,12 @@ func getXAlignUnpack(format string, i *int, fs *formatState) int {
 	case 'x':
 		return 1
 	case 's':
-		var size int
+		var size int64
 		size, *i = parsePackSize(format, *i, 8)
 		if size < 1 || size > 16 {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
-		return size
+		return int(size)
 	case 'c', 'z', '<', '>', '=', '!', 'X':
 		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
 	case ' ':
@@ -814,12 +827,14 @@ func unpackFloat64(data string, offset *int, fs *formatState, kind byte) vm.Valu
 	return vm.NewFloat(f)
 }
 
-func unpackFixedString(data string, offset *int, size int, fs *formatState) vm.Value {
-	if *offset+size > len(data) {
+func unpackFixedString(data string, offset *int, size int64, fs *formatState) vm.Value {
+	// A 'c' directive may declare a size up to MAX_SIZE; guard the int math so a
+	// huge size reports "data string too short" rather than overflowing.
+	if size < 0 || size > int64(len(data)-*offset) {
 		panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
 	}
-	s := data[*offset : *offset+size]
-	*offset += size
+	s := data[*offset : *offset+int(size)]
+	*offset += int(size)
 	return vm.NewString(s)
 }
 
@@ -892,7 +907,18 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 func stringPacksize(v *vm.VM) int {
 	format := getString(v, 1, "string.packsize")
 	fs := newFormatState(packCallName(v, "string.packsize"))
-	totalSize := 0
+	var totalSize int64
+
+	// addSize accumulates 'pad + size' for one directive, mirroring Lua 5.5's
+	// per-option overflow check (totalsize <= LUA_MAXINTEGER - (size+ntoalign)).
+	// Sizes are int64 because a 'c' directive can be as large as MAX_SIZE.
+	addSize := func(pad int, size int64) {
+		add := int64(pad) + size
+		if add < 0 || totalSize > maxPackSize-add {
+			panic(fmt.Sprintf("bad argument #1 to '%s' (format result too large)", fs.funcName))
+		}
+		totalSize += add
+	}
 
 	i := 0
 	for i < len(format) {
@@ -905,65 +931,54 @@ func stringPacksize(v *vm.VM) int {
 		case '<', '>', '=':
 			continue
 		case '!':
-			var align int
+			var align int64
 			align, i = parsePackSize(format, i, 8)
 			if align < 1 || align > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", align))
 			}
-			fs.maxAlign = align
+			fs.maxAlign = int(align)
 			continue
 		}
 
 		switch ch {
 		case 'b', 'B':
-			totalSize += addPadding(totalSize, fs.effectiveAlign(1))
-			totalSize += 1
+			addSize(addPadding(int(totalSize), fs.effectiveAlign(1)), 1)
 		case 'h', 'H':
-			totalSize += addPadding(totalSize, fs.effectiveAlign(2))
-			totalSize += 2
+			addSize(addPadding(int(totalSize), fs.effectiveAlign(2)), 2)
 		case 'l', 'L', 'j', 'J', 'T':
-			totalSize += addPadding(totalSize, fs.effectiveAlign(8))
-			totalSize += 8
+			addSize(addPadding(int(totalSize), fs.effectiveAlign(8)), 8)
 		case 'i', 'I':
-			var size int
+			var size int64
 			size, i = parsePackSize(format, i, 4)
 			if size < 1 || size > 16 {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
-			totalSize += addPadding(totalSize, fs.effectiveAlign(size))
-			totalSize += size
+			addSize(addPadding(int(totalSize), fs.effectiveAlign(int(size))), size)
 		case 'f':
-			totalSize += addPadding(totalSize, fs.effectiveAlign(4))
-			totalSize += 4
+			addSize(addPadding(int(totalSize), fs.effectiveAlign(4)), 4)
 		case 'd', 'n':
-			totalSize += addPadding(totalSize, fs.effectiveAlign(8))
-			totalSize += 8
+			addSize(addPadding(int(totalSize), fs.effectiveAlign(8)), 8)
 		case 'c':
 			if i >= len(format) || format[i] < '0' || format[i] > '9' {
 				panic("missing size for format option 'c'")
 			}
-			var size int
+			var size int64
 			size, i = parsePackSize(format, i, 0)
-			totalSize += size
+			addSize(0, size)
 		case 'x':
-			totalSize += addPadding(totalSize, fs.effectiveAlign(1))
-			totalSize += 1
+			addSize(addPadding(int(totalSize), fs.effectiveAlign(1)), 1)
 		case 'X':
 			natAlign := getXAlignPacksize(format, &i, fs)
 			align := fs.effectiveAlign(natAlign)
-			totalSize += addPadding(totalSize, align)
+			addSize(addPadding(int(totalSize), align), 0)
 		case 'z', 's':
 			panic(fmt.Sprintf("bad argument #1 to '%s' (variable-length format)", fs.funcName))
 		default:
 			panic(fmt.Sprintf("invalid format option '%c'", ch))
 		}
-
-		if totalSize > maxPackSize {
-			panic(fmt.Sprintf("bad argument #1 to '%s' (format result too large)", fs.funcName))
-		}
 	}
 
-	v.Set(0, vm.NewInt(int64(totalSize)))
+	v.Set(0, vm.NewInt(totalSize))
 	return 1
 }
 
@@ -982,12 +997,12 @@ func getXAlignPacksize(format string, i *int, fs *formatState) int {
 	case 'l', 'L', 'j', 'J', 'T':
 		return 8
 	case 'i', 'I':
-		var size int
+		var size int64
 		size, *i = parsePackSize(format, *i, 4)
 		if size < 1 || size > 16 {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
-		return size
+		return int(size)
 	case 'f':
 		return 4
 	case 'd', 'n':
@@ -995,12 +1010,12 @@ func getXAlignPacksize(format string, i *int, fs *formatState) int {
 	case 'x':
 		return 1
 	case 's':
-		var size int
+		var size int64
 		size, *i = parsePackSize(format, *i, 8)
 		if size < 1 || size > 16 {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
-		return size
+		return int(size)
 	case 'c', 'z', '<', '>', '=', '!', 'X':
 		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
 	case ' ':

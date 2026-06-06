@@ -193,14 +193,16 @@ end
 do
   checkerror("invalid format", packsize, "c1" .. string.rep("0", 40))
 
-  if packsize("i") == 4 then
-    -- result would be 2^31  (2^3 repetitions of 2^28 strings)
-    local s = string.rep("c268435456", 2^3)
-    checkerror("too large", packsize, s)
-    -- one less is OK
-    s = string.rep("c268435456", 2^3 - 1) .. "c268435455"
-    assert(packsize(s) == 0x7fffffff)
-  end
+  -- Lua 5.5 raised the pack-size limit from INT_MAX to LUA_MAXINTEGER
+  -- (MAX_SIZE == math.maxinteger on 64-bit). A single c-string the size of
+  -- maxsize-9 is accepted; overflowing the total or the buffer is rejected.
+  -- Mirrors official tpack.lua (5.5): packsize accepts maxsize-9, "too large"
+  -- on total overflow, "too long" on packing past the buffer limit.
+  local maxsize = (packsize("j") <= packsize("T")) and
+                  math.maxinteger or (1 << (packsize("j") * 8 - 1)) - 1
+  assert(packsize(string.format("c%d", maxsize - 9)) == maxsize - 9)
+  checkerror("too large", packsize, string.format("c%dc10", maxsize - 9))
+  checkerror("too long", pack, string.format("xxxxxxxxxx c%d", maxsize - 9))
   print("PASS")
 end
 --> =PASS
