@@ -151,11 +151,11 @@ type VM struct {
 	metaCallDepth int             // >0 when inside a metamethod call chain (for "C stack overflow" message)
 
 	// GC rate limiting and mode tracking
-	lastLuaGC     time.Time // Last time ProcessGcFinalizers invoked runtime.GC()
-	gcCallCount   int       // Number of times runtime.GC() was actually invoked (for testing)
-	gcStepCounter int       // Instruction counter for GC stepping (counts up to GCStepInterval)
-	gcMode        string    // Current GC mode: "generational" (default) or "incremental"
-	gcRunning     bool      // Whether GC is "running" (tracked for collectgarbage("isrunning"))
+	lastLuaGC     time.Time       // Last time ProcessGcFinalizers invoked runtime.GC()
+	gcCallCount   int             // Number of times runtime.GC() was actually invoked (for testing)
+	gcStepCounter int             // Instruction counter for GC stepping (counts up to GCStepInterval)
+	gcMode        string          // Current GC mode: "generational" (default) or "incremental"
+	gcRunning     bool            // Whether GC is "running" (tracked for collectgarbage("isrunning"))
 	gcParams      map[string]byte // Encoded GC tunables for collectgarbage("param", ...) round-trip
 
 	// Output capture
