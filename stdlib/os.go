@@ -10,6 +10,19 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
+// os.date / os.time table field names (Lua §6.9).
+const (
+	osDateYear  = "year"
+	osDateMonth = "month"
+	osDateDay   = "day"
+	osDateHour  = "hour"
+	osDateMin   = "min"
+	osDateSec   = "sec"
+	osDateWday  = "wday"
+	osDateYday  = "yday"
+	osDateIsDST = "isdst"
+)
+
 // formatPathError formats an OS error for Lua, stripping the Go operation prefix.
 // Go returns "remove /path: error" or "rename /old /new: error".
 // Lua expects "/path: Error description" with errno.
@@ -203,7 +216,7 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		dateTable := &vm.LuaTimeInput{}
 
 		// Required fields
-		for _, key := range []string{"year", "month", "day"} {
+		for _, key := range []string{osDateYear, osDateMonth, osDateDay} {
 			val, err := v.IndexValue(arg, vm.NewString(key))
 			if err != nil {
 				panic(err)
@@ -216,11 +229,11 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 				panic(fmt.Sprintf("field '%s' is not an integer", key))
 			}
 			switch key {
-			case "year":
+			case osDateYear:
 				dateTable.Year = int(i)
-			case "month":
+			case osDateMonth:
 				dateTable.Month = int(i)
-			case "day":
+			case osDateDay:
 				dateTable.Day = int(i)
 			}
 		}
@@ -232,8 +245,8 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		}
 
 		// Optional fields with Lua 5.4 defaults: hour=12, min=0, sec=0
-		defaults := map[string]int{"hour": 12, "min": 0, "sec": 0}
-		for _, key := range []string{"hour", "min", "sec"} {
+		defaults := map[string]int{osDateHour: 12, osDateMin: 0, osDateSec: 0}
+		for _, key := range []string{osDateHour, osDateMin, osDateSec} {
 			val, err := v.IndexValue(arg, vm.NewString(key))
 			if err != nil {
 				panic(err)
@@ -244,26 +257,26 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 					panic(fmt.Sprintf("field '%s' is not an integer", key))
 				}
 				switch key {
-				case "hour":
+				case osDateHour:
 					dateTable.Hour = int(i)
-				case "min":
+				case osDateMin:
 					dateTable.Min = int(i)
-				case "sec":
+				case osDateSec:
 					dateTable.Sec = int(i)
 				}
 			} else {
 				switch key {
-				case "hour":
+				case osDateHour:
 					dateTable.Hour = defaults[key]
-				case "min":
+				case osDateMin:
 					dateTable.Min = defaults[key]
-				case "sec":
+				case osDateSec:
 					dateTable.Sec = defaults[key]
 				}
 			}
 		}
 
-		isdstVal, err := v.IndexValue(arg, vm.NewString("isdst"))
+		isdstVal, err := v.IndexValue(arg, vm.NewString(osDateIsDST))
 		if err != nil {
 			panic(err)
 		}
@@ -278,16 +291,16 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 		}
 
 		if norm != nil {
-			setOSDateField(v, arg, "year", vm.NewInt(int64(norm.Year)))
-			setOSDateField(v, arg, "month", vm.NewInt(int64(norm.Month)))
-			setOSDateField(v, arg, "day", vm.NewInt(int64(norm.Day)))
-			setOSDateField(v, arg, "hour", vm.NewInt(int64(norm.Hour)))
-			setOSDateField(v, arg, "min", vm.NewInt(int64(norm.Min)))
-			setOSDateField(v, arg, "sec", vm.NewInt(int64(norm.Sec)))
-			setOSDateField(v, arg, "yday", vm.NewInt(int64(norm.Yday)))
-			setOSDateField(v, arg, "wday", vm.NewInt(int64(norm.Wday)))
+			setOSDateField(v, arg, osDateYear, vm.NewInt(int64(norm.Year)))
+			setOSDateField(v, arg, osDateMonth, vm.NewInt(int64(norm.Month)))
+			setOSDateField(v, arg, osDateDay, vm.NewInt(int64(norm.Day)))
+			setOSDateField(v, arg, osDateHour, vm.NewInt(int64(norm.Hour)))
+			setOSDateField(v, arg, osDateMin, vm.NewInt(int64(norm.Min)))
+			setOSDateField(v, arg, osDateSec, vm.NewInt(int64(norm.Sec)))
+			setOSDateField(v, arg, osDateYday, vm.NewInt(int64(norm.Yday)))
+			setOSDateField(v, arg, osDateWday, vm.NewInt(int64(norm.Wday)))
 			if norm.HasDST {
-				setOSDateField(v, arg, "isdst", vm.NewBool(norm.IsDST))
+				setOSDateField(v, arg, osDateIsDST, vm.NewBool(norm.IsDST))
 			}
 		}
 
@@ -347,15 +360,15 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 				panic("date result cannot be represented in this installation")
 			}
 			t := vm.NewEmptyTable()
-			t.SetString("year", vm.NewInt(int64(dt.Year)))
-			t.SetString("month", vm.NewInt(int64(dt.Month)))
-			t.SetString("day", vm.NewInt(int64(dt.Day)))
-			t.SetString("hour", vm.NewInt(int64(dt.Hour)))
-			t.SetString("min", vm.NewInt(int64(dt.Min)))
-			t.SetString("sec", vm.NewInt(int64(dt.Sec)))
-			t.SetString("wday", vm.NewInt(int64(dt.Wday)))
-			t.SetString("yday", vm.NewInt(int64(dt.Yday)))
-			t.SetString("isdst", vm.NewBool(dt.IsDST))
+			t.SetString(osDateYear, vm.NewInt(int64(dt.Year)))
+			t.SetString(osDateMonth, vm.NewInt(int64(dt.Month)))
+			t.SetString(osDateDay, vm.NewInt(int64(dt.Day)))
+			t.SetString(osDateHour, vm.NewInt(int64(dt.Hour)))
+			t.SetString(osDateMin, vm.NewInt(int64(dt.Min)))
+			t.SetString(osDateSec, vm.NewInt(int64(dt.Sec)))
+			t.SetString(osDateWday, vm.NewInt(int64(dt.Wday)))
+			t.SetString(osDateYday, vm.NewInt(int64(dt.Yday)))
+			t.SetString(osDateIsDST, vm.NewBool(dt.IsDST))
 			v.Set(0, vm.NewTable(t))
 			return 1
 		}

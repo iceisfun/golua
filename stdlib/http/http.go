@@ -33,6 +33,34 @@ const defaultTimeout = 60 * time.Second
 // ±maxSafeJSONInteger are converted to Lua integers, larger ones stay floats.
 const maxSafeJSONInteger = 1 << 53
 
+// Request/response table field names exchanged with Lua.
+const (
+	fieldURL        = "url"
+	fieldMethod     = "method"
+	fieldHeaders    = "headers"
+	fieldBody       = "body"
+	fieldTimeout    = "timeout"
+	fieldStatus     = "status"
+	fieldStatusText = "status_text"
+	fieldJSON       = "json"
+)
+
+// HTTP method names used by the convenience functions.
+const (
+	methodGet     = "GET"
+	methodPost    = "POST"
+	methodPut     = "PUT"
+	methodPatch   = "PATCH"
+	methodDelete  = "DELETE"
+	methodHead    = "HEAD"
+	methodOptions = "OPTIONS"
+)
+
+const (
+	headerContentType = "Content-Type"
+	contentTypeJSON   = "application/json"
+)
+
 // Open registers the http module as a global in the VM.
 func Open(v *vm.VM) {
 	httpTable := vm.NewEmptyTable()
@@ -51,7 +79,7 @@ func Open(v *vm.VM) {
 func httpGet(v *vm.VM) int {
 	url := getString(v, 1, "http.get")
 	opts := getOptions(v, 2)
-	opts.Method = "GET"
+	opts.Method = methodGet
 	opts.URL = url
 	return doRequest(v, opts)
 }
@@ -61,11 +89,11 @@ func httpPost(v *vm.VM) int {
 	url := getString(v, 1, "http.post")
 	body := v.Get(2)
 	opts := getOptions(v, 3)
-	opts.Method = "POST"
+	opts.Method = methodPost
 	opts.URL = url
 	opts.Body = body
 	if opts.ContentType == "" && body.IsTable() {
-		opts.ContentType = "application/json"
+		opts.ContentType = contentTypeJSON
 	}
 	return doRequest(v, opts)
 }
@@ -75,11 +103,11 @@ func httpPut(v *vm.VM) int {
 	url := getString(v, 1, "http.put")
 	body := v.Get(2)
 	opts := getOptions(v, 3)
-	opts.Method = "PUT"
+	opts.Method = methodPut
 	opts.URL = url
 	opts.Body = body
 	if opts.ContentType == "" && body.IsTable() {
-		opts.ContentType = "application/json"
+		opts.ContentType = contentTypeJSON
 	}
 	return doRequest(v, opts)
 }
@@ -89,11 +117,11 @@ func httpPatch(v *vm.VM) int {
 	url := getString(v, 1, "http.patch")
 	body := v.Get(2)
 	opts := getOptions(v, 3)
-	opts.Method = "PATCH"
+	opts.Method = methodPatch
 	opts.URL = url
 	opts.Body = body
 	if opts.ContentType == "" && body.IsTable() {
-		opts.ContentType = "application/json"
+		opts.ContentType = contentTypeJSON
 	}
 	return doRequest(v, opts)
 }
@@ -102,7 +130,7 @@ func httpPatch(v *vm.VM) int {
 func httpDelete(v *vm.VM) int {
 	url := getString(v, 1, "http.delete")
 	opts := getOptions(v, 2)
-	opts.Method = "DELETE"
+	opts.Method = methodDelete
 	opts.URL = url
 	return doRequest(v, opts)
 }
@@ -111,7 +139,7 @@ func httpDelete(v *vm.VM) int {
 func httpHead(v *vm.VM) int {
 	url := getString(v, 1, "http.head")
 	opts := getOptions(v, 2)
-	opts.Method = "HEAD"
+	opts.Method = methodHead
 	opts.URL = url
 	return doRequest(v, opts)
 }
@@ -120,7 +148,7 @@ func httpHead(v *vm.VM) int {
 func httpOptions(v *vm.VM) int {
 	url := getString(v, 1, "http.options")
 	opts := getOptions(v, 2)
-	opts.Method = "OPTIONS"
+	opts.Method = methodOptions
 	opts.URL = url
 	return doRequest(v, opts)
 }
@@ -135,30 +163,30 @@ func httpFetch(v *vm.VM) int {
 
 	opts := requestOpts{}
 
-	if urlVal := tbl.Get(vm.NewString("url")); urlVal.IsString() {
+	if urlVal := tbl.Get(vm.NewString(fieldURL)); urlVal.IsString() {
 		opts.URL = urlVal.AsString()
 	} else {
 		panic("bad argument #1 to 'http.fetch' (field 'url' is required)")
 	}
 
-	if methodVal := tbl.Get(vm.NewString("method")); methodVal.IsString() {
+	if methodVal := tbl.Get(vm.NewString(fieldMethod)); methodVal.IsString() {
 		opts.Method = strings.ToUpper(methodVal.AsString())
 	} else {
-		opts.Method = "GET"
+		opts.Method = methodGet
 	}
 
-	if headersVal := tbl.Get(vm.NewString("headers")); headersVal.IsTable() {
+	if headersVal := tbl.Get(vm.NewString(fieldHeaders)); headersVal.IsTable() {
 		opts.Headers = headersVal.AsTable()
 	}
 
-	if bodyVal := tbl.Get(vm.NewString("body")); !bodyVal.IsNil() {
+	if bodyVal := tbl.Get(vm.NewString(fieldBody)); !bodyVal.IsNil() {
 		opts.Body = bodyVal
 		if opts.ContentType == "" && bodyVal.IsTable() {
-			opts.ContentType = "application/json"
+			opts.ContentType = contentTypeJSON
 		}
 	}
 
-	if timeoutVal := tbl.Get(vm.NewString("timeout")); timeoutVal.IsNumber() {
+	if timeoutVal := tbl.Get(vm.NewString(fieldTimeout)); timeoutVal.IsNumber() {
 		if timeoutVal.IsInt() {
 			opts.Timeout = time.Duration(timeoutVal.AsInt()) * time.Second
 		} else {
@@ -197,10 +225,10 @@ func getOptions(v *vm.VM, idx int) requestOpts {
 	}
 	tbl := arg.AsTable()
 
-	if headersVal := tbl.Get(vm.NewString("headers")); headersVal.IsTable() {
+	if headersVal := tbl.Get(vm.NewString(fieldHeaders)); headersVal.IsTable() {
 		opts.Headers = headersVal.AsTable()
 	}
-	if timeoutVal := tbl.Get(vm.NewString("timeout")); timeoutVal.IsNumber() {
+	if timeoutVal := tbl.Get(vm.NewString(fieldTimeout)); timeoutVal.IsNumber() {
 		if timeoutVal.IsInt() {
 			opts.Timeout = time.Duration(timeoutVal.AsInt()) * time.Second
 		} else {
@@ -366,7 +394,7 @@ func doRequest(v *vm.VM, opts requestOpts) int {
 
 	// Set content type for table bodies
 	if opts.ContentType != "" {
-		req.Header.Set("Content-Type", opts.ContentType)
+		req.Header.Set(headerContentType, opts.ContentType)
 	}
 
 	// Set custom headers
@@ -400,9 +428,9 @@ func doRequest(v *vm.VM, opts requestOpts) int {
 
 	// Build response table
 	result := vm.NewEmptyTable()
-	result.SetString("status", vm.NewInt(int64(resp.StatusCode)))
-	result.SetString("status_text", vm.NewString(resp.Status))
-	result.SetString("body", vm.NewString(string(bodyBytes)))
+	result.SetString(fieldStatus, vm.NewInt(int64(resp.StatusCode)))
+	result.SetString(fieldStatusText, vm.NewString(resp.Status))
+	result.SetString(fieldBody, vm.NewString(string(bodyBytes)))
 
 	// Response headers
 	headerTable := vm.NewEmptyTable()
@@ -411,11 +439,11 @@ func doRequest(v *vm.VM, opts requestOpts) int {
 			headerTable.SetString(name, vm.NewString(values[0]))
 		}
 	}
-	result.SetString("headers", vm.NewTable(headerTable))
+	result.SetString(fieldHeaders, vm.NewTable(headerTable))
 
 	// json() convenience method
 	bodyStr := string(bodyBytes)
-	result.SetString("json", vm.NewNativeFunc(func(v *vm.VM) int {
+	result.SetString(fieldJSON, vm.NewNativeFunc(func(v *vm.VM) int {
 		var parsed any
 		if err := json.Unmarshal([]byte(bodyStr), &parsed); err != nil {
 			panic(fmt.Sprintf("http: failed to parse JSON response: %s", err.Error()))

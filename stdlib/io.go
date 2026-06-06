@@ -19,6 +19,28 @@ import (
 // Matches Lua 5.4's MAXARGLINE (liolib.c).
 const maxArgLine = 250
 
+// Internal io-module table keys storing the current default input/output file
+// handles (io.input()/io.output()). These are private storage slots, not Lua
+// metamethods, so they carry the "__" prefix to stay hidden from scripts.
+const (
+	ioFieldInput  = "__input"
+	ioFieldOutput = "__output"
+)
+
+// file:seek whence values (Lua §6.8).
+const (
+	seekSet = "set"
+	seekCur = "cur"
+	seekEnd = "end"
+)
+
+// file:setvbuf buffering modes (Lua §6.8).
+const (
+	vbufNo   = "no"
+	vbufFull = "full"
+	vbufLine = "line"
+)
+
 // ioState holds per-VM file handle tables created when the IO provider is first used.
 type ioState struct {
 	meta    *vm.Table // metatable for file handle userdata
@@ -167,10 +189,10 @@ func openIo(v *vm.VM) {
 
 	// Set defaults to the same handle objects as stdin/stdout
 	if !stdinHandle.IsNil() {
-		ioTable.SetString("__input", stdinHandle)
+		ioTable.SetString(ioFieldInput, stdinHandle)
 	}
 	if !stdoutHandle.IsNil() {
-		ioTable.SetString("__output", stdoutHandle)
+		ioTable.SetString(ioFieldOutput, stdoutHandle)
 	}
 
 	ioTable.SetString("input", vm.NewNativeFunc(makeIoInput(v, provider, ioTable)))
@@ -632,7 +654,7 @@ func makeIoClose(ioTable *vm.Table) vm.NativeFunc {
 		val := v.Get(1)
 		if v.ArgCount() == 0 {
 			// io.close() with no args: close default output
-			val = ioTable.Get(vm.NewString("__output"))
+			val = ioTable.Get(vm.NewString(ioFieldOutput))
 			if val.IsNil() {
 				v.Set(0, vm.Nil)
 				v.Set(1, vm.NewString("cannot close standard file"))
@@ -703,7 +725,7 @@ func makeIoFlush(provider vm.LuaIoProvider) vm.NativeFunc {
 			panic("io library not available")
 		}
 		ioTable := ioVal.AsTable()
-		outputVal := ioTable.Get(vm.NewString("__output"))
+		outputVal := ioTable.Get(vm.NewString(ioFieldOutput))
 		fh := getFileHandle(v, outputVal, "io.flush")
 		ctx := v.Context()
 		fh.checkOpen(ctx, "flush")
@@ -733,7 +755,7 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 				panic("io library not available")
 			}
 			ioTable := ioVal.AsTable()
-			inputVal := ioTable.Get(vm.NewString("__input"))
+			inputVal := ioTable.Get(vm.NewString(ioFieldInput))
 			fh := getFileHandle(v, inputVal, "io.lines")
 			ctx := v.Context()
 			fh.checkOpen(ctx, "lines")
@@ -815,7 +837,7 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 		arg := v.Get(1)
 		if arg.IsNil() {
 			// Return current default input
-			v.Set(0, ioTable.Get(vm.NewString("__input")))
+			v.Set(0, ioTable.Get(vm.NewString(ioFieldInput)))
 			return 1
 		}
 
@@ -832,7 +854,7 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 				panic(fmt.Sprintf("cannot open file '%s' (%s)", fname, errDesc))
 			}
 			handle := makeFileHandle(v, f)
-			ioTable.SetString("__input", handle)
+			ioTable.SetString(ioFieldInput, handle)
 			v.Set(0, handle)
 			return 1
 		}
@@ -840,7 +862,7 @@ func makeIoInput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm.
 		// Assume it's a file handle - set as default input
 		fh := getFileHandle(v, arg, "io.input") // validate it's a file handle
 		fh.checkOpen(v.Context(), "input")
-		ioTable.SetString("__input", arg)
+		ioTable.SetString(ioFieldInput, arg)
 		v.Set(0, arg)
 		return 1
 	}
@@ -852,7 +874,7 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 		arg := v.Get(1)
 		if arg.IsNil() {
 			// Return current default output
-			v.Set(0, ioTable.Get(vm.NewString("__output")))
+			v.Set(0, ioTable.Get(vm.NewString(ioFieldOutput)))
 			return 1
 		}
 
@@ -869,7 +891,7 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 				panic(fmt.Sprintf("cannot open file '%s' (%s)", fname, errDesc))
 			}
 			handle := makeFileHandle(v, f)
-			ioTable.SetString("__output", handle)
+			ioTable.SetString(ioFieldOutput, handle)
 			v.Set(0, handle)
 			return 1
 		}
@@ -877,7 +899,7 @@ func makeIoOutput(vmRef *vm.VM, provider vm.LuaIoProvider, ioTable *vm.Table) vm
 		// Assume it's a file handle - set as default output
 		fh := getFileHandle(v, arg, "io.output") // validate it's a file handle
 		fh.checkOpen(v.Context(), "output")
-		ioTable.SetString("__output", arg)
+		ioTable.SetString(ioFieldOutput, arg)
 		v.Set(0, arg)
 		return 1
 	}
@@ -892,7 +914,7 @@ func makeIoRead(provider vm.LuaIoProvider) vm.NativeFunc {
 			panic("io library not available")
 		}
 		ioTable := ioVal.AsTable()
-		inputVal := ioTable.Get(vm.NewString("__input"))
+		inputVal := ioTable.Get(vm.NewString(ioFieldInput))
 		fh := getFileHandle(v, inputVal, "io.read")
 		if fh.closed || fh.file.IsClosed(v.Context()) {
 			panic("default input file is closed")
@@ -911,7 +933,7 @@ func makeIoWrite(provider vm.LuaIoProvider) vm.NativeFunc {
 			panic("io library not available")
 		}
 		ioTable := ioVal.AsTable()
-		outputVal := ioTable.Get(vm.NewString("__output"))
+		outputVal := ioTable.Get(vm.NewString(ioFieldOutput))
 		fh := getFileHandle(v, outputVal, "io.write")
 		if fh.closed || fh.file.IsClosed(v.Context()) {
 			panic("default output file is closed")
@@ -1375,14 +1397,14 @@ func fileSeek(v *vm.VM) int {
 	fh := getFileHandle(v, v.Get(1), "seek")
 	fh.checkOpen(v.Context(), "seek")
 
-	whence := "cur"
+	whence := seekCur
 	if !v.Get(2).IsNil() {
 		whence = v.Get(2).AsString()
 	}
 
 	// Validate whence before calling provider (invalid whence is a hard error)
 	switch whence {
-	case "set", "cur", "end":
+	case seekSet, seekCur, seekEnd:
 		// valid
 	default:
 		fileArgError(v, 2, "seek", fmt.Sprintf("invalid option '%s'", whence))
@@ -1461,7 +1483,7 @@ func fileSetVBuf(v *vm.VM) int {
 
 	// Validate mode before calling provider (invalid mode is a hard error)
 	switch modeStr {
-	case "no", "full", "line":
+	case vbufNo, vbufFull, vbufLine:
 		// valid
 	default:
 		fileArgError(v, 2, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
