@@ -35,11 +35,7 @@ func luaUtf8Char(v *vm.VM) int {
 
 	var buf []byte
 	for i := 1; i <= n; i++ {
-		val := v.Get(i)
-		code, ok := val.ToInt()
-		if !ok {
-			callerArgError(v, i, "utf8.char", "number has no integer representation")
-		}
+		code := getInt(v, i, "utf8.char")
 		if code < 0 || code > 0x7FFFFFFF {
 			callerArgError(v, i, "utf8.char", "value out of range")
 		}
