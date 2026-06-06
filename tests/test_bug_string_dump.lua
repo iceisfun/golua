@@ -1,4 +1,3 @@
--- Bug: string.dump is not implemented.
 -- Lua 5.4: string.dump(f) serializes function f to a binary string.
 
 -- string.dump should exist

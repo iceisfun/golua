@@ -1,6 +1,4 @@
--- BUG: warn function not implemented
 -- In Lua 5.4, warn() is a global function for emitting warnings.
--- GoLua doesn't provide it at all (warn == nil).
 
 assert(type(warn) == "function", "warn should be a function, got: " .. type(warn))
 
