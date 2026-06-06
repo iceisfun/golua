@@ -18,15 +18,15 @@ func (vm *VM) equal(v1, v2 Value) (bool, error) {
 	leftHasEqMeta := (v1.IsTable() && !v1.isThread()) || v1.IsUserdata()
 	rightHasEqMeta := (v2.IsTable() && !v2.isThread()) || v2.IsUserdata()
 	if leftHasEqMeta && rightHasEqMeta {
-		mm := vm.getMetafield(v1, "__eq")
+		mm := vm.getMetafield(v1, MetaEq)
 		if mm.IsNil() {
-			mm = vm.getMetafield(v2, "__eq")
+			mm = vm.getMetafield(v2, MetaEq)
 		}
 		if mm.IsNil() {
 			return false, nil
 		}
 
-		res, err := vm.callMetamethod("eq", mm, v1, v2)
+		res, err := vm.callMetamethod(MetaEvent(MetaEq), mm, v1, v2)
 		if err != nil {
 			return false, err
 		}
@@ -49,14 +49,14 @@ func (vm *VM) lessThan(v1, v2 Value) (bool, error) {
 	}
 
 	// 2. Metamethod __lt
-	op := "__lt"
+	op := MetaLt
 	mm := vm.getMetafield(v1, op)
 	if mm.IsNil() {
 		mm = vm.getMetafield(v2, op)
 	}
 
 	if !mm.IsNil() {
-		res, err := vm.callMetamethod("lt", mm, v1, v2)
+		res, err := vm.callMetamethod(MetaEvent(MetaLt), mm, v1, v2)
 		if err != nil {
 			return false, err
 		}
@@ -74,14 +74,14 @@ func (vm *VM) lessEqual(v1, v2 Value) (bool, error) {
 	}
 
 	// 2. Metamethod __le
-	op := "__le"
+	op := MetaLe
 	mm := vm.getMetafield(v1, op)
 	if mm.IsNil() {
 		mm = vm.getMetafield(v2, op)
 	}
 
 	if !mm.IsNil() {
-		res, err := vm.callMetamethod("le", mm, v1, v2)
+		res, err := vm.callMetamethod(MetaEvent(MetaLe), mm, v1, v2)
 		if err != nil {
 			return false, err
 		}
@@ -127,14 +127,14 @@ func (vm *VM) concat(v1, v2 Value, reg1 int) (Value, error) {
 	}
 
 	// 2. Metamethod __concat
-	op := "__concat"
+	op := MetaConcat
 	mm := vm.getMetafield(v1, op)
 	if mm.IsNil() {
 		mm = vm.getMetafield(v2, op)
 	}
 
 	if !mm.IsNil() {
-		return vm.callMetamethod("concat", mm, v1, v2)
+		return vm.callMetamethod(MetaEvent(MetaConcat), mm, v1, v2)
 	}
 
 	// Report the non-concatenable operand (not the valid string/number one)

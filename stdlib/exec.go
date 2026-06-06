@@ -33,9 +33,9 @@ func getExecState(v *vm.VM) *execState {
 	methods.SetString("stderr", vm.NewNativeFunc(processStderr))
 
 	meta := vm.NewEmptyTable()
-	meta.SetString("__name", vm.NewString("PROCESS*"))
-	meta.SetString("__index", vm.NewTable(methods))
-	meta.SetString("__tostring", vm.NewNativeFunc(processToString))
+	meta.SetString(vm.MetaName, vm.NewString("PROCESS*"))
+	meta.SetString(vm.MetaIndex, vm.NewTable(methods))
+	meta.SetString(vm.MetaTostring, vm.NewNativeFunc(processToString))
 
 	s := &execState{meta: meta, methods: methods}
 	v.SetInternalState("exec", s)

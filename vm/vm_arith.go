@@ -121,7 +121,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, er
 	// Try metamethods (handles strings via string metatable, tables via their metatable)
 	mmName := vm.arithMetamethod(op)
 	if mm := vm.getArithMetamethod(v1, v2, mmName); !mm.IsNil() {
-		result, err := vm.callMetamethod(mmName[2:], mm, v1, v2)
+		result, err := vm.callMetamethod(MetaEvent(mmName), mm, v1, v2)
 		if err != nil {
 			return Nil, err
 		}
@@ -223,7 +223,7 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 	// Try metamethods
 	mmName := vm.arithMetamethod(op)
 	if mm := vm.getArithMetamethod(v, kv, mmName); !mm.IsNil() {
-		result, err := vm.callMetamethod(mmName[2:], mm, v, kv)
+		result, err := vm.callMetamethod(MetaEvent(mmName), mm, v, kv)
 		if err != nil {
 			return Nil, err
 		}
@@ -240,19 +240,19 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 func (vm *VM) arithMetamethod(op compiler.OpCode) string {
 	switch op {
 	case compiler.OP_ADD, compiler.OP_ADDK:
-		return "__add"
+		return MetaAdd
 	case compiler.OP_SUB, compiler.OP_SUBK:
-		return "__sub"
+		return MetaSub
 	case compiler.OP_MUL, compiler.OP_MULK:
-		return "__mul"
+		return MetaMul
 	case compiler.OP_DIV, compiler.OP_DIVK:
-		return "__div"
+		return MetaDiv
 	case compiler.OP_IDIV, compiler.OP_IDIVK:
-		return "__idiv"
+		return MetaIDiv
 	case compiler.OP_MOD, compiler.OP_MODK:
-		return "__mod"
+		return MetaMod
 	case compiler.OP_POW, compiler.OP_POWK:
-		return "__pow"
+		return MetaPow
 	default:
 		return ""
 	}
@@ -297,7 +297,7 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, 
 	// Try metamethods
 	mmName := vm.bitwiseMetamethod(op)
 	if mm := vm.getArithMetamethod(v1, v2, mmName); !mm.IsNil() {
-		return vm.callMetamethod(mmName[2:], mm, v1, v2)
+		return vm.callMetamethod(MetaEvent(mmName), mm, v1, v2)
 	}
 
 	// Match Lua 5.4 luaT_trybinTM ordering: if both operands are numbers,
@@ -342,7 +342,7 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value, regB int) (Value, error)
 	// Try metamethods
 	mmName := vm.bitwiseMetamethod(op)
 	if mm := vm.getArithMetamethod(v, kv, mmName); !mm.IsNil() {
-		return vm.callMetamethod(mmName[2:], mm, v, kv)
+		return vm.callMetamethod(MetaEvent(mmName), mm, v, kv)
 	}
 
 	// Match Lua 5.4 luaT_trybinTM ordering: if both operands are numbers,
@@ -364,15 +364,15 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value, regB int) (Value, error)
 func (vm *VM) bitwiseMetamethod(op compiler.OpCode) string {
 	switch op {
 	case compiler.OP_BAND, compiler.OP_BANDK:
-		return "__band"
+		return MetaBAnd
 	case compiler.OP_BOR, compiler.OP_BORK:
-		return "__bor"
+		return MetaBOr
 	case compiler.OP_BXOR, compiler.OP_BXORK:
-		return "__bxor"
+		return MetaBXor
 	case compiler.OP_SHL:
-		return "__shl"
+		return MetaShl
 	case compiler.OP_SHR:
-		return "__shr"
+		return MetaShr
 	default:
 		return ""
 	}

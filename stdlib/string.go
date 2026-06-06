@@ -38,18 +38,18 @@ func openString(v *vm.VM) {
 	// The metatable has __index pointing to the string library and default
 	// arithmetic metamethods that perform string-to-number coercion.
 	strMeta := vm.NewEmptyTable()
-	strMeta.SetString("__index", strLib)
+	strMeta.SetString(vm.MetaIndex, strLib)
 
 	// Lua 5.4 default string arithmetic metamethods: coerce to number.
 	// If user sets mt.__add = nil, coercion stops (matches Lua 5.4).
-	strMeta.SetString("__add", vm.NewNativeFunc(makeStringArith("add", func(a, b float64) float64 { return a + b }, func(a, b int64) int64 { return a + b })))
-	strMeta.SetString("__sub", vm.NewNativeFunc(makeStringArith("sub", func(a, b float64) float64 { return a - b }, func(a, b int64) int64 { return a - b })))
-	strMeta.SetString("__mul", vm.NewNativeFunc(makeStringArith("mul", func(a, b float64) float64 { return a * b }, func(a, b int64) int64 { return a * b })))
-	strMeta.SetString("__div", vm.NewNativeFunc(makeStringArith("div", func(a, b float64) float64 { return a / b }, nil)))
-	strMeta.SetString("__idiv", vm.NewNativeFunc(makeStringArithFloorDiv()))
-	strMeta.SetString("__mod", vm.NewNativeFunc(makeStringArithMod()))
-	strMeta.SetString("__pow", vm.NewNativeFunc(makeStringArith("pow", func(a, b float64) float64 { return vm.PowWithSubnormalFix(a, b) }, nil)))
-	strMeta.SetString("__unm", vm.NewNativeFunc(stringMetaUnm))
+	strMeta.SetString(vm.MetaAdd, vm.NewNativeFunc(makeStringArith("add", func(a, b float64) float64 { return a + b }, func(a, b int64) int64 { return a + b })))
+	strMeta.SetString(vm.MetaSub, vm.NewNativeFunc(makeStringArith("sub", func(a, b float64) float64 { return a - b }, func(a, b int64) int64 { return a - b })))
+	strMeta.SetString(vm.MetaMul, vm.NewNativeFunc(makeStringArith("mul", func(a, b float64) float64 { return a * b }, func(a, b int64) int64 { return a * b })))
+	strMeta.SetString(vm.MetaDiv, vm.NewNativeFunc(makeStringArith("div", func(a, b float64) float64 { return a / b }, nil)))
+	strMeta.SetString(vm.MetaIDiv, vm.NewNativeFunc(makeStringArithFloorDiv()))
+	strMeta.SetString(vm.MetaMod, vm.NewNativeFunc(makeStringArithMod()))
+	strMeta.SetString(vm.MetaPow, vm.NewNativeFunc(makeStringArith("pow", func(a, b float64) float64 { return vm.PowWithSubnormalFix(a, b) }, nil)))
+	strMeta.SetString(vm.MetaUnm, vm.NewNativeFunc(stringMetaUnm))
 
 	v.SetStringMeta(strMeta)
 }
@@ -632,7 +632,7 @@ func makeStringArithFloorDiv() func(*vm.VM) int {
 		cv1, ok1 := coerceToNumber(a)
 		cv2, ok2 := coerceToNumber(b)
 		if !ok1 || !ok2 {
-			if result, ok := stringArithFallback(v, a, b, ok1, ok2, "__idiv"); ok {
+			if result, ok := stringArithFallback(v, a, b, ok1, ok2, vm.MetaIDiv); ok {
 				v.Set(0, result)
 				return 1
 			}
@@ -667,7 +667,7 @@ func makeStringArithMod() func(*vm.VM) int {
 		cv1, ok1 := coerceToNumber(a)
 		cv2, ok2 := coerceToNumber(b)
 		if !ok1 || !ok2 {
-			if result, ok := stringArithFallback(v, a, b, ok1, ok2, "__mod"); ok {
+			if result, ok := stringArithFallback(v, a, b, ok1, ok2, vm.MetaMod); ok {
 				v.Set(0, result)
 				return 1
 			}

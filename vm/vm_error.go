@@ -122,7 +122,7 @@ func (vm *VM) ArgErrorFuncName() (name, nameWhat string) {
 // ObjTypeName returns the type name for a value, checking __name in
 // the metatable first (matching Lua 5.4's luaT_objtypename).
 func (vm *VM) ObjTypeName(v Value) string {
-	name := vm.getMetafield(v, "__name")
+	name := vm.getMetafield(v, MetaName)
 	if name.IsString() {
 		return name.AsString()
 	}

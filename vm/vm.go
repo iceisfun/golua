@@ -630,7 +630,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	// Resolve __call metamethod chain (up to MaxCallChainDepth levels)
 	cur := fn
 	for depth := 1; ; depth++ {
-		mm := vm.getMetafield(cur, "__call")
+		mm := vm.getMetafield(cur, MetaCall)
 		if mm.IsNil() {
 			return nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
 		}
@@ -746,7 +746,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 	origFn := fn
 	cur := fn
 	for depth := 1; ; depth++ {
-		mm := vm.getMetafield(cur, "__call")
+		mm := vm.getMetafield(cur, MetaCall)
 		if mm.IsNil() {
 			panic(vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(origFn)))
 		}
@@ -1254,7 +1254,7 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 	// Resolve __call chain: each level prepends self
 	cur := fn
 	for depth := 1; ; depth++ {
-		mm := vm.getMetafield(cur, "__call")
+		mm := vm.getMetafield(cur, MetaCall)
 		if mm.IsNil() {
 			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", vm.ObjTypeName(fn), name)
 		}

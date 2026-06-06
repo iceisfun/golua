@@ -547,7 +547,7 @@ func (vm *VM) SetIndexValue(val Value, key Value, value Value) error {
 		}
 		return vm.tableSet(val.ptr.(LuaTable), key, value)
 	}
-	if mm := vm.getMetafield(val, "__newindex"); !mm.IsNil() {
+	if mm := vm.getMetafield(val, MetaNewIndex); !mm.IsNil() {
 		if mm.IsFunction() || mm.IsNativeFunc() {
 			_, err := vm.callMetamethod3("newindex", mm, val, key, value)
 			return err
@@ -569,7 +569,7 @@ func (vm *VM) SetIndexInt(val Value, key int, value Value) error {
 		}
 		return vm.tableSetInt(val.ptr.(LuaTable), key, value)
 	}
-	if mm := vm.getMetafield(val, "__newindex"); !mm.IsNil() {
+	if mm := vm.getMetafield(val, MetaNewIndex); !mm.IsNil() {
 		if mm.IsFunction() || mm.IsNativeFunc() {
 			_, err := vm.callMetamethod3("newindex", mm, val, NewInt(int64(key)), value)
 			return err
@@ -600,7 +600,7 @@ func (vm *VM) ObjLen(val Value) (int, error) {
 	if val.IsString() {
 		return len(val.AsString()), nil
 	}
-	mm := vm.getMetafield(val, "__len")
+	mm := vm.getMetafield(val, MetaLen)
 	if !mm.IsNil() {
 		res, err := vm.callMetamethod("len", mm, val, Nil)
 		if err != nil {
