@@ -41,6 +41,17 @@ type VM struct {
 	// boundaries in the coroutine's call stack.
 	closingCoroutine bool
 
+	// protectedCallDepth counts the current nesting of ProtectedCall on the
+	// goroutine stack. closingCoroutineDepth records this depth at the moment
+	// coroutine.close begins running __close handlers. Only ProtectedCall
+	// frames that were already on the stack when closing began (entry depth
+	// <= closingCoroutineDepth — i.e. the coroutine's suspended pcall/xpcall
+	// frames) must re-panic so __close errors reach coroutine.close. A pcall
+	// created *inside* a __close handler runs at a deeper level and must catch
+	// its own errors normally.
+	protectedCallDepth    int
+	closingCoroutineDepth int
+
 	// Type metatables (for string, number, bool, nil, function, thread,
 	// and lightuserdata values from debug.upvalueid).
 	stringMeta        LuaTable
@@ -372,6 +383,13 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	skipTBC := vm.skipTBCCleanup
 	vm.skipTBCCleanup = false
 
+	// Record this call's nesting depth so the closingCoroutine re-panic logic
+	// can distinguish suspended frames (which must propagate __close errors)
+	// from pcalls created inside a __close handler (which catch normally).
+	vm.protectedCallDepth++
+	entryDepth := vm.protectedCallDepth
+	defer func() { vm.protectedCallDepth-- }()
+
 	defer func() {
 		if r := recover(); r != nil {
 			// LuaExitError must propagate through all ProtectedCall boundaries
@@ -379,8 +397,11 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				panic(r)
 			}
 			// When force-closing a coroutine, __close errors must propagate
-			// through pcall/xpcall boundaries to reach coroutine.close.
-			if vm.closingCoroutine {
+			// through the coroutine's *suspended* pcall/xpcall boundaries to
+			// reach coroutine.close. A pcall created inside the __close handler
+			// itself (deeper than the depth at which closing began) must still
+			// catch its own errors normally.
+			if vm.closingCoroutine && entryDepth <= vm.closingCoroutineDepth {
 				panic(r)
 			}
 			// Hook errors are uncatchable by pcall/xpcall (Lua 5.4 semantics).
@@ -855,6 +876,11 @@ func (vm *VM) CoroutineID() int {
 // pcall/xpcall boundaries during coroutine.close.
 func (vm *VM) EnterClosingCoroutine() {
 	vm.closingCoroutine = true
+	// Record the ProtectedCall nesting depth at this point. The suspended
+	// pcall/xpcall frames of the coroutine sit at depths <= this value and
+	// must re-panic so __close errors reach coroutine.close. pcalls created
+	// later inside a __close handler sit at deeper depths and catch normally.
+	vm.closingCoroutineDepth = vm.protectedCallDepth
 }
 
 // CallCoroutine calls a closure as a coroutine, with yield support.
