@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"fmt"
+
 	"github.com/iceisfun/golua/v2/ast"
 	"github.com/iceisfun/golua/v2/token"
 )
@@ -36,6 +38,44 @@ const (
 	precedencePowRight
 	precedencePowLeft
 )
+
+// String returns the precedence level's name for debugging.
+func (p precedence) String() string {
+	switch p {
+	case precedenceLowest:
+		return "precedenceLowest"
+	case precedenceOr:
+		return "precedenceOr"
+	case precedenceAnd:
+		return "precedenceAnd"
+	case precedenceCompare:
+		return "precedenceCompare"
+	case precedenceBitOr:
+		return "precedenceBitOr"
+	case precedenceBitXor:
+		return "precedenceBitXor"
+	case precedenceBitAnd:
+		return "precedenceBitAnd"
+	case precedenceShift:
+		return "precedenceShift"
+	case precedenceConcatRight:
+		return "precedenceConcatRight"
+	case precedenceConcatLeft:
+		return "precedenceConcatLeft"
+	case precedenceAdd:
+		return "precedenceAdd"
+	case precedenceMul:
+		return "precedenceMul"
+	case precedenceUnary:
+		return "precedenceUnary"
+	case precedencePowRight:
+		return "precedencePowRight"
+	case precedencePowLeft:
+		return "precedencePowLeft"
+	default:
+		return fmt.Sprintf("precedence(%d)", int(p))
+	}
+}
 
 type binPriority struct {
 	left  precedence

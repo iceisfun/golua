@@ -146,6 +146,32 @@ const (
 	exprVarArg                   // vararg — info is pc of VARARG instruction
 )
 
+// String returns the exprKind's name for debugging and error output.
+func (k exprKind) String() string {
+	switch k {
+	case exprReg:
+		return "exprReg"
+	case exprConst:
+		return "exprConst"
+	case exprTrue:
+		return "exprTrue"
+	case exprFalse:
+		return "exprFalse"
+	case exprNil:
+		return "exprNil"
+	case exprJump:
+		return "exprJump"
+	case exprRelocate:
+		return "exprRelocate"
+	case exprCall:
+		return "exprCall"
+	case exprVarArg:
+		return "exprVarArg"
+	default:
+		return fmt.Sprintf("exprKind(%d)", int(k))
+	}
+}
+
 // exprResult tracks where an expression's value ended up after compilation.
 type exprResult struct {
 	kind exprKind
