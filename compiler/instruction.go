@@ -37,6 +37,11 @@ const (
 	SizeBx = SizeK + SizeB + SizeC // 17
 	SizeAx = SizeA + SizeBx        // 25
 	SizeSJ = SizeAx                // 25
+
+	// IvABC format (NEWTABLE, SETLIST) reuses the B/C bit region as two
+	// variable-width fields: a 6-bit vB and a 10-bit vC.
+	SizeVB = 6
+	SizeVC = 10
 )
 
 // Field positions.
@@ -49,6 +54,8 @@ const (
 	PosBx = PosK           // 15
 	PosAx = PosA           // 7
 	PosSJ = PosA           // 7
+	PosVB = PosB           // 16 — IvABC vB starts where B does
+	PosVC = PosVB + SizeVB // 22 — IvABC vC follows the 6-bit vB
 )
 
 // Limits.
@@ -59,6 +66,8 @@ const (
 	MaxArgBx = (1 << SizeBx) - 1 // 131071
 	MaxArgAx = (1 << SizeAx) - 1
 	MaxArgSJ = (1 << SizeSJ) - 1
+	MaxArgVB = (1 << SizeVB) - 1 // 63
+	MaxArgVC = (1 << SizeVC) - 1 // 1023
 
 	OffsetSBx = MaxArgBx >> 1 // 65535
 	OffsetSC  = MaxArgC >> 1  // 127
@@ -107,6 +116,16 @@ func (i Instruction) C() int {
 // K extracts the 1-bit k flag (used for comparison polarity and RK mode).
 func (i Instruction) K() int {
 	return int((uint32(i) >> PosK) & 1)
+}
+
+// VB extracts the 6-bit vB field of an IvABC instruction (NEWTABLE, SETLIST).
+func (i Instruction) VB() int {
+	return int((uint32(i) >> PosVB) & mask1(SizeVB, 0))
+}
+
+// VC extracts the 10-bit vC field of an IvABC instruction (NEWTABLE, SETLIST).
+func (i Instruction) VC() int {
+	return int((uint32(i) >> PosVC) & mask1(SizeVC, 0))
 }
 
 // Bx extracts the unsigned 17-bit Bx field (iABx format).

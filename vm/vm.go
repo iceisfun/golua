@@ -174,6 +174,13 @@ const (
 	VarargBufferOffset = 256 // stack gap between MaxStack and vararg storage
 )
 
+// Stack sizing parameters.
+const (
+	initialStackSize  = 256 // initial slot count of a fresh VM's value stack
+	stackGrowChunk    = 256 // number of slots appended each time the stack grows
+	stackSafetyMargin = 10  // extra headroom reserved above a call's args for temporaries/metamethods
+)
+
 // callFrame represents a function call on the call stack.
 type callFrame struct {
 	closure               *Closure // Function being executed
@@ -199,7 +206,7 @@ type callFrame struct {
 // Optional VMOption arguments can configure context and limits.
 func New(opts ...VMOption) *VM {
 	vm := &VM{
-		stack:         make([]Value, 256),
+		stack:         make([]Value, initialStackSize),
 		callStack:     make([]callFrame, 0, 32),
 		globals:       NewEmptyTable(),
 		warnEnabled:   false,
@@ -566,7 +573,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 		// For native functions, we need to set up a temp frame
 		nf := fn.AsNativeFunc()
 		base := vm.top
-		vm.ensureStack(base + len(args) + 10)
+		vm.ensureStack(base + len(args) + stackSafetyMargin)
 
 		// Copy arguments (slot 0 is reserved for the function, args start at 1)
 		vm.stack[base] = fn
@@ -657,7 +664,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	if fn.IsNativeFunc() {
 		nf := fn.AsNativeFunc()
 		base := vm.top
-		vm.ensureStack(base + len(args) + 10)
+		vm.ensureStack(base + len(args) + stackSafetyMargin)
 
 		vm.stack[base] = fn
 		for i, arg := range args {
@@ -709,7 +716,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 		nf := fn.AsNativeFunc()
 		savedTop := vm.top
 		base := vm.top
-		vm.ensureStack(base + len(args) + 10)
+		vm.ensureStack(base + len(args) + stackSafetyMargin)
 		vm.stack[base] = fn
 
 		for i, arg := range args {
@@ -771,7 +778,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 		nf := fn.AsNativeFunc()
 		savedTop := vm.top
 		base := vm.top
-		vm.ensureStack(base + len(args) + 10)
+		vm.ensureStack(base + len(args) + stackSafetyMargin)
 		vm.stack[base] = fn
 		for i, arg := range args {
 			vm.stack[base+1+i] = arg
@@ -805,7 +812,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 // parent and child happens through the yieldCh and resumeCh channels.
 func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 	return &VM{
-		stack:             make([]Value, 256),
+		stack:             make([]Value, initialStackSize),
 		callStack:         make([]callFrame, 0, 16),
 		globals:           parent.globals,
 		stringMeta:        parent.stringMeta,
@@ -1141,7 +1148,7 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 
 		// Set up for native call at top of stack
 		nativeBase := vm.top
-		vm.ensureStack(nativeBase + 10)
+		vm.ensureStack(nativeBase + stackSafetyMargin)
 		vm.stack[nativeBase+1] = arg1
 		vm.stack[nativeBase+2] = arg2
 
@@ -1206,7 +1213,7 @@ func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, e
 
 		// Set up for native call at top of stack
 		nativeBase := vm.top
-		vm.ensureStack(nativeBase + 10)
+		vm.ensureStack(nativeBase + stackSafetyMargin)
 		vm.stack[nativeBase+1] = arg1
 		vm.stack[nativeBase+2] = arg2
 		vm.stack[nativeBase+3] = arg3
@@ -1283,7 +1290,7 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 		if mm.IsNativeFunc() {
 			savedTop := vm.top
 			nativeBase := vm.top
-			vm.ensureStack(nativeBase + len(args) + 10)
+			vm.ensureStack(nativeBase + len(args) + stackSafetyMargin)
 			for i, a := range args {
 				vm.stack[nativeBase+1+i] = a
 			}

@@ -28,6 +28,11 @@ import (
 
 const defaultTimeout = 60 * time.Second
 
+// maxSafeJSONInteger is 2^53, the largest integer with an exact IEEE-754
+// double representation. JSON numbers decode as float64; whole numbers within
+// ±maxSafeJSONInteger are converted to Lua integers, larger ones stay floats.
+const maxSafeJSONInteger = 1 << 53
+
 // Open registers the http module as a global in the VM.
 func Open(v *vm.VM) {
 	httpTable := vm.NewEmptyTable()
@@ -305,7 +310,7 @@ func jsonToLuaValue(val any) vm.Value {
 		return vm.NewBool(v)
 	case float64:
 		// JSON numbers are float64; convert to int if it's a whole number
-		if v == float64(int64(v)) && v >= -9007199254740992 && v <= 9007199254740992 {
+		if v == float64(int64(v)) && v >= -maxSafeJSONInteger && v <= maxSafeJSONInteger {
 			return vm.NewInt(int64(v))
 		}
 		return vm.NewFloat(v)

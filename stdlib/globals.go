@@ -11,6 +11,28 @@ import (
 	"github.com/iceisfun/golua/v2/vm"
 )
 
+// Default values reported by collectgarbage("param", name). golua delegates to
+// Go's garbage collector, so these mirror the Lua 5.5 reference defaults for
+// compatibility but setting them has no effect.
+const (
+	gcDefaultPause      = 250
+	gcDefaultMinorMul   = 20
+	gcDefaultMajorMinor = 50
+	gcDefaultMinorMajor = 68
+	gcDefaultStepMul    = 200
+	gcDefaultStepSize   = 9600
+)
+
+// gcParamDefaults maps each collectgarbage tunable to its reported default.
+var gcParamDefaults = map[string]int64{
+	"pause":      gcDefaultPause,
+	"minormul":   gcDefaultMinorMul,
+	"majorminor": gcDefaultMajorMinor,
+	"minormajor": gcDefaultMinorMajor,
+	"stepmul":    gcDefaultStepMul,
+	"stepsize":   gcDefaultStepSize,
+}
+
 // gotDesc returns "got TYPE" or "got no value" for arg error messages.
 func gotDesc(v *vm.VM, argn int) string {
 	if v.ArgCount() < argn {
@@ -521,16 +543,7 @@ func luaCollectgarbage(v *vm.VM) int {
 		} else {
 			paramName = valueToString(arg2)
 		}
-		// Default values for GC parameters (since Go manages its own GC)
-		paramDefaults := map[string]int64{
-			"pause":      250,
-			"minormul":   20,
-			"majorminor": 50,
-			"minormajor": 68,
-			"stepmul":    200,
-			"stepsize":   9600,
-		}
-		defaultVal, ok := paramDefaults[paramName]
+		defaultVal, ok := gcParamDefaults[paramName]
 		if !ok {
 			callerArgError(v, 2, "collectgarbage", fmt.Sprintf("invalid option '%s'", paramName))
 		}

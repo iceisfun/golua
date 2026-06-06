@@ -1158,7 +1158,7 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 	vB := hashLog
 	vC := nArr
 	k := 0
-	if vC > 0x3FF {
+	if vC > MaxArgVC {
 		// Need EXTRAARG for array size
 		k = 1
 		vC = 0
@@ -1279,7 +1279,7 @@ func (c *compiler) emitSetList(tableReg, count, offset int, line int) {
 	vB := count
 	vC := offset
 	k := 0
-	if vC > 0x3FF {
+	if vC > MaxArgVC {
 		k = 1
 		vC = 0
 	}
