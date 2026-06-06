@@ -109,8 +109,8 @@ type LocalVar struct {
 // with a single upvalue (_ENV).
 type Proto struct {
 	Source   string // source file name (for error messages and debug info)
-	LineDef  int   // first line of the function definition
-	LastLine int   // last line of the function definition
+	LineDef  int    // first line of the function definition
+	LastLine int    // last line of the function definition
 
 	NumParams int  // number of fixed (named) parameters
 	IsVarArg  bool // true if the function accepts varargs (...)
@@ -305,8 +305,8 @@ func (p *Proto) formatInst(pc int, inst Instruction) string {
 		a := inst.A()
 		// For NEWTABLE and SETLIST, use vB and vC extraction
 		// vB is bits 16..21 (6 bits), vC is bits 22..31 (10 bits)
-		vB := int((uint32(inst) >> 16) & 0x3F)
-		vC := int((uint32(inst) >> 22) & 0x3FF)
+		vB := inst.VB()
+		vC := inst.VC()
 		k := inst.K()
 		switch op {
 		case OP_NEWTABLE:

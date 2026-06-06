@@ -18,7 +18,7 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 	// Set up the stack frame
 	base := vm.top
 	savedTop := vm.top
-	vm.ensureStack(base + proto.MaxStack + 10)
+	vm.ensureStack(base + proto.MaxStack + stackSafetyMargin)
 
 	// Handle varargs
 	numParams := proto.NumParams
@@ -541,8 +541,8 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_NEWTABLE:
 			a := inst.A()
 			// IvABC: vB (bits 16-21, 6 bits) = hash log, vC (bits 22-31, 10 bits) = array size
-			vB := int((uint32(inst) >> 16) & 0x3F)
-			vC := int((uint32(inst) >> 22) & 0x3FF)
+			vB := inst.VB()
+			vC := inst.VC()
 			if inst.K() != 0 {
 				// Array size in next EXTRAARG instruction
 				frame.pc++
@@ -1745,8 +1745,8 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_SETLIST:
 			a := inst.A()
 			// IvABC format: extract vB (count) and vC (offset)
-			vB := int((uint32(inst) >> 16) & 0x3F)
-			vC := int((uint32(inst) >> 22) & 0x3FF)
+			vB := inst.VB()
+			vC := inst.VC()
 			k := inst.K()
 
 			tbl := vm.stack[frame.base+a].AsTable()
@@ -1872,7 +1872,7 @@ func (vm *VM) ensureStack(n int) {
 			n, limit))
 	}
 	for len(vm.stack) <= n {
-		vm.stack = append(vm.stack, make([]Value, 256)...)
+		vm.stack = append(vm.stack, make([]Value, stackGrowChunk)...)
 	}
 }
 

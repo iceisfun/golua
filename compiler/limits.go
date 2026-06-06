@@ -49,4 +49,3 @@ func WithLimits(limits CompilerLimits) CompileOption {
 		cfg.limits = limits
 	}
 }
-
