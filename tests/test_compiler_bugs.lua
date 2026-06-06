@@ -73,12 +73,14 @@ do
         "Bug 4 - should report near 'end': " .. err)
 end
 
--- Bug 5: Duplicate label error prefix uses EOF line
+-- Bug 5: Duplicate label error position is the later (second) label's line,
+-- and the message references the earlier label's line. Matches reference
+-- lua5.5.0: "<chunk>:3: label 'A' already defined on line 1".
 do
     local code = "::A::\nlocal x = 1\n::A::\n"
     local ok, err = load(code)
     err = tostring(err)
-    assert(string.find(err, ":4:", 1, true) and string.find(err, "on line 1", 1, true),
+    assert(string.find(err, ":3:", 1, true) and string.find(err, "on line 1", 1, true),
         "Bug 5 - wrong error format: " .. err)
 end
 

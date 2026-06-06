@@ -108,6 +108,62 @@ func TestGotoScopeErrorLineSkipsNoops(t *testing.T) {
 	}
 }
 
+// TestDuplicateLabelErrorLine verifies the duplicate-label error position and
+// referenced line match reference Lua 5.5 when no-op statements (';') separate
+// the two labels. Lua's labelstat() consumes trailing ';' and following labels
+// in one call, registering them in reverse, so the error is reported at the
+// textually later label and references the already-registered duplicate.
+func TestDuplicateLabelErrorLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  string
+		wantPos string // expected ":LINE:" prefix
+		wantRef string // expected "on line N" fragment
+	}{
+		{
+			// adjacent via semicolon: ::a:: L1, ; L2, ::a:: L3
+			"semicolon between duplicate labels",
+			"::a::\n;\n::a::\n",
+			":3:", "on line 3",
+		},
+		{
+			// adjacent same line: ::a:: ; ::a::
+			"semicolon same line",
+			"::a:: ; ::a::\n",
+			":1:", "on line 1",
+		},
+		{
+			// non-adjacent (real statement between): position at later label,
+			// message references the earlier one
+			"real statement between duplicates",
+			"::L::\nlocal x = 1\n::L::\n",
+			":3:", "on line 1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			block, err := parser.Parse(tt.name, tt.source)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			_, err = compiler.Compile(tt.name, block)
+			if err == nil {
+				t.Fatalf("expected duplicate-label error, got success")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "already defined") {
+				t.Fatalf("expected duplicate-label error, got: %v", msg)
+			}
+			if !strings.Contains(msg, tt.wantPos) {
+				t.Fatalf("expected position %q, got: %v", tt.wantPos, msg)
+			}
+			if !strings.Contains(msg, tt.wantRef) {
+				t.Fatalf("expected %q, got: %v", tt.wantRef, msg)
+			}
+		})
+	}
+}
+
 func TestGotoLabelVisibility(t *testing.T) {
 	tests := []struct {
 		name   string

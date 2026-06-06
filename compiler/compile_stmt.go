@@ -128,36 +128,31 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 		// such labels as if locals declared before them are already
 		// out of scope, allowing goto to jump over those locals.
 		if _, ok := stmt.(*ast.LabelStmt); ok {
-			// Collect consecutive label statements. Lua 5.4's labelstat()
-			// recursively processes adjacent labels before registering the
-			// current one, effectively registering them in reverse order.
-			// This affects duplicate detection: for "::L::\n::L::", the
-			// second label is registered first, so the error says "already
-			// defined on line 2" (the second label's line).
+			// Collect the entire run of consecutive no-op statements that
+			// Lua's labelstat() consumes in a single call. Its
+			// `while (token == ';' || token == TK_DBCOLON) statement(ls)`
+			// loop swallows trailing empty statements (';') AND following
+			// labels before the current label is registered, recursing for
+			// each nested label. The net effect is that all labels in the
+			// run are registered in reverse order, which matters both for
+			// the "jumps into scope" error line and for duplicate-label
+			// detection (the later label is registered first, so the error
+			// references the later label's line).
 			runEnd := i + 1
 			for runEnd < len(stmts) {
-				if _, isLabel := stmts[runEnd].(*ast.LabelStmt); !isLabel {
-					break
-				}
-				runEnd++
-			}
-
-			// Compute afterLine for the entire label run. Lua's labelstat()
-			// consumes any trailing no-op statements (';' and following labels)
-			// via its `while (token == ';' || token == TK_DBCOLON)` loop BEFORE
-			// it resolves pending gotos. So `ls->lastline` — and therefore the
-			// "jumps into scope" error line — is the line of the first real
-			// (non-label, non-empty) statement, not the first semicolon. Scan
-			// past both labels and empty statements to find that line.
-			afterEnd := runEnd
-			for afterEnd < len(stmts) {
-				switch stmts[afterEnd].(type) {
+				switch stmts[runEnd].(type) {
 				case *ast.LabelStmt, *ast.EmptyStmt:
-					afterEnd++
+					runEnd++
 					continue
 				}
 				break
 			}
+			// Trim trailing empty statements: they are no-ops that don't
+			// affect label registration, but they advance ls->lastline. The
+			// run for label processing ends at the last label; the line of
+			// the first real statement (used as the error line) is computed
+			// from afterEnd, which already skips them.
+			afterEnd := runEnd
 			afterLine := blockAfterLine
 			if afterLine == 0 {
 				afterLine = c.endLine
@@ -166,14 +161,18 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 				afterLine = stmts[afterEnd].Pos().Line
 			}
 
-			// Process labels in reverse order to match lua5.4's recursive behavior.
+			// Process labels in reverse order to match lua5.4's recursive
+			// behavior, skipping any empty statements interleaved in the run.
 			for j := runEnd - 1; j >= i; j-- {
-				lbl := stmts[j].(*ast.LabelStmt)
+				lbl, ok := stmts[j].(*ast.LabelStmt)
+				if !ok {
+					continue // empty statement (';') — no-op
+				}
 				atEnd := labelEndOpt && labelAtBlockEnd(stmts, j)
 				c.compileLabelStmt(lbl, atEnd, afterLine)
 			}
 
-			// Skip past the label run (loop will increment i).
+			// Skip past the entire run (loop will increment i).
 			i = runEnd - 1
 			continue
 		} else if ls, ok := stmt.(*ast.LocalStmt); ok {
@@ -1030,10 +1029,23 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 	scope := fs.scopes[len(fs.scopes)-1]
 	for _, lbl := range fs.labels {
 		if lbl.name == s.Name {
-			// Use the duplicate label's EndLine for the error prefix,
-			// matching Lua 5.4's checkrepeated() which uses ls->linenumber
-			// (the line after the closing :: of the duplicate label).
-			c.error(s.EndLine, "label '%s' already defined on line %d", s.Name, lbl.line)
+			// Lua's checkrepeated() reports the duplicate at ls->lastline,
+			// which is the line of the textually LATER of the two labels (the
+			// last one whose closing '::' was consumed), while the message
+			// references the already-registered duplicate's line (lbl.line).
+			//
+			// Two cases produce the same rule:
+			//   - Non-adjacent (separate runs): this label (s) is the later
+			//     one; the earlier one is already in fs.labels (lbl.line).
+			//   - Adjacent (one labelstat run): labels are processed in
+			//     reverse, so the later label registered first and s is the
+			//     EARLIER one — but lbl.line is then the later label's line.
+			// In both cases the error position is max(s line, lbl.line).
+			errLine := lbl.line
+			if s.P.Line > errLine {
+				errLine = s.P.Line
+			}
+			c.error(errLine, "label '%s' already defined on line %d", s.Name, lbl.line)
 			return
 		}
 	}
