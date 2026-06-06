@@ -430,18 +430,24 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 // ---------------------------------------------------------------------------
 
 // compileForInStmt compiles "for k, v in iter do ... end".
-// Uses TFORPREP/TFORCALL/TFORLOOP with 4 control registers + loop variables.
+// Lua 5.5 layout: 3 internal control registers (iterator function, state,
+// closing variable) plus the loop variables, the first of which doubles as the
+// control register. The iterator explist still fills 4 slots (function, state,
+// control, closing); TFORPREP swaps the control/closing values so the closing
+// variable lands in the internal slot at base+2 and the control variable lands
+// at base+3 (the user's first loop variable).
 func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	fs := c.fs
 	line := s.P.Line
 
 	fs.enterScope(true)
 
-	// Reserve 4 control registers: iterator, state, control, closing
+	// Reserve 4 explist slots: iterator, state, control, closing
 	base := fs.freeReg
 
 	// Compile iterator expressions into base, base+1, base+2, base+3
-	// The 4th value (base+3) is the to-be-closed variable per Lua 5.4
+	// The 4th value (base+3) is the closing variable; TFORPREP later swaps it
+	// down to base+2 (the internal to-be-closed slot).
 	nIter := len(s.Iters)
 	if nIter == 1 && isMultiRet(s.Iters[0]) {
 		// Single multi-return expression (e.g., pairs(t)) - ask for 4 results
@@ -493,29 +499,30 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		fs.maxReg = fs.freeReg
 	}
 
-	// Add internal for-in variables as hidden locals to protect their registers.
-	// These must be registered BEFORE OP_TBC so localName() can resolve the
-	// variable name at the TBC instruction's PC.
+	// Add the 3 internal for-in control registers as hidden locals (Lua 5.5:
+	// iterator function, state, closing variable). The control variable is
+	// folded into the user's first loop variable at base+3 (no dedicated
+	// control slot as in Lua 5.4). TFORPREP swaps the control/closing values
+	// into place at runtime and marks base+2 as to-be-closed, so there is no
+	// separate OP_TBC instruction.
 	localStartPC := fs.pc()
-	fs.checkVarLimitAt(4+len(s.Names), line, "in")
+	fs.checkVarLimitAt(3+len(s.Names), line, "in")
 	fs.locals = append(fs.locals,
 		localVar{name: forStateVarName, reg: base, startPC: localStartPC},
 		localVar{name: forStateVarName, reg: base + 1, startPC: localStartPC},
-		localVar{name: forStateVarName, reg: base + 2, startPC: localStartPC},
-		localVar{name: forStateVarName, reg: base + 3, startPC: localStartPC, attrib: attribClose},
+		// base+2 is the closing variable (after the TFORPREP swap); mark it
+		// <close> so leaveScope emits the loop-end OP_CLOSE that fires __close.
+		localVar{name: forStateVarName, reg: base + 2, startPC: localStartPC, attrib: attribClose},
 	)
-	fs.nActVar += 4
-
-	// Mark base+3 as to-be-closed (the 4th return from iterator factory)
-	fs.emit(ABC(OP_TBC, base+3, 0, 0, 0), line)
+	fs.nActVar += 3
 
 	// TFORPREP
 	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), line)
 
-	// Loop variables start at base+4
+	// Loop variables start at base+3 (the first is the control variable).
 	nVars := len(s.Names)
 	for i, name := range s.Names {
-		reg := base + 4 + i
+		reg := base + 3 + i
 		fs.freeReg = reg + 1
 		if fs.freeReg > fs.maxReg {
 			fs.maxReg = fs.freeReg
@@ -538,11 +545,13 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// Body
 	c.compileBlock(s.Body)
 
-	// Close upvalues at the loop variables (base+4) and above before next iteration.
-	// This ensures each iteration gets its own closed upvalue copy.
+	// Close upvalues at the loop variables (base+3) and above before next
+	// iteration. This ensures each iteration gets its own closed upvalue copy.
+	// The closing variable at base+2 stays open across iterations (it is closed
+	// once when the loop scope exits).
 	scope := fs.scopes[len(fs.scopes)-1]
-	if fs.needsClose(scope.nLocals + 4) {
-		fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), line)
+	if fs.needsClose(scope.nLocals + 3) {
+		fs.emit(ABC(OP_CLOSE, base+3, 0, 0, 0), line)
 	}
 
 	// TFORCALL — calls the iterator. Use the line of the last iterator

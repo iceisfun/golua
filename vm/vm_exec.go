@@ -1671,15 +1671,54 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_TFORPREP:
 			a, bx := inst.A(), inst.Bx()
-			_ = a
+			// Lua 5.5: the explist left base+a+2 = control init and
+			// base+a+3 = closing variable. Swap them so the closing value lands
+			// in the internal slot at base+a+2 and the control value lands at
+			// base+a+3 (the user's first loop variable). Then mark base+a+2 as
+			// to-be-closed (this folds in what 5.4 did with a separate OP_TBC).
+			ctrlInit := vm.stack[frame.base+a+2]
+			vm.stack[frame.base+a+2] = vm.stack[frame.base+a+3]
+			vm.stack[frame.base+a+3] = ctrlInit
+			closeVal := vm.stack[frame.base+a+2]
+			// Validate: nil and false are always OK; otherwise must have __close.
+			if !closeVal.IsNil() && !(closeVal.IsBool() && !closeVal.AsBool()) {
+				needErr := false
+				if closeVal.IsTable() {
+					mt := closeVal.AsTable().Metatable()
+					if mt == nil {
+						mt = vm.GetTypeMeta(closeVal)
+					}
+					if mt == nil || mt.Get(metaClose).IsNil() {
+						needErr = true
+					}
+				} else if ud := closeVal.AsUserdata(); ud != nil {
+					mt := ud.Metatable()
+					if mt == nil || mt.Get(metaClose).IsNil() {
+						needErr = true
+					}
+				} else {
+					typeMT := vm.GetTypeMeta(closeVal)
+					if typeMT == nil || typeMT.Get(metaClose).IsNil() {
+						needErr = true
+					}
+				}
+				if needErr {
+					varName := localName(frame.closure.Proto, a+2, frame.pc)
+					return nil, vm.runtimeError("variable '%s' got a non-closable value", varName)
+				}
+			}
+			vm.tbcVars = append(vm.tbcVars, frame.base+a+2)
 			frame.pc += bx
 
 		case compiler.OP_TFORCALL:
 			a, c := inst.A(), inst.C()
-			// R[A] = iterator function, R[A+1] = state, R[A+2] = control variable
+			// Lua 5.5 layout: R[A] = iterator function, R[A+1] = state,
+			// R[A+2] = closing variable, R[A+3] = control variable (the user's
+			// first loop variable). The iterator results land at R[A+3]... so
+			// the first return directly becomes the new control variable.
 			fn := vm.stack[frame.base+a]
 			state := vm.stack[frame.base+a+1]
-			ctrl := vm.stack[frame.base+a+2]
+			ctrl := vm.stack[frame.base+a+3]
 
 			// Call iterator: fn(state, ctrl)
 			var results []Value
@@ -1735,23 +1774,24 @@ func (vm *VM) execute() ([]Value, error) {
 				return nil, err
 			}
 
-			// Store results at R[A+4], ..., R[A+3+C]
+			// Store results at R[A+3], ..., R[A+2+C] (the loop variables).
 			for i := 0; i < c && i < len(results); i++ {
-				vm.stack[frame.base+a+4+i] = results[i]
+				vm.stack[frame.base+a+3+i] = results[i]
 			}
 			for i := len(results); i < c; i++ {
-				vm.stack[frame.base+a+4+i] = Nil
+				vm.stack[frame.base+a+3+i] = Nil
 			}
 
 		case compiler.OP_TFORLOOP:
 			a, bx := inst.A(), inst.Bx()
-			// If R[A+2] (first result, now at R[A+4] after TFORCALL) is not nil, continue
-			// Note: bx+1 accounts for pre-increment of frame.pc
-			if !vm.stack[frame.base+a+4].IsNil() {
+			// Lua 5.5: the control variable is the first loop variable at R[A+3].
+			// If it is not nil, continue the loop (no copy-back needed — the
+			// iterator results already populated R[A+3]...).
+			// Note: bx+1 accounts for pre-increment of frame.pc.
+			if !vm.stack[frame.base+a+3].IsNil() {
 				if err := vm.CheckInterrupt(); err != nil {
 					return nil, err
 				}
-				vm.stack[frame.base+a+2] = vm.stack[frame.base+a+4]
 				frame.pc -= bx + 1
 			}
 

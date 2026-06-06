@@ -28,8 +28,10 @@ do
     --> =13	1
 end
 
--- Generic for: GoLua emits more instructions than Lua 5.4 (43 vs 19),
--- a known architectural difference in for-in loop compilation.
+-- Generic for: GoLua emits more instructions than Lua 5.4 (42 vs 19),
+-- a known architectural difference in for-in loop compilation. (Lua 5.5
+-- folds the to-be-closed setup into TFORPREP, so GoLua no longer emits a
+-- separate OP_TBC instruction here.)
 do
     local function iter(_, i)
         if i < 2 then
@@ -43,5 +45,5 @@ do
     end
     debug.sethook()
     print(n)
-    --> =43
+    --> =42
 end
