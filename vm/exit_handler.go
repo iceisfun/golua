@@ -32,7 +32,15 @@ func (e *LuaExitError) Error() string {
 // <close> handlers before panicking with this value.  ProtectedCall
 // propagates the sentinel through pcall/xpcall boundaries (just like
 // LuaExitError), since the long-jump terminates the entire coroutine.
-type CoroutineSelfClose struct{}
+//
+// If a pending <close> handler errors while the running coroutine is being
+// self-closed, the coroutine still terminates via this sentinel, but the
+// handler's error is carried in Err so the resumer observes (false, errval)
+// instead of (true). Err is nil for the normal (no-error) self-close.
+type CoroutineSelfClose struct {
+	Err    error
+	HasErr bool
+}
 
 // DefaultExitHandler stops VM execution by panicking with a LuaExitError
 // sentinel that propagates through ProtectedCall boundaries.

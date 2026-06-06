@@ -322,8 +322,13 @@ func runCoroutine(co *Coroutine) {
 			// Lua 5.5: coroutine.close(coroutine.running()) terminates the
 			// coroutine cleanly via the vm.CoroutineSelfClose sentinel. Treat
 			// this as a normal completion, not an error.
-			if _, ok := r.(vm.CoroutineSelfClose); ok {
+			if sc, ok := r.(vm.CoroutineSelfClose); ok {
 				co.mu.Lock()
+				// A <close> handler that errored during self-close terminates the
+				// coroutine with that error: resume reports (false, errval).
+				if sc.HasErr {
+					co.err = sc.Err
+				}
 				co.status = statusDead
 				co.mu.Unlock()
 				close(co.doneCh)
@@ -658,7 +663,7 @@ func coWrap(v *vm.VM) int {
 					} else {
 						errVal = vm.NewString(err.Error())
 					}
-					if closeErr := coVM.ClosePendingTBC(errVal); closeErr != nil {
+					if closeErr := coVM.ClosePendingTBC(errVal, true); closeErr != nil {
 						err = closeErr
 					}
 				}
@@ -748,8 +753,27 @@ func coClose(v *vm.VM) int {
 	// runCoroutine treats this sentinel as a normal completion and the
 	// resumer sees (true, nil).
 	if int(id) == v.CoroutineID() {
-		v.CloseAllTBC()
-		panic(vm.CoroutineSelfClose{})
+		// Run pending <close> handlers on the current call stack. If one errors,
+		// the running coroutine still terminates (self-close), but the error is
+		// carried on the sentinel so the resumer observes (false, errval) rather
+		// than (true) — matching Lua 5.5 lua_closethread semantics.
+		selfClose := vm.CoroutineSelfClose{}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					selfClose.HasErr = true
+					if le, ok := r.(*vm.LuaError); ok {
+						selfClose.Err = le
+					} else if err, ok := r.(error); ok {
+						selfClose.Err = err
+					} else {
+						selfClose.Err = fmt.Errorf("%v", r)
+					}
+				}
+			}()
+			v.CloseAllTBC()
+		}()
+		panic(selfClose)
 	}
 
 	reg := getCoRegistry(v)
@@ -795,7 +819,9 @@ func coClose(v *vm.VM) int {
 					errVal = vm.NewString(coErr.Error())
 				}
 			}
-			if closeErr := coVM.ClosePendingTBC(errVal); closeErr != nil {
+			// coroutine.close on a non-errored coroutine performs a normal close
+			// (no error object); only an actual pending error makes hasError true.
+			if closeErr := coVM.ClosePendingTBC(errVal, coErr != nil); closeErr != nil {
 				coErr = closeErr
 			}
 			// Clear the call stack so debug.getinfo(co, level) returns nil,

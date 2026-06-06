@@ -19,6 +19,12 @@ import (
 // raise Limits.MaxCallDepth per-VM (a true fix is a trampolined VM loop).
 const DefaultMaxCallDepth = 10000
 
+// maxCCalls mirrors reference Lua's LUAI_MAXCCALLS: the number of nested C
+// calls (here, a chain of coroutine.close invocations driven from __close
+// handlers) before a "C stack overflow" is raised. Reference Lua overflows
+// at ~200 such levels.
+const maxCCalls = 200
+
 // DefaultMaxStackSlots is the default stack slot limit, matching Lua 5.4's
 // LUAI_MAXSTACK. Prevents a single unpack or deep call chain from allocating
 // unbounded memory.

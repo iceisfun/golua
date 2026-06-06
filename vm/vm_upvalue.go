@@ -23,10 +23,10 @@ func (vm *VM) findOrCreateUpvalue(stackIdx int) *Upvalue {
 // closeUpvalues closes all open upvalues at or above the given stack level,
 // then calls __close metamethods on any to-be-closed variables in that range.
 func (vm *VM) closeUpvalues(level int) {
-	vm.closeUpvaluesWithError(level, Nil)
+	vm.closeUpvaluesWithError(level, Nil, false)
 }
 
-func (vm *VM) closeUpvaluesWithError(level int, errVal Value) {
+func (vm *VM) closeUpvaluesWithError(level int, errVal Value, hasError bool) {
 	// Close all upvalues with stack index >= level
 	remaining := vm.openUpvalues[:0]
 	for _, uv := range vm.openUpvalues {
@@ -73,7 +73,7 @@ func (vm *VM) closeUpvaluesWithError(level int, errVal Value) {
 				tbcIndices[k]--
 			}
 		}
-		vm.callCloseMetamethod(stackIdx, errVal)
+		vm.callCloseMetamethod(stackIdx, errVal, hasError)
 	}
 }
 
@@ -81,7 +81,7 @@ func (vm *VM) closeUpvaluesWithError(level int, errVal Value) {
 // in reverse order. Each call is individually protected so that all handlers run
 // even if one errors. If any handler errors, the last error is re-raised after
 // all handlers have been called.
-func (vm *VM) callCloseHandlers(indices []int, errVal Value, useMsgHandler bool) {
+func (vm *VM) callCloseHandlers(indices []int, errVal Value, hasError bool, useMsgHandler bool) {
 	var lastPanic interface{}
 	for i := len(indices) - 1; i >= 0; i-- {
 		savedTbcLen := len(vm.tbcVars)
@@ -92,6 +92,9 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value, useMsgHandler bool)
 				vm.top = savedTop
 				if r := recover(); r != nil {
 					lastPanic = r
+					// A handler errored: subsequent handlers now run in an error
+					// context (they receive an error object even if it is nil).
+					hasError = true
 					// Update errVal for subsequent handlers (Lua 5.4 behavior:
 					// __close receives the most recent error)
 					prevErrVal := errVal
@@ -138,12 +141,12 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value, useMsgHandler bool)
 									}
 								}
 							}()
-							vm.callCloseHandlers(innerTBC, errVal, useMsgHandler)
+							vm.callCloseHandlers(innerTBC, errVal, hasError, useMsgHandler)
 						}()
 					}
 				}
 			}()
-			vm.callCloseMetamethod(indices[i], errVal)
+			vm.callCloseMetamethod(indices[i], errVal, hasError)
 		}()
 	}
 	// Re-raise the last __close handler error after all handlers have run.
@@ -185,11 +188,13 @@ func (vm *VM) CloseAllTBC() {
 	// report it. Chain errVal through handlers (Lua 5.4 behavior).
 	var lastPanic interface{}
 	errVal := Nil
+	hasError := false
 	for i := len(tbcToClose) - 1; i >= 0; i-- {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
 					lastPanic = r
+					hasError = true
 					if le, ok := r.(*LuaError); ok {
 						errVal = le.Value
 					} else {
@@ -197,7 +202,7 @@ func (vm *VM) CloseAllTBC() {
 					}
 				}
 			}()
-			vm.callCloseMetamethod(tbcToClose[i], errVal)
+			vm.callCloseMetamethod(tbcToClose[i], errVal, hasError)
 		}()
 	}
 	if lastPanic != nil {
@@ -206,8 +211,12 @@ func (vm *VM) CloseAllTBC() {
 }
 
 // callCloseMetamethod calls the __close metamethod on a TBC variable.
-// errVal is the error object (Nil for normal exit, the Lua error value on error paths).
-func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
+// errVal is the error object on error paths. hasError distinguishes a normal
+// close (no error object; __close receives only the object) from an error close
+// (__close receives object plus errVal, even when errVal is itself nil — e.g.
+// error(nil)). This mirrors Lua 5.5 lfunc.c callclosemethod, which pushes the
+// error argument only when err != NULL.
+func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value, hasError bool) {
 	val := vm.stack[stackIdx]
 	// nil and false are always OK (no __close needed)
 	if val.IsNil() || (val.IsBool() && !val.AsBool()) {
@@ -238,8 +247,17 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 		}
 	}
 	if !closeFunc.IsNil() {
-		vm.pendingSuppressTracebackName = !errVal.IsNil() || len(vm.callStack) == 0
-		_, err := vm.callMetamethod("close", closeFunc, val, errVal)
+		vm.pendingSuppressTracebackName = hasError || len(vm.callStack) == 0
+		// Lua 5.5: __close receives only the object on a normal close, and
+		// (object, errobj) on an error close. On the normal path there is no
+		// error object, so omit the second argument entirely (matching lfunc.c
+		// callclosemethod which only pushes the error when err != NULL).
+		var err error
+		if hasError {
+			_, err = vm.callMetamethodArgs("close", closeFunc, val, errVal)
+		} else {
+			_, err = vm.callMetamethodArgs("close", closeFunc, val)
+		}
 		if err != nil {
 			panic(err.Error())
 		}

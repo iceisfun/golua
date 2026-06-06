@@ -28,7 +28,10 @@ do
       extrares = co()    -- runs until first (extra) yield
     end
     local res = table.pack(co())   -- runs until yield inside '__close'
-    assert(res.n == 2 and res[2] == nil)
+    -- The "regular" yield yields all values passed to the close function;
+    -- without errors, that is only the object being closed. Lua 5.5 passes a
+    -- single argument to __close on a normal (error-free) close.
+    assert(res.n == 1 and type(res[1]) == "table")
     local res2 = table.pack(co())   -- runs until end of function
     assert(res2.n == t.n)
     for i = 1, #t do

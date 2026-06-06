@@ -565,7 +565,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 							}
 						}
 					}()
-					vm.callCloseHandlers(tbcToClose, closeErrVal, !msgh.IsNil())
+					vm.callCloseHandlers(tbcToClose, closeErrVal, true, !msgh.IsNil())
 				}()
 				vm.msgHandler = Nil
 
@@ -1010,7 +1010,7 @@ func (vm *VM) ProtectedCallCoroutine(fn Value, args []Value) ([]Value, error) {
 // ClosePendingTBC closes all pending to-be-closed variables on this VM.
 // Used by coroutine.close and wrap error recovery. Returns the final error
 // value (which may be from a __close handler if one errors).
-func (vm *VM) ClosePendingTBC(errVal Value) (finalErr error) {
+func (vm *VM) ClosePendingTBC(errVal Value, hasError bool) (finalErr error) {
 	if len(vm.tbcVars) == 0 {
 		return nil
 	}
@@ -1035,7 +1035,7 @@ func (vm *VM) ClosePendingTBC(errVal Value) (finalErr error) {
 				}
 			}
 		}()
-		vm.callCloseHandlers(tbcToClose, errVal, false)
+		vm.callCloseHandlers(tbcToClose, errVal, hasError, false)
 	}()
 	return finalErr
 }
@@ -1163,8 +1163,18 @@ func (vm *VM) hasCFrame() bool {
 // the return value.
 func (vm *VM) EnterCloseChain() bool {
 	depth := atomic.AddInt32(vm.closeDepth, 1)
+	// A chain of coroutine.close calls (each __close handler closing the
+	// previous coroutine) consumes one C-stack frame per level in reference
+	// Lua, which overflows at LUAI_MAXCCALLS (~200) rather than at the much
+	// deeper Lua call-depth limit. Cap the close-chain at the C-call limit so
+	// that deeply nested coroutine.close reports "C stack overflow" with a
+	// reference-comparable depth, while still respecting a smaller per-VM
+	// MaxCallDepth when one is configured.
 	max := vm.maxCallDepth()
-	return max > 0 && int(depth) > max
+	if max <= 0 || max > maxCCalls {
+		max = maxCCalls
+	}
+	return int(depth) > max
 }
 
 // ExitCloseChain decrements the shared close-depth counter.
@@ -1175,6 +1185,15 @@ func (vm *VM) ExitCloseChain() {
 // callMetamethod calls a metamethod with 2 arguments and returns the first result.
 // name is the metamethod name without "__" prefix (e.g. "index", "add").
 func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
+	return vm.callMetamethodArgs(name, fn, arg1, arg2)
+}
+
+// callMetamethodArgs invokes a metamethod with an explicit argument list
+// (arg1 plus zero or more extra arguments). Most metamethods take exactly two
+// arguments (callMetamethod), but __close passes only the object on a normal
+// close and (object, errobj) on an error close (see Lua 5.5 lfunc.c
+// callclosemethod, which omits the error argument when there is no error).
+func (vm *VM) callMetamethodArgs(name string, fn, arg1 Value, extra ...Value) (Value, error) {
 	vm.metaCallDepth++
 	defer func() { vm.metaCallDepth-- }()
 
@@ -1183,7 +1202,10 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 		vm.pendingCallNameWhat = nwMetamethod
 		// Some __close contexts should retain getinfo() naming but suppress the
 		// synthetic "in metamethod 'close'" label in traceback output.
-		results, err := vm.call(fn.AsClosure(), []Value{arg1, arg2}, 1)
+		args := make([]Value, 0, 1+len(extra))
+		args = append(args, arg1)
+		args = append(args, extra...)
+		results, err := vm.call(fn.AsClosure(), args, 1)
 		if err != nil {
 			return Nil, err
 		}
@@ -1200,13 +1222,16 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 
 		// Set up for native call at top of stack
 		nativeBase := vm.top
-		vm.ensureStack(nativeBase + stackSafetyMargin)
+		nargs := 1 + len(extra)
+		vm.ensureStack(nativeBase + nargs + stackSafetyMargin)
 		vm.stack[nativeBase+1] = arg1
-		vm.stack[nativeBase+2] = arg2
+		for i, e := range extra {
+			vm.stack[nativeBase+2+i] = e
+		}
 
 		nativeFrame := callFrame{
 			base:                  nativeBase,
-			argc:                  2,
+			argc:                  nargs,
 			funcValue:             fn,
 			callName:              name,
 			callNameWhat:          nwMetamethod,
@@ -1214,7 +1239,7 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 		}
 		vm.pendingSuppressTracebackName = false
 		vm.callStack = append(vm.callStack, nativeFrame)
-		vm.top = nativeBase + 3
+		vm.top = nativeBase + 1 + nargs
 
 		nResults := fn.AsNativeFunc()(vm)
 		var result Value
@@ -1233,7 +1258,10 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 	}
 
 	// Not a direct function — try __call metamethod chain (callable tables, etc.)
-	result, err := vm.callValue(name, fn, []Value{arg1, arg2})
+	args := make([]Value, 0, 1+len(extra))
+	args = append(args, arg1)
+	args = append(args, extra...)
+	result, err := vm.callValue(name, fn, args)
 	if err != nil {
 		return Nil, err
 	}
