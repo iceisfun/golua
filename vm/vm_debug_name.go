@@ -116,11 +116,11 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 				}
 				return "?", nwGlobal
 			}
-			// Detect SELF fallback pattern: MOVE base+1,obj + LOADK + GETTABLE base,obj,key.
-			// If the previous instruction wrote obj to base+1 (self), this is a method call.
-			if kn != "" && isSelfFallback(proto, i, reg, b) {
-				return kn, nwMethod
-			}
+			// The SELF-opcode fallback (MOVE base+1,obj + LOADK + GETTABLE) is
+			// indistinguishable from a plain table access here, and reference
+			// Lua's getobjname names it "field" (it has no fallback heuristic;
+			// OP_GETTABLE → "field"). Do NOT recover "method" — see errors.lua
+			// "t:bbb()" with >256 constants forcing the RK-limit fallback.
 			if kn != "" {
 				return kn, nwField
 			}
@@ -368,10 +368,9 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 				}
 				return "?", nwGlobal
 			}
-			// Detect SELF fallback pattern (MOVE base+1,obj + LOADK + GETTABLE).
-			if kn != "" && isSelfFallback(proto, i, reg, b) {
-				return kn, nwMethod
-			}
+			// The SELF-opcode fallback (MOVE base+1,obj + LOADK + GETTABLE) is
+			// named "field" by reference Lua's getobjname (OP_GETTABLE → "field";
+			// no method-recovery heuristic). Do not return "method" here.
 			if kn != "" {
 				return kn, nwField
 			}
@@ -487,34 +486,4 @@ func kName(proto *compiler.Proto, pc int, reg int) string {
 		}
 	}
 	return ""
-}
-
-// isSelfFallback detects the SELF fallback pattern emitted by the compiler
-// when a method name's constant index exceeds MaxArgC. The pattern is:
-//
-//	MOVE base+1, objReg    // copy self
-//	LOADK/LOADKX tmp, "method_name"
-//	GETTABLE base, objReg, tmp
-//
-// Returns true if the instruction at gettablePC is part of this pattern.
-func isSelfFallback(proto *compiler.Proto, gettablePC int, base int, objReg int) bool {
-	// Look backward past LOADK/LOADKX to find a MOVE writing to base+1
-	for j := gettablePC - 1; j >= 0; j-- {
-		jInst := proto.Code[j]
-		jOp := jInst.OpCode()
-		switch jOp {
-		case compiler.OP_LOADK, compiler.OP_LOADKX:
-			// Skip LOADK that loaded the key into the temp register
-			continue
-		case compiler.OP_EXTRAARG:
-			// Part of LOADKX
-			continue
-		case compiler.OP_MOVE:
-			// Check: MOVE base+1, objReg
-			return jInst.A() == base+1 && jInst.B() == objReg
-		default:
-			return false
-		}
-	}
-	return false
 }

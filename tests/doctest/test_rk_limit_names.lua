@@ -21,7 +21,10 @@ f = assert(load(s .. "; local t = {}; aaa = t.bbb + 1"))
 ok, msg = pcall(f)
 print(msg:find("field 'bbb'", 1, true) ~= nil) --> true
 
--- method name
+-- method name: the SELF opcode cannot be used when the key's constant index
+-- exceeds the RK limit, so the compiler falls back to a plain table access.
+-- Reference Lua's getobjname reports this as a "field" (it has no method
+-- recovery heuristic for the fallback), so golua matches with "field 'bbb'".
 f = assert(load(s .. "; local t = {}; t:bbb()"))
 ok, msg = pcall(f)
-print(msg:find("method 'bbb'", 1, true) ~= nil) --> true
+print(msg:find("field 'bbb'", 1, true) ~= nil) --> true

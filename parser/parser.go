@@ -621,16 +621,22 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 		return nil
 	}
 
-	// Lua 5.4: at most one <close> variable per local statement.
+	// Lua 5.4: at most one <close> variable per local statement. Reference Lua
+	// raises this while reading the attribute of the offending (second) close
+	// variable, so the reported line is that variable's line — not the parser's
+	// current token, which may have advanced past a trailing newline.
 	closeCount := 0
-	for _, a := range attribs {
+	for i, a := range attribs {
 		if a == "close" {
 			closeCount++
+			if closeCount > 1 {
+				p.err = &token.PosError{
+					Pos: names[i].Pos(),
+					Msg: "multiple to-be-closed variables in local list",
+				}
+				return nil
+			}
 		}
-	}
-	if closeCount > 1 {
-		p.errorf("multiple to-be-closed variables in local list")
-		return nil
 	}
 
 	var values []ast.Expr

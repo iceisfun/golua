@@ -38,7 +38,22 @@ func gotDesc(v *vm.VM, argn int) string {
 	if v.ArgCount() < argn {
 		return ", got no value"
 	}
-	return fmt.Sprintf(", got %s", v.ObjTypeName(v.Get(argn)))
+	return fmt.Sprintf(", got %s", argTypeName(v, v.Get(argn)))
+}
+
+// argTypeName mirrors reference Lua's luaL_typeerror type resolution: it
+// reports a __name metafield if present, then distinguishes light userdata
+// (e.g. debug.upvalueid results) from full userdata, then falls back to the
+// ordinary type name. ObjTypeName collapses both userdata kinds to "userdata";
+// the light-userdata distinction only surfaces in argument error messages.
+func argTypeName(v *vm.VM, val vm.Value) string {
+	if name := v.GetMetafield(val, "__name"); name.IsString() {
+		return name.AsString()
+	}
+	if val.IsLightUserdata() {
+		return "light userdata"
+	}
+	return val.Type()
 }
 
 // print(...)

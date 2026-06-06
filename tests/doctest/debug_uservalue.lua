@@ -15,12 +15,14 @@ print(ok)
 print(err:find("userdata expected, got table") ~= nil)
 --> =true
 
--- setuservalue on light userdata: reference reports type as "userdata"
+-- setuservalue on light userdata: reference's luaL_typeerror distinguishes
+-- light userdata (e.g. debug.upvalueid results) from full userdata, so the
+-- "got" type reads "light userdata" (verified against lua5.5.0).
 local x = 1
 local function f() return x end
 local id = debug.upvalueid(f, 1)
 local ok2, err2 = pcall(debug.setuservalue, id, 10)
 print(ok2)
 --> =false
-print(err2:find("userdata expected, got userdata") ~= nil)
+print(err2:find("userdata expected, got light userdata") ~= nil)
 --> =true
