@@ -186,6 +186,13 @@ func stringByte(v *vm.VM) int {
 		end = len(s)
 	}
 
+	// After clamping, an empty/inverted range yields no results. Returning
+	// here also avoids int overflow in the n computation below when the
+	// raw indices are extreme (e.g. j = math.mininteger).
+	if start > end {
+		return 0
+	}
+
 	n := end - start + 1
 	if n > 0 {
 		v.EnsureStack(v.Base() + n)
