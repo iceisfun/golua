@@ -374,6 +374,19 @@ func runCoroutine(co *Coroutine) {
 		results, err = coVM.ProtectedCallCoroutine(co.fn, args)
 	}
 
+	// On NORMAL completion, defensively copy the return values out of any VM
+	// buffer they may alias (OP_RETURN returns a slice into vm.retBuf), then
+	// release that buffer so locals from the completed frames become collectable
+	// (reference Lua frees a dead coroutine's stack). Without the copy, clearing
+	// retBuf would also wipe co.result. When the coroutine died via an ERROR, the
+	// suspended frame at the error point is retained for post-mortem debugging
+	// (debug.getinfo/getlocal/setlocal on the dead coroutine), so leave it intact.
+	if err == nil && len(results) > 0 {
+		safe := make([]vm.Value, len(results))
+		copy(safe, results)
+		results = safe
+	}
+
 	co.mu.Lock()
 	co.result = results
 	if err != nil {
@@ -381,6 +394,10 @@ func runCoroutine(co *Coroutine) {
 	}
 	co.status = statusDead
 	co.mu.Unlock()
+
+	if err == nil {
+		coVM.ReleaseDeadStack()
+	}
 }
 
 // coroutine.yield(...) -> resume args

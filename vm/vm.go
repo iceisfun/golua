@@ -1048,6 +1048,22 @@ func (vm *VM) ClearCallStack() {
 	vm.top = 0
 }
 
+// ReleaseDeadStack nils out the value slots of a finished coroutine VM's stack
+// so locals from its completed frames become collectable by Go's GC. Reference
+// Lua frees a dead coroutine's stack while keeping the thread object alive; here
+// the return values have already been copied out (co.result), so the entire
+// live region can be cleared. callStack/top are left as-is (frames were already
+// popped on normal return).
+func (vm *VM) ReleaseDeadStack() {
+	for i := range vm.stack {
+		vm.stack[i] = Nil
+	}
+	for i := range vm.retBuf {
+		vm.retBuf[i] = Nil
+	}
+	vm.top = 0
+}
+
 // ThreadObj returns the thread object representing this VM (for coroutine.running).
 func (vm *VM) ThreadObj() Value {
 	return vm.threadObj

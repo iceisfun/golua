@@ -1,10 +1,9 @@
--- BROKEN: Flaky due to Go GC timing — weak.Pointer collection is
--- non-deterministic and depends on concurrent GC scheduling. These tests
--- pass most of the time but intermittently fail when GC doesn't collect
--- objects before the assertions run. Renamed from test_ to broken_ to
--- skip in CI while preserving as documentation of intended behavior.
+-- Weak table tests matching Lua 5.4/5.5 __mode semantics.
 --
--- Weak table tests matching Lua 5.4 __mode semantics.
+-- Previously filed as flaky-broken (intermittent GC timing). Now stable across
+-- repeated and parallel-load runs after the coroutine-VM stack/retBuf release
+-- fix; the helper-function pattern (objects dropped in separate frames) plus
+-- the dead-slot clearing in ProcessGcFinalizers makes collection reliable.
 -- Note: tests use helper functions to create/assign objects in separate
 -- stack frames, preventing Go's GC from keeping stale temp register refs.
 

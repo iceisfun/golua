@@ -1,12 +1,10 @@
 -- test_gc_finalizer: __gc metamethod behavior
-
--- BROKEN: GC finalization timing is non-deterministic under Go's GC.
--- golua delegates garbage collection entirely to Go's runtime.GC() and
--- does not attempt to match C Lua's deterministic collector behavior.
--- Go's GC does not guarantee that all finalizers run within a single
--- GC cycle, so tests depending on exact finalization counts may fail.
--- Guarantees: correctness, eventual finalization, weak table cleanup,
--- no resurrection invariant violations. See README.md.
+--
+-- Previously broken: an object whose last reference was a leftover register in
+-- a completed coroutine's stack/retBuf was pinned by the coroutine VM, so its
+-- __gc never fired even after collectgarbage(). Fixed by releasing a finished
+-- coroutine VM's stack and retBuf (vm.ReleaseDeadStack), matching reference Lua
+-- which frees a dead coroutine's stack.
 
 -- Finalizer fires after coroutine frame exit
 do
