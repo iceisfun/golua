@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -641,7 +642,13 @@ func makeStringArithFloorDiv() func(*vm.VM) int {
 		if cv1.IsInt() && cv2.IsInt() {
 			i1, i2 := cv1.AsInt(), cv2.AsInt()
 			if i2 == 0 {
-				panic("attempt to divide by zero")
+				// Raised from within the string arithmetic metamethod, which in
+				// reference Lua is a C frame; the error therefore carries NO
+				// source position. Panicking an error value routes through the
+				// VM's bare-error path (matching luaG_runerror on a C frame),
+				// whereas a string panic would get a source:line: prefix from
+				// luaL_where.
+				panic(errors.New("attempt to divide by zero"))
 			}
 			if i2 == -1 {
 				v.Set(0, vm.NewInt(-i1))
@@ -676,7 +683,10 @@ func makeStringArithMod() func(*vm.VM) int {
 		if cv1.IsInt() && cv2.IsInt() {
 			i1, i2 := cv1.AsInt(), cv2.AsInt()
 			if i2 == 0 {
-				panic("attempt to perform 'n%0'")
+				// Bare error (no source position): raised inside the string
+				// arithmetic metamethod's C frame in reference Lua. See the
+				// floor-div case above for the rationale.
+				panic(errors.New("attempt to perform 'n%0'"))
 			}
 			if i2 == -1 {
 				v.Set(0, vm.NewInt(0))
