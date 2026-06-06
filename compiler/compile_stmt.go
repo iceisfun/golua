@@ -142,13 +142,28 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 				runEnd++
 			}
 
-			// Compute afterLine for the entire label run.
+			// Compute afterLine for the entire label run. Lua's labelstat()
+			// consumes any trailing no-op statements (';' and following labels)
+			// via its `while (token == ';' || token == TK_DBCOLON)` loop BEFORE
+			// it resolves pending gotos. So `ls->lastline` — and therefore the
+			// "jumps into scope" error line — is the line of the first real
+			// (non-label, non-empty) statement, not the first semicolon. Scan
+			// past both labels and empty statements to find that line.
+			afterEnd := runEnd
+			for afterEnd < len(stmts) {
+				switch stmts[afterEnd].(type) {
+				case *ast.LabelStmt, *ast.EmptyStmt:
+					afterEnd++
+					continue
+				}
+				break
+			}
 			afterLine := blockAfterLine
 			if afterLine == 0 {
 				afterLine = c.endLine
 			}
-			if runEnd < len(stmts) {
-				afterLine = stmts[runEnd].Pos().Line
+			if afterEnd < len(stmts) {
+				afterLine = stmts[afterEnd].Pos().Line
 			}
 
 			// Process labels in reverse order to match lua5.4's recursive behavior.
