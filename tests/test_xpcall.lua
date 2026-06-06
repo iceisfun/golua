@@ -1,4 +1,3 @@
--- BROKEN: xpcall() not implemented
 -- xpcall(f, msgh [, arg1, ...]) is a core Lua 5.4 function that calls f
 -- in protected mode with a custom message handler.
 
