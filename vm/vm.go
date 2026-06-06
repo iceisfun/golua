@@ -1086,11 +1086,21 @@ func (vm *VM) hasCFrame() bool {
 	if vm.metaCallDepth > 0 {
 		return true
 	}
-	// If callDepthBase > 0, this VM inherited call depth from a parent VM
-	// through a native function (e.g., coroutine.resume), so there are
-	// native frames in the overflow chain even if this VM's stack is pure Lua.
+	// A coroutine VM inherits call depth from its parent through a native frame
+	// (e.g. coroutine.resume). Distinguish two overflow shapes:
+	//   - Deep pure-Lua recursion inside a single coroutine: this VM's own
+	//     callStack reaches the limit on its own. That is a Lua-stack
+	//     "stack overflow".
+	//   - Resume-within-resume nesting: each coroutine VM has only a shallow
+	//     callStack but callDepthBase accumulates across many native resume
+	//     frames. The inherited base dominates the overflow → "C stack overflow".
+	// Treat the overflow as C-driven only when the inherited base (native
+	// re-entrancy) — not this VM's own Lua frames — is what crosses the limit.
 	if vm.callDepthBase > 0 {
-		return true
+		max := vm.maxCallDepth()
+		if max > 0 && len(vm.callStack) <= max/2 {
+			return true
+		}
 	}
 	n := len(vm.callStack)
 	limit := 10
