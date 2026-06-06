@@ -320,14 +320,20 @@ func (c *compiler) compileDoStmt(s *ast.DoStmt) {
 // ---------------------------------------------------------------------------
 
 // compileForNumStmt compiles "for i = start, stop, step do ... end".
-// Uses FORPREP/FORLOOP opcodes with 4 internal registers (init, limit, step, i).
+// Lua 5.5 layout: 2 internal control registers plus the visible loop variable,
+// which doubles as the control register (no separate safe-copy slot as in 5.4).
+// FORPREP rewrites the init/limit/step inputs in place so that after prep
+// base   = loop counter (int) or limit (float),
+// base+1 = step,
+// base+2 = control variable (the visible 'i').
 func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	fs := c.fs
 	line := s.P.Line
 
 	fs.enterScope(true)
 
-	// Reserve 4 registers: (internal) init, limit, step, (external) i
+	// Reserve 3 registers: init, limit, step are compiled into base, base+1,
+	// base+2; FORPREP rewrites them in place, leaving the visible 'i' at base+2.
 	base := fs.freeReg
 
 	// Compile init, limit, step into base, base+1, base+2
@@ -356,27 +362,27 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	// FORPREP — jumps to FORLOOP if not to run
 	forPrepPC := fs.emit(ABx(OP_FORPREP, base, 0), line)
 
-	// The loop variable is at base+3
-	fs.freeReg = base + 4
+	// Body-live registers: 2 control slots (base, base+1) + visible i (base+2).
+	fs.freeReg = base + 3
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
 	fs.checkRegLimit()
 
-	// Add internal for loop variables as hidden locals to protect their registers
-	// This ensures freeReg won't be reset below base+4 during the loop body
-	fs.checkVarLimitAt(4, line, "for")
+	// Add the 2 internal control registers as hidden locals to protect their
+	// registers so freeReg won't be reset below base+3 during the loop body.
+	fs.checkVarLimitAt(3, line, "for")
 	fs.locals = append(fs.locals,
 		localVar{name: forStateVarName, reg: base, startPC: fs.pc()},
 		localVar{name: forStateVarName, reg: base + 1, startPC: fs.pc()},
-		localVar{name: forStateVarName, reg: base + 2, startPC: fs.pc()},
 	)
-	fs.nActVar += 3
+	fs.nActVar += 2
 
-	// Add the loop variable as a const local (Lua 5.5: for-loop control variables are read-only)
+	// The control register at base+2 is the visible loop variable, exposed as a
+	// const local (Lua 5.5: for-loop control variables are read-only).
 	fs.locals = append(fs.locals, localVar{
 		name:    s.Name.Name,
-		reg:     base + 3,
+		reg:     base + 2,
 		startPC: fs.pc(),
 		attrib:  attribConst,
 	})
@@ -385,13 +391,13 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	// Body
 	c.compileBlock(s.Body)
 
-	// Close upvalues at the loop variable (base+3) and above before looping back,
+	// Close upvalues at the loop variable (base+2) and above before looping back,
 	// but only if any variable from the loop variable onwards was captured by an
 	// inner closure or has a <close> attribute. Skipping CLOSE when not needed
 	// avoids inflating instruction counts (which affects debug count hooks).
 	needClose := false
 	for i := len(fs.locals) - 1; i >= 0; i-- {
-		if fs.locals[i].reg < base+3 {
+		if fs.locals[i].reg < base+2 {
 			break
 		}
 		if fs.locals[i].captured || fs.locals[i].attrib == attribClose {
@@ -400,7 +406,7 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 		}
 	}
 	if needClose {
-		fs.emit(ABC(OP_CLOSE, base+3, 0, 0, 0), line)
+		fs.emit(ABC(OP_CLOSE, base+2, 0, 0, 0), line)
 	}
 
 	// FORLOOP — jumps back to just after FORPREP

@@ -1445,23 +1445,22 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_FORLOOP:
 			a, bx := inst.A(), inst.Bx()
-			// R[A] = index, R[A+1] = counter (remaining iterations), R[A+2] = step
-			stepVal := vm.stack[frame.base+a+2]
+			// Lua 5.5 layout: R[A] = counter (int) or limit (float),
+			// R[A+1] = step, R[A+2] = control variable (visible i).
+			stepVal := vm.stack[frame.base+a+1]
 			if stepVal.IsInt() {
-				// Integer for loop: counter-based (Lua 5.4 semantics)
-				// R[A+1] is the remaining iterations counter, decremented each loop.
+				// Integer for loop: counter-based (Lua 5.5 semantics).
+				// R[A] is the remaining iterations counter, decremented each loop.
 				// Use uint64 arithmetic: when the total iteration count exceeds
 				// MaxInt64, the counter is stored as a negative int64 but must
 				// be treated as unsigned for correct wrap-around behavior.
-				ucounter := uint64(vm.stack[frame.base+a+1].AsInt())
-				ucounter--
-				vm.stack[frame.base+a+1] = NewInt(int64(ucounter))
-				if ucounter != ^uint64(0) { // pre-decrement was > 0 (unsigned)
-					idx := vm.stack[frame.base+a].AsInt()
+				ucounter := uint64(vm.stack[frame.base+a].AsInt())
+				if ucounter > 0 {
+					vm.stack[frame.base+a] = NewInt(int64(ucounter - 1))
+					idx := vm.stack[frame.base+a+2].AsInt()
 					step := stepVal.AsInt()
 					idx += step
-					vm.stack[frame.base+a] = NewInt(idx)
-					vm.stack[frame.base+a+3] = NewInt(idx)
+					vm.stack[frame.base+a+2] = NewInt(idx)
 					if err := vm.CheckInterrupt(); err != nil {
 						return nil, err
 					}
@@ -1469,26 +1468,25 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 			} else {
 				// Float for loop
-				idx := vm.stack[frame.base+a].AsFloat()
-				limit := vm.stack[frame.base+a+1].AsFloat()
+				idx := vm.stack[frame.base+a+2].AsFloat()
+				limit := vm.stack[frame.base+a].AsFloat()
 				step := stepVal.AsFloat()
 				idx += step
-				vm.stack[frame.base+a] = NewFloat(idx)
 				if step >= 0 {
 					if idx <= limit {
 						if err := vm.CheckInterrupt(); err != nil {
 							return nil, err
 						}
+						vm.stack[frame.base+a+2] = NewFloat(idx)
 						frame.pc -= bx + 1
-						vm.stack[frame.base+a+3] = NewFloat(idx)
 					}
 				} else {
 					if idx >= limit {
 						if err := vm.CheckInterrupt(); err != nil {
 							return nil, err
 						}
+						vm.stack[frame.base+a+2] = NewFloat(idx)
 						frame.pc -= bx + 1
-						vm.stack[frame.base+a+3] = NewFloat(idx)
 					}
 				}
 			}
@@ -1561,9 +1559,6 @@ func (vm *VM) execute() ([]Value, error) {
 						// with limit = MinInt64 (always >= comparison true).
 						if stepI >= 0 {
 							// Positive step: skip loop
-							vm.stack[frame.base+a] = NewInt(initI)
-							vm.stack[frame.base+a+1] = NewInt(math.MinInt64)
-							vm.stack[frame.base+a+2] = NewInt(stepI)
 							frame.pc += bx + 1
 							break
 						}
@@ -1605,11 +1600,9 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, vm.runtimeError("bad 'for' limit (number expected, got %s)", vm.ObjTypeName(limit))
 				}
 
-				// Integer for loop: counter-based (Lua 5.4 semantics)
-				// R[A] = current index
-				// R[A+1] = remaining iterations counter = (limit - init) / step
-				// R[A+2] = step
-				// R[A+3] = visible i (copy of index)
+				// Integer for loop: counter-based (Lua 5.5 layout).
+				// After prep: R[A] = remaining iterations counter,
+				// R[A+1] = step, R[A+2] = control variable (visible i).
 				shouldSkip := false
 				if stepI >= 0 {
 					if initI > limitI {
@@ -1621,23 +1614,19 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 				}
 				if shouldSkip {
-					vm.stack[frame.base+a] = NewInt(initI)
-					vm.stack[frame.base+a+1] = NewInt(0)
-					vm.stack[frame.base+a+2] = NewInt(stepI)
 					frame.pc += bx + 1
 				} else {
 					// Compute counter using unsigned division to avoid overflow.
-					// Lua 5.4 uses: (uint64)(limit - init) / (uint64)(step)
+					// Lua 5.5 uses: (uint64)(limit - init) / (uint64)(step)
 					var counter int64
 					if stepI > 0 {
 						counter = int64(uint64(limitI-initI) / uint64(stepI))
 					} else {
 						counter = int64(uint64(initI-limitI) / uint64(-stepI))
 					}
-					vm.stack[frame.base+a] = NewInt(initI)
-					vm.stack[frame.base+a+1] = NewInt(counter)
-					vm.stack[frame.base+a+2] = NewInt(stepI)
-					vm.stack[frame.base+a+3] = NewInt(initI)
+					vm.stack[frame.base+a] = NewInt(counter)
+					vm.stack[frame.base+a+1] = NewInt(stepI)
+					vm.stack[frame.base+a+2] = NewInt(initI)
 				}
 			} else {
 				// Float for loop — validate in Lua 5.4 order: limit, step, initial
@@ -1656,24 +1645,27 @@ func (vm *VM) execute() ([]Value, error) {
 				if stepF == 0 {
 					return nil, vm.runtimeError("'for' step is zero")
 				}
-				vm.stack[frame.base+a] = NewFloat(initF)
-				vm.stack[frame.base+a+1] = NewFloat(limitF)
-				vm.stack[frame.base+a+2] = NewFloat(stepF)
 				// Use C-style float comparison semantics: NaN comparisons
 				// return false, so "should we skip?" checks fail and the
 				// loop enters. This matches Lua 5.4's luai_numlt behavior.
+				skip := false
 				if stepF >= 0 {
 					if initF > limitF {
-						frame.pc += bx + 1
-					} else {
-						vm.stack[frame.base+a+3] = NewFloat(initF)
+						skip = true
 					}
 				} else {
 					if initF < limitF {
-						frame.pc += bx + 1
-					} else {
-						vm.stack[frame.base+a+3] = NewFloat(initF)
+						skip = true
 					}
+				}
+				if skip {
+					frame.pc += bx + 1
+				} else {
+					// Lua 5.5 layout: R[A] = limit, R[A+1] = step,
+					// R[A+2] = control variable (visible i).
+					vm.stack[frame.base+a] = NewFloat(limitF)
+					vm.stack[frame.base+a+1] = NewFloat(stepF)
+					vm.stack[frame.base+a+2] = NewFloat(initF)
 				}
 			}
 

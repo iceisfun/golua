@@ -1,18 +1,22 @@
 -- Test debug.getlocal/setlocal on for-loop internal state variables
 --
--- In Lua 5.4, integer for-loops use counter-based internal state:
---   (for state) #1 = current index (same as visible i)
---   (for state) #2 = remaining iterations counter = (limit - init) / step
---   (for state) #3 = step
---   visible i      = copy of current index
+-- In Lua 5.5, integer for-loops use a 2-slot counter-based internal state and
+-- fold the visible loop variable into the control register (no separate
+-- safe-copy slot as in Lua 5.4):
+--   (for state) #1 = remaining iterations counter = (limit - init) / step
+--   (for state) #2 = step
+--   visible i      = control variable (current index)
 --
--- FORLOOP: counter--; index += step; if counter >= 0 then i = index; continue
+-- FORLOOP: if counter > 0 then counter--; i += step; continue
+--
+-- With one preceding local X the slots are:
+--   slot 1 = X,  slot 2 = counter,  slot 3 = step,  slot 4 = i
 
--- Test 1: counter representation (no preceding locals to simplify indices)
+-- Test 1: counter representation (one preceding local to anchor indices)
 do
     local counters = {}
     for i = 1, 5 do
-        local _, counter = debug.getlocal(1, 3) -- (for state) #2 = counter
+        local _, counter = debug.getlocal(1, 2) -- (for state) #1 = counter
         counters[#counters+1] = counter
     end
     assert(counters[1] == 4, "counter iter 1: expected 4, got " .. tostring(counters[1]))
@@ -27,7 +31,7 @@ end
 do
     local counters = {}
     for i = 1, 10, 2 do
-        local _, counter = debug.getlocal(1, 3)
+        local _, counter = debug.getlocal(1, 2)
         counters[#counters+1] = counter
     end
     assert(counters[1] == 4, "step2 iter 1: expected 4, got " .. tostring(counters[1]))
@@ -39,28 +43,30 @@ end
 do
     local counters = {}
     for i = 5, 1, -1 do
-        local _, counter = debug.getlocal(1, 3)
+        local _, counter = debug.getlocal(1, 2)
         counters[#counters+1] = counter
     end
     assert(counters[1] == 4, "neg step iter 1: expected 4, got " .. tostring(counters[1]))
     assert(counters[5] == 0, "neg step iter 5: expected 0, got " .. tostring(counters[5]))
 end
 
--- Test 4: state1 (index) equals visible i
+-- Test 4: the control register is the visible loop variable.
+-- No preceding local here, so slots are: 1=counter, 2=step, 3=i.
 do
     for i = 1, 5 do
-        local _, idx = debug.getlocal(1, 1)
-        assert(idx == i, "state1 index: expected " .. i .. ", got " .. tostring(idx))
+        local name, idx = debug.getlocal(1, 3)
+        assert(name == "i", "control name: expected 'i', got " .. tostring(name))
+        assert(idx == i, "control value: expected " .. i .. ", got " .. tostring(idx))
     end
 end
 
--- Test 5: setlocal on index (state1) changes future i values
+-- Test 5: setlocal on the control variable (slot 4) changes future i values
 do
     local out = {}
     for i = 1, 5 do
         out[#out+1] = i
         if i == 2 then
-            debug.setlocal(1, 2, 10)  -- set index (state1, but shifted by 'out')
+            debug.setlocal(1, 4, 10)  -- mutate control variable (shifted by 'out')
         end
     end
     assert(out[1] == 1, "setidx out[1]=" .. tostring(out[1]))
@@ -70,37 +76,37 @@ do
     assert(out[5] == 13, "setidx out[5]: expected 13, got " .. tostring(out[5]))
 end
 
--- Test 6: setlocal on counter (state2) to 0 stops the loop
+-- Test 6: setlocal on counter (slot 2) to 0 stops the loop
 do
     local out = {}
     for i = 1, 20 do
         out[#out+1] = i
         if i == 3 then
-            debug.setlocal(1, 3, 0)  -- set counter to 0 (shifted by 'out')
+            debug.setlocal(1, 2, 0)  -- set counter to 0 (shifted by 'out')
         end
     end
     assert(#out == 3, "counter=0: expected 3 elements, got " .. #out)
 end
 
--- Test 7: setlocal on counter to extend the loop
+-- Test 7: setlocal on counter (slot 2) to extend the loop
 do
     local out = {}
     for i = 1, 5 do
         out[#out+1] = i
         if i == 3 then
-            debug.setlocal(1, 3, 10)  -- extend by setting counter to 10
+            debug.setlocal(1, 2, 10)  -- extend by setting counter to 10
         end
     end
     assert(#out == 13, "counter=10: expected 13 elements, got " .. #out)
 end
 
--- Test 8: setlocal on step (state3) changes increment
+-- Test 8: setlocal on step (slot 3) changes increment
 do
     local out = {}
     for i = 1, 30 do
         out[#out+1] = i
         if i == 2 then
-            debug.setlocal(1, 4, 3)  -- set step to 3 (shifted by 'out')
+            debug.setlocal(1, 3, 3)  -- set step to 3 (shifted by 'out')
         end
         if #out > 50 then break end
     end
