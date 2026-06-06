@@ -57,6 +57,57 @@ func TestGotoIntoLocalScope(t *testing.T) {
 	}
 }
 
+// TestGotoScopeErrorLineSkipsNoops verifies the "jumps into the scope" error
+// line matches reference Lua 5.5: a trailing ';' (or labels) after the target
+// label is consumed by labelstat() before the goto is resolved, so the error
+// line is the first real statement after the label run, NOT the first ';'.
+func TestGotoScopeErrorLineSkipsNoops(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		wantLine string // expected ":LINE:" fragment in the error
+	}{
+		{
+			// label on line 3, ';' on line 4, print on line 5 -> error at line 5
+			"semicolon after label",
+			"goto L\n" +
+				"local z = 9\n" +
+				"::L:: ;\n" +
+				"print('after')\n",
+			":4:",
+		},
+		{
+			// label line 3, two empties lines 4-5, print line 6 -> error line 6
+			"multiple empties after label",
+			"goto L\n" +
+				"local z = 9\n" +
+				"::L::\n" +
+				";\n" +
+				";\n" +
+				"print('after')\n",
+			":6:",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			block, err := parser.Parse(tt.name, tt.source)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			_, err = compiler.Compile(tt.name, block)
+			if err == nil {
+				t.Fatalf("expected compile error, got success")
+			}
+			if !strings.Contains(err.Error(), "jumps into the scope") {
+				t.Fatalf("expected scope error, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantLine) {
+				t.Fatalf("expected error line %q, got: %v", tt.wantLine, err)
+			}
+		})
+	}
+}
+
 func TestGotoLabelVisibility(t *testing.T) {
 	tests := []struct {
 		name   string
