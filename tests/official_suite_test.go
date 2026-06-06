@@ -131,6 +131,9 @@ func runOfficialFile(suiteDir, file string) error {
 	v := vm.New(
 		vm.WithContext(ctx),
 		vm.WithLimits(vm.Limits{GCStepInterval: 10000}),
+		// Capture print() output into the VM buffer instead of stdout so the
+		// test run stays quiet; this runner only asserts on the run error.
+		vm.WithCaptureOutput(true),
 	)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())

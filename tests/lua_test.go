@@ -146,9 +146,12 @@ func runLuaTest(t *testing.T, filename string) {
 
 	// Run with GC stepping enabled so Go's concurrent GC collects weak table
 	// entries during tight Lua loops (needed for weak-table tests).
+	// Capture print() output into the VM buffer instead of stdout so the test
+	// run stays quiet; this runner only asserts on the run error.
 	v := vm.New(
 		vm.WithContext(ctx),
 		vm.WithLimits(vm.Limits{GCStepInterval: 10000}),
+		vm.WithCaptureOutput(true),
 	)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
@@ -185,11 +188,23 @@ func runLuaTest(t *testing.T, filename string) {
 	select {
 	case runErr := <-resultCh:
 		if runErr != nil {
+			logCapturedOutput(t, v)
 			t.Fatalf("Runtime error: %v", runErr)
 		}
 	case <-time.After(luaTestTimeout + 2*time.Second):
 		cancel()
+		logCapturedOutput(t, v)
 		t.Fatalf("Test timed out after %v (possible deadlock)", luaTestTimeout)
+	}
+}
+
+// logCapturedOutput dumps any print() output captured by the VM so failures
+// remain debuggable even though stdout is suppressed during the run.
+func logCapturedOutput(t *testing.T, v *vm.VM) {
+	t.Helper()
+	lines := v.OutputLines()
+	for _, line := range lines {
+		t.Logf("output: %s", line)
 	}
 }
 
@@ -212,9 +227,12 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 	ctx, cancel := context.WithTimeout(context.Background(), luaTestTimeout)
 	defer cancel()
 
+	// Capture print() output into the VM buffer instead of stdout so the test
+	// run stays quiet; this runner only asserts on the run error.
 	v := vm.New(
 		vm.WithContext(ctx),
 		vm.WithLimits(vm.Limits{GCStepInterval: 10000}),
+		vm.WithCaptureOutput(true),
 	)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
@@ -251,10 +269,12 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 	select {
 	case runErr := <-resultCh:
 		if runErr != nil {
+			logCapturedOutput(t, v)
 			t.Fatalf("Runtime error: %v", runErr)
 		}
 	case <-time.After(luaTestTimeout + 2*time.Second):
 		cancel()
+		logCapturedOutput(t, v)
 		t.Fatalf("Test timed out after %v (possible deadlock)", luaTestTimeout)
 	}
 }
