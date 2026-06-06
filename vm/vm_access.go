@@ -357,6 +357,88 @@ func (vm *VM) SetGCMode(mode string) string {
 	return prev
 }
 
+// gcCodeParam encodes a percentage value 'p' as a floating-point byte,
+// mirroring Lua 5.5's luaO_codeparam (excess-7 exponent, normalized mantissa).
+func gcCodeParam(p uint64) byte {
+	const maxP = uint64(0x1F) << (0xF - 7 - 1) // overflow threshold (times 100 below)
+	if p >= maxP*100 {
+		return 0xFF
+	}
+	p = (p*128 + 99) / 100 // round up the division
+	if p < 0x10 {          // subnormal
+		return byte(p)
+	}
+	// preserve 5 bits in 'p'
+	logv := uint64(gcCeilLog2(p+1) - 5)
+	return byte(((p >> logv) - 0x10) | ((logv + 1) << 4))
+}
+
+// gcApplyParam computes 'p'*'x' where 'p' is a floating-point byte, mirroring
+// Lua 5.5's luaO_applyparam. Used to read back GC params (applied to base 100).
+func gcApplyParam(p byte, x int64) int64 {
+	const maxMem = int64(^uint64(0) >> 1) // MAX_LMEM
+	m := int64(p & 0xF)                   // mantissa
+	e := int(p >> 4)                      // exponent
+	if e > 0 {                            // normalized
+		e--
+		m += 0x10
+	}
+	e -= 7 // correct excess-7
+	if e >= 0 {
+		if x < (maxMem/0x1F)>>uint(e) {
+			return (x * m) << uint(e)
+		}
+		return maxMem
+	}
+	e = -e
+	if x < maxMem/0x1F {
+		return (x * m) >> uint(e)
+	} else if (x >> uint(e)) < maxMem/0x1F {
+		return (x >> uint(e)) * m
+	}
+	return maxMem
+}
+
+// gcCeilLog2 returns ceil(log2(x)) for x >= 1, mirroring luaO_ceillog2.
+func gcCeilLog2(x uint64) uint {
+	l := uint(0)
+	x--
+	for x >= 256 {
+		l += 8
+		x >>= 8
+	}
+	for x > 0 {
+		l++
+		x >>= 1
+	}
+	return l
+}
+
+// GCParam reads the current encoded value of GC tunable 'name' applied to base
+// 100 (matching Lua 5.5 collectgarbage("param", name) read semantics). 'def' is
+// the default value reported when the param has not been set this VM.
+func (vm *VM) GCParam(name string, def int64) int64 {
+	if vm.gcParams != nil {
+		if b, ok := vm.gcParams[name]; ok {
+			return gcApplyParam(b, 100)
+		}
+	}
+	return def
+}
+
+// SetGCParam records GC tunable 'name' as the encoded form of 'value' so a
+// subsequent GCParam read round-trips (with Lua 5.5's floating-byte
+// quantization). Storage is bookkeeping only; Go's GC is unaffected.
+func (vm *VM) SetGCParam(name string, value int64) {
+	if vm.gcParams == nil {
+		vm.gcParams = make(map[string]byte, 6)
+	}
+	if value < 0 {
+		value = 0
+	}
+	vm.gcParams[name] = gcCodeParam(uint64(value))
+}
+
 // GCRunning returns whether the GC is in "running" state.
 func (vm *VM) GCRunning() bool {
 	return vm.gcRunning

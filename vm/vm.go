@@ -156,6 +156,7 @@ type VM struct {
 	gcStepCounter int       // Instruction counter for GC stepping (counts up to GCStepInterval)
 	gcMode        string    // Current GC mode: "generational" (default) or "incremental"
 	gcRunning     bool      // Whether GC is "running" (tracked for collectgarbage("isrunning"))
+	gcParams      map[string]byte // Encoded GC tunables for collectgarbage("param", ...) round-trip
 
 	// Output capture
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout

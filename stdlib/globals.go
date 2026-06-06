@@ -547,15 +547,31 @@ func luaCollectgarbage(v *vm.VM) int {
 		if !ok {
 			callerArgError(v, 2, "collectgarbage", fmt.Sprintf("invalid option '%s'", paramName))
 		}
+		// Read the current value (the encoded param applied to base 100, or the
+		// reference default when never set this VM). This is returned even when a
+		// new value is also being set, matching Lua 5.5's lua_gc(LUA_GCPARAM).
+		curVal := v.GCParam(paramName, defaultVal)
 		// If a third argument is provided (and not nil), validate it's a number
+		// and store it so a subsequent read round-trips. Go's GC is unaffected.
 		arg3 := v.Get(3)
 		if !arg3.IsNil() {
 			if !arg3.IsNumber() {
 				callerArgError(v, 3, "collectgarbage", fmt.Sprintf("number expected%s", gotDesc(v, 3)))
 			}
+			var setVal int64
+			if arg3.IsInt() {
+				setVal = arg3.AsInt()
+			} else {
+				f := arg3.AsFloat()
+				if i := int64(f); float64(i) == f {
+					setVal = i
+				} else {
+					callerArgError(v, 3, "collectgarbage", "number has no integer representation")
+				}
+			}
+			v.SetGCParam(paramName, setVal)
 		}
-		// Return the current (default) value; setting has no effect in Go's GC
-		v.Set(0, vm.NewInt(defaultVal))
+		v.Set(0, vm.NewInt(curVal))
 		return 1
 	case "step":
 		// Lua spec: returns true only when the step completes a full GC cycle.
