@@ -520,7 +520,12 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), line)
 
 	// Loop variables start at base+3 (the first is the control variable).
+	// Record their index in fs.locals now, before the body adds more locals:
+	// computing it after compileBlock would include body locals that are still
+	// active at the fixup point (leaveScope removes them later), which would
+	// make the visibility fixup below grab the wrong entries.
 	nVars := len(s.Names)
+	loopVarStart := len(fs.locals)
 	for i, name := range s.Names {
 		reg := base + 3 + i
 		fs.freeReg = reg + 1
@@ -583,8 +588,8 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// Fix loop variable visibility: they should NOT be visible during the
 	// TFORCALL iterator invocation (matching Lua 5.4 where loop vars start
 	// after TFORCALL). Emit separate debug entries for the body range only.
+	// loopVarStart was captured before the body was compiled (see above).
 	bodyEnd := tforCallPC // exclusive: body ends just before TFORCALL
-	loopVarStart := len(fs.locals) - nVars
 	for i := 0; i < nVars; i++ {
 		lv := &fs.locals[loopVarStart+i]
 		fs.proto.Locals = append(fs.proto.Locals, LocalVar{
