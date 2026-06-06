@@ -118,9 +118,9 @@ type VM struct {
 	// Message handler for xpcall: called inside ProtectedCall's recovery
 	// BEFORE the call stack is truncated, so debug.traceback can see
 	// the full stack. Set by xpcall and cleared after use.
-	msgHandler       Value
-	msgHandlerResult Value
-	msgHandlerUsed   bool
+	msgHandler         Value
+	msgHandlerResult   Value
+	msgHandlerUsed     bool
 	lastErrorCallStack []callFrame // saved call stack from the last error
 
 	// inMsgHandler tracks whether we're inside an xpcall message handler.
@@ -620,7 +620,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	}
 
 	// Check for __call metamethod
-	op := "__call"
+	op := MetaCall
 	mm := vm.getMetafield(fn, op)
 	if !mm.IsNil() {
 		// New args: prepend fn (self)
@@ -677,7 +677,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 	}
 
 	// Check for __call metamethod
-	mm := vm.getMetafield(fn, "__call")
+	mm := vm.getMetafield(fn, MetaCall)
 	if !mm.IsNil() {
 		newArgs := make([]Value, len(args)+1)
 		newArgs[0] = fn
@@ -1144,7 +1144,7 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 	// Resolve __call chain: each level prepends self
 	cur := fn
 	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
-		mm := vm.getMetafield(cur, "__call")
+		mm := vm.getMetafield(cur, MetaCall)
 		if mm.IsNil() {
 			return Nil, vm.runtimeError("attempt to call a %s value (metamethod '%s')", vm.ObjTypeName(fn), name)
 		}

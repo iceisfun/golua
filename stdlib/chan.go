@@ -13,7 +13,7 @@ var channelHandleMeta *vm.Table
 
 func init() {
 	channelHandleMeta = vm.NewEmptyTable()
-	channelHandleMeta.SetString("__name", vm.NewString("channel"))
+	channelHandleMeta.SetString(vm.MetaName, vm.NewString("channel"))
 }
 
 // chanRegistry is the per-VM channel registry, stored in VM internal state.

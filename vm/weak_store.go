@@ -11,9 +11,9 @@ import (
 type weakTableMode byte
 
 const (
-	weakNone      weakTableMode = 0   // strong table (default)
-	weakKeys      weakTableMode = 'k' // weak keys only
-	weakValues    weakTableMode = 'v' // weak values only
+	weakNone       weakTableMode = 0   // strong table (default)
+	weakKeys       weakTableMode = 'k' // weak keys only
+	weakValues     weakTableMode = 'v' // weak values only
 	weakKeysValues weakTableMode = 'b' // both weak keys and weak values
 )
 
@@ -372,8 +372,8 @@ func (ws *weakStore) migrate() []struct{ k, v Value } {
 // Global weak table registry — tracks all tables with weak stores so that
 // ProcessGcFinalizers can sweep them after GC cycles.
 var (
-	weakTablesMu   sync.Mutex
-	weakTablePtrs  []weak.Pointer[Table]
+	weakTablesMu  sync.Mutex
+	weakTablePtrs []weak.Pointer[Table]
 )
 
 // registerWeakTable adds a table to the global weak table registry.

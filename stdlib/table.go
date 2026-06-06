@@ -35,9 +35,9 @@ func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 	if val.IsTable() {
 		return val
 	}
-	if ((need&tabR) == 0 || !v.GetMetafield(val, "__index").IsNil()) &&
-		((need&tabW) == 0 || !v.GetMetafield(val, "__newindex").IsNil()) &&
-		((need&tabL) == 0 || !v.GetMetafield(val, "__len").IsNil()) {
+	if ((need&tabR) == 0 || !v.GetMetafield(val, vm.MetaIndex).IsNil()) &&
+		((need&tabW) == 0 || !v.GetMetafield(val, vm.MetaNewIndex).IsNil()) &&
+		((need&tabL) == 0 || !v.GetMetafield(val, vm.MetaLen).IsNil()) {
 		return val
 	}
 	got := v.ObjTypeName(val)

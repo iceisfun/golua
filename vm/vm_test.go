@@ -291,8 +291,8 @@ func TestLogicalAnd(t *testing.T) {
 
 func TestLogicalOr(t *testing.T) {
 	tests := []struct {
-		src      string
-		expectI  int64
+		src         string
+		expectI     int64
 		expectFalsy bool
 	}{
 		{"return 1 or 2", 1, false},

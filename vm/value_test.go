@@ -502,8 +502,8 @@ func TestStringRepresentation(t *testing.T) {
 		{NewInt(-1), "-1"},
 		{NewInt(0), "0"},
 		{NewFloat(3.14), "3.14"},
-		{NewFloat(1.0), "1.0"},        // whole float gets .1f format
-		{NewFloat(0.0), "0.0"},        // zero float
+		{NewFloat(1.0), "1.0"}, // whole float gets .1f format
+		{NewFloat(0.0), "0.0"}, // zero float
 		{NewString("hello"), "hello"},
 		{NewString(""), ""},
 	}

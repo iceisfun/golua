@@ -1172,7 +1172,7 @@ func (vm *VM) GetRegistry() LuaTable {
 		// hooks differently, but the entry must exist for conformance.
 		hookKey := NewEmptyTable()
 		hookMt := NewEmptyTable()
-		hookMt.SetString("__mode", NewString("k"))
+		hookMt.SetString(MetaMode, NewString("k"))
 		hookKey.SetMetatable(hookMt)
 		_ = vm.registry.Set(NewString("_HOOKKEY"), NewTable(hookKey))
 	}

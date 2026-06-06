@@ -38,15 +38,15 @@ func dumpProto(p *compiler.Proto, strip bool) []byte {
 	d := &dumper{w: &buf, strip: strip}
 
 	// Header
-	buf.Write([]byte("\x1bLua")) // signature
-	buf.WriteByte(0x54)          // version 5.4
-	buf.WriteByte(0)             // format
+	buf.Write([]byte("\x1bLua"))            // signature
+	buf.WriteByte(0x54)                     // version 5.4
+	buf.WriteByte(0)                        // format
 	buf.Write([]byte("\x19\x93\r\n\x1a\n")) // LUAC_DATA
-	buf.WriteByte(4)             // instruction size
-	buf.WriteByte(8)             // integer size
-	buf.WriteByte(8)             // number (float) size
-	d.writeInt(0x5678)           // LUAC_INT check
-	d.writeFloat(370.5)          // LUAC_NUM check
+	buf.WriteByte(4)                        // instruction size
+	buf.WriteByte(8)                        // integer size
+	buf.WriteByte(8)                        // number (float) size
+	d.writeInt(0x5678)                      // LUAC_INT check
+	d.writeFloat(370.5)                     // LUAC_NUM check
 
 	// One upvalue for the top-level function
 	buf.WriteByte(byte(len(p.Upvalues)))

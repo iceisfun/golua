@@ -32,12 +32,12 @@ const DefaultMaxMetaDepth = 2000
 // Limits configures execution limits for the VM.
 // Zero values mean no limit (except MaxMetaDepth, where 0 means use DefaultMaxMetaDepth).
 type Limits struct {
-	MaxCallDepth    int                    // Maximum call stack depth (0 = DefaultMaxCallDepth, negative = unlimited)
-	MaxStackSlots   int                    // Maximum stack slots (0 = DefaultMaxStackSlots, negative = unlimited)
-	MaxInstructions int64                  // Maximum checkpoint visits (0 = unlimited)
-	MaxMetaDepth    int                    // Maximum __index/__newindex chain depth (0 = DefaultMaxMetaDepth)
-	MinGCInterval   time.Duration          // Minimum interval between Lua-triggered GC (0 = no limit, negative = disable)
-	GCStepInterval  int                    // Run runtime.GC() every N instructions (0 = off)
+	MaxCallDepth    int                     // Maximum call stack depth (0 = DefaultMaxCallDepth, negative = unlimited)
+	MaxStackSlots   int                     // Maximum stack slots (0 = DefaultMaxStackSlots, negative = unlimited)
+	MaxInstructions int64                   // Maximum checkpoint visits (0 = unlimited)
+	MaxMetaDepth    int                     // Maximum __index/__newindex chain depth (0 = DefaultMaxMetaDepth)
+	MinGCInterval   time.Duration           // Minimum interval between Lua-triggered GC (0 = no limit, negative = disable)
+	GCStepInterval  int                     // Run runtime.GC() every N instructions (0 = off)
 	CompilerLimits  compiler.CompilerLimits // Compiler limits passed to load()/dofile() (zero = defaults)
 }
 

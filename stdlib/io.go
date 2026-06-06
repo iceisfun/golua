@@ -41,14 +41,14 @@ func getIoState(v *vm.VM) *ioState {
 	methods.SetString("flush", vm.NewNativeFunc(fileFlush))
 
 	meta := vm.NewEmptyTable()
-	meta.SetString("__name", vm.NewString("FILE*"))
-	meta.SetString("__index", vm.NewTable(methods))
-	meta.SetString("__tostring", vm.NewNativeFunc(fileToString))
+	meta.SetString(vm.MetaName, vm.NewString("FILE*"))
+	meta.SetString(vm.MetaIndex, vm.NewTable(methods))
+	meta.SetString(vm.MetaTostring, vm.NewNativeFunc(fileToString))
 	// __close and __gc silently close the file if not already closed.
 	// This is needed for to-be-closed variables (generic for with io.lines).
 	closeGC := vm.NewNativeFunc(fileCloseGC)
-	meta.SetString("__close", closeGC)
-	meta.SetString("__gc", closeGC)
+	meta.SetString(vm.MetaClose, closeGC)
+	meta.SetString(vm.MetaGC, closeGC)
 
 	s := &ioState{meta: meta, methods: methods}
 	v.SetInternalState("io", s)

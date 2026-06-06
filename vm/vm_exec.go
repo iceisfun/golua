@@ -274,7 +274,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return nil, err
 				}
 				vm.stack[frame.base+a] = val
-			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, key)
 				if err != nil {
 					return nil, err
@@ -306,7 +306,7 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 					vm.stack[frame.base+a] = val
 				}
-			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				// Type metatable __index
 				val, err := vm.resolveIndex(mm, table, key)
 				if err != nil {
@@ -331,7 +331,7 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 					vm.stack[frame.base+a] = val
 				}
-			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewInt(int64(c)))
 				if err != nil {
 					return nil, err
@@ -357,7 +357,7 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 					vm.stack[frame.base+a] = val
 				}
-			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewString(key))
 				if err != nil {
 					return nil, err
@@ -401,7 +401,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else if err := vm.tableSet(table.ptr.(LuaTable), key, value); err != nil {
 					return nil, err
 				}
-			} else if mm := vm.getMetafield(table, "__newindex"); !mm.IsNil() {
+			} else if mm := vm.getMetafield(table, MetaNewIndex); !mm.IsNil() {
 				if mm.IsFunction() || mm.IsNativeFunc() {
 					_, err := vm.callMetamethod3("newindex", mm, table, key, value)
 					if err != nil {
@@ -450,7 +450,7 @@ func (vm *VM) execute() ([]Value, error) {
 						return nil, err
 					}
 				}
-			} else if mm := vm.getMetafield(table, "__newindex"); !mm.IsNil() {
+			} else if mm := vm.getMetafield(table, MetaNewIndex); !mm.IsNil() {
 				if mm.IsFunction() || mm.IsNativeFunc() {
 					_, err := vm.callMetamethod3("newindex", mm, table, NewInt(int64(b)), value)
 					if err != nil {
@@ -501,7 +501,7 @@ func (vm *VM) execute() ([]Value, error) {
 						return nil, err
 					}
 				}
-			} else if mm := vm.getMetafield(table, "__newindex"); !mm.IsNil() {
+			} else if mm := vm.getMetafield(table, MetaNewIndex); !mm.IsNil() {
 				if mm.IsFunction() || mm.IsNativeFunc() {
 					_, err := vm.callMetamethod3("newindex", mm, table, NewString(key), value)
 					if err != nil {
@@ -613,7 +613,7 @@ func (vm *VM) execute() ([]Value, error) {
 				} else {
 					return nil, vm.runtimeError("attempt to index a userdata value")
 				}
-			} else if mm := vm.getMetafield(table, "__index"); !mm.IsNil() {
+			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewString(key))
 				if err != nil {
 					return nil, err
@@ -639,7 +639,7 @@ func (vm *VM) execute() ([]Value, error) {
 				// tag must come from MMBINI rather than being hardcoded. The
 				// MMBINI carries the user-written immediate (un-negated) in
 				// its sB field — that's the value the metamethod must see.
-				mmName := "__add"
+				mmName := MetaAdd
 				immForMM := int64(sc)
 				flip := false
 				if frame.pc < len(code) {
@@ -656,7 +656,7 @@ func (vm *VM) execute() ([]Value, error) {
 					arg1, arg2 = immVal, v
 				}
 				if mm := vm.getArithMetamethod(arg1, arg2, mmName); !mm.IsNil() {
-					result, err := vm.callMetamethod(mmName[2:], mm, arg1, arg2)
+					result, err := vm.callMetamethod(MetaEvent(mmName), mm, arg1, arg2)
 					if err != nil {
 						return nil, err
 					}
@@ -849,7 +849,7 @@ func (vm *VM) execute() ([]Value, error) {
 					}
 					return nil, vm.runtimeError("attempt to perform arithmetic on a %s value", vm.ObjTypeName(right))
 				}
-				result, err := vm.callMetamethod(mmName[2:], mm, left, right)
+				result, err := vm.callMetamethod(MetaEvent(mmName), mm, left, right)
 				if err != nil {
 					return nil, err
 				}
@@ -865,8 +865,8 @@ func (vm *VM) execute() ([]Value, error) {
 				} else {
 					vm.stack[frame.base+a] = NewFloat(-v.AsFloat())
 				}
-			} else if mm := vm.getMetafield(v, "__unm"); !mm.IsNil() {
-				result, err := vm.callMetamethod("unm", mm, v, v)
+			} else if mm := vm.getMetafield(v, MetaUnm); !mm.IsNil() {
+				result, err := vm.callMetamethod(MetaEvent(MetaUnm), mm, v, v)
 				if err != nil {
 					return nil, err
 				}
@@ -887,8 +887,8 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 			}
 			if !done {
-				if mm := vm.getMetafield(v, "__bnot"); !mm.IsNil() {
-					result, err := vm.callMetamethod("bnot", mm, v, v)
+				if mm := vm.getMetafield(v, MetaBNot); !mm.IsNil() {
+					result, err := vm.callMetamethod(MetaEvent(MetaBNot), mm, v, v)
 					if err != nil {
 						return nil, err
 					}
@@ -913,10 +913,10 @@ func (vm *VM) execute() ([]Value, error) {
 				vm.stack[frame.base+a] = NewInt(int64(len(v.AsString())))
 			} else {
 				// Check for __len metamethod
-				op := "__len"
+				op := MetaLen
 				mm := vm.getMetafield(v, op)
 				if !mm.IsNil() {
-					res, err := vm.callMetamethod("len", mm, v, v)
+					res, err := vm.callMetamethod(MetaEvent(MetaLen), mm, v, v)
 					if err != nil {
 						return nil, err
 					}
@@ -1340,7 +1340,7 @@ func (vm *VM) execute() ([]Value, error) {
 					return results, nil
 				} else {
 					// Check for __call metamethod
-					op := "__call"
+					op := MetaCall
 					mm := vm.getMetafield(fn, op)
 					if !mm.IsNil() {
 						// Create new args with self (fn) prepended
@@ -2076,7 +2076,7 @@ dispatch:
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 	} else {
 		// Check for __call metamethod
-		mm := vm.getMetafield(fn, "__call")
+		mm := vm.getMetafield(fn, MetaCall)
 		if mm.IsNil() {
 			return vm.runtimeError("attempt to call a %s value%s", vm.ObjTypeName(fn), vm.varInfo(a))
 		}

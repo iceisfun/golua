@@ -113,7 +113,7 @@ func luaToString(v *vm.VM) int {
 		mt = v.GetTypeMeta(val)
 	}
 	if mt != nil {
-		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+		if ts := mt.Get(vm.NewString(vm.MetaTostring)); !ts.IsNil() {
 			exitNonYieldable := v.EnterNonYieldable()
 			defer exitNonYieldable()
 			// Save lastErrorCallStack so the inner ProtectedCall doesn't
@@ -570,7 +570,7 @@ func luaPairs(v *vm.VM) int {
 	}
 	arg := v.Get(1)
 
-	if mp := v.GetMetafield(arg, "__pairs"); !mp.IsNil() {
+	if mp := v.GetMetafield(arg, vm.MetaPairs); !mp.IsNil() {
 		results, err := v.ProtectedCall(mp, []vm.Value{arg})
 		if err != nil {
 			panic(err)
@@ -783,7 +783,7 @@ func luaGetmetatable(v *vm.VM) int {
 		mt := val.AsTable().Metatable()
 		if mt != nil {
 			// Check for __metatable field - if present, return that instead
-			protected := mt.Get(vm.NewString("__metatable"))
+			protected := mt.Get(vm.NewString(vm.MetaMetatable))
 			if !protected.IsNil() {
 				v.Set(0, protected)
 				return 1
@@ -798,7 +798,7 @@ func luaGetmetatable(v *vm.VM) int {
 	if ud := val.AsUserdata(); ud != nil {
 		if mt := ud.Metatable(); mt != nil {
 			// Check for __metatable field - if present, return that instead
-			protected := mt.Get(vm.NewString("__metatable"))
+			protected := mt.Get(vm.NewString(vm.MetaMetatable))
 			if !protected.IsNil() {
 				v.Set(0, protected)
 				return 1
@@ -812,7 +812,7 @@ func luaGetmetatable(v *vm.VM) int {
 	// Check type metatables for non-table types (and threads)
 	if mt := v.GetTypeMeta(val); mt != nil {
 		// Check for __metatable field
-		protected := mt.Get(vm.NewString("__metatable"))
+		protected := mt.Get(vm.NewString(vm.MetaMetatable))
 		if !protected.IsNil() {
 			v.Set(0, protected)
 			return 1
@@ -835,7 +835,7 @@ func luaSetmetatable(v *vm.VM) int {
 	}
 	// Check __metatable protection on existing metatable
 	if existingMT := tbl.Metatable(); existingMT != nil {
-		if !existingMT.Get(vm.NewString("__metatable")).IsNil() {
+		if !existingMT.Get(vm.NewString(vm.MetaMetatable)).IsNil() {
 			panic("cannot change a protected metatable")
 		}
 	}
@@ -867,7 +867,7 @@ func tolstring(v *vm.VM, val vm.Value) string {
 		mt = v.GetTypeMeta(val)
 	}
 	if mt != nil {
-		if ts := mt.Get(vm.NewString("__tostring")); !ts.IsNil() {
+		if ts := mt.Get(vm.NewString(vm.MetaTostring)); !ts.IsNil() {
 			exitNonYieldable := v.EnterNonYieldable()
 			results, err := v.ProtectedCall(ts, []vm.Value{val})
 			exitNonYieldable()
@@ -926,7 +926,7 @@ func valueToString(val vm.Value) string {
 		}
 		// Check for __name metamethod (used when __tostring is absent)
 		if mt := tbl.Metatable(); mt != nil {
-			if name := mt.Get(vm.NewString("__name")); name.IsString() {
+			if name := mt.Get(vm.NewString(vm.MetaName)); name.IsString() {
 				return fmt.Sprintf("%s: %p", name.AsString(), tbl)
 			}
 		}
@@ -938,7 +938,7 @@ func valueToString(val vm.Value) string {
 	case val.IsUserdata():
 		ud := val.AsUserdata()
 		if mt := ud.Metatable(); mt != nil {
-			if name := mt.Get(vm.NewString("__name")); name.IsString() {
+			if name := mt.Get(vm.NewString(vm.MetaName)); name.IsString() {
 				return fmt.Sprintf("%s: %p", name.AsString(), ud)
 			}
 		}

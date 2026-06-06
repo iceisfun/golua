@@ -724,4 +724,3 @@ func setProtoSource(proto *compiler.Proto, source string) {
 		setProtoSource(child, source)
 	}
 }
-
