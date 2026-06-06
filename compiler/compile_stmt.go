@@ -1082,6 +1082,13 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 				remaining = append(remaining, pg)
 				continue
 			}
+			// Validate: goto must not jump past a Lua 5.5 global declaration
+			// into a non-block-end label (treated like a local declaration).
+			if pg.globalBarrier != "" && !atBlockEnd {
+				c.errorAtLine(afterLine, "<goto %s> at line %d jumps into the scope of '%s'", pg.name, pg.line, pg.globalBarrier)
+				remaining = append(remaining, pg)
+				continue
+			}
 			// Patch placeholder OP_CLOSE if one was emitted
 			if pg.closePC >= 0 && labelNLocals < pg.nLocals {
 				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(fs.regBaseForLocals(labelNLocals))
@@ -1217,8 +1224,15 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 		if len(s.Attribs) > 0 {
 			attrib = s.Attribs[0]
 		}
+		if attrib == attribClose {
+			c.error(s, "global variables cannot be to-be-closed")
+			return
+		}
 		ge.star = true
 		ge.starAttr = attrib
+		// A `global *` declaration is scope-creating: a goto cannot jump
+		// past it into a non-block-end label (reported as scope of '*').
+		c.markGlobalBarrier("*")
 		return // global * is a directive, no codegen
 	}
 
@@ -1235,6 +1249,9 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 			ge.names = make(map[string]string)
 		}
 		ge.names[name.Name] = attrib
+		// A named global declaration is scope-creating for goto resolution,
+		// just like a local declaration.
+		c.markGlobalBarrier(name.Name)
 
 		// Codegen: assign initial value to _ENV[name]
 		if i < len(s.Values) {
@@ -1280,6 +1297,8 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 		ge.names = make(map[string]string)
 	}
 	ge.names[s.Name.Name] = ""
+	// A global function declaration is scope-creating for goto resolution.
+	c.markGlobalBarrier(s.Name.Name)
 
 	protoIdx := c.compileFunc(s.Func, line)
 	closureLine := s.Func.EndLine

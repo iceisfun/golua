@@ -255,3 +255,63 @@ func TestGotoValidCases(t *testing.T) {
 		})
 	}
 }
+
+// TestGotoIntoGlobalScope verifies Lua 5.5 treats `global x` / `global *` /
+// `global function` declarations as scope-creating for goto resolution: a goto
+// that appears before such a declaration cannot jump past it into a
+// non-block-end label, matching reference (testes/goto.lua line 30 and kin).
+func TestGotoIntoGlobalScope(t *testing.T) {
+	errcases := []struct {
+		name, source, substr string
+	}{
+		{
+			"goto over global *",
+			` goto l2; global *; ::l1:: ::l2:: print(3) `,
+			"jumps into the scope of '*'",
+		},
+		{
+			"goto over named global",
+			` goto l2; global X; ::l2:: ;return 1 `,
+			"jumps into the scope of 'X'",
+		},
+		{
+			"goto over global function",
+			` goto l2; global function f() end ::l2:: ;return 1 `,
+			"jumps into the scope of 'f'",
+		},
+		{
+			"global <close> star rejected",
+			`global <close> *`,
+			"global variables cannot be to-be-closed",
+		},
+	}
+	for _, tt := range errcases {
+		t.Run(tt.name, func(t *testing.T) {
+			expectCompileError(t, tt.source, tt.name, tt.substr)
+		})
+	}
+
+	// Valid cases: block-end labels and globals that go out of scope before
+	// the label do NOT create a barrier.
+	okcases := []struct {
+		name, source string
+	}{
+		{
+			"goto over global * to block-end label",
+			`do goto l2; global *; ::l2:: end`,
+		},
+		{
+			"goto over named global to block-end label",
+			`do goto l2; global X; ::l2:: end`,
+		},
+		{
+			"global in inner block, label outside",
+			`goto l2; do global *; end ::l2:: ;return 1`,
+		},
+	}
+	for _, tt := range okcases {
+		t.Run(tt.name, func(t *testing.T) {
+			runLuaSource(t, tt.source, tt.name)
+		})
+	}
+}

@@ -225,6 +225,16 @@ type pendingGoto struct {
 	nLocals int // number of locals at goto
 	line    int
 	closePC int // pc of placeholder OP_CLOSE (-1 if none)
+
+	// globalBarrier records a Lua 5.5 global declaration (`global x` or
+	// `global *`) that appeared after this goto in the same active block.
+	// Reference Lua treats global declarations as scope-creating, so a goto
+	// cannot jump past one into a non-block-end label. Empty when no barrier;
+	// the special value "*" denotes a wildcard `global *` declaration.
+	globalBarrier string
+	// barrierDepth is the scope nesting depth (len(scopes)) at which the
+	// barrier global was declared, used to clear it when that scope exits.
+	barrierDepth int
 }
 
 // globalEnv tracks Lua 5.5 compile-time global declarations for the
@@ -956,6 +966,13 @@ func (c *compiler) leaveScope(line int) {
 			}
 			pg.nLocals = scope.nLocals
 		}
+		// A global declared inside the closing scope goes out of scope, so a
+		// goto that escapes that scope is no longer barred by it. The scope
+		// has already been popped, so it sat at depth len(scopes)+1.
+		if pg.globalBarrier != "" && pg.barrierDepth > len(fs.scopes) {
+			pg.globalBarrier = ""
+			pg.barrierDepth = 0
+		}
 	}
 
 	// Patch break jumps
@@ -992,6 +1009,27 @@ func (c *compiler) patchJump(jpc int) {
 		return
 	}
 	fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
+}
+
+// markGlobalBarrier records a Lua 5.5 global declaration as a scope barrier
+// for any goto pending at the current block level. Reference Lua treats a
+// `global x` / `global *` declaration like a variable declaration: a goto that
+// appears before it cannot jump past it into a (non-block-end) label, raising
+// "<goto g> at line N jumps into the scope of 'x'" (or '*' for a wildcard).
+// barrierName is the declared name, or "*" for a wildcard declaration.
+func (c *compiler) markGlobalBarrier(barrierName string) {
+	fs := c.fs
+	depth := len(fs.scopes)
+	for i := range fs.pendGotos {
+		pg := &fs.pendGotos[i]
+		// Only gotos at this block level (same nActVar) are affected; a goto
+		// from a deeper, already-closed scope has been moved out and a goto
+		// from an enclosing scope cannot target a label inside this one.
+		if pg.globalBarrier == "" && pg.nLocals >= fs.nActVar {
+			pg.globalBarrier = barrierName
+			pg.barrierDepth = depth
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
