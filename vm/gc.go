@@ -7,8 +7,9 @@ import (
 )
 
 // gcEntry is a pending __gc finalization queued by Go's garbage collector.
+// obj is the value passed to the __gc metamethod (a table or userdata).
 type gcEntry struct {
-	table  LuaTable
+	obj    Value
 	gcFunc Value
 }
 
@@ -45,7 +46,37 @@ func (vm *VM) RegisterGcFinalizer(t *Table) {
 			return
 		}
 		q.mu.Lock()
-		q.pending = append(q.pending, gcEntry{table: t, gcFunc: gcFunc})
+		q.pending = append(q.pending, gcEntry{obj: NewTable(t), gcFunc: gcFunc})
+		q.mu.Unlock()
+	})
+}
+
+// RegisterGcFinalizerUserdata checks if u has a __gc metamethod and registers a
+// Go finalizer if so. Safe to call multiple times (idempotent). This is the
+// userdata analog of RegisterGcFinalizer; full userdata (e.g. io file handles)
+// can carry a __gc metamethod that must run when the value becomes unreachable.
+//
+// Lua 5.4 Reference: §2.5.3 (garbage-collection metamethods).
+func (vm *VM) RegisterGcFinalizerUserdata(u *Userdata) {
+	mt := u.Metatable()
+	if mt == nil {
+		return
+	}
+	if mt.Get(metaGc).IsNil() {
+		return
+	}
+	q := vm.gcQueue
+	runtime.SetFinalizer(u, func(u *Userdata) {
+		mt := u.Metatable()
+		if mt == nil {
+			return
+		}
+		gcFunc := mt.Get(metaGc)
+		if gcFunc.IsNil() {
+			return
+		}
+		q.mu.Lock()
+		q.pending = append(q.pending, gcEntry{obj: userdataValue(u), gcFunc: gcFunc})
 		q.mu.Unlock()
 	})
 }
@@ -118,7 +149,7 @@ func (vm *VM) ProcessGcFinalizers() {
 		// prevents yielding. Mark the context as non-yieldable.
 		exit := vm.EnterNonYieldable()
 		// Lua 5.4: errors in __gc are not propagated
-		vm.ProtectedCall(entry.gcFunc, []Value{NewTable(entry.table)})
+		vm.ProtectedCall(entry.gcFunc, []Value{entry.obj})
 		exit()
 	}
 }
@@ -140,7 +171,7 @@ func (vm *VM) processGcFinalizersOnly() {
 
 	for _, entry := range entries {
 		exit := vm.EnterNonYieldable()
-		vm.ProtectedCall(entry.gcFunc, []Value{NewTable(entry.table)})
+		vm.ProtectedCall(entry.gcFunc, []Value{entry.obj})
 		exit()
 	}
 }

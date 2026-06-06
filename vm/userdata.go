@@ -36,6 +36,11 @@ func NewUserdataValueUV(data interface{}, mt LuaTable, nuvalue int) Value {
 	return Value{typ: typeUpvalue, ptr: ud}
 }
 
+// userdataValue wraps an existing *Userdata back into a Value of userdata type.
+func userdataValue(u *Userdata) Value {
+	return Value{typ: typeUpvalue, ptr: u}
+}
+
 // IsUserdata reports whether v is a full userdata value (as opposed to a
 // lightuserdata/upvalue-id).
 func (v Value) IsUserdata() bool {

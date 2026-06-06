@@ -86,12 +86,19 @@ type fileHandle struct {
 // makeFileHandle creates a file handle userdata wrapping a LuaFile.
 func makeFileHandle(v *vm.VM, f vm.LuaFile) vm.Value {
 	fh := &fileHandle{file: f}
-	return vm.NewUserdataValueUV(fh, getIoState(v).meta, 0)
+	val := vm.NewUserdataValueUV(fh, getIoState(v).meta, 0)
+	// Register the __gc finalizer so an unreferenced (never explicitly closed)
+	// file handle is closed — and its buffered writes flushed — when collected,
+	// matching reference Lua's file __gc behavior.
+	v.RegisterGcFinalizerUserdata(val.AsUserdata())
+	return val
 }
 
 func makeFileHandleWithClose(v *vm.VM, f vm.LuaFile, closeFn func(*vm.VM, *fileHandle) int, gcCloseFn func(*fileHandle)) vm.Value {
 	fh := &fileHandle{file: f, closeFn: closeFn, gcCloseFn: gcCloseFn}
-	return vm.NewUserdataValueUV(fh, getIoState(v).meta, 0)
+	val := vm.NewUserdataValueUV(fh, getIoState(v).meta, 0)
+	v.RegisterGcFinalizerUserdata(val.AsUserdata())
+	return val
 }
 
 // fileArgError raises a "bad argument" error for file operations.
