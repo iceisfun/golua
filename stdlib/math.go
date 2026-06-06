@@ -230,12 +230,6 @@ func mathCos(v *vm.VM) int {
 	return 1
 }
 
-func mathCosh(v *vm.VM) int {
-	n := getNumber(v, 1, "math.cosh")
-	v.Set(0, vm.NewFloat(math.Cosh(n)))
-	return 1
-}
-
 func mathDeg(v *vm.VM) int {
 	n := getNumber(v, 1, "math.deg")
 	// Match C's math_deg: x * (180/PI), so the constant folds first and a
@@ -343,12 +337,6 @@ func mathLdexp(v *vm.VM) int {
 	return 1
 }
 
-func mathLog10(v *vm.VM) int {
-	x := getNumber(v, 1, "math.log10")
-	v.Set(0, vm.NewFloat(cLog10(x)))
-	return 1
-}
-
 func mathMax(v *vm.VM) int {
 	n := v.ArgCount()
 	if n == 0 {
@@ -431,13 +419,6 @@ func mathRad(v *vm.VM) int {
 	// Match C's math_rad: x * (PI/180), so the constant folds first and a
 	// huge x scales without the intermediate x*PI overflowing to +Inf.
 	v.Set(0, vm.NewFloat(n*(math.Pi/180)))
-	return 1
-}
-
-func mathPow(v *vm.VM) int {
-	x := getNumber(v, 1, "math.pow")
-	y := getNumber(v, 2, "math.pow")
-	v.Set(0, vm.NewFloat(vm.PowWithSubnormalFix(x, y)))
 	return 1
 }
 
@@ -557,12 +538,6 @@ func mathSin(v *vm.VM) int {
 	return 1
 }
 
-func mathSinh(v *vm.VM) int {
-	n := getNumber(v, 1, "math.sinh")
-	v.Set(0, vm.NewFloat(math.Sinh(n)))
-	return 1
-}
-
 func mathSqrt(v *vm.VM) int {
 	n := getNumber(v, 1, "math.sqrt")
 	v.Set(0, vm.NewFloat(math.Sqrt(n)))
@@ -576,12 +551,6 @@ func mathTan(v *vm.VM) int {
 		result = math.Copysign(result, -1)
 	}
 	v.Set(0, vm.NewFloat(result))
-	return 1
-}
-
-func mathTanh(v *vm.VM) int {
-	n := getNumber(v, 1, "math.tanh")
-	v.Set(0, vm.NewFloat(math.Tanh(n)))
 	return 1
 }
 

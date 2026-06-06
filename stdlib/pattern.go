@@ -363,33 +363,6 @@ func luaMatchFrom(s, pattern string, init int) (int, int, []captureValue, bool) 
 	return 0, 0, nil, false
 }
 
-// matchWithPos holds match result with position info, used by gsub/gmatch/find.
-type matchWithPos struct {
-	start               int            // 0-based start
-	end                 int            // 0-based end (exclusive)
-	captures            []captureValue // captured groups
-	hasExplicitCaptures bool           // true when pattern had () groups
-}
-
-// luaMatchWithPos returns match info including positions.
-// Searches from init (1-based) forward.
-func luaMatchWithPos(s, pattern string, init int) *matchWithPos {
-	start, end, caps, found := luaMatchFrom(s, pattern, init)
-	if !found {
-		return nil
-	}
-	hasExplicit := len(caps) > 0
-	if !hasExplicit {
-		caps = []captureValue{{str: s[start:end]}}
-	}
-	return &matchWithPos{
-		start:               start,
-		end:                 end,
-		captures:            caps,
-		hasExplicitCaptures: hasExplicit,
-	}
-}
-
 // --- Pattern element types ---
 
 type patternElem interface {

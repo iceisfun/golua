@@ -677,11 +677,6 @@ func luaDebugGetMetatable(v *vm.VM) int {
 // debug.setcstacklimit(n)
 // GoLua does not expose Lua's internal C stack accounting, so keep a
 // compatibility stub that reports the conventional default limit used by Lua.
-func luaDebugSetCStackLimit(v *vm.VM) int {
-	_ = getInt(v, 1, "debug.setcstacklimit")
-	v.Set(0, vm.NewInt(200))
-	return 1
-}
 
 // debug.getuservalue(u [, n])
 func luaDebugGetUserValue(v *vm.VM) int {

@@ -130,31 +130,6 @@ func getNatAlign(kind byte, size int) int {
 	return 1
 }
 
-// getSize returns the size of a format directive (for non-variable-length ones).
-func getSize(kind byte, size int) int {
-	switch kind {
-	case 'b', 'B':
-		return 1
-	case 'h', 'H':
-		return 2
-	case 'l', 'L', 'j', 'J', 'T':
-		return 8
-	case 'f':
-		return 4
-	case 'd', 'n':
-		return 8
-	case 'i', 'I':
-		return size
-	case 'c':
-		return size
-	case 'x':
-		return 1
-	case 's':
-		return size // prefix size
-	}
-	return 0
-}
-
 // addPadding computes alignment padding bytes needed.
 func addPadding(pos, align int) int {
 	if align <= 1 {
