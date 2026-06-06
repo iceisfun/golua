@@ -116,6 +116,7 @@ type Proto struct {
 	IsVarArg       bool // true if the function accepts varargs (...)
 	HasNamedVarArg bool // Lua 5.5: function has a named vararg parameter (... name)
 	VarArgReg      int  // register index of the named vararg local
+	HasVarArgSlot  bool // Lua 5.5: a "..." in the parlist reserves a (vararg table) register at NumParams (true for named and plain "..."; false for the main chunk, which is vararg but has no parlist)
 
 	MaxStack int // high-water mark of register usage (determines stack allocation)
 

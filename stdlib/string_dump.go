@@ -129,13 +129,17 @@ func (d *dumper) dumpFunction(p *compiler.Proto) {
 
 	// Function header
 	d.writeByte(byte(p.NumParams))
-	// Vararg flag byte: bit 0 = has vararg, bit 1 = named vararg (... name)
+	// Vararg flag byte: bit 0 = has vararg, bit 1 = named vararg (... name),
+	// bit 2 = reserves a (vararg table) slot at NumParams.
 	var vaFlag byte
 	if p.IsVarArg {
 		vaFlag |= 1
 	}
 	if p.HasNamedVarArg {
 		vaFlag |= 2
+	}
+	if p.HasVarArgSlot {
+		vaFlag |= 4
 	}
 	d.writeByte(vaFlag)
 	if p.HasNamedVarArg {

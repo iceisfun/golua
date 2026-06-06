@@ -183,10 +183,12 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 
 	// Function header
 	p.NumParams = int(u.readByte())
-	// Vararg flag byte: bit 0 = has vararg, bit 1 = named vararg (... name)
+	// Vararg flag byte: bit 0 = has vararg, bit 1 = named vararg (... name),
+	// bit 2 = reserves a (vararg table) slot at NumParams.
 	vaFlag := u.readByte()
 	p.IsVarArg = vaFlag&1 != 0
 	p.HasNamedVarArg = vaFlag&2 != 0
+	p.HasVarArgSlot = vaFlag&4 != 0
 	if p.HasNamedVarArg {
 		p.VarArgReg = int(u.readByte())
 	}

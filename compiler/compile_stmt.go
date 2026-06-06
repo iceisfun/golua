@@ -1369,24 +1369,39 @@ func (c *compiler) compileFunc(fe *ast.FuncExpr, line int) int {
 		}
 		fs.emit(ABC(OP_VARARGPREP, fs.proto.NumParams, 0, 0, 0), varargLine)
 
-		// Lua 5.5: named vararg parameter — register a const local for
-		// the vararg table. The VM creates the table during call setup.
+		// Lua 5.5: a "..." in the parameter list reserves a register at
+		// index NumParams for the vararg table local. A named vararg
+		// ("... name") materializes a real table there during call setup;
+		// a plain "..." reserves a hidden slot holding nil, named
+		// "(vararg table)", so debug.getlocal numbering shifts to match
+		// reference Lua 5.5. (The main chunk is vararg but has no parlist,
+		// so it does not reserve this slot.)
+		//
+		// The slot's StartPC is the pc *after* VARARGPREP (reference
+		// registers it via adjustlocalvars once VARARGPREP is emitted), so
+		// the static-function form debug.getlocal(f, NumParams+1) — which
+		// probes pc=0 — does not see it; only fixed params are active there.
+		reg := fs.freeReg
+		name := "(vararg table)"
+		attrib := ""
 		if fe.VarArgName != "" {
-			reg := fs.freeReg
-			fs.locals = append(fs.locals, localVar{
-				name:    fe.VarArgName,
-				reg:     reg,
-				startPC: 0,
-				attrib:  attribConst,
-			})
-			fs.nActVar++
-			fs.freeReg++
-			if fs.freeReg > fs.maxReg {
-				fs.maxReg = fs.freeReg
-			}
+			name = fe.VarArgName
+			attrib = attribConst
 			fs.proto.HasNamedVarArg = true
 			fs.proto.VarArgReg = reg
 		}
+		fs.locals = append(fs.locals, localVar{
+			name:    name,
+			reg:     reg,
+			startPC: len(fs.proto.Code),
+			attrib:  attrib,
+		})
+		fs.nActVar++
+		fs.freeReg++
+		if fs.freeReg > fs.maxReg {
+			fs.maxReg = fs.freeReg
+		}
+		fs.proto.HasVarArgSlot = true
 	}
 
 	c.compileBlockWith(fe.Body, true, fe.EndLine)

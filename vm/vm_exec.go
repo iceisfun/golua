@@ -44,10 +44,14 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 			copy(varargSlice, args[numParams:numParams+numVararg])
 		}
 
-		// Lua 5.5: named vararg parameter — create a table from the varargs
-		// and store it in the designated register.
+		// Lua 5.5: a "..." in the parlist reserves a vararg-table register
+		// at NumParams. A named vararg materializes a real table there; a
+		// plain "..." reserves a hidden slot that must read back as nil
+		// (it is never written by any instruction, so clear stale data).
 		if proto.HasNamedVarArg {
 			vm.stack[base+proto.VarArgReg] = vm.createVarArgTable(varargSlice, numVararg)
+		} else if proto.HasVarArgSlot {
+			vm.stack[base+numParams] = Nil
 		}
 	} else {
 		// Non-vararg: copy args, nil-fill rest
@@ -1278,9 +1282,12 @@ func (vm *VM) execute() ([]Value, error) {
 							frame.numVararg = 0
 							frame.varargs = nil
 						}
-						// Lua 5.5: named vararg parameter
+						// Lua 5.5: vararg-table slot at NumParams (table for a
+						// named vararg, hidden nil for a plain "...").
 						if proto.HasNamedVarArg {
 							vm.stack[frame.base+proto.VarArgReg] = vm.createVarArgTable(frame.varargs, frame.numVararg)
+						} else if proto.HasVarArgSlot {
+							vm.stack[frame.base+numParams] = Nil
 						}
 						frame.isVararg = true
 					} else {
