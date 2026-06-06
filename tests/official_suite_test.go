@@ -62,17 +62,13 @@ func TestOfficialSuite(t *testing.T) {
 	// numbers are approximate and refer to the file's own numbering. Each is a
 	// lead to triage into {real parity bug, harness dependency, known-soft}.
 	knownFail := map[string]string{
-		"calls.lua":     "calls.lua:515 assertion — triage",
-		"coroutine.lua": "coroutine.lua:332 assertion — triage",
-		"cstack.lua":    "cstack.lua:108 assertion — C-stack depth/limits — triage",
-		"db.lua":        "db.lua:25 'wrong trace!!' — debug traceback shape — triage",
-		"errors.lua":    "errors.lua:30 assertion — triage",
-		"files.lua":     "files.lua:257 assertion — real filesystem/tmpfile behaviour — triage",
-		"gc.lua":        "gc.lua:33 assertion — GC semantics, may need T — triage",
-		"goto.lua":      "goto.lua:14 assertion — goto/label case — triage",
-		"locals.lua":    "locals.lua:314 assertion — named vararg inside a <close> handler — triage",
-		"sort.lua":      "sort.lua:22 assertion — table library — triage",
-		"tpack.lua":     "tpack.lua:141 string.pack format rejection — triage",
+		"calls.lua":  "calls.lua:556 — <const> string dedup: golua inlines <const> across closure boundaries (copies into each nested proto's constant pool) instead of capturing one upvalue; const-propagation rework (deferred)",
+		"db.lua":     "db.lua:417 — debug.getlocal on an out-of-range temporary slot returns \"(temporary)\",0 instead of nil (deferred)",
+		"errors.lua": "errors.lua:637 — xpcall(error, err, 300) expects 'C stack overflow' but golua reports 'error in error handling' (deferred C-stack-message class)",
+		"files.lua":  "files.lua:467 — io.output(\"/dev/null\") blocked by jailed NewFullIoProvider(suiteDir); harness/provider limitation, not a parity bug",
+		"gc.lua":     "gc.lua:286 — weak-table reclamation under Go GC (timing-dependent, deferred); collectgarbage(\"param\") round-trip fixed",
+		"goto.lua":   "goto.lua:316 — 'global X' must shadow an enclosing local (write _ENV.X); golua decouples globalEnv from the local var list, architectural (deferred)",
+		"sort.lua":   "sort.lua:22 — assert(memdiff > N*4) relies on collectgarbage(\"count\") deltas, which the harness prelude stubs to a constant; reference fails identically under the same stub (harness limitation)",
 	}
 
 	files, err := filepath.Glob(filepath.Join(suiteDir, "*.lua"))
@@ -212,7 +208,17 @@ do
   collectgarbage = function(opt, ...)
     opt = opt or "collect"
     if opt == "count" then return 0.0, 0 end
-    return real(opt, ...)
+    -- Delegate everything else to the real collectgarbage. Re-raise its error
+    -- one level up (level 2) so argument-error messages still name
+    -- 'collectgarbage' rather than this wrapper's local 'real' — errors.lua's
+    -- "(collectgarbage or print){}" check greps the message for that name.
+    local res = table.pack(pcall(real, opt, ...))
+    if res[1] then return table.unpack(res, 2, res.n) end
+    local err = res[2]
+    if type(err) == "string" then
+      err = (err:gsub("'real'", "'collectgarbage'"))
+    end
+    error(err, 2)
   end
 end
 `
