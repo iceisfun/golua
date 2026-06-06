@@ -92,18 +92,6 @@ func (l *Lexer) readChar() {
 	l.col++
 }
 
-// peek returns the next character without consuming it.
-func (l *Lexer) peek() rune {
-	if l.pos >= len(l.input) {
-		return eof
-	}
-	r, size := utf8.DecodeRuneInString(l.input[l.pos:])
-	if r == utf8.RuneError && size == 1 {
-		return rune(l.input[l.pos])
-	}
-	return r
-}
-
 // writeCurrent writes the current character to buf. Raw bytes (invalid UTF-8)
 // are written as single bytes; valid UTF-8 characters use rune encoding.
 func (l *Lexer) writeCurrent(buf *strings.Builder) {
@@ -523,4 +511,3 @@ func (l *Lexer) scanDot(pos token.Pos) (token.Token, error) {
 	}
 	return token.Token{Type: token.Type('.'), Literal: ".", Pos: pos}, nil
 }
-

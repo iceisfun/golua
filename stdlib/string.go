@@ -751,10 +751,3 @@ func coerceToNumber(val vm.Value) (vm.Value, bool) {
 	}
 	return vm.Nil, false
 }
-
-func pickNonNumericType(a, b string) string {
-	if a == "string" {
-		return a
-	}
-	return b
-}

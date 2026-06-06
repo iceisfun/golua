@@ -179,8 +179,6 @@ type exprResult struct {
 	f    int // patch list for jumps-when-false (-1 = no pending)
 }
 
-func (e exprResult) hasJumps() bool { return e.t != -1 || e.f != -1 }
-
 // ---------------------------------------------------------------------------
 // funcState — per-function compiler state
 // ---------------------------------------------------------------------------
@@ -469,19 +467,6 @@ func (fs *funcState) reserveReg() int {
 	return r
 }
 
-// reserveRegs allocates n consecutive registers and returns the base index.
-func (fs *funcState) reserveRegs(n int) int {
-	base := fs.freeReg
-	fs.freeReg += n
-	if fs.freeReg > fs.maxReg {
-		fs.maxReg = fs.freeReg
-	}
-	if fs.freeReg > fs.c.limits.MaxRegs {
-		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
-	}
-	return base
-}
-
 // emit appends an instruction to the current proto and returns its pc.
 func (fs *funcState) emit(inst Instruction, line int) int {
 	pc := len(fs.proto.Code)
@@ -660,11 +645,6 @@ func (fs *funcState) stringConstant(s string) int {
 // Local variables
 // ---------------------------------------------------------------------------
 
-// checkVarLimit checks that adding count new locals won't exceed the limit.
-func (fs *funcState) checkVarLimit(count int) {
-	fs.checkVarLimitAt(count, 0, "")
-}
-
 // checkVarLimitAt checks that adding count new locals won't exceed the limit,
 // with explicit source line and near-token context for Lua 5.4-style messages.
 func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
@@ -690,27 +670,6 @@ func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
 func (fs *funcState) checkRegLimit() {
 	if fs.freeReg > fs.c.limits.MaxRegs {
 		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
-	}
-}
-
-// addLocal declares a new local variable, reserves its register, and returns the register index.
-func (fs *funcState) addLocal(name string, attrib string) int {
-	fs.checkVarLimit(1)
-	reg := fs.reserveReg()
-	fs.locals = append(fs.locals, localVar{
-		name:    name,
-		reg:     reg,
-		startPC: -1, // not yet active
-		attrib:  attrib,
-	})
-	fs.nActVar++
-	return reg
-}
-
-// activateLocal marks a local variable as visible starting at the current pc.
-func (fs *funcState) activateLocal(idx int) {
-	if idx < len(fs.locals) {
-		fs.locals[idx].startPC = fs.pc()
 	}
 }
 
