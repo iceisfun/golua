@@ -312,6 +312,29 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 // Binary operations
 // ---------------------------------------------------------------------------
 
+// operandToReg resolves expr to a register usable as an operand (B field).
+// If expr is a plain local variable already living in a register, that
+// register is returned directly with tmp=false (no MOVE, no reservation) —
+// matching reference Lua's exp2anyreg, which reads in-register locals in
+// place. Otherwise a fresh temp is reserved, expr is compiled into it, and
+// tmp=true is returned so the caller frees it afterward. Reading the local
+// in place avoids an extra MOVE and, crucially, avoids reserving a temp that
+// would push a following call's target register up by one and leave a stale
+// "(temporary)" slot visible to debug.getlocal.
+func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
+	fs := c.fs
+	if name, ok := expr.(*ast.NameExpr); ok {
+		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
+			if localReg, ok := fs.lookupLocal(name.Name); ok {
+				return localReg, false
+			}
+		}
+	}
+	reg = fs.reserveReg()
+	c.compileExprToReg(expr, reg)
+	return reg, true
+}
+
 // smallIntConst checks whether an expression is a small integer constant
 // that fits in the signed C field (sC range: -OffsetSC to +OffsetSC, i.e.
 // -127 to +127). If so, it returns the value and true.
@@ -657,21 +680,23 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	if e.Op == "+" {
 		if imm, ok := smallIntConst(e.Right); ok {
 			// a + imm  →  ADDI reg, leftReg, imm; MMBINI leftReg, imm, TM_ADD, 0
-			leftReg := fs.reserveReg()
-			c.compileExprToReg(e.Left, leftReg)
+			leftReg, tmp := c.operandToReg(e.Left)
 			c.fixDischargedLine(line)
 			fs.emit(ABC(OP_ADDI, reg, leftReg, imm+OffsetSC, 0), line)
 			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_ADD), 0), line)
-			fs.freeReg = leftReg
+			if tmp {
+				fs.freeReg = leftReg
+			}
 			return
 		}
 		if imm, ok := smallIntConst(e.Left); ok {
 			// imm + a  →  ADDI reg, rightReg, imm; MMBINI rightReg, imm, TM_ADD, k=1
-			rightReg := fs.reserveReg()
-			c.compileExprToReg(e.Right, rightReg)
+			rightReg, tmp := c.operandToReg(e.Right)
 			fs.emit(ABC(OP_ADDI, reg, rightReg, imm+OffsetSC, 0), line)
 			fs.emit(ABC(OP_MMBINI, rightReg, imm+OffsetSC, int(TM_ADD), 1), line)
-			fs.freeReg = rightReg
+			if tmp {
+				fs.freeReg = rightReg
+			}
 			return
 		}
 	}
@@ -689,12 +714,13 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 			// a - imm  →  ADDI reg, leftReg, -imm; MMBINI leftReg, imm, TM_SUB, 0
 			// (MMBINI carries the original imm so the __sub metamethod
 			//  receives the user-written argument value.)
-			leftReg := fs.reserveReg()
-			c.compileExprToReg(e.Left, leftReg)
+			leftReg, tmp := c.operandToReg(e.Left)
 			c.fixDischargedLine(line)
 			fs.emit(ABC(OP_ADDI, reg, leftReg, -imm+OffsetSC, 0), line)
 			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_SUB), 0), line)
-			fs.freeReg = leftReg
+			if tmp {
+				fs.freeReg = leftReg
+			}
 			return
 		}
 	}
@@ -714,8 +740,18 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	}
 	c.compileExprToReg(e.Left, leftReg)
 	c.fixDischargedLine(line)
-	rightReg := fs.reserveReg()
+	// Use the current free-register top (rather than reserveReg, which would
+	// pre-advance freeReg) so a right operand that is itself a call/table
+	// constructor lands directly at rightReg instead of being compiled one
+	// slot higher and MOVEd back. The pre-advance would make compileExprToReg
+	// see reg < savedFreeReg and take its temp+MOVE branch, leaving a stale
+	// register gap below the call target — observable as a spurious
+	// "(temporary)" slot in debug.getlocal (see db.lua temp-slot test).
+	rightReg := fs.freeReg
 	c.compileExprToReg(e.Right, rightReg)
+	if fs.freeReg < rightReg+1 {
+		fs.freeReg = rightReg + 1
+	}
 
 	var op OpCode
 	var mmOp MetamethodTag
