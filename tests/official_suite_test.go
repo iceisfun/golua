@@ -67,11 +67,21 @@ func TestOfficialSuite(t *testing.T) {
 		"files.lua": true,
 	}
 
+	// Per-file timeout overrides. A few upstream files are CPU-heavy stress
+	// tests — calls.lua drives deep recursion to provoke stack overflow, which
+	// in C Lua bails at ~200 C calls (LUAI_MAXCCALLS) but in golua grinds
+	// through its much deeper DefaultMaxCallDepth (10000). It passes correctly
+	// and runs in ~4s solo, but can exceed the 30s default under full-machine
+	// `go test ./...` contention. Give it more headroom. Files NOT listed keep
+	// luaTestTimeout, so a genuine hang (e.g. db.lua) is still caught quickly.
+	heavyTimeout := map[string]time.Duration{
+		"calls.lua": 120 * time.Second,
+	}
+
 	// Exploration backlog: standalone failures observed at wiring time. Line
 	// numbers are approximate and refer to the file's own numbering. Each is a
 	// lead to triage into {real parity bug, harness dependency, known-soft}.
 	knownFail := map[string]string{
-		"calls.lua":  "calls.lua:556 — <const> string dedup: golua inlines <const> across closure boundaries (copies into each nested proto's constant pool) instead of capturing one upvalue; const-propagation rework (deferred)",
 		"db.lua":     "db.lua — the original :417 debug.getlocal out-of-range temp-slot bug is FIXED (compiler ADDI/arith no longer leaves a register gap below a call target). A SECOND, independent blocker remains: the full file hangs in a cumulative-state interaction somewhere after the coroutine-debug section (~line 681+), only reproducible in the full run (every section passes in isolation). Not the getlocal bug; needs separate triage (deferred)",
 		"errors.lua": "errors.lua:637 — xpcall(error, err, 300) expects 'C stack overflow' but golua reports 'error in error handling' (deferred C-stack-message class)",
 		"gc.lua":     "gc.lua:286 — weak-table reclamation under Go GC (timing-dependent, deferred); collectgarbage(\"param\") round-trip fixed",
@@ -97,7 +107,11 @@ func TestOfficialSuite(t *testing.T) {
 				t.Skip("resource-intensive official file requires -full flag")
 			}
 
-			runErr := runOfficialFile(suiteDir, file, unsandboxedIo[base])
+			timeout := luaTestTimeout
+			if t, ok := heavyTimeout[base]; ok {
+				timeout = t
+			}
+			runErr := runOfficialFile(suiteDir, file, unsandboxedIo[base], timeout)
 			reason, isKnown := knownFail[base]
 
 			switch {
@@ -117,7 +131,7 @@ func TestOfficialSuite(t *testing.T) {
 // runOfficialFile runs the harness prelude and then `file` in a single VM whose
 // providers are rooted at the suite directory (so dofile/require of sibling
 // files and relative paths resolve). Returns the run error, if any.
-func runOfficialFile(suiteDir, file string, unsandboxedIo bool) error {
+func runOfficialFile(suiteDir, file string, unsandboxedIo bool, timeout time.Duration) error {
 	src, err := os.ReadFile(file)
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
@@ -132,7 +146,7 @@ func runOfficialFile(suiteDir, file string, unsandboxedIo bool) error {
 		return fmt.Errorf("compile: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), luaTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	v := vm.New(
@@ -186,9 +200,9 @@ func runOfficialFile(suiteDir, file string, unsandboxedIo bool) error {
 	select {
 	case e := <-resultCh:
 		return e
-	case <-time.After(luaTestTimeout + 2*time.Second):
+	case <-time.After(timeout + 2*time.Second):
 		cancel()
-		return fmt.Errorf("timed out after %v (possible deadlock)", luaTestTimeout)
+		return fmt.Errorf("timed out after %v (possible deadlock)", timeout)
 	}
 }
 
