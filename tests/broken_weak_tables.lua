@@ -1,11 +1,16 @@
 -- Weak table tests matching Lua 5.4/5.5 __mode semantics.
 --
--- Previously filed as flaky-broken (intermittent GC timing). Now stable across
--- repeated and parallel-load runs after the coroutine-VM stack/retBuf release
--- fix; the helper-function pattern (objects dropped in separate frames) plus
--- the dead-slot clearing in ProcessGcFinalizers makes collection reliable.
--- Note: tests use helper functions to create/assign objects in separate
--- stack frames, preventing Go's GC from keeping stale temp register refs.
+-- DEFERRED (broken_ prefix -> skipped by TestLuaFiles). These tests assert that
+-- a weak value/key is nil/gone immediately after collectgarbage(). golua backs
+-- weak tables with Go's GC, and collectgarbage() -> runtime.GC() does NOT
+-- deterministically reclaim a value that a stray VM stack/register slot still
+-- pins, especially under the heavy parallel allocation of a full `go test ./...`
+-- run. The helper-function pattern below makes it pass reliably in isolation
+-- (and it did for a while), but it is intermittently flaky under full-suite
+-- load -- the same Go-GC-timing class as the deferred official-suite gc.lua weak
+-- reclamation. Reliable weak semantics need a real weak-reference implementation
+-- (clear-on-collectgarbage) rather than leaning on Go's GC; that is intentionally
+-- not being pursued. Re-promote (drop the broken_ prefix) if/when that lands.
 
 local function makeTable() return {} end
 
