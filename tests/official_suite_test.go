@@ -82,10 +82,9 @@ func TestOfficialSuite(t *testing.T) {
 	// numbers are approximate and refer to the file's own numbering. Each is a
 	// lead to triage into {real parity bug, harness dependency, known-soft}.
 	knownFail := map[string]string{
-		"db.lua":     "db.lua — the original :417 debug.getlocal out-of-range temp-slot bug is FIXED (compiler ADDI/arith no longer leaves a register gap below a call target). A SECOND, independent blocker remains: the full file hangs in a cumulative-state interaction somewhere after the coroutine-debug section (~line 681+), only reproducible in the full run (every section passes in isolation). Not the getlocal bug; needs separate triage (deferred)",
-		"errors.lua": "errors.lua:637 — xpcall(error, err, 300) expects 'C stack overflow' but golua reports 'error in error handling' (deferred C-stack-message class)",
-		"gc.lua":     "gc.lua:286 — weak-table reclamation under Go GC (timing-dependent, deferred); collectgarbage(\"param\") round-trip fixed",
-		"sort.lua":   "sort.lua:22 — assert(memdiff > N*4) relies on collectgarbage(\"count\") deltas, which the harness prelude stubs to a constant; reference fails identically under the same stub (harness limitation)",
+		"db.lua":   "db.lua — the original :417 debug.getlocal out-of-range temp-slot bug is FIXED (compiler ADDI/arith no longer leaves a register gap below a call target). A SECOND, independent blocker remains: the full file hangs in a cumulative-state interaction somewhere after the coroutine-debug section (~line 681+), only reproducible in the full run (every section passes in isolation). Not the getlocal bug; needs separate triage (deferred)",
+		"gc.lua":   "gc.lua:286 — weak-table reclamation under Go GC (timing-dependent, deferred); collectgarbage(\"param\") round-trip fixed",
+		"sort.lua": "sort.lua:22 — assert(memdiff > N*4) relies on collectgarbage(\"count\") deltas, which the harness prelude stubs to a constant; reference fails identically under the same stub (harness limitation)",
 	}
 
 	files, err := filepath.Glob(filepath.Join(suiteDir, "*.lua"))
