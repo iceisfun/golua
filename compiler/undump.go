@@ -40,6 +40,10 @@ type undumper struct {
 	data   []byte
 	pos    int
 	source string
+	// saved mirrors the dumper's string-reuse table: each newly-read string is
+	// appended (1-based index), and a size==0 marker is followed by the index of
+	// a previously-read string to reuse. Must track the dumper's order exactly.
+	saved []string
 }
 
 func (u *undumper) error(msg string) error {
@@ -107,11 +111,20 @@ func (u *undumper) readNumber() float64 {
 func (u *undumper) readStringN() string {
 	size := u.readSize()
 	if size == 0 {
-		return ""
+		// Reuse marker: followed by a 1-based saved index (0 means NULL).
+		idx := u.readSize()
+		if idx == 0 {
+			return ""
+		}
+		if idx > len(u.saved) {
+			panic(u.error("invalid string index"))
+		}
+		return u.saved[idx-1]
 	}
 	size-- // stored as len+1
-	s := u.readBytes(size)
-	return string(s)
+	s := string(u.readBytes(size))
+	u.saved = append(u.saved, s)
+	return s
 }
 
 func (u *undumper) readString() string {

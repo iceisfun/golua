@@ -30,7 +30,7 @@ func stringDump(v *vm.VM) int {
 // dumpProto serializes a Proto to Lua 5.4 binary chunk format.
 func dumpProto(p *compiler.Proto, strip bool) []byte {
 	var buf bytes.Buffer
-	d := &dumper{w: &buf, strip: strip}
+	d := &dumper{w: &buf, strip: strip, saved: map[string]int{}}
 
 	// Header
 	buf.Write([]byte("\x1bLua"))            // signature
@@ -58,9 +58,14 @@ func dumpProto(p *compiler.Proto, strip bool) []byte {
 }
 
 type dumper struct {
-	w            *bytes.Buffer
-	strip        bool
-	parentSource string // source of the enclosing function (for dedup)
+	w     *bytes.Buffer
+	strip bool
+	// saved/nstr implement Lua 5.4/5.5 dump string reuse: each distinct string
+	// is written once (assigned the next 1-based index in nstr) and every later
+	// occurrence is emitted as size==0 followed by that saved index. This also
+	// dedups the shared source name across the proto tree (no parentSource hack).
+	saved map[string]int
+	nstr  int
 }
 
 func (d *dumper) writeByte(b byte) {
@@ -109,21 +114,25 @@ func (d *dumper) writeVarInt(x uint64) {
 }
 
 func (d *dumper) writeString(s string) {
-	if s == "" {
+	// Already saved? Emit size==0 plus the saved 1-based index (reuse).
+	if idx, ok := d.saved[s]; ok {
 		d.writeSize(0)
+		d.writeSize(idx)
 		return
 	}
+	// New string: size is len+1 (size==0 is reserved for reuse), followed by
+	// the raw bytes. Save it under the next index for later reuse.
 	d.writeSize(len(s) + 1)
 	d.w.WriteString(s)
+	d.nstr++
+	d.saved[s] = d.nstr
 }
 
 func (d *dumper) dumpFunction(p *compiler.Proto) {
-	// Source name: Lua 5.4 writes an empty string for child functions
-	// that share the same source as the parent, to avoid bloat.
+	// Source name. The string-reuse table dedups it across the proto tree, so
+	// child functions sharing the parent's source emit a compact reuse ref.
 	if d.strip {
 		d.writeString("=?")
-	} else if p.Source == d.parentSource {
-		d.writeString("")
 	} else {
 		d.writeString(p.Source)
 	}
@@ -198,12 +207,9 @@ func (d *dumper) dumpFunction(p *compiler.Proto) {
 
 	// Nested protos
 	d.writeSize(len(p.Protos))
-	savedParent := d.parentSource
-	d.parentSource = p.Source
 	for _, sub := range p.Protos {
 		d.dumpFunction(sub)
 	}
-	d.parentSource = savedParent
 
 	// Debug info
 	if d.strip {
