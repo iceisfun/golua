@@ -147,10 +147,29 @@ func TestGlobalInitCheck_NilValueOK(t *testing.T) {
 }
 
 func TestGlobalInitCheck_MultipleNames(t *testing.T) {
+	// A short initializer list nil-pads the trailing names, but every declared
+	// name still gets the "already defined" check (reference Lua 5.5
+	// initglobal/adjust_assign). Here 'assert' is already a non-nil builtin,
+	// so the check fires for it even though it has no explicit value.
 	_, err := runGlobalTest(t, `
 		global X, Y, assert = 1, 2
-		assert(X == 1)
-		assert(Y == 2)
+	`)
+	if err == nil {
+		t.Fatal("expected runtime error for assert, got nil")
+	}
+	if !strings.Contains(err.Error(), "global 'assert' already defined") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// Multi-value init distributes values across names; the first name with a
+	// pre-existing non-nil global triggers the check.
+	_, err = runGlobalTest(t, `
+		global pcall, assert
+		assert(pcall(function()
+			local x = {1, 2}
+			global A, B = x[1], x[2]
+		end))
+		assert(_ENV.A == 1 and _ENV.B == 2)
 	`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

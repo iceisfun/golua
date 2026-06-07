@@ -1215,9 +1215,7 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 	fs := c.fs
 	line := s.P.Line
 
-	// Register declarations in globalEnv tracking.
 	ge := &fs.globalEnv
-	ge.explicit = true
 
 	if s.Star {
 		attrib := ""
@@ -1228,6 +1226,7 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 			c.error(s, "global variables cannot be to-be-closed")
 			return
 		}
+		ge.explicit = true
 		ge.star = true
 		ge.starAttr = attrib
 		// A `global *` declaration is scope-creating: a goto cannot jump
@@ -1236,7 +1235,15 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 		return // global * is a directive, no codegen
 	}
 
-	for i, name := range s.Names {
+	// Validate attributes and mark goto barriers up front, but do NOT yet
+	// record the names/declOrder shadowing. Reference Lua activates a global
+	// declaration (bumps nactvar) only AFTER its initializer is read, so an
+	// initializer like `global a = a` still resolves the RHS 'a' to the
+	// enclosing local rather than to the (just-declared) global.
+	for _, name := range s.Names {
+		c.markGlobalBarrier(name.Name)
+	}
+	for i := range s.Names {
 		attrib := ""
 		if i < len(s.Attribs) {
 			attrib = s.Attribs[i]
@@ -1245,42 +1252,97 @@ func (c *compiler) compileGlobalStmt(s *ast.GlobalStmt) {
 			c.error(s, "global variables cannot be to-be-closed")
 			return
 		}
-		if ge.names == nil {
-			ge.names = make(map[string]string)
+	}
+
+	// Initialization: `global a, b, c = e1, e2, ...`. This behaves like a
+	// multi-assignment to _ENV[a], _ENV[b], ... — the value list is spread
+	// (multi-return last expr) and nil-padded to match the name count, then
+	// each global is stored with an OP_ERRNNIL "already defined" check
+	// (reference: initglobal/adjust_assign in lparser.c). Compiled BEFORE the
+	// declaration is recorded so the RHS sees pre-declaration name resolution.
+	if len(s.Values) > 0 {
+		c.compileGlobalInit(s.Names, s.Values, line)
+	}
+
+	// Now activate the declaration.
+	ge.explicit = true
+	if ge.names == nil {
+		ge.names = make(map[string]string)
+	}
+	if ge.declOrder == nil {
+		ge.declOrder = make(map[string]int)
+	}
+	for i, name := range s.Names {
+		attrib := ""
+		if i < len(s.Attribs) {
+			attrib = s.Attribs[i]
 		}
 		ge.names[name.Name] = attrib
-		// A named global declaration is scope-creating for goto resolution,
-		// just like a local declaration.
-		c.markGlobalBarrier(name.Name)
+		ge.declOrder[name.Name] = len(fs.locals)
+	}
+}
 
-		// Codegen: assign initial value to _ENV[name]
-		if i < len(s.Values) {
-			nameK := fs.stringConstant(name.Name)
-			reg := fs.reserveReg()
-			c.compileExprToReg(s.Values[i], reg)
-			// Runtime check: error if _ENV[name] is already non-nil.
-			chkReg := fs.reserveReg()
-			if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
-				fs.emitGetField(chkReg, envReg, nameK, line)
-			} else {
-				envUV := c.resolveEnv()
-				fs.emitGetTabUp(chkReg, envUV, nameK, line)
+// compileGlobalInit evaluates a global declaration's initializer list into
+// consecutive registers (with multi-return spread and nil padding), then
+// stores each value into _ENV[name] guarded by an OP_ERRNNIL check.
+func (c *compiler) compileGlobalInit(names []*ast.NameExpr, values []ast.Expr, line int) {
+	fs := c.fs
+	nNames := len(names)
+	nValues := len(values)
+	base := fs.freeReg
+
+	lastIsMultiRet := false
+	for i := 0; i < nValues; i++ {
+		if i == nValues-1 && i < nNames-1 && isMultiRet(values[i]) {
+			c.compileExprMultiRet(values[i], nNames-i)
+			lastIsMultiRet = true
+		} else if i < nNames {
+			c.compileExprToReg(values[i], base+i)
+			fs.freeReg = base + i + 1
+			if fs.freeReg > fs.maxReg {
+				fs.maxReg = fs.freeReg
 			}
-			bx := nameK + 1
-			if nameK >= MaxArgBx {
-				bx = 0
-			}
-			fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
-			fs.freeReg = reg + 1 // free the check register
-			if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
-				fs.emitSetField(envReg, nameK, reg, line)
-			} else {
-				envUV := c.resolveEnv()
-				fs.emitSetTabUp(envUV, nameK, reg, line)
-			}
-			fs.freeReg = reg
+		} else {
+			// More values than names — evaluate for side effects, discard.
+			tmp := fs.freeReg
+			c.compileExprToReg(values[i], tmp)
+			fs.freeReg = base + nNames
 		}
 	}
+	if nValues < nNames && !lastIsMultiRet {
+		fs.emit(ABC(OP_LOADNIL, base+nValues, nNames-nValues-1, 0, 0), line)
+	}
+	fs.freeReg = base + nNames
+	if fs.freeReg > fs.maxReg {
+		fs.maxReg = fs.freeReg
+	}
+	fs.checkRegLimit()
+
+	// Store each value into _ENV[name] with the "already defined" check.
+	for i, name := range names {
+		nameK := fs.stringConstant(name.Name)
+		valReg := base + i
+		chkReg := fs.reserveReg()
+		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
+			fs.emitGetField(chkReg, envReg, nameK, line)
+		} else {
+			envUV := c.resolveEnv()
+			fs.emitGetTabUp(chkReg, envUV, nameK, line)
+		}
+		bx := nameK + 1
+		if nameK >= MaxArgBx {
+			bx = 0
+		}
+		fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
+		fs.freeReg = base + nNames // free the check register
+		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
+			fs.emitSetField(envReg, nameK, valReg, line)
+		} else {
+			envUV := c.resolveEnv()
+			fs.emitSetTabUp(envUV, nameK, valReg, line)
+		}
+	}
+	fs.freeReg = base
 }
 
 // compileGlobalFuncStmt compiles "global function name(...) ... end".
@@ -1297,6 +1359,10 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 		ge.names = make(map[string]string)
 	}
 	ge.names[s.Name.Name] = ""
+	if ge.declOrder == nil {
+		ge.declOrder = make(map[string]int)
+	}
+	ge.declOrder[s.Name.Name] = len(fs.locals)
 	// A global function declaration is scope-creating for goto resolution.
 	c.markGlobalBarrier(s.Name.Name)
 

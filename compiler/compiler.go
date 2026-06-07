@@ -28,6 +28,7 @@ const (
 	errControlStructureTooLong = "control structure too long"
 	errAssignToConst           = "attempt to assign to const variable '%s'"
 	errVarNotDeclared          = "variable '%s' not declared"
+	errEnvIsGlobal             = "_ENV is global when accessing variable '%s'"
 )
 
 // shortSrc returns a display-friendly source name, matching Lua 5.4's luaO_chunkid.
@@ -246,6 +247,16 @@ type globalEnv struct {
 	names    map[string]string // declared name → attrib ("" or "const")
 	star     bool              // wildcard * declared
 	starAttr string            // "" (rw) or "const" (ro)
+
+	// declOrder records, for each named `global X` declaration, the number of
+	// entries in fs.locals at the moment the declaration was compiled. In
+	// reference Lua 5.5 a `global X` declaration is inserted into the active
+	// variable list (interleaved with locals) and name resolution scans that
+	// list innermost-first, so a `global X` declared after a `local X` shadows
+	// the local. golua keeps globals in a separate map; declOrder lets name
+	// resolution reproduce that ordering: a local at fs.locals index i is
+	// shadowed by a `global X` whose declOrder > i.
+	declOrder map[string]int
 }
 
 // funcState holds per-function compiler state: the proto being built,
@@ -391,6 +402,18 @@ func (c *compiler) newFuncState(source string, parent *funcState) *funcState {
 				cp[k] = v
 			}
 			fs.globalEnv.names = cp
+		}
+		// declOrder positions index the parent's locals list, which is
+		// meaningless in the child. Inherited global declarations precede all
+		// of the child's own locals, so map them to -1 ("declared before any
+		// local here"). A local the child declares itself (index >= 0) then
+		// correctly shadows the inherited global.
+		if parent.globalEnv.declOrder != nil {
+			cp := make(map[string]int, len(parent.globalEnv.declOrder))
+			for k := range parent.globalEnv.declOrder {
+				cp[k] = -1
+			}
+			fs.globalEnv.declOrder = cp
 		}
 	}
 	c.fs = fs
@@ -728,6 +751,14 @@ func (fs *funcState) lookupLocal(name string) (int, bool) {
 			if lv.inlined {
 				return 0, false
 			}
+			// Lua 5.5: a `global name` declaration shadows an enclosing local
+			// of the same name declared earlier. The global was recorded with
+			// the locals-list length at its declaration; if that exceeds this
+			// local's index, the global is "newer" and wins, so this local is
+			// not visible (resolution falls through to _ENV[name]).
+			if order, ok := fs.globalEnv.declOrder[name]; ok && order > i {
+				return 0, false
+			}
 			return lv.reg, true
 		}
 	}
@@ -741,11 +772,16 @@ func (fs *funcState) lookupLocal(name string) (int, bool) {
 func (fs *funcState) lookupInlined(name string) (Value, bool) {
 	for i := len(fs.locals) - 1; i >= 0; i-- {
 		lv := fs.locals[i]
-		if lv.name == name && lv.startPC >= 0 && lv.inlined {
-			return lv.inlineVal, true
-		}
-		// A regular local with the same name shadows any inlined binding.
-		if lv.name == name && lv.startPC >= 0 && !lv.inlined {
+		if lv.name == name && lv.startPC >= 0 {
+			// A later `global name` declaration shadows this binding (Lua 5.5);
+			// the name then resolves as a global, not the inlined constant.
+			if order, ok := fs.globalEnv.declOrder[name]; ok && order > i {
+				return Value{}, false
+			}
+			if lv.inlined {
+				return lv.inlineVal, true
+			}
+			// A regular local with the same name shadows any inlined binding.
 			return Value{}, false
 		}
 	}
@@ -887,6 +923,13 @@ func (fs *funcState) enterScope(isLoop bool) {
 			cp[k] = v
 		}
 		saved.names = cp
+	}
+	if saved.declOrder != nil {
+		cp := make(map[string]int, len(saved.declOrder))
+		for k, v := range saved.declOrder {
+			cp[k] = v
+		}
+		saved.declOrder = cp
 	}
 	fs.scopes = append(fs.scopes, scopeInfo{
 		nLocals:        fs.nActVar,
@@ -1040,6 +1083,10 @@ func (c *compiler) markGlobalBarrier(barrierName string) {
 // the current Lua 5.5 global declaration rules.
 func (c *compiler) checkGlobalRead(name string, node ast.Node) {
 	ge := &c.fs.globalEnv
+	if c.envDeclaredGlobal(name) {
+		c.error(node, errEnvIsGlobal, name)
+		return
+	}
 	if !ge.explicit {
 		return
 	}
@@ -1056,6 +1103,10 @@ func (c *compiler) checkGlobalRead(name string, node ast.Node) {
 // the current Lua 5.5 global declaration rules.
 func (c *compiler) checkGlobalWrite(name string, node ast.Node) {
 	ge := &c.fs.globalEnv
+	if c.envDeclaredGlobal(name) {
+		c.error(node, errEnvIsGlobal, name)
+		return
+	}
 	if !ge.explicit {
 		return
 	}
@@ -1072,6 +1123,27 @@ func (c *compiler) checkGlobalWrite(name string, node ast.Node) {
 		return
 	}
 	c.error(node, errVarNotDeclared, name)
+}
+
+// envDeclaredGlobal reports whether accessing global variable 'name' (a name
+// other than _ENV itself) must fail because _ENV has been declared via a
+// `global _ENV` statement. In Lua 5.5 a global access compiles to _ENV[name];
+// if _ENV itself resolves as a global rather than an upvalue/local, the
+// compiler raises "_ENV is global when accessing variable 'name'" (lparser.c
+// buildglobal). A local/upvalue _ENV shadowing the declaration suppresses it.
+func (c *compiler) envDeclaredGlobal(name string) bool {
+	if name == envUpvalueName {
+		return false
+	}
+	fs := c.fs
+	if _, ok := fs.globalEnv.names[envUpvalueName]; !ok {
+		return false
+	}
+	// A real local or upvalue _ENV shadows the global declaration.
+	if _, ok := fs.lookupLocal(envUpvalueName); ok {
+		return false
+	}
+	return true
 }
 
 // resolveEnv returns the upvalue index for _ENV (the global environment table).
