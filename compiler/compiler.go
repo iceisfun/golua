@@ -461,7 +461,10 @@ func (fs *funcState) reserveReg() int {
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
-	if fs.freeReg > fs.c.limits.MaxRegs {
+	// Match reference Lua's luaK_checkstack: it errors when the new stack top
+	// is >= MAXREGS (255), so the highest usable freeReg is 254. Using `>`
+	// here would accept one register past the reference limit (off-by-one).
+	if fs.freeReg >= fs.c.limits.MaxRegs {
 		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
 	}
 	return r
@@ -668,7 +671,8 @@ func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
 
 // checkRegLimit checks that the current freeReg doesn't exceed the register limit.
 func (fs *funcState) checkRegLimit() {
-	if fs.freeReg > fs.c.limits.MaxRegs {
+	// `>=` matches reference luaK_checkstack (newstack >= MAXREGS); see reserveReg.
+	if fs.freeReg >= fs.c.limits.MaxRegs {
 		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
 	}
 }

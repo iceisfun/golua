@@ -96,7 +96,8 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		if fs.freeReg > fs.maxReg {
 			fs.maxReg = fs.freeReg
 		}
-		if fs.freeReg > fs.c.limits.MaxRegs {
+		// `>=` matches reference luaK_checkstack (newstack >= MAXREGS); see reserveReg.
+		if fs.freeReg >= fs.c.limits.MaxRegs {
 			near := exprNear(expr)
 			if near != "" {
 				fs.c.error(expr, "function or expression needs too many registers near '%s'", near)
