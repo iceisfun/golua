@@ -312,47 +312,57 @@ func (vm *VM) callMsgHandler(msgh Value, errVal Value, errorCallStack []callFram
 	defer func() { vm.inMsgHandler-- }()
 
 	const maxRetries = 200
-	curErrVal := errVal
-	succeeded := false
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		var hResults []Value
+	// tryHandler invokes the message handler once with errv. It returns the
+	// handler's results and whether it errored; on error, nextErr carries the
+	// new error value to retry with.
+	tryHandler := func(errv Value) (hResults []Value, errored bool, nextErr Value) {
 		var hErr error
 		var panicked bool
-
+		nextErr = errv
 		func() {
 			defer func() {
 				if hr := recover(); hr != nil {
 					panicked = true
 					if le, ok := hr.(*LuaError); ok {
-						curErrVal = le.Value
+						nextErr = le.Value
 					} else {
 						msg := fmt.Sprintf("%v", hr)
 						msg = vm.AddCallerLocation(msg)
-						curErrVal = NewString(msg)
+						nextErr = NewString(msg)
 					}
 				}
 			}()
 			vm.callStack = errorCallStack
 			exit := vm.EnterNonYieldable()
-			hResults, hErr = vm.ProtectedCall(msgh, []Value{curErrVal})
+			hResults, hErr = vm.ProtectedCall(msgh, []Value{errv})
 			exit()
 		}()
-
 		if panicked {
-			// Handler panicked; retry with the new error value
-			continue
+			return nil, true, nextErr
 		}
 		if hErr != nil {
-			// Handler returned error via ProtectedCall; extract and retry
 			if le, ok := hErr.(*LuaError); ok {
-				curErrVal = le.Value
+				nextErr = le.Value
 			} else {
-				curErrVal = NewString(hErr.Error())
+				nextErr = NewString(hErr.Error())
 			}
+			return nil, true, nextErr
+		}
+		return hResults, false, errv
+	}
+
+	curErrVal := errVal
+	succeeded := false
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		hResults, errored, nextErr := tryHandler(curErrVal)
+		if errored {
+			// Handler errored; retry with the new error value.
+			curErrVal = nextErr
 			continue
 		}
-		// Handler succeeded
+		// Handler succeeded.
 		if len(hResults) > 0 {
 			vm.msgHandlerResult = hResults[0]
 		} else {
@@ -363,7 +373,21 @@ func (vm *VM) callMsgHandler(msgh Value, errVal Value, errorCallStack []callFram
 	}
 
 	if !succeeded {
-		vm.msgHandlerResult = NewString("error in error handling")
+		// The handler recursed past the C-call limit. Reference Lua raises
+		// "C stack overflow" (luaE_checkcstack -> luaG_runerror) and then
+		// invokes the handler ONE more time with that message via
+		// luaG_errormsg. If the handler returns, that result is the final
+		// message (e.g. a handler that passes non-number errors straight
+		// through yields "C stack overflow"); if it errors again, the limit
+		// is truly exhausted and the message becomes "error in error handling".
+		hResults, errored, _ := tryHandler(NewString("C stack overflow"))
+		if errored {
+			vm.msgHandlerResult = NewString("error in error handling")
+		} else if len(hResults) > 0 {
+			vm.msgHandlerResult = hResults[0]
+		} else {
+			vm.msgHandlerResult = Nil
+		}
 	}
 
 	vm.limits.MaxCallDepth = savedMaxCallDepth
