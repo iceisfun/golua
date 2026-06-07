@@ -965,6 +965,11 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 			fs.maxReg = fs.freeReg
 		}
 	}
+	// OP_RETURN's B field holds nret+1; reference luaK_ret rejects nret+1 >
+	// MAXARG_B (255) with "too many returns" before the field can overflow.
+	if len(s.Values)+1 > MaxArgB {
+		c.error(s, "too many returns (limit is %d)", MaxArgB)
+	}
 	fs.emit(ABC(OP_RETURN, base, len(s.Values)+1, 0, 0), line)
 }
 
