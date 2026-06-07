@@ -133,8 +133,8 @@ end
 t.name = "example"
 t.active = true
 
--- No-argument form is the same as {}
-local empty = table.create()
+-- narr is required; nrec defaults to 0
+local arrOnly = table.create(3)
 ```
 
 This is useful in performance-sensitive code where the final table size is known

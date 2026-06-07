@@ -199,9 +199,9 @@ func main() {
 		print("  t[1] =", t[1], "  t[5] =", t[5])
 		print("  t.name =", t.name, "  t.active =", t.active)
 
-		-- No-arg version: same as {}
-		local empty = table.create()
-		print("  table.create() type =", type(empty), "  #empty =", #empty)
+		-- narr is required; nrec defaults to 0.
+		local arrOnly = table.create(3)
+		print("  table.create(3) type =", type(arrOnly), "  #arrOnly =", #arrOnly)
 	`)
 	if err != nil {
 		log.Fatalf("Unexpected error: %v", err)
