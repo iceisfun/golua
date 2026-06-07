@@ -58,16 +58,23 @@ func TestOfficialSuite(t *testing.T) {
 		"verybig.lua": true,
 	}
 
+	// Files that need real, unjailed filesystem access (e.g. /dev/null and
+	// /dev/full for the flush tests). These run trusted upstream code, so the
+	// harness swaps in an unsandboxed test-only IO provider for them. Scoped
+	// per-file so the default root-jailed provider still guards every other
+	// file's access-denied / error-message expectations.
+	unsandboxedIo := map[string]bool{
+		"files.lua": true,
+	}
+
 	// Exploration backlog: standalone failures observed at wiring time. Line
 	// numbers are approximate and refer to the file's own numbering. Each is a
 	// lead to triage into {real parity bug, harness dependency, known-soft}.
 	knownFail := map[string]string{
 		"calls.lua":  "calls.lua:556 — <const> string dedup: golua inlines <const> across closure boundaries (copies into each nested proto's constant pool) instead of capturing one upvalue; const-propagation rework (deferred)",
-		"db.lua":     "db.lua:417 — debug.getlocal on an out-of-range temporary slot returns \"(temporary)\",0 instead of nil (deferred)",
+		"db.lua":     "db.lua — the original :417 debug.getlocal out-of-range temp-slot bug is FIXED (compiler ADDI/arith no longer leaves a register gap below a call target). A SECOND, independent blocker remains: the full file hangs in a cumulative-state interaction somewhere after the coroutine-debug section (~line 681+), only reproducible in the full run (every section passes in isolation). Not the getlocal bug; needs separate triage (deferred)",
 		"errors.lua": "errors.lua:637 — xpcall(error, err, 300) expects 'C stack overflow' but golua reports 'error in error handling' (deferred C-stack-message class)",
-		"files.lua":  "files.lua:467 — io.output(\"/dev/null\") blocked by jailed NewFullIoProvider(suiteDir); harness/provider limitation, not a parity bug",
 		"gc.lua":     "gc.lua:286 — weak-table reclamation under Go GC (timing-dependent, deferred); collectgarbage(\"param\") round-trip fixed",
-		"goto.lua":   "goto.lua:316 — 'global X' must shadow an enclosing local (write _ENV.X); golua decouples globalEnv from the local var list, architectural (deferred)",
 		"sort.lua":   "sort.lua:22 — assert(memdiff > N*4) relies on collectgarbage(\"count\") deltas, which the harness prelude stubs to a constant; reference fails identically under the same stub (harness limitation)",
 	}
 
@@ -90,7 +97,7 @@ func TestOfficialSuite(t *testing.T) {
 				t.Skip("resource-intensive official file requires -full flag")
 			}
 
-			runErr := runOfficialFile(suiteDir, file)
+			runErr := runOfficialFile(suiteDir, file, unsandboxedIo[base])
 			reason, isKnown := knownFail[base]
 
 			switch {
@@ -110,7 +117,7 @@ func TestOfficialSuite(t *testing.T) {
 // runOfficialFile runs the harness prelude and then `file` in a single VM whose
 // providers are rooted at the suite directory (so dofile/require of sibling
 // files and relative paths resolve). Returns the run error, if any.
-func runOfficialFile(suiteDir, file string) error {
+func runOfficialFile(suiteDir, file string, unsandboxedIo bool) error {
 	src, err := os.ReadFile(file)
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
@@ -137,7 +144,13 @@ func runOfficialFile(suiteDir, file string) error {
 	)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
-	v.SetIoProvider(vm.NewFullIoProvider(suiteDir))
+	if unsandboxedIo {
+		// Test-only: real, unjailed filesystem access so /dev/null and
+		// /dev/full (the flush tests) behave as on a stock Lua build.
+		v.SetIoProvider(vm.NewTestIoProvider())
+	} else {
+		v.SetIoProvider(vm.NewFullIoProvider(suiteDir))
+	}
 	v.SetCodeProvider(vm.NewDirCodeProvider(suiteDir, vm.LuaLoaderCaps{
 		AllowLoadfile: true,
 		AllowDofile:   true,

@@ -15,6 +15,7 @@ import (
 // and writing files. It jails file access to a root directory for security.
 type FullIoProvider struct {
 	root   string
+	noJail bool // when true, path-jailing is disabled (test-only, unsandboxed)
 	stdin  *stdFile
 	stdout *stdFile
 	stderr *stdFile
@@ -35,8 +36,33 @@ func NewFullIoProvider(root string) *FullIoProvider {
 	}
 }
 
+// NewTestIoProvider creates an UNSANDBOXED, full read/write IO provider with no
+// path-jailing: every absolute or relative path the program names is passed
+// straight through to the host filesystem (including real devices such as
+// /dev/null and /dev/full).
+//
+// This is intended ONLY for test harnesses that run trusted Lua and need real
+// OS device semantics (e.g. the official Lua 5.5 conformance suite's flush
+// tests). It is deliberately NOT a safe embedding default: do not use it to run
+// untrusted scripts. For sandboxed embedding use NewFullIoProvider (root-jailed)
+// or NewJailedIoProvider (read-only) instead.
+func NewTestIoProvider() *FullIoProvider {
+	return &FullIoProvider{
+		root:   "",
+		noJail: true,
+		stdin:  &stdFile{file: os.Stdin, name: "stdin", readable: true},
+		stdout: &stdFile{file: os.Stdout, name: "stdout", writable: true},
+		stderr: &stdFile{file: os.Stderr, name: "stderr", writable: true},
+	}
+}
+
 // resolvePath resolves a filename to an absolute path within the root.
 func (p *FullIoProvider) resolvePath(name string) (string, error) {
+	// Unsandboxed (test-only) mode: pass the name straight through to the host
+	// filesystem with no jailing. Relative names resolve against the process cwd.
+	if p.noJail {
+		return name, nil
+	}
 	if filepath.IsAbs(name) {
 		// Allow absolute paths that are within root
 		absName, err := filepath.Abs(name)
@@ -330,7 +356,19 @@ func (f *fullFile) Flush(ctx context.Context) error {
 		return fmt.Errorf("attempt to use a closed file")
 	}
 	if f.writer != nil {
-		return f.writer.Flush()
+		err := f.writer.Flush()
+		if err != nil {
+			// bufio.Writer makes a flush error sticky: it retains the
+			// unwritten bytes and returns the same error from every
+			// subsequent Write. C stdio behaves differently — fflush()
+			// surfaces the device error once, then the stream's buffer is
+			// available again, so a later small fwrite() into buffer space
+			// succeeds (see the /dev/full flush test in the Lua 5.5 suite).
+			// Reset the writer to drop the undeliverable bytes and clear the
+			// sticky error, matching that behavior.
+			f.writer.Reset(f.file)
+		}
+		return err
 	}
 	return nil
 }
