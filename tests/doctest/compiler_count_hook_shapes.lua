@@ -28,8 +28,11 @@ do
     --> =13	1
 end
 
--- Generic for: GoLua emits more instructions than Lua 5.4 (43 vs 19),
--- a known architectural difference in for-in loop compilation.
+-- Generic for: GoLua emits more instructions than Lua 5.4 (41 vs 19),
+-- a known architectural difference in for-in loop compilation. The body
+-- `return i + 1` now reads the local `i` directly in the ADDI operand
+-- instead of MOVEing it to a temp, saving the two MOVEs that previously
+-- ran each iteration (was 43).
 do
     local function iter(_, i)
         if i < 2 then
@@ -43,5 +46,5 @@ do
     end
     debug.sethook()
     print(n)
-    --> =43
+    --> =41
 end
