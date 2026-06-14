@@ -22,11 +22,24 @@ func stmtEndLine(s ast.Stmt) int {
 	case *ast.RepeatStmt:
 		// repeat..until has no 'end'; use the condition's line
 		return s.Cond.Pos().Line
+	case *ast.FuncStmt:
+		if s.Func != nil {
+			return s.Func.EndLine
+		}
+	case *ast.LocalFuncStmt:
+		if s.Func != nil {
+			return s.Func.EndLine
+		}
+	case *ast.GlobalFuncStmt:
+		if s.Func != nil {
+			return s.Func.EndLine
+		}
+	case *ast.LabelStmt:
+		return s.EndLine
 	case *ast.ExprStmt:
 		return s.Expr.Pos().Line
-	default:
-		return s.Pos().Line
 	}
+	return s.Pos().Line
 }
 
 // preRegisterUpvalues walks an assignment target expression and pre-registers
@@ -147,18 +160,38 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 				}
 				break
 			}
-			// Trim trailing empty statements: they are no-ops that don't
-			// affect label registration, but they advance ls->lastline. The
-			// run for label processing ends at the last label; the line of
-			// the first real statement (used as the error line) is computed
-			// from afterEnd, which already skips them.
-			afterEnd := runEnd
-			afterLine := blockAfterLine
+			// Determine the line prefix for a "jumps into the scope" error.
+			// Reference Lua raises this error in solvegotos(), which runs at
+			// leaveblock — i.e. AFTER the whole block has been parsed — using
+			// ls->lastline (the line of the block's final token), NOT the line
+			// of the statement immediately following the label.
+			//
+			//   - Ordinary blocks (do/while/for/if/function/chunk): lastline is
+			//     the end line of the block's last statement (statlist stops
+			//     before the closing 'end'/EOF).
+			//   - repeat-until bodies (labelEndOpt == false): the body's locals
+			//     remain visible in the until condition, so leaveblock runs
+			//     only after the condition is parsed; lastline is the condition
+			//     line (already passed in as blockAfterLine).
+			//
+			// Three cases by where leaveblock runs relative to the closing
+			// token (which sets ls->lastline):
+			//   - repeat-until body (labelEndOpt == false): after 'until cond'
+			//     -> the condition line, passed in as blockAfterLine.
+			//   - function body (labelEndOpt == true, blockAfterLine != 0):
+			//     close_func runs leaveblock AFTER the closing 'end' is
+			//     consumed -> the 'end' line, passed in as fe.EndLine.
+			//   - do/while/for/if body or main chunk (labelEndOpt == true,
+			//     blockAfterLine == 0): leaveblock runs before the closing
+			//     'end'/EOF -> the block's last statement line.
+			var afterLine int
+			if !labelEndOpt || blockAfterLine != 0 {
+				afterLine = blockAfterLine
+			} else {
+				afterLine = blockLastStmtLine(stmts)
+			}
 			if afterLine == 0 {
 				afterLine = c.endLine
-			}
-			if afterEnd < len(stmts) {
-				afterLine = stmts[afterEnd].Pos().Line
 			}
 
 			// Process labels in reverse order to match lua5.4's recursive

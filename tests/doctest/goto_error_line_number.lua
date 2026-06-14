@@ -22,9 +22,31 @@ print(err4)
 --> ~]:4: no visible label 'L' for <goto> at line 4
 
 -- goto jumping into scope of local variable (compile error)
--- The error line prefix is the line of the first statement after the label
+-- Reference Lua raises this at leaveblock, so the error line prefix is
+-- ls->lastline: the end line of the block's LAST statement. Here that is
+-- print(x) on line 5 (also the only statement after the label).
 local ok5, err5 = load("do\ngoto L\nlocal x = 1\n::L::\nprint(x)\nend")
 print(err5)
+--> ~]:5: <goto L> at line 2 jumps into the scope of 'x'
+
+-- When several statements follow the label, the prefix is the LAST one's
+-- line (here line 5, 'local c'), NOT the first statement after the label
+-- (line 4) nor the 'end' keyword (line 6). Verified against lua5.5.0.
+local ok5b, err5b = load("do\ngoto L\nlocal x\n::L::\nlocal a\nlocal c\nend")
+print(err5b)
+--> ~]:6: <goto L> at line 2 jumps into the scope of 'x'
+
+-- function body: close_func runs leaveblock AFTER the closing 'end' is
+-- consumed, so unlike a do/while/for block the prefix is the 'end' line (6),
+-- NOT the body's last statement (line 5). Verified against lua5.5.0.
+local ok5d, err5d = load("local function f()\ngoto L\nlocal x\n::L::\nlocal y\nend")
+print(err5d)
+--> ~]:6: <goto L> at line 2 jumps into the scope of 'x'
+
+-- repeat-until: body locals stay visible in the condition, so the goto is
+-- resolved only after 'until', and the prefix is the condition's line (5).
+local ok5c, err5c = load("repeat\ngoto L\nlocal x\n::L::\nuntil false")
+print(err5c)
 --> ~]:5: <goto L> at line 2 jumps into the scope of 'x'
 
 -- goto in inner function: error line prefix is the function's 'end', not chunk EOF

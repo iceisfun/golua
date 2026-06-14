@@ -855,9 +855,10 @@ func TestGotoIntoScopeErrorLine_Repeat(t *testing.T) {
 	}
 }
 
-// TestGotoIntoScopeErrorLine_While verifies that goto-into-scope errors
-// in while/do blocks report the line of the first statement after the
-// label, not the line of the end keyword.
+// TestGotoIntoScopeErrorLine_While verifies that goto-into-scope errors in
+// while/do blocks report the line reference Lua uses: ls->lastline at
+// leaveblock, i.e. the end line of the block's LAST statement — not the line
+// of the first statement after the label, and not the 'end' keyword line.
 func TestGotoIntoScopeErrorLine_While(t *testing.T) {
 	src := "while true do\ngoto L\nlocal x\n::L::\nprint(1)\nbreak\nend"
 	block, err := parser.Parse("<test>", src)
@@ -871,8 +872,9 @@ func TestGotoIntoScopeErrorLine_While(t *testing.T) {
 		t.Fatal("expected compile error for goto jumping into local scope")
 	}
 	errMsg := err.Error()
-	// Should report line 5 (print(1), the statement after ::L::), not line 7 (end)
-	if !strings.Contains(errMsg, "]:5:") {
-		t.Errorf("expected error at line 5 (first stmt after label), got: %s", errMsg)
+	// Should report line 6 (break, the while body's LAST statement), matching
+	// lua5.5.0 — not line 5 (print, the statement after ::L::) or line 7 (end).
+	if !strings.Contains(errMsg, "]:6:") {
+		t.Errorf("expected error at line 6 (block's last stmt), got: %s", errMsg)
 	}
 }
