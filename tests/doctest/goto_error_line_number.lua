@@ -43,6 +43,13 @@ local ok5d, err5d = load("local function f()\ngoto L\nlocal x\n::L::\nlocal y\ne
 print(err5d)
 --> ~]:6: <goto L> at line 2 jumps into the scope of 'x'
 
+-- A multi-line trailing expression as the block's last statement: the prefix
+-- is the line of the statement's FINAL token (the closing ')' on line 7), not
+-- the statement's start line. Exercises AST End()/span tracking.
+local ok5e, err5e = load("do\ngoto L\nlocal x\n::L::\nprint(\n1\n)\nend")
+print(err5e)
+--> ~]:7: <goto L> at line 2 jumps into the scope of 'x'
+
 -- repeat-until: body locals stay visible in the condition, so the goto is
 -- resolved only after 'until', and the prefix is the condition's line (5).
 local ok5c, err5c = load("repeat\ngoto L\nlocal x\n::L::\nuntil false")

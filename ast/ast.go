@@ -18,9 +18,11 @@ import "github.com/iceisfun/golua/v2/token"
 // Interfaces
 // ---------------------------------------------------------------------------
 
-// Node is the common interface for every AST node.
+// Node is the common interface for every AST node. Pos returns the position of
+// the node's first token; End returns the position just past its last token.
 type Node interface {
 	Pos() token.Pos
+	End() token.Pos
 }
 
 // Stmt is a statement node.

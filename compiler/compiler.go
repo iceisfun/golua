@@ -376,6 +376,17 @@ func blockMaxLine(block *ast.Block) int {
 	return maxLine
 }
 
+// blockLastStmtLine returns the source line of the final token of a block's
+// last statement, which is the value reference Lua reports (ls->lastline) when
+// it raises a "jumps into the scope" error at leaveblock. Returns 0 for an
+// empty block.
+func blockLastStmtLine(stmts []ast.Stmt) int {
+	if len(stmts) == 0 {
+		return 0
+	}
+	return stmtEndLine(stmts[len(stmts)-1])
+}
+
 // ---------------------------------------------------------------------------
 // Function state helpers
 // ---------------------------------------------------------------------------

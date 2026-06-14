@@ -4,42 +4,16 @@ import (
 	"github.com/iceisfun/golua/v2/ast"
 )
 
-// stmtEndLine returns the "end line" of a statement — the line of the closing
-// 'end' keyword for block statements, or the start line for simple statements.
-// This matches Lua 5.4's ls->lastline which tracks the last consumed token.
+// stmtEndLine returns the "end line" of a statement — the line of its final
+// token (the closing 'end' for block statements, the closing ')' of a trailing
+// call, the until-condition line for repeat, etc.). This matches Lua 5.4's
+// ls->lastline, which tracks the last consumed token, via the AST's End()
+// span. A LabelStmt reports the line just past its closing '::'.
 func stmtEndLine(s ast.Stmt) int {
-	switch s := s.(type) {
-	case *ast.IfStmt:
-		return s.EndLine
-	case *ast.WhileStmt:
-		return s.EndLine
-	case *ast.DoStmt:
-		return s.EndLine
-	case *ast.ForNumStmt:
-		return s.EndLine
-	case *ast.ForInStmt:
-		return s.EndLine
-	case *ast.RepeatStmt:
-		// repeat..until has no 'end'; use the condition's line
-		return s.Cond.Pos().Line
-	case *ast.FuncStmt:
-		if s.Func != nil {
-			return s.Func.EndLine
-		}
-	case *ast.LocalFuncStmt:
-		if s.Func != nil {
-			return s.Func.EndLine
-		}
-	case *ast.GlobalFuncStmt:
-		if s.Func != nil {
-			return s.Func.EndLine
-		}
-	case *ast.LabelStmt:
-		return s.EndLine
-	case *ast.ExprStmt:
-		return s.Expr.Pos().Line
+	if lbl, ok := s.(*ast.LabelStmt); ok && lbl.EndLine != 0 {
+		return lbl.EndLine
 	}
-	return s.Pos().Line
+	return s.End().Line
 }
 
 // preRegisterUpvalues walks an assignment target expression and pre-registers

@@ -39,6 +39,7 @@ type Lexer struct {
 	line           int    // current line number (1-based)
 	col            int    // current column number (1-based)
 	current        rune   // current character (eof at end)
+	curOffset      int    // byte offset of the current character
 	rawByte        bool   // true when current holds a raw byte (invalid UTF-8)
 	stringRawStart int    // byte position of opening delimiter for string scanning (used in "near" context)
 }
@@ -75,10 +76,12 @@ func New(source, input string, stripShebang bool) *Lexer {
 // The rawByte flag is set when the current character is a raw invalid byte.
 func (l *Lexer) readChar() {
 	if l.pos >= len(l.input) {
+		l.curOffset = l.pos
 		l.current = eof
 		l.rawByte = false
 		return
 	}
+	l.curOffset = l.pos
 	r, size := utf8.DecodeRuneInString(l.input[l.pos:])
 	if r == utf8.RuneError && size == 1 {
 		// Invalid UTF-8 byte: preserve raw byte value
@@ -104,7 +107,7 @@ func (l *Lexer) writeCurrent(buf *strings.Builder) {
 
 // currentPos returns the current source position (pointing at current char).
 func (l *Lexer) currentPos() token.Pos {
-	return token.Pos{Source: l.source, Line: l.line, Column: l.col - 1}
+	return token.Pos{Source: l.source, Offset: l.curOffset, Line: l.line, Column: l.col - 1}
 }
 
 // errorf creates a lexer error at the current position.
