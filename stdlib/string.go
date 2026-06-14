@@ -729,6 +729,12 @@ func makeStringArithMod() func(*vm.VM) int {
 		if result != 0 && (result < 0) != (n2 < 0) {
 			result += n2
 		}
+		if math.IsNaN(result) {
+			// C's fmod returns a negative NaN ("-nan"); Go's math.Mod
+			// returns a positive NaN. Match the VM's luaNumMod fix so the
+			// string-coerced path agrees with the direct-float path.
+			result = math.Copysign(math.NaN(), -1)
+		}
 		v.Set(0, vm.NewFloat(result))
 		return 1
 	}
