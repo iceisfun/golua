@@ -114,9 +114,18 @@ func (vm *VM) Traceback(msg string, level int) string {
 			line = proto.Lines[0]
 		}
 
+		// Location prefix. Reference luaL_traceback omits the ":line" segment
+		// when the current line is unknown (<= 0), e.g. a frame whose function
+		// came from a debug-stripped dump (empty line table): it prints
+		// "source:" instead of "source:0:".
+		loc := source + ":"
+		if line > 0 {
+			loc = fmt.Sprintf("%s:%d:", source, line)
+		}
+
 		// Determine function name
 		if i == 0 && proto.LineDef == 0 {
-			fmt.Fprintf(&b, "%s:%d: in main chunk", source, line)
+			fmt.Fprintf(&b, "%s in main chunk", loc)
 		} else {
 			// Try to get the function name from the caller's call site
 			name := ""
@@ -161,16 +170,16 @@ func (vm *VM) Traceback(msg string, level int) string {
 				name = vm.frameFuncName(frame)
 			}
 			if nameWhat == "metamethod" {
-				fmt.Fprintf(&b, "%s:%d: in metamethod '%s'", source, line, name)
+				fmt.Fprintf(&b, "%s in metamethod '%s'", loc, name)
 			} else if nameWhat == "hook" {
-				fmt.Fprintf(&b, "%s:%d: in hook '%s'", source, line, name)
+				fmt.Fprintf(&b, "%s in hook '%s'", loc, name)
 			} else if len(name) > 0 && name[0] == '<' {
 				// Anonymous function: "in function <file:line>" (no quotes)
-				fmt.Fprintf(&b, "%s:%d: in function %s", source, line, name)
+				fmt.Fprintf(&b, "%s in function %s", loc, name)
 			} else if nameWhat == "local" || nameWhat == "field" || nameWhat == "upvalue" || nameWhat == "method" || nameWhat == "for iterator" {
-				fmt.Fprintf(&b, "%s:%d: in %s '%s'", source, line, nameWhat, name)
+				fmt.Fprintf(&b, "%s in %s '%s'", loc, nameWhat, name)
 			} else {
-				fmt.Fprintf(&b, "%s:%d: in function '%s'", source, line, name)
+				fmt.Fprintf(&b, "%s in function '%s'", loc, name)
 			}
 		}
 		written++
