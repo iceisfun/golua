@@ -47,6 +47,21 @@ assert(tb:find("[C]: in ?", 1, true), tb)
 	runLuaWithDebug(t, source, "test_debug_traceback_bottom_c_frame", provider)
 }
 
+func TestDebugTracebackRegression_StrippedDumpOmitsZeroLine(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	// A function reloaded from a debug-stripped dump has no line table, so its
+	// frame's current line is unknown. Reference luaL_traceback then prints
+	// "source: in ..." (no ":line"), NOT "source:0: in ...".
+	source := `local g = load(string.dump(function()
+  return debug.traceback("msg", 1)
+end, true))
+local tb = g()
+assert(tb:find("?: in local 'g'", 1, true), tb)
+assert(not tb:find("?:0:", 1, true), tb)
+`
+	runLuaWithDebug(t, source, "test_debug_traceback_stripped_dump", provider)
+}
+
 func TestDebugTracebackRegression_NativeFramesUseCFormatting(t *testing.T) {
 	provider := vm.NewDefaultDebugProvider()
 	source := `local function capture()
