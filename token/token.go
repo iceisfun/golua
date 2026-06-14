@@ -144,6 +144,7 @@ func (typ Type) String() string {
 // Pos represents a position in source code.
 type Pos struct {
 	Source string // source name (e.g. filename)
+	Offset int    // 0-based byte offset into the source (0 if unknown)
 	Line   int    // 1-based line number
 	Column int    // 1-based column number
 }

@@ -232,7 +232,9 @@ func (p *parser) parseSimpleExpr() ast.Expr {
 	case token.STRING:
 		v := p.tok
 		p.advance()
-		return ast.NewStringExpr(pos, v.Literal)
+		s := ast.NewStringExpr(pos, v.Literal)
+		s.EndP = tokenEnd(v)
+		return s
 	case token.NIL:
 		p.advance()
 		return ast.NewNilExpr(pos)
@@ -271,8 +273,11 @@ func (p *parser) parsePrimaryExpr() ast.Expr {
 		openLine := p.tok.Pos.Line
 		p.advance()
 		inner := p.parseExpr()
+		closeTok := p.tok
 		p.checkMatch(token.Type(')'), "(", openLine)
-		return ast.NewParenExpr(pos, inner)
+		pe := ast.NewParenExpr(pos, inner)
+		pe.EndP = tokenEnd(closeTok)
+		return pe
 	default:
 		p.errorf("unexpected symbol%s", p.nearClause())
 		return ast.NewNilExpr(p.pos())
@@ -289,30 +294,42 @@ func (p *parser) continueSuffixedExpr(expr ast.Expr) ast.Expr {
 			pos := p.pos()
 			p.advance()
 			field := p.parseName()
-			expr = ast.NewFieldExpr(pos, expr, field.Name)
+			fe := ast.NewFieldExpr(pos, expr, field.Name)
+			fe.EndP = field.End()
+			expr = fe
 		case p.check(token.Type('[')):
 			pos := p.pos()
 			p.advance()
 			key := p.parseExpr()
-			p.expect(token.Type(']'))
-			expr = ast.NewIndexExpr(pos, expr, key)
+			closeTok, _ := p.expect(token.Type(']'))
+			ie := ast.NewIndexExpr(pos, expr, key)
+			ie.EndP = tokenEnd(closeTok)
+			expr = ie
 		case p.check(token.Type(':')):
 			pos := p.pos()
 			p.advance()
 			method := p.parseName()
-			args := p.parseFuncArgs()
-			expr = ast.NewMethodCallExpr(pos, expr, method.Name, args)
+			args, argsEnd := p.parseFuncArgs()
+			mc := ast.NewMethodCallExpr(pos, expr, method.Name, args)
+			mc.EndP = argsEnd
+			expr = mc
 		case p.check(token.Type('(')) || p.check(token.STRING) || p.check(token.Type('{')):
 			pos := p.pos()
-			args := p.parseFuncArgs()
-			expr = ast.NewFuncCallExpr(pos, expr, args)
+			args, argsEnd := p.parseFuncArgs()
+			fc := ast.NewFuncCallExpr(pos, expr, args)
+			fc.EndP = argsEnd
+			expr = fc
 		default:
 			return expr
 		}
 	}
 }
 
-func (p *parser) parseFuncArgs() []ast.Expr {
+// parseFuncArgs parses a call's argument list and returns the arguments along
+// with the position just past the closing delimiter (')' for parenthesised
+// calls, or the end of the single string/table argument for the f"..." / f{}
+// call forms).
+func (p *parser) parseFuncArgs() ([]ast.Expr, token.Pos) {
 	switch p.tok.Type {
 	case token.Type('('):
 		openLine := p.tok.Pos.Line
@@ -321,18 +338,22 @@ func (p *parser) parseFuncArgs() []ast.Expr {
 		if !p.check(token.Type(')')) {
 			args = p.parseExprList()
 		}
+		closeTok := p.tok
 		p.checkMatch(token.Type(')'), "(", openLine)
-		return args
+		return args, tokenEnd(closeTok)
 	case token.Type('{'):
-		return []ast.Expr{p.parseTableConstructor()}
+		tc := p.parseTableConstructor()
+		return []ast.Expr{tc}, tc.End()
 	case token.STRING:
 		pos := p.pos()
 		v := p.tok
 		p.advance()
-		return []ast.Expr{ast.NewStringExpr(pos, v.Literal)}
+		s := ast.NewStringExpr(pos, v.Literal)
+		s.EndP = tokenEnd(v)
+		return []ast.Expr{s}, s.EndP
 	default:
 		p.errorf("function arguments expected%s", p.nearClause())
-		return nil
+		return nil, p.pos()
 	}
 }
 
@@ -380,10 +401,12 @@ func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
 	p.addLocals(len(params))
 	p.expect(token.Type(')'))
 	body := p.parseBlock()
+	endTok := p.tok
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "function", funcLine)
 	fe := ast.NewFuncExpr(pos, params, vararg, varargName, body)
 	fe.EndLine = endLine
+	fe.EndP = tokenEnd(endTok)
 	return fe
 }
 
@@ -401,8 +424,11 @@ func (p *parser) parseTableConstructor() *ast.TableConstructor {
 			break
 		}
 	}
+	closeTok := p.tok
 	p.checkMatch(token.Type('}'), "{", openLine)
-	return ast.NewTableConstructor(pos, fields)
+	tc := ast.NewTableConstructor(pos, fields)
+	tc.EndP = tokenEnd(closeTok)
+	return tc
 }
 
 // parseField: '[' expr ']' '=' expr | NAME '=' expr | expr

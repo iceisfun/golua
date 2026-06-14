@@ -236,6 +236,21 @@ func (p *parser) leaveBlock() {
 
 func (p *parser) pos() token.Pos { return p.tok.Pos }
 
+// tokenEnd returns the position just past a token, derived from its start
+// position and source length. Exact for single-line tokens (all keywords,
+// punctuation, names, numbers, and short strings); a multi-line token (e.g. a
+// long-bracket string) is approximated on its starting line.
+func tokenEnd(tok token.Token) token.Pos {
+	n := len(tok.Literal)
+	if len(tok.Raw) > n {
+		n = len(tok.Raw)
+	}
+	end := tok.Pos
+	end.Offset += n
+	end.Column += n
+	return end
+}
+
 // checkMatch expects a closing token (e.g. '}', ')', 'end') that matches
 // an opening token. If the close is missing and on a different line from the
 // open, the error includes "(to close 'OPEN' at line N)" for better diagnostics.
@@ -427,9 +442,12 @@ func (p *parser) parseIfStmt() ast.Stmt {
 		elseb = p.parseBlock()
 		p.leaveBlock()
 	}
+	endTok := p.tok
 	endLine := p.tok.Pos.Line // line of 'end' keyword
 	p.checkMatch(token.END, "if", openLine)
-	return ast.NewIfStmt(pos, cond, thenLine, then, elseifs, elseb, endLine)
+	s := ast.NewIfStmt(pos, cond, thenLine, then, elseifs, elseb, endLine)
+	s.EndP = tokenEnd(endTok)
+	return s
 }
 
 func (p *parser) parseWhileStmt() ast.Stmt {
@@ -443,9 +461,12 @@ func (p *parser) parseWhileStmt() ast.Stmt {
 	p.enterBlock()
 	body := p.parseBlock()
 	p.leaveBlock()
+	endTok := p.tok
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "while", openLine)
-	return ast.NewWhileStmt(pos, cond, body, endLine)
+	s := ast.NewWhileStmt(pos, cond, body, endLine)
+	s.EndP = tokenEnd(endTok)
+	return s
 }
 
 func (p *parser) parseDoStmt() ast.Stmt {
@@ -457,9 +478,12 @@ func (p *parser) parseDoStmt() ast.Stmt {
 	p.enterBlock()
 	body := p.parseBlock()
 	p.leaveBlock()
+	endTok := p.tok
 	endLine := p.tok.Pos.Line // line of 'end' keyword
 	p.checkMatch(token.END, "do", openLine)
-	return ast.NewDoStmt(pos, body, endLine)
+	s := ast.NewDoStmt(pos, body, endLine)
+	s.EndP = tokenEnd(endTok)
+	return s
 }
 
 func (p *parser) parseForStmt() ast.Stmt {
@@ -495,9 +519,12 @@ func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr
 	p.addLocals(4) // for-loop internal variables: (for index), (for limit), (for step), name
 	body := p.parseBlock()
 	p.leaveBlock()
+	endTok := p.tok
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
-	return ast.NewForNumStmt(pos, name, start, stop, step, body, endLine)
+	s := ast.NewForNumStmt(pos, name, start, stop, step, body, endLine)
+	s.EndP = tokenEnd(endTok)
+	return s
 }
 
 func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.NameExpr) ast.Stmt {
@@ -512,9 +539,12 @@ func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.Name
 	p.addLocals(4 + len(names)) // for-in internal variables: (for state), (for control), (for toclose), (for iterator) + user names
 	body := p.parseBlock()
 	p.leaveBlock()
+	endTok := p.tok
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
-	return ast.NewForInStmt(pos, names, iters, body, endLine)
+	s := ast.NewForInStmt(pos, names, iters, body, endLine)
+	s.EndP = tokenEnd(endTok)
+	return s
 }
 
 func (p *parser) parseRepeatStmt() ast.Stmt {
