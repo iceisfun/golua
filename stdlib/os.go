@@ -335,11 +335,12 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 
 		var timestamp int64
 		if !v.Get(2).IsNil() {
-			ts, ok := v.Get(2).ToInt()
-			if !ok {
-				callerArgError(v, 2, "os.date", fmt.Sprintf("number expected, got %s", v.Get(2).Type()))
-			}
-			timestamp = ts
+			// getInt distinguishes a non-integral number ("number has no
+			// integer representation") from a non-number ("number expected,
+			// got <type>"), matching reference luaL_checkinteger. The previous
+			// code emitted the nonsensical "number expected, got number" for a
+			// fractional time argument.
+			timestamp = getInt(v, 2, "os.date")
 		} else {
 			ts, _, _ := provider.Time(v.Context(), nil)
 			timestamp = ts

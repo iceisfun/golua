@@ -63,6 +63,25 @@ func TestOs_DateString(t *testing.T) {
 	runLuaWithOs(t, source, "test_os_date_string", provider)
 }
 
+func TestOs_DateNonIntegralTimeError(t *testing.T) {
+	provider := vm.NewDefaultOsProvider()
+	// A fractional time argument has no integer representation. Reference Lua
+	// reports "number has no integer representation" (via luaL_checkinteger),
+	// not the nonsensical "number expected, got number".
+	source := `
+		local ok, err = pcall(os.date, "!%Y", 1.5)
+		assert(ok == false, "expected os.date to fail on fractional time")
+		assert(err:find("number has no integer representation", 1, true),
+			"unexpected error: " .. tostring(err))
+		-- A non-number time argument still reports the type.
+		local ok2, err2 = pcall(os.date, "!%Y", {})
+		assert(ok2 == false, "expected os.date to fail on table time")
+		assert(err2:find("number expected, got table", 1, true),
+			"unexpected error: " .. tostring(err2))
+	`
+	runLuaWithOs(t, source, "test_os_date_noninteger_time", provider)
+}
+
 func TestOs_DateTable(t *testing.T) {
 	provider := vm.NewDefaultOsProvider()
 	source := `
