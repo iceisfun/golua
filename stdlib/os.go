@@ -195,6 +195,18 @@ func makeOsClock(provider vm.LuaOsProvider) vm.NativeFunc {
 	}
 }
 
+// timeFieldOutOfBound reports whether an os.time date-table field whose value
+// is i would, after subtracting delta, fail to fit in C's int (the type of the
+// struct tm fields). This mirrors reference Lua's getfield() bound check
+// (loslib.c): out-of-bound when !(res>=0 ? res-delta<=INT_MAX : INT_MIN+delta<=res).
+// delta is 1900 for year, 1 for month, and 0 for day/hour/min/sec.
+func timeFieldOutOfBound(i, delta int64) bool {
+	if i >= 0 {
+		return i-delta > math.MaxInt32
+	}
+	return int64(math.MinInt32)+delta > i
+}
+
 // makeOsTime creates the os.time([table]) function.
 func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
@@ -230,18 +242,23 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			}
 			switch key {
 			case osDateYear:
+				// tm_year = year - 1900 must fit in C's int.
+				if timeFieldOutOfBound(i, 1900) {
+					panic(fmt.Sprintf("field '%s' is out-of-bound", key))
+				}
 				dateTable.Year = int(i)
 			case osDateMonth:
+				// tm_mon = month - 1 must fit in C's int.
+				if timeFieldOutOfBound(i, 1) {
+					panic(fmt.Sprintf("field '%s' is out-of-bound", key))
+				}
 				dateTable.Month = int(i)
 			case osDateDay:
+				if timeFieldOutOfBound(i, 0) {
+					panic(fmt.Sprintf("field '%s' is out-of-bound", key))
+				}
 				dateTable.Day = int(i)
 			}
-		}
-
-		// Lua 5.4: validate year fits in C's int (tm_year = year - 1900)
-		tmYear := int64(dateTable.Year) - 1900
-		if tmYear < math.MinInt32 || tmYear > math.MaxInt32 {
-			panic("field 'year' is out-of-bound")
 		}
 
 		// Optional fields with Lua 5.4 defaults: hour=12, min=0, sec=0
@@ -255,6 +272,10 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 				i, ok := val.ToInt()
 				if !ok {
 					panic(fmt.Sprintf("field '%s' is not an integer", key))
+				}
+				// hour/min/sec map directly onto C int tm fields (delta 0).
+				if timeFieldOutOfBound(i, 0) {
+					panic(fmt.Sprintf("field '%s' is out-of-bound", key))
 				}
 				switch key {
 				case osDateHour:
