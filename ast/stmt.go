@@ -122,6 +122,7 @@ type ForNumStmt struct {
 	Stop    Expr
 	Step    Expr // nil = default 1
 	Body    *Block
+	DoLine  int // line of the 'do' keyword (0 if unknown)
 	EndLine int // line of 'end' keyword
 }
 

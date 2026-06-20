@@ -571,6 +571,7 @@ func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr
 	if p.match(token.Type(',')) {
 		step = p.parseExpr()
 	}
+	doLine := p.tok.Pos.Line
 	p.expect(token.DO)
 	p.enterBlock()
 	p.trackLocals(3) // Lua 5.5 numeric-for slots: 2 internal control + visible var
@@ -580,6 +581,7 @@ func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
 	s := ast.NewForNumStmt(pos, name, start, stop, step, body, endLine)
+	s.DoLine = doLine
 	s.EndP = tokenEnd(endTok)
 	return s
 }
