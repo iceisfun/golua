@@ -171,7 +171,12 @@ func (p *parser) errorf(format string, args ...any) error {
 func (p *parser) incDepth() {
 	p.depth++
 	if p.depth >= maxSyntaxLevels {
-		p.errorf("C stack overflow")
+		// Reference Lua raises "C stack overflow" via luaD_throw (not
+		// luaX_syntaxerror), so it carries no "source:line:" prefix.
+		if p.err == nil {
+			p.err = &token.PosError{Pos: p.tok.Pos, Msg: "C stack overflow", Bare: true}
+		}
+		return
 	}
 }
 

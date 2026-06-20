@@ -158,11 +158,19 @@ func (p Pos) String() string {
 type PosError struct {
 	Pos Pos
 	Msg string
+	// Bare suppresses the "source:line:" prefix. Reference Lua raises a few
+	// errors (notably "C stack overflow") via luaD_throw rather than
+	// luaX_syntaxerror, so they carry no position; set Bare for those.
+	Bare bool
 }
 
 // Error returns the error message prefixed with source:line (without column),
-// matching Lua 5.4's error message format.
+// matching Lua 5.4's error message format. When Bare is set, the position
+// prefix is omitted.
 func (e *PosError) Error() string {
+	if e.Bare {
+		return e.Msg
+	}
 	return fmt.Sprintf("%s:%d: %s", e.Pos.Source, e.Pos.Line, e.Msg)
 }
 
