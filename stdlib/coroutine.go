@@ -830,11 +830,18 @@ func coClose(v *vm.VM) int {
 		}
 		if coErr != nil {
 			v.Set(0, vm.False)
+			var errVal vm.Value
 			if le, ok := coErr.(*vm.LuaError); ok {
-				v.Set(1, le.Value)
+				errVal = le.Value
 			} else {
-				v.Set(1, vm.NewString(coErr.Error()))
+				errVal = vm.NewString(coErr.Error())
 			}
+			// Lua 5.5: a nil error object is replaced by "<no error object>",
+			// symmetrically with the resume path (and pcall/xpcall).
+			if errVal.IsNil() {
+				errVal = vm.NewString("<no error object>")
+			}
+			v.Set(1, errVal)
 			return 2
 		}
 		v.Set(0, vm.True)
@@ -890,11 +897,18 @@ func coClose(v *vm.VM) int {
 	}
 	if coErr != nil {
 		v.Set(0, vm.False)
+		var errVal vm.Value
 		if le, ok := coErr.(*vm.LuaError); ok {
-			v.Set(1, le.Value)
+			errVal = le.Value
 		} else {
-			v.Set(1, vm.NewString(coErr.Error()))
+			errVal = vm.NewString(coErr.Error())
 		}
+		// Lua 5.5: a nil error object is replaced by "<no error object>",
+		// symmetrically with the resume path (and pcall/xpcall).
+		if errVal.IsNil() {
+			errVal = vm.NewString("<no error object>")
+		}
+		v.Set(1, errVal)
 		return 2
 	}
 
