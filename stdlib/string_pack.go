@@ -971,7 +971,21 @@ func stringPacksize(v *vm.VM) int {
 			natAlign := getXAlignPacksize(format, &i, fs)
 			align := fs.effectiveAlign(natAlign)
 			addSize(addPadding(int(totalSize), align), 0)
-		case 'z', 's':
+		case 'z':
+			// 'z' is char-aligned (no alignment), so it never triggers the
+			// power-of-2 check; it is simply a variable-length format.
+			panic(fmt.Sprintf("bad argument #1 to '%s' (variable-length format)", fs.funcName))
+		case 's':
+			// Reference Lua resolves an option's alignment (getdetails) before
+			// classifying it as variable-length. The 's' prefix size is used as
+			// the alignment, so a non-power-of-2 prefix under '!N' reports the
+			// alignment error first; otherwise it is variable-length.
+			var size int64
+			size, i = parsePackSize(format, i, 8)
+			if size < 1 || size > 16 {
+				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
+			}
+			fs.effectiveAlign(int(size)) // may panic "alignment not power of 2"
 			panic(fmt.Sprintf("bad argument #1 to '%s' (variable-length format)", fs.funcName))
 		default:
 			panic(fmt.Sprintf("invalid format option '%c'", ch))

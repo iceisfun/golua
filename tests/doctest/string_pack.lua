@@ -107,3 +107,20 @@ do
     print(a, b, c, d, e)
     --> =-1	200	-1000	60000	123456
 end
+
+-- packsize: alignment power-of-2 check on 's' size must fire before the
+-- variable-length error (parity with reference Lua's getdetails ordering).
+do
+    -- 's6' under '!16': prefix size 6 is not a power of 2 -> alignment error wins
+    print(pcall(string.packsize, "!16s6"))
+    --> =false	bad argument #1 to 'string.packsize' (format asks for alignment not power of 2)
+    -- 's4' has power-of-2 prefix -> variable-length error still reported
+    print(pcall(string.packsize, "!16s4"))
+    --> =false	bad argument #1 to 'string.packsize' (variable-length format)
+    -- 'z' needs no alignment -> variable-length error reported
+    print(pcall(string.packsize, "!16z"))
+    --> =false	bad argument #1 to 'string.packsize' (variable-length format)
+    -- s8 (power of 2) -> variable-length
+    print(pcall(string.packsize, "!16s8"))
+    --> =false	bad argument #1 to 'string.packsize' (variable-length format)
+end
