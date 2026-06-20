@@ -97,12 +97,11 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 			fs.maxReg = fs.freeReg
 		}
 		if fs.freeReg > fs.c.limits.MaxRegs {
-			near := exprNear(expr)
-			if near != "" {
-				fs.c.error(expr, "function or expression needs too many registers near '%s'", near)
-			} else {
-				fs.c.error(expr, "function or expression needs too many registers")
-			}
+			// Lua 5.5 reworded this from the 5.4 "function or expression needs
+			// too many registers" to the errorlimit() form
+			// "too many registers (limit is N) in main function/in function at
+			// line N[ near '<token>']".
+			fs.limitError("registers", fs.c.limits.MaxRegs, expr.Pos().Line, exprNear(expr))
 		}
 	}
 
