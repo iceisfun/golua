@@ -388,7 +388,15 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 
 	// Add the 2 internal control registers as hidden locals to protect their
 	// registers so freeReg won't be reset below base+3 during the loop body.
-	fs.checkVarLimitAt(3, line, "for")
+	//
+	// Lua 5.5 checks the MAXVARS limit in two phases (lparser.c fornum/forbody):
+	// the 2 internal "(for state)" vars are adjustlocalvars'd before 'do', and
+	// the visible control variable inside forbody, after 'do' is consumed. So
+	// the near-token is 'do' if the internals alone overflow, otherwise the
+	// token following 'do' (first body statement, or 'end' for an empty body).
+	bodyLine, bodyNear := c.forBodyNextInfo(s.Body, s.EndLine)
+	fs.checkVarLimitAt(2, line, "do")
+	fs.checkVarLimitAt(3, bodyLine, bodyNear)
 	fs.locals = append(fs.locals,
 		localVar{name: forStateVarName, reg: base, startPC: fs.pc()},
 		localVar{name: forStateVarName, reg: base + 1, startPC: fs.pc()},
@@ -523,7 +531,14 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// into place at runtime and marks base+2 as to-be-closed, so there is no
 	// separate OP_TBC instruction.
 	localStartPC := fs.pc()
-	fs.checkVarLimitAt(3+len(s.Names), line, "in")
+	// Lua 5.5 checks the MAXVARS limit in two phases (lparser.c forlist/forbody):
+	// the 3 internal "(for state)" vars are adjustlocalvars'd after 'in <explist>'
+	// but before 'do', and the user loop variables inside forbody, after 'do'.
+	// So the near-token is 'do' if the internals alone overflow, otherwise the
+	// token following 'do' (first body statement, or 'end' for an empty body).
+	bodyLine, bodyNear := c.forBodyNextInfo(s.Body, s.EndLine)
+	fs.checkVarLimitAt(3, line, "do")
+	fs.checkVarLimitAt(3+len(s.Names), bodyLine, bodyNear)
 	fs.locals = append(fs.locals,
 		localVar{name: forStateVarName, reg: base, startPC: localStartPC},
 		localVar{name: forStateVarName, reg: base + 1, startPC: localStartPC},

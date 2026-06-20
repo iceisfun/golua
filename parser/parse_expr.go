@@ -386,7 +386,7 @@ func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
 				if p.check(token.NAME) {
 					varargName = p.tok.Literal
 					p.advance()
-					p.addLocals(1) // count the named vararg as a local
+					p.trackLocals(1) // count the named vararg as a local
 				}
 				break
 			}
@@ -401,7 +401,7 @@ func (p *parser) parseFuncBodyAt(isMethod bool, funcLine int) *ast.FuncExpr {
 		}
 	}
 	// Count parameters as locals in this function scope.
-	p.addLocals(len(params))
+	p.trackLocals(len(params))
 	p.expect(token.Type(')'))
 	body := p.parseBlock()
 	endTok := p.tok

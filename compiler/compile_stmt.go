@@ -250,6 +250,27 @@ func (c *compiler) nextStmtInfo(stmts []ast.Stmt, idx int, blockAfterLine int) (
 	return line, near
 }
 
+// forBodyNextInfo returns the line and near-token of the token following the
+// loop's 'do'. Lua 5.5 checks the per-function MAXVARS limit for a for loop's
+// visible/user variables inside forbody's adjustlocalvars, which runs right
+// after 'do' is consumed; the reported "near '<token>'" is therefore the first
+// token of the body (or 'end' for an empty body) — never the loop keyword.
+func (c *compiler) forBodyNextInfo(body *ast.Block, endLine int) (int, string) {
+	if body != nil {
+		for _, st := range body.Stmts {
+			if _, ok := st.(*ast.EmptyStmt); ok {
+				continue
+			}
+			return st.Pos().Line, stmtNearToken(st)
+		}
+	}
+	line := endLine
+	if line == 0 {
+		line = c.endLine
+	}
+	return line, "end"
+}
+
 // stmtNearToken returns the leading keyword/token for a statement.
 func stmtNearToken(s ast.Stmt) string {
 	switch s.(type) {
@@ -295,6 +316,16 @@ func exprLeadToken(e ast.Expr) string {
 		return x.Name
 	case *ast.ParenExpr:
 		return "("
+	case *ast.FuncCallExpr:
+		// `f(...)`, `t.m(...)`, `t[k](...)` lead with the called expr's token.
+		return exprLeadToken(x.Func)
+	case *ast.MethodCallExpr:
+		// `obj:method(...)` leads with obj's first token.
+		return exprLeadToken(x.Object)
+	case *ast.FieldExpr:
+		return exprLeadToken(x.Table)
+	case *ast.IndexExpr:
+		return exprLeadToken(x.Table)
 	default:
 		return "<eof>"
 	}
@@ -459,40 +490,36 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 		fs.emit(ABC(OP_LOADNIL, base, nNames-1, 0, 0), line)
 	}
 
-	// Register all local variables occupying base..base+nNames-1
-	// Choose near token and line to match Lua 5.4:
-	//   - If any variable has an attribute, near '<' (attribute opener), current line
-	//   - If there are values (=), near '=', current line
-	//   - Otherwise, use the next statement's line and near token (lookahead)
-	nearToken := ""
-	errLine := line
-	hasAttrib := false
-	for _, a := range s.Attribs {
-		if a != "" {
-			hasAttrib = true
-			break
-		}
+	// Register all local variables. Lua 5.5 checks the MAXVARS limit inside
+	// adjustlocalvars (lparser.c), which runs *after* the entire local
+	// statement (names + attribs + '=' explist) has been parsed. The reported
+	// "near '<token>'" is therefore always the token that follows the whole
+	// statement (the parser lookahead) — never the '=' or '<' inside it — and
+	// the limit is checked against the register level, i.e. the number of
+	// register-occupying locals (a trailing inlined `<const>` compile-time
+	// constant consumes no register, matching adjustlocalvars(nvars-1)).
+	nearToken := nextNear
+	errLine := nextLine
+	if nearToken == "" {
+		nearToken = "<eof>"
+		errLine = line
 	}
-	if hasAttrib {
-		nearToken = "<"
-	} else if nValues > 0 {
-		nearToken = "="
-	} else {
-		// No values, no attributes — use next token info (Lua 5.4 lookahead)
-		if nextNear != "" {
-			nearToken = nextNear
-			errLine = nextLine
-		} else {
-			nearToken = "<eof>"
-		}
-	}
-	fs.checkVarLimitAt(nNames, errLine, nearToken)
 
 	fs.freeReg = base + nRegVars
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
-	fs.checkRegLimit()
+	// Lua 5.5 reserves the registers for the declared locals (adjust_assign /
+	// luaK_reserveregs) *before* adjustlocalvars checks MAXVARS. When a single
+	// declaration introduces more locals than the register limit (255) allows,
+	// the register limit is therefore reported first; only within the register
+	// limit does the MAXVARS (200) check apply. Keep this order so the messages
+	// match the reference compiler.
+	fs.checkRegLimitAt(errLine, nearToken)
+
+	// base is the current register level; adding nRegVars register-occupying
+	// locals must not push the level past MaxVars.
+	fs.checkVarLimitAt(base+nRegVars-fs.nActVar, errLine, nearToken)
 	baseIdx := len(fs.locals)
 	for i, name := range s.Names {
 		attrib := ""

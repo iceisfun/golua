@@ -480,12 +480,18 @@ func TestLimits_MaxVars(t *testing.T) {
 }
 
 func TestLimits_MaxVars_Exceeded(t *testing.T) {
-	// 201 locals — exceeds the default limit of 200.
-	// The parser now enforces this limit too, so the error comes from parsing.
+	// 201 locals — exceeds the default limit of 200. Matching Lua 5.5, the
+	// MAXVARS limit is enforced by the compiler (which has the constant-folding
+	// information the parser lacks), not the parser, so parsing succeeds and the
+	// error is raised during compilation.
 	source := genLocals(201)
-	_, err := parser.Parse("test", source)
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("unexpected parse error for 201 locals: %v", err)
+	}
+	_, err = compiler.Compile("test", block)
 	if err == nil {
-		t.Fatal("expected parse error for 201 locals")
+		t.Fatal("expected compile error for 201 locals")
 	}
 	if !strings.Contains(err.Error(), "too many local variables") {
 		t.Fatalf("expected 'too many local variables', got: %v", err)

@@ -724,24 +724,34 @@ func (fs *funcState) stringConstant(s string) int {
 // Local variables
 // ---------------------------------------------------------------------------
 
+// limitError raises a Lua 5.5 errorlimit-style message:
+//
+//	too many <what> (limit is <limit>) in <where>[ near '<token>']
+//
+// where <where> is "main function" or "function at line N", matching the
+// reference compiler's errorlimit() + luaX_syntaxerror() near-clause.
+func (fs *funcState) limitError(what string, limit, line int, near string) {
+	msg := fmt.Sprintf("too many %s (limit is %d)", what, limit)
+	if fs.proto.LineDef == 0 {
+		msg += " in main function"
+	} else {
+		msg += fmt.Sprintf(" in function at line %d", fs.proto.LineDef)
+	}
+	if near != "" {
+		if near == "<eof>" {
+			msg += " near <eof>"
+		} else {
+			msg += fmt.Sprintf(" near '%s'", near)
+		}
+	}
+	fs.c.error(line, "%s", msg)
+}
+
 // checkVarLimitAt checks that adding count new locals won't exceed the limit,
 // with explicit source line and near-token context for Lua 5.4-style messages.
 func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
 	if fs.nActVar+count > fs.c.limits.MaxVars {
-		msg := fmt.Sprintf("too many local variables (limit is %d)", fs.c.limits.MaxVars)
-		if fs.proto.LineDef == 0 {
-			msg += " in main function"
-		} else {
-			msg += fmt.Sprintf(" in function at line %d", fs.proto.LineDef)
-		}
-		if near != "" {
-			if near == "<eof>" {
-				msg += " near <eof>"
-			} else {
-				msg += fmt.Sprintf(" near '%s'", near)
-			}
-		}
-		fs.c.error(line, "%s", msg)
+		fs.limitError("local variables", fs.c.limits.MaxVars, line, near)
 	}
 }
 
@@ -749,6 +759,15 @@ func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
 func (fs *funcState) checkRegLimit() {
 	if fs.freeReg > fs.c.limits.MaxRegs {
 		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
+	}
+}
+
+// checkRegLimitAt is like checkRegLimit but emits the full Lua 5.5 errorlimit
+// message (with "in function at line N near '<token>'") for the cases where the
+// reference compiler reports the register limit during a declaration.
+func (fs *funcState) checkRegLimitAt(line int, near string) {
+	if fs.freeReg > fs.c.limits.MaxRegs {
+		fs.limitError("registers", fs.c.limits.MaxRegs, line, near)
 	}
 }
 

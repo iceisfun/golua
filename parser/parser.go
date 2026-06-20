@@ -108,6 +108,17 @@ type parser struct {
 	depth        int         // recursion depth counter
 	funcs        []funcScope // stack of function scopes for local var limit checking
 	maxVars      int         // maximum local variables per function (0 = maxLocalVars)
+
+	// pendingLimitErr holds a "too many local variables" error that has been
+	// detected during parsing but deliberately not yet raised. golua is a
+	// two-pass front end (parse, then compile); the compiler owns the precise
+	// limit message for well-formed source (it has the constant-folding and
+	// register information, and reports the correct two-phase near-token). But
+	// for an incomplete source the compiler never runs, so a bare structural
+	// error like "'end' expected" would mask the real cause. When the parser
+	// later fails structurally, it raises this pending limit error instead,
+	// matching the single-pass reference compiler which reports the limit.
+	pendingLimitErr error
 }
 
 func (p *parser) maxVarsLimit() int {
@@ -184,6 +195,16 @@ func (p *parser) errorf(format string, args ...any) error {
 	if p.err != nil {
 		return p.err
 	}
+	// If the function already overflowed the local-variable limit, the real
+	// cause of any structural failure (e.g. an incomplete source hitting EOF
+	// before its closing 'end') is the limit, not the structural token. Surface
+	// the pending limit error instead, matching the single-pass reference
+	// compiler. Well-formed source never reaches a structural error here, so the
+	// compiler still owns the limit message in the common case.
+	if p.pendingLimitErr != nil {
+		p.err = p.pendingLimitErr
+		return p.err
+	}
 	p.err = &token.PosError{Pos: p.tok.Pos, Msg: fmt.Sprintf(format, args...)}
 	return p.err
 }
@@ -213,16 +234,21 @@ func (p *parser) popFuncScope() {
 	}
 }
 
-// addLocals registers n new locals in the current function scope and
-// checks the MAXVARS limit, producing an error matching Lua 5.4's format.
-func (p *parser) addLocals(n int) {
+// trackLocals records n new locals in the current function scope and, if that
+// pushes the function past the MAXVARS limit, records a *pending* limit error
+// (see parser.pendingLimitErr) WITHOUT raising it immediately. For well-formed
+// source the compiler later reports the precise limit message (with the correct
+// two-phase near-token and register-vs-variable precedence); the pending error
+// is only surfaced if parsing subsequently fails structurally (e.g. incomplete
+// source), in place of a misleading "'end' expected".
+func (p *parser) trackLocals(n int) {
 	if len(p.funcs) == 0 {
 		return
 	}
 	fs := &p.funcs[len(p.funcs)-1]
 	fs.nLocals += n
 	limit := p.maxVarsLimit()
-	if fs.nLocals > limit {
+	if fs.nLocals > limit && p.pendingLimitErr == nil {
 		msg := fmt.Sprintf("too many local variables (limit is %d)", limit)
 		if fs.lineDef == 0 {
 			msg += " in main function"
@@ -230,7 +256,7 @@ func (p *parser) addLocals(n int) {
 			msg += fmt.Sprintf(" in function at line %d", fs.lineDef)
 		}
 		msg += p.nearClause()
-		p.errorf("%s", msg)
+		p.pendingLimitErr = &token.PosError{Pos: p.tok.Pos, Msg: msg}
 	}
 }
 
@@ -547,7 +573,7 @@ func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr
 	}
 	p.expect(token.DO)
 	p.enterBlock()
-	p.addLocals(4) // for-loop internal variables: (for index), (for limit), (for step), name
+	p.trackLocals(3) // Lua 5.5 numeric-for slots: 2 internal control + visible var
 	body := p.parseBlock()
 	p.leaveBlock()
 	endTok := p.tok
@@ -567,7 +593,7 @@ func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.Name
 	iters := p.parseExprList()
 	p.expect(token.DO)
 	p.enterBlock()
-	p.addLocals(4 + len(names)) // for-in internal variables: (for state), (for control), (for toclose), (for iterator) + user names
+	p.trackLocals(3 + len(names)) // Lua 5.5 generic-for slots: 3 internal state + user vars
 	body := p.parseBlock()
 	p.leaveBlock()
 	endTok := p.tok
@@ -622,7 +648,7 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 		funcLine := p.tok.Pos.Line
 		p.advance()
 		name := p.parseName()
-		p.addLocals(1) // local function name is a local in outer scope
+		p.trackLocals(1) // local function name is a local in outer scope
 		fn := p.parseFuncBodyAt(false, funcLine)
 		return ast.NewLocalFuncStmt(pos, name, fn)
 	}
@@ -631,14 +657,12 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 	defAttrib := p.parseAttrib()
 
 	names := []*ast.NameExpr{p.parseName()}
-	p.addLocals(1)
 	if p.err != nil {
 		return nil
 	}
 	attribs := []string{p.parseAttribOr(defAttrib)}
 	for p.match(token.Type(',')) {
 		names = append(names, p.parseName())
-		p.addLocals(1)
 		if p.err != nil {
 			return nil
 		}
@@ -672,7 +696,20 @@ func (p *parser) parseLocalStmt() ast.Stmt {
 	var values []ast.Expr
 	if p.match(token.Type('=')) {
 		values = p.parseExprList()
+		if p.err != nil {
+			return nil
+		}
 	}
+
+	// The MAXVARS / register limit for local declarations is owned by the
+	// compiler, which has the constant-folding and register-allocation
+	// information the parser lacks (Lua 5.5 checks it in adjustlocalvars /
+	// luaK_reserveregs, excluding trailing inlined <const> compile-time
+	// constants and reporting the register limit first when a single
+	// declaration overflows the register file). The parser only tracks the
+	// running count so scoping for subsequent declarations stays correct.
+	p.trackLocals(len(names))
+
 	return ast.NewLocalStmt(pos, names, attribs, values)
 }
 
