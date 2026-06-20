@@ -553,7 +553,25 @@ func tableMove(v *vm.VM) int {
 // realistically OOM the process. 1<<30 (~1G entries) is absurdly large for
 // a preallocation hint while leaving headroom before Go's own allocator
 // rejects the request.
-const maxTableCreateSize = 1 << 30
+//
+// The narr/nrec arguments are validated against the same limits as reference
+// Lua 5.5, and crucially these limits bound only *acceptance*, not allocation:
+//   - An argument exceeding INT_MAX no longer fits the C int the reference
+//     uses, so it is rejected as the argument error "out of range".
+//   - A hash hint (nrec) that fits in an int but exceeds the hash part's
+//     MAXHSIZE raises the runtime error "table overflow" (no location prefix),
+//     distinct from the argument "out of range".
+//
+// A large-but-accepted array hint (e.g. table.create(1<<29)) is NOT allocated
+// eagerly: reference Lua only succeeds because Linux overcommit hands it a
+// virtual mapping it never faults in, whereas Go's make zero-fills the whole
+// backing store and would trigger a fatal, pcall-uncatchable out-of-memory
+// abort. vm.NewTableWithSize independently clamps the real preallocation, so
+// the table is returned (matching reference) without the giant allocation.
+const (
+	maxTableCreateArg  = math.MaxInt32 // INT_MAX: narr/nrec above this are "out of range"
+	maxTableCreateHash = 1 << 30       // MAXHSIZE: nrec above this is "table overflow"
+)
 
 // table.create(narr [, nrec])
 // Creates a new empty table with preallocated capacity for narr array slots
@@ -565,15 +583,21 @@ func tableCreate(v *vm.VM) int {
 		callerArgError(v, 1, "table.create", "number expected, got no value")
 	}
 	narr := getInt(v, 1, "table.create")
-	if narr < 0 || narr > maxTableCreateSize {
+	if narr < 0 || narr > maxTableCreateArg {
 		callerArgError(v, 1, "table.create", "out of range")
 	}
 
 	var nrec int64
 	if v.ArgCount() >= 2 && !v.Get(2).IsNil() {
 		nrec = getInt(v, 2, "table.create")
-		if nrec < 0 || nrec > maxTableCreateSize {
+		if nrec < 0 || nrec > maxTableCreateArg {
 			callerArgError(v, 2, "table.create", "out of range")
+		}
+		if nrec > maxTableCreateHash {
+			// Plain runtime error: reference Lua raises this without a
+			// source-location prefix, so use a LuaError value (panic(string)
+			// would gain a file:line prefix from the native-recovery layer).
+			panic(&vm.LuaError{Value: vm.NewString("table overflow")})
 		}
 	}
 

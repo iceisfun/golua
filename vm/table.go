@@ -98,6 +98,22 @@ func (t *Table) VMRef() *VM { return t.vmRef }
 // pcall absorbs (matching reference Lua 5.5 behavior).
 const maxTableEntries = 1 << 22
 
+// maxTablePrealloc caps how many slots NewTableWithSize will eagerly reserve
+// from a caller-supplied size hint (e.g. table.create(narr, nrec) or a large
+// table-constructor count). The hint is advisory — its only purpose is to skip
+// the geometric realloc cascade while the table fills — and that benefit is
+// fully amortized within a few tens of thousands of entries. Reference Lua can
+// "honor" an enormous hint almost for free because it relies on lazy page
+// commit; Go's make() zero-fills the whole backing store immediately, so an
+// unbounded hint becomes an unbounded resident allocation that the runtime
+// aborts on fatally (uncatchable by pcall). Clamping the *prealloc* well below
+// maxTableEntries keeps a single huge hint to a few MB and keeps a flood of
+// adversarial pcall(table.create, huge) calls comfortably ahead of GC, while a
+// table that genuinely fills past this point simply grows on demand (paying the
+// realloc as it goes, exactly as an un-presized table would) up to the
+// maxTableEntries ceiling. 1<<16 ≈ 65536 slots ≈ 2.6MB at 40B/Value.
+const maxTablePrealloc = 1 << 16
+
 // NewEmptyTable creates a new empty table.
 func NewEmptyTable() *Table {
 	return &Table{}
@@ -108,6 +124,20 @@ func NewEmptyTable() *Table {
 // predict whether keys will be strings, integers, or other types.
 func NewTableWithSize(narray, nhash int) *Table {
 	t := &Table{}
+	// narray/nhash are advisory preallocation hints. Clamp them to
+	// maxTablePrealloc before any make(): a caller-supplied hint (e.g.
+	// table.create(1<<29), or a giant table-constructor count) must never turn
+	// into a multi-gigabyte Go backing-array allocation. Go's make zero-fills
+	// the whole backing store even at len 0, forcing every page resident, so an
+	// unclamped huge hint triggers runtime.throw("out of memory") — a fatal,
+	// pcall-uncatchable abort. The table still grows on demand (and raises a
+	// catchable "not enough memory" once it reaches the maxTableEntries ceiling).
+	if narray > maxTablePrealloc {
+		narray = maxTablePrealloc
+	}
+	if nhash > maxTablePrealloc {
+		nhash = maxTablePrealloc
+	}
 	if narray > 0 {
 		t.array = make([]Value, 0, narray)
 	}
@@ -652,6 +682,14 @@ func (t *Table) shrinkArray() {
 // rehashToArray moves sequential integer keys from hash to array.
 func (t *Table) rehashToArray() {
 	for {
+		// Respect the array-size cap. Promotion from the hash part must not
+		// grow the array beyond maxTableEntries: leftover sequential keys stay
+		// in the hash part (still reachable via the integer-hash get path),
+		// preserving the len(t.array) <= maxTableEntries invariant that the
+		// Set/SetInt append paths rely on to stay below Go's fatal-OOM ceiling.
+		if len(t.array) >= maxTableEntries {
+			return
+		}
 		nextIdx := int64(len(t.array) + 1)
 		nextIdxKey := Value{typ: typeInt, integer: nextIdx}
 		// Check integer hash first (most common case)
