@@ -749,6 +749,7 @@ func fileWrite(v *vm.VM) int {
 func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 	ctx := v.Context()
 	n := v.ArgCount() - (firstArg - 1)
+	var totalBytes int64 // bytes written so far (for the 5.5 error counter)
 	for i := firstArg; i < firstArg+n; i++ {
 		arg := v.Get(i)
 		var s string
@@ -762,12 +763,19 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 		}
 		err := f.Write(ctx, s)
 		if err != nil {
+			// Lua 5.5 g_write returns four values on a write error:
+			// nil, error message, errno, and the number of bytes written
+			// before the failure. golua writes whole arguments atomically, so
+			// the failing write contributed 0 bytes and totalBytes is the sum
+			// of the fully-written preceding arguments.
 			errno, errDesc := extractLuaFileError(err)
 			v.Set(0, vm.Nil)
 			v.Set(1, vm.NewString(errDesc))
 			v.Set(2, vm.NewInt(int64(errno)))
-			return 3
+			v.Set(3, vm.NewInt(totalBytes))
+			return 4
 		}
+		totalBytes += int64(len(s))
 	}
 
 	// Return the file handle (for chaining)

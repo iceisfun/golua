@@ -444,3 +444,32 @@ func TestIo_FileLinesDoesNotAutoClose(t *testing.T) {
 	`
 	runLuaWithIo(t, source, "test_io_file_lines_no_auto_close", provider)
 }
+
+// TestIo_WriteError_FourValues verifies that a failed file:write returns the
+// four-value shape introduced in Lua 5.5: nil, error message, errno, and the
+// number of bytes written before the failure (0 when the first write fails).
+func TestIo_WriteError_FourValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "ro.txt"), []byte("seed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	provider := vm.NewFullIoProvider(tmpDir)
+	source := `
+		local f = assert(io.open("ro.txt", "r"))   -- read-only handle
+		local n = select("#", f:write("x"))
+		assert(n == 4, "expected 4 return values, got " .. n)
+		local ok, msg, errno, count = f:write("x")
+		assert(ok == nil, "first value should be nil")
+		assert(type(msg) == "string", "second value should be an error string")
+		assert(math.type(errno) == "integer", "third value should be an integer errno")
+		assert(count == 0, "fourth value (bytes written) should be 0, got " .. tostring(count))
+		f:close()
+
+		-- the success path is unchanged: returns the file handle (1 value)
+		local w = assert(io.open("out.txt", "w"))
+		assert(select("#", w:write("a")) == 1, "successful write returns 1 value")
+		assert(w:write("b") == w, "write returns the handle for chaining")
+		w:close()
+	`
+	runLuaWithIo(t, source, "test_io_write_error_four_values", provider)
+}
