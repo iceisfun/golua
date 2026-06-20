@@ -16,6 +16,19 @@ func stmtEndLine(s ast.Stmt) int {
 	return s.End().Line
 }
 
+// stmtCloseLine is like stmtEndLine but returns the line Lua's close_func uses
+// for end-of-function diagnostics (ls->lastline = last token consumed). For a
+// trailing LabelStmt this is the label's own source line, NOT the next-token
+// line stored in LabelStmt.EndLine (which exists only for duplicate-label
+// reporting). Using EndLine here would point an unresolved-goto error at the
+// blank line / EOF following the label instead of the label itself.
+func stmtCloseLine(s ast.Stmt) int {
+	if _, ok := s.(*ast.LabelStmt); ok {
+		return s.Pos().Line
+	}
+	return stmtEndLine(s)
+}
+
 // preRegisterUpvalues walks an assignment target expression and pre-registers
 // any upvalue references in left-to-right order. This ensures that upvalue
 // indices match Lua 5.4's source order, where LHS targets are processed
@@ -79,7 +92,15 @@ func (c *compiler) compileChunk(source string, block *ast.Block) *Proto {
 	fs.emit(ABC(OP_RETURN0, 0, 0, 0, 0), lastLine)
 	// LastLine stays 0 for the main chunk (set at proto init).
 	// Lua 5.4 always reports lastlinedefined=0 for the top-level function.
-	fs.closeLine = lastLine
+	// closeLine drives the "no visible label" (unresolved goto) error, which
+	// reference Lua reports at ls->lastline = the last token consumed. For a
+	// chunk ending in a label, that is the label's own line, not the
+	// next-token line stored in LabelStmt.EndLine.
+	closeLine := lastLine
+	if block != nil && len(block.Stmts) > 0 {
+		closeLine = stmtCloseLine(block.Stmts[len(block.Stmts)-1])
+	}
+	fs.closeLine = closeLine
 
 	c.leaveScope(lastLine)
 
@@ -168,6 +189,19 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 				afterLine = c.endLine
 			}
 
+			// runLastLabelLine is the source line of the LAST label in this
+			// consecutive run. Lua's labelstat() consumes the whole run before
+			// reporting a duplicate, so ls->lastline (the duplicate-error
+			// position) is the run's final label line, regardless of which
+			// label in the run is the duplicate.
+			runLastLabelLine := 0
+			for j := runEnd - 1; j >= i; j-- {
+				if lbl, ok := stmts[j].(*ast.LabelStmt); ok {
+					runLastLabelLine = lbl.P.Line
+					break
+				}
+			}
+
 			// Process labels in reverse order to match lua5.4's recursive
 			// behavior, skipping any empty statements interleaved in the run.
 			for j := runEnd - 1; j >= i; j-- {
@@ -176,7 +210,7 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 					continue // empty statement (';') — no-op
 				}
 				atEnd := labelEndOpt && labelAtBlockEnd(stmts, j)
-				c.compileLabelStmt(lbl, atEnd, afterLine)
+				c.compileLabelStmt(lbl, atEnd, afterLine, runLastLabelLine)
 			}
 
 			// Skip past the entire run (loop will increment i).
@@ -310,7 +344,7 @@ func (c *compiler) compileStmt(stmt ast.Stmt) {
 	case *ast.GotoStmt:
 		c.compileGotoStmt(s)
 	case *ast.LabelStmt:
-		c.compileLabelStmt(s, false, c.endLine)
+		c.compileLabelStmt(s, false, c.endLine, s.P.Line)
 	case *ast.FuncStmt:
 		c.compileFuncStmt(s)
 	case *ast.LocalFuncStmt:
@@ -1032,7 +1066,7 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 // its block (Lua 5.4 §3.3.4). In that case, locals declared before the
 // label are treated as already out of scope, allowing goto to jump past
 // them.
-func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine int) {
+func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine, runLastLabelLine int) {
 	fs := c.fs
 
 	// Check for duplicate label in all visible scopes. Labels are
@@ -1042,20 +1076,20 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 	for _, lbl := range fs.labels {
 		if lbl.name == s.Name {
 			// Lua's checkrepeated() reports the duplicate at ls->lastline,
-			// which is the line of the textually LATER of the two labels (the
-			// last one whose closing '::' was consumed), while the message
-			// references the already-registered duplicate's line (lbl.line).
+			// which is the line of the last token consumed when the label was
+			// registered. labelstat() consumes an entire consecutive run of
+			// labels (and interleaved ';') before any of them is registered, so
+			// ls->lastline is the run's FINAL label line — passed in here as
+			// runLastLabelLine — regardless of which label in the run is the
+			// duplicate. The message references the already-registered
+			// duplicate's line (lbl.line).
 			//
-			// Two cases produce the same rule:
-			//   - Non-adjacent (separate runs): this label (s) is the later
-			//     one; the earlier one is already in fs.labels (lbl.line).
-			//   - Adjacent (one labelstat run): labels are processed in
-			//     reverse, so the later label registered first and s is the
-			//     EARLIER one — but lbl.line is then the later label's line.
-			// In both cases the error position is max(s line, lbl.line).
+			// The error position is the max of the run's last label line (this
+			// label's run) and the pre-existing duplicate's line (which, for a
+			// duplicate registered in an earlier sibling run, may be later).
 			errLine := lbl.line
-			if s.P.Line > errLine {
-				errLine = s.P.Line
+			if runLastLabelLine > errLine {
+				errLine = runLastLabelLine
 			}
 			c.error(errLine, "label '%s' already defined on line %d", s.Name, lbl.line)
 			return

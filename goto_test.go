@@ -139,6 +139,35 @@ func TestDuplicateLabelErrorLine(t *testing.T) {
 			"::L::\nlocal x = 1\n::L::\n",
 			":3:", "on line 1",
 		},
+		{
+			// duplicate in a nested block, followed by another label in the
+			// same run: labelstat() consumes the whole run before registering,
+			// so the error position is the run's LAST label line (4), not the
+			// duplicate's own line (3).
+			"duplicate followed by trailing label in run",
+			"::skip::\nif true then\n  ::skip::\n  ::a::\nend\n",
+			":4:", "on line 1",
+		},
+		{
+			// run with several trailing labels -> position is the last one (5)
+			"duplicate followed by multiple trailing labels",
+			"::skip::\nif true then\n  ::skip::\n  ::a::\n  ::c::\nend\n",
+			":5:", "on line 1",
+		},
+		{
+			// ';' interleaved in the run does not change the rule: last label
+			// in the run (line 5) is the position
+			"duplicate then semicolon then label",
+			"::skip::\nif true then\n  ::skip::\n  ;\n  ::a::\nend\n",
+			":5:", "on line 1",
+		},
+		{
+			// same-block adjacent run where dup is first: ::skip:: ::skip:: ::a::
+			// position is the run's last label (line 3)
+			"adjacent run with trailing label same block",
+			"::skip::\n::skip::\n::a::\n",
+			":3:", "on line 2",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,6 +188,56 @@ func TestDuplicateLabelErrorLine(t *testing.T) {
 			}
 			if !strings.Contains(msg, tt.wantRef) {
 				t.Fatalf("expected %q, got: %v", tt.wantRef, msg)
+			}
+		})
+	}
+}
+
+// TestNoVisibleLabelErrorLineTrailingLabel verifies the "no visible label"
+// (unresolved goto) error line for a main chunk that ends in a label. Reference
+// Lua 5.5 reports the error at ls->lastline = the last token consumed, which for
+// a chunk ending in "::b::" is the label's own line — not the next-token line
+// (blank/EOF) stored in LabelStmt.EndLine for duplicate-label reporting.
+func TestNoVisibleLabelErrorLineTrailingLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		wantLine string // expected ":LINE:" fragment in the error
+	}{
+		{
+			// goto line 1, trailing label line 2 (with trailing newline) -> line 2
+			"trailing label with newline",
+			"goto a\n::b::\n",
+			":2:",
+		},
+		{
+			// blank lines after the trailing label must not push the line to EOF
+			"trailing label then blank lines",
+			"goto a\n::b::\n\n\n",
+			":2:",
+		},
+		{
+			// last statement is a label following other statements
+			"label after statements",
+			"goto a\nprint(1)\n::b::\n",
+			":3:",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			block, err := parser.Parse(tt.name, tt.source)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			_, err = compiler.Compile(tt.name, block)
+			if err == nil {
+				t.Fatalf("expected compile error, got success")
+			}
+			if !strings.Contains(err.Error(), "no visible label") {
+				t.Fatalf("expected no-visible-label error, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantLine) {
+				t.Fatalf("expected error line %q, got: %v", tt.wantLine, err)
 			}
 		})
 	}
