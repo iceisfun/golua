@@ -33,6 +33,11 @@ func configureCLIProviders(v *vm.VM, testMode bool, scriptDir string) {
 	}
 	v.SetIoProvider(vm.NewFullIoProvider(scriptDir))
 	v.SetExecProvider(vm.NewDefaultExecProvider())
+	// Enable io.popen alongside os.execute: both are subprocess-spawning
+	// capabilities and reference Lua exposes both at the standalone-interpreter
+	// trust level. io.popen is gated by the process provider (separate from the
+	// exec provider that backs os.execute), so it must be set explicitly.
+	v.SetProcessProvider(vm.NewDefaultProcessProvider())
 	v.SetExitHandler(vm.NewDefaultExitHandler())
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 }

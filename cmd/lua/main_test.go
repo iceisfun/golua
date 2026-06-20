@@ -195,6 +195,44 @@ func TestConfigureCLIProviders_DefaultModeAllowsWrite(t *testing.T) {
 	}
 }
 
+func TestConfigureCLIProviders_DefaultModeEnablesPopen(t *testing.T) {
+	dir := t.TempDir()
+	// io.popen should be available (and functional) in default CLI mode, matching
+	// reference standalone Lua which exposes both os.execute and io.popen.
+	results, err := runLuaWithCLIProviders(t, false, dir, `
+		if type(io.popen) ~= "function" then
+			return false, "io.popen not a function: " .. type(io.popen)
+		end
+		local f, openErr = io.popen("echo hello")
+		if not f then
+			return false, "popen failed: " .. tostring(openErr)
+		end
+		local out = f:read("a")
+		f:close()
+		return out == "hello\n", out
+	`)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(results) < 1 || !results[0].AsBool() {
+		t.Fatalf("io.popen did not work as expected: %#v", results)
+	}
+}
+
+func TestConfigureCLIProviders_TestModeNoPopen(t *testing.T) {
+	dir := t.TempDir()
+	// Jailed/test mode must NOT expose io.popen (no process provider set).
+	results, err := runLuaWithCLIProviders(t, true, dir, `
+		return io.popen == nil
+	`)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(results) != 1 || !results[0].AsBool() {
+		t.Fatalf("expected io.popen to be nil in test mode: %#v", results)
+	}
+}
+
 func TestRunCLI_DoubleDashStopsOptionParsing(t *testing.T) {
 	dir := t.TempDir()
 	script := writeTempLua(t, dir, "-e", `print("ok")`)
