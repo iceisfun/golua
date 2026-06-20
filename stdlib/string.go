@@ -151,9 +151,19 @@ func stringRep(v *vm.VM) int {
 	if unit > 0 && unit > math.MaxInt64/n {
 		panic("resulting string too large")
 	}
+	totalSize := sLen*n + sepLen*(n-1)
+	// Reference Lua's buffer allocator rejects a request of >= MAX_SIZE
+	// (LUA_MAXINTEGER on 64-bit) with "resulting string too large" before any
+	// allocation is attempted (lauxlib.c:newbuffsize, sz >= MAX_SIZE - B->n).
+	// This fires even when the size is representable, so it must be checked
+	// before the "not enough memory" allocation-failure path below. Example:
+	// string.rep("x", math.maxinteger) has totalSize == MaxInt64 and the guard
+	// above does not catch it (unit==1, MaxInt64/n==1, 1 > 1 is false).
+	if totalSize >= math.MaxInt64 {
+		panic("resulting string too large")
+	}
 	// The size is representable but may exceed the sandbox cap (or be
 	// unallocatable in reference Lua); mirror reference's "not enough memory".
-	totalSize := sLen*n + sepLen*(n-1)
 	if totalSize > maxSize {
 		panic("not enough memory")
 	}
