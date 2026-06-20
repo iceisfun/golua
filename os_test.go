@@ -223,3 +223,38 @@ func TestOs_Setlocale_EmptyFallsBackToC(t *testing.T) {
 	`
 	runLuaWithOs(t, source, "test_os_setlocale_empty_fallback_c", provider)
 }
+
+// TestOs_Time_FieldOutOfBound verifies that os.time bounds-checks every date
+// field against C's int range (the type of struct tm members), matching
+// reference Lua 5.5's getfield(): out-of-range day/hour/min/sec, month-1, and
+// year-1900 raise "field '<name>' is out-of-bound" instead of silently
+// overflowing into a garbage timestamp.
+func TestOs_Time_FieldOutOfBound(t *testing.T) {
+	provider := vm.NewDefaultOsProvider()
+	source := `
+		local INT_MAX = 2147483647
+		local function oob(tbl, field)
+			local ok, err = pcall(os.time, tbl)
+			assert(ok == false, "expected os.time to fail for out-of-bound " .. field)
+			local want = "field '" .. field .. "' is out-of-bound"
+			assert(err == want, "for " .. field .. " got: " .. tostring(err))
+		end
+		-- delta 0 fields: value must fit [INT_MIN, INT_MAX]
+		oob({year=2000, month=1, day=INT_MAX+1}, "day")
+		oob({year=2000, month=1, day=1, hour=INT_MAX+1}, "hour")
+		oob({year=2000, month=1, day=1, min=INT_MAX+1}, "min")
+		oob({year=2000, month=1, day=1, sec=INT_MAX+1}, "sec")
+		oob({year=2000, month=1, day=1, sec=-2147483649}, "sec")
+		-- month is offset by 1 (tm_mon = month-1); INT_MAX+2 overflows
+		oob({year=2000, month=INT_MAX+2, day=1}, "month")
+		-- year is offset by 1900
+		oob({year=INT_MAX+1901, month=1, day=1}, "year")
+
+		-- Boundary values that DO fit must still succeed.
+		assert(os.time({year=2000, month=1, day=1, sec=INT_MAX}),
+			"sec=INT_MAX should be accepted")
+		assert(os.time({year=2000, month=INT_MAX+1, day=1}),
+			"month=INT_MAX+1 (tm_mon=INT_MAX) should be accepted")
+	`
+	runLuaWithOs(t, source, "test_os_time_field_out_of_bound", provider)
+}
