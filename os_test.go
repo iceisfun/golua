@@ -258,3 +258,35 @@ func TestOs_Time_FieldOutOfBound(t *testing.T) {
 	`
 	runLuaWithOs(t, source, "test_os_time_field_out_of_bound", provider)
 }
+
+// TestOs_Date_AltModifiers verifies that os.date accepts the POSIX %E and %O
+// alternate-representation modifiers for the specifier combinations allowed by
+// reference Lua 5.5 (LUA_STRFTIMEOPTIONS). In the C/POSIX locale these modifiers
+// are no-ops that format as the base specifier, and invalid combinations still
+// raise "invalid conversion specifier".
+func TestOs_Date_AltModifiers(t *testing.T) {
+	provider := vm.NewDefaultOsProvider()
+	source := `
+		-- valid modifiers behave as the base specifier (C/POSIX locale = no-op)
+		assert(os.date("!%Oy", 0) == os.date("!%y", 0), "%Oy should equal %y")
+		assert(os.date("!%Ey", 0) == os.date("!%y", 0), "%Ey should equal %y")
+		assert(os.date("!%EY", 0) == os.date("!%Y", 0), "%EY should equal %Y")
+		assert(os.date("!%Od", 0) == os.date("!%d", 0), "%Od should equal %d")
+		assert(os.date("!%OH%OM%OS", 0) == os.date("!%H%M%S", 0), "%OH%OM%OS")
+
+		-- invalid combinations are rejected with the reference wording
+		local function bad(fmt)
+			local ok, err = pcall(os.date, fmt, 0)
+			assert(ok == false, "expected " .. fmt .. " to fail")
+			local want = "bad argument #1 to 'os.date' (invalid conversion specifier '"
+				.. fmt:gsub("^!", "") .. "')"
+			assert(err == want, "for " .. fmt .. " got: " .. tostring(err))
+		end
+		bad("!%Oc")  -- 'c' not in the O block (only in E block)
+		bad("!%Ed")  -- 'd' not in the E block (only in O block)
+		bad("!%Oz")
+		bad("!%E")   -- modifier at end of string
+		bad("!%O")
+	`
+	runLuaWithOs(t, source, "test_os_date_alt_modifiers", provider)
+}

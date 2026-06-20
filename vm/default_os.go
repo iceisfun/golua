@@ -229,6 +229,22 @@ func (p *DefaultOsProvider) Capabilities(ctx context.Context) LuaOsCaps {
 // strftimeFormat converts a strftime format string and formats time t.
 // Some specifiers map directly to Go layout strings; others require
 // runtime computation and are emitted as literal text.
+// altModifierValid reports whether the POSIX alternate-representation
+// modifier mod ('E' or 'O') is valid before base specifier, matching the
+// two-char option blocks in reference Lua 5.5's LUA_STRFTIMEOPTIONS (C99):
+//
+//	E: Ec EC Ex EX Ey EY
+//	O: Od Oe OH OI Om OM OS Ou OU OV Ow OW Oy
+func altModifierValid(mod, base byte) bool {
+	switch mod {
+	case 'E':
+		return strings.IndexByte("cCxXyY", base) >= 0
+	case 'O':
+		return strings.IndexByte("deHImMSuUVwWy", base) >= 0
+	}
+	return false
+}
+
 func strftimeFormat(format string, t time.Time) (string, error) {
 	// First expand compound specifiers so the main loop only handles primitives.
 	format = expandCompoundSpecifiers(format)
@@ -241,6 +257,17 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 				return "", fmt.Errorf("invalid conversion specifier '%%'")
 			}
 			i++
+			// POSIX alternate-representation modifiers %E* and %O*. In the
+			// C/POSIX locale (and in Go, which has no locale alternates) they
+			// are no-ops that format as the base specifier. Only the
+			// combinations in reference Lua 5.5's LUA_STRFTIMEOPTIONS are valid;
+			// anything else falls through to the invalid-specifier error below.
+			if format[i] == 'E' || format[i] == 'O' {
+				if i+1 >= len(format) || !altModifierValid(format[i], format[i+1]) {
+					return "", fmt.Errorf("invalid conversion specifier '%%%s'", format[i:])
+				}
+				i++ // consume modifier; format the base specifier
+			}
 			switch format[i] {
 			case 'Y':
 				// Natural-width year (no zero-padding); matches glibc strftime.
