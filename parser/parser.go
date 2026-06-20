@@ -514,6 +514,7 @@ func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr
 	if p.match(token.Type(',')) {
 		step = p.parseExpr()
 	}
+	doLine := p.tok.Pos.Line
 	p.expect(token.DO)
 	p.enterBlock()
 	p.addLocals(4) // for-loop internal variables: (for index), (for limit), (for step), name
@@ -523,6 +524,7 @@ func (p *parser) parseForNumStmt(pos token.Pos, openLine int, name *ast.NameExpr
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
 	s := ast.NewForNumStmt(pos, name, start, stop, step, body, endLine)
+	s.DoLine = doLine
 	s.EndP = tokenEnd(endTok)
 	return s
 }

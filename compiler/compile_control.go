@@ -353,8 +353,16 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 		fs.maxReg = fs.freeReg
 	}
 
-	// FORPREP — jumps to FORLOOP if not to run
-	forPrepPC := fs.emit(ABx(OP_FORPREP, base, 0), line)
+	// FORPREP — jumps to FORLOOP if not to run. Reference Lua attributes the
+	// instruction (and thus any "bad 'for' limit/initial value/step" or
+	// "'for' step is zero" runtime error) to the line of the 'do' keyword, not
+	// the 'for' keyword, since luaK_code stamps it with lastline after 'do' is
+	// consumed.
+	prepLine := s.DoLine
+	if prepLine == 0 {
+		prepLine = line
+	}
+	forPrepPC := fs.emit(ABx(OP_FORPREP, base, 0), prepLine)
 
 	// The loop variable is at base+3
 	fs.freeReg = base + 4
