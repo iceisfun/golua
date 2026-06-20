@@ -473,3 +473,32 @@ func TestIo_WriteError_FourValues(t *testing.T) {
 	`
 	runLuaWithIo(t, source, "test_io_write_error_four_values", provider)
 }
+
+// TestIo_AppendModeInitialPosition verifies that opening a file in write-only
+// append mode ("a") positions the stream at end-of-file, so seek("cur")
+// reports the EOF offset (POSIX/glibc and reference Lua behavior). Read+append
+// ("a+") deliberately keeps the read position at the start.
+func TestIo_AppendModeInitialPosition(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "data.txt"), []byte("ABCDEFGH"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	provider := vm.NewFullIoProvider(tmpDir)
+	source := `
+		local a = assert(io.open("data.txt", "a"))
+		assert(a:seek("cur") == 8, "append 'a' should start at EOF, got " .. a:seek("cur"))
+		a:close()
+
+		local ap = assert(io.open("data.txt", "a+"))
+		assert(ap:seek("cur") == 0, "'a+' read position should start at 0, got " .. ap:seek("cur"))
+		ap:close()
+
+		-- O_APPEND still forces writes to the end regardless of position
+		local w = assert(io.open("data.txt", "a"))
+		w:write("IJ"); w:close()
+		local r = assert(io.open("data.txt", "r"))
+		assert(r:read("a") == "ABCDEFGHIJ", "append should write at EOF")
+		r:close()
+	`
+	runLuaWithIo(t, source, "test_io_append_mode_initial_position", provider)
+}

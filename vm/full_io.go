@@ -92,7 +92,7 @@ func (p *FullIoProvider) Open(ctx context.Context, name string, mode string) (Lu
 	}
 
 	var flag int
-	var readable, writable bool
+	var readable, writable, seekEnd bool
 	switch strings.TrimRight(mode, "b") {
 	case "r":
 		flag = os.O_RDONLY
@@ -103,6 +103,10 @@ func (p *FullIoProvider) Open(ctx context.Context, name string, mode string) (Lu
 	case "a":
 		flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
 		writable = true
+		// POSIX/glibc position a write-only append stream's indicator at EOF,
+		// so seek("cur") reports the end offset (reference Lua parity). Note
+		// "a+" deliberately keeps the read position at the start.
+		seekEnd = true
 	case "r+":
 		flag = os.O_RDWR
 		readable = true
@@ -122,6 +126,11 @@ func (p *FullIoProvider) Open(ctx context.Context, name string, mode string) (Lu
 	f, err := os.OpenFile(path, flag, 0666)
 	if err != nil {
 		return nil, err
+	}
+	if seekEnd {
+		// Best-effort: O_APPEND already forces writes to EOF regardless of the
+		// position, this only makes seek("cur") report the EOF offset.
+		_, _ = f.Seek(0, io.SeekEnd)
 	}
 
 	return &fullFile{
