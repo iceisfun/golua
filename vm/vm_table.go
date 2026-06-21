@@ -589,10 +589,29 @@ func (vm *VM) TableSetInt(t LuaTable, key int, value Value) error {
 
 // IndexValue retrieves val[key] with __index metamethod support for any value type.
 func (vm *VM) IndexValue(val Value, key Value) (Value, error) {
+	// Fast path: concrete *Table with no metatable (mirrors SetIndexValue and
+	// the GETTABLE opcode), avoiding the AsTable/tableGet interface round-trip.
+	if ct, ok := val.ptr.(*Table); ok && val.typ == typeTable && !ct.isThread && ct.metatable == nil {
+		return ct.Get(key), nil
+	}
 	if val.IsTable() {
 		return vm.tableGet(val.AsTable(), key)
 	}
 	return vm.indexValue(val, key)
+}
+
+// IndexInt retrieves val[key] for an integer key with __index metamethod
+// support. It mirrors SetIndexInt: the fast path reads directly from a
+// metatable-free concrete *Table via GetInt, avoiding boxing the key into a
+// Value and the IsNumber/ToInt decode that IndexValue+Table.Get would perform.
+func (vm *VM) IndexInt(val Value, key int) (Value, error) {
+	if ct, ok := val.ptr.(*Table); ok && val.typ == typeTable && !ct.isThread && ct.metatable == nil {
+		return ct.GetInt(key), nil
+	}
+	if val.IsTable() {
+		return vm.tableGetInt(val.AsTable(), key)
+	}
+	return vm.indexValue(val, NewInt(int64(key)))
 }
 
 // ObjLen returns #v with __len metamethod support.

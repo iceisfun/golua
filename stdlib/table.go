@@ -65,9 +65,9 @@ func tableObjLen(v *vm.VM, val vm.Value) int {
 	return length
 }
 
-// tableGetInt reads t[key] via metamethod-aware TableGetInt, panicking on error.
+// tableGetInt reads t[key] via metamethod-aware IndexInt, panicking on error.
 func tableGetIdx(v *vm.VM, obj vm.Value, key int) vm.Value {
-	val, err := v.IndexValue(obj, vm.NewInt(int64(key)))
+	val, err := v.IndexInt(obj, key)
 	if err != nil {
 		panic(err)
 	}
