@@ -1,6 +1,7 @@
 -- When a <close> metamethod errors, the traceback frame above the close
--- should reference a line near the scope exit (end keyword), not the
--- block-opening keyword (do/for/while).
+-- should reference the line of the block's LAST STATEMENT (reference Lua's
+-- ls->lastline at leaveblock), not the block-opening keyword (do) nor the
+-- closing 'end'. Verified against lua5.5.0.
 
 local ok, err = xpcall(function()
     do
@@ -22,8 +23,10 @@ for line in tostring(err):gmatch("[^\n]+") do
     end
 end
 
--- The 'do' is on line 6, 'end' is on line 10.
--- The frame line should be 10 (the end), not 6 (the do).
-assert(frame_line and frame_line >= 10,
-    string.format("__close frame should reference 'end' line (>=10), got line %s\n%s",
+-- The <close> declaration is the block's last statement and spans lines 8-10;
+-- its final token "})" is on line 10. Reference Lua attributes the block-exit
+-- close (and thus the enclosing frame) to that line, NOT the 'do' (line 7) or
+-- the 'end' (line 11).
+assert(frame_line == 10,
+    string.format("__close frame should reference the last-statement line (10), got line %s\n%s",
         tostring(frame_line), tostring(err)))

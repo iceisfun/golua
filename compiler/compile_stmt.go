@@ -223,6 +223,9 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 		} else {
 			c.compileStmt(stmt)
 		}
+		// Record this statement's AST end line so a block-exit OP_CLOSE can be
+		// attributed to the block's last statement (reference Lua ls->lastline).
+		c.fs.blockLastLine = stmtEndLine(stmt)
 		// After each statement, release temporary registers while
 		// preserving all registers occupied by active locals.
 		// We use regTop() instead of nActVar because locals may not
