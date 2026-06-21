@@ -603,9 +603,10 @@ var ipairsIter = vm.NewNativeFunc(func(v *vm.VM) int {
 	i := v.Get(2)
 	idx, _ := i.ToInt()
 	idx++
-	// Use IndexValue to support any indexable type and produce natural
-	// "attempt to index" errors for non-indexable types (like numbers).
-	val, err := v.IndexValue(tval, vm.NewInt(idx))
+	// Use IndexInt to support any indexable type and produce natural
+	// "attempt to index" errors for non-indexable types (like numbers),
+	// while taking the integer-key fast path for plain array tables.
+	val, err := v.IndexInt(tval, int(idx))
 	if err != nil {
 		panic(err)
 	}
