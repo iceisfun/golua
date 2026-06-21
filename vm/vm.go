@@ -685,7 +685,10 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	for depth := 1; ; depth++ {
 		mm := vm.getMetafield(cur, MetaCall)
 		if mm.IsNil() {
-			return nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(fn))
+			// Report the type of the value that actually failed to be callable
+			// (the current link in the __call chain), not the original object.
+			// This matches reference Lua and the OP_CALL dispatch path.
+			return nil, vm.runtimeError("attempt to call a %s value", vm.ObjTypeName(cur))
 		}
 		if depth > MaxCallChainDepth {
 			return nil, vm.runtimeError("'__call' chain too long")
