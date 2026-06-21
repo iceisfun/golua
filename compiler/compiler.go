@@ -241,6 +241,12 @@ type funcState struct {
 	// post-parse compile errors like unresolved gotos.
 	closeLine int
 
+	// blockLastLine is the AST end line of the most recently compiled
+	// top-level statement in the current block. It tracks reference Lua's
+	// ls->lastline at leaveblock time and is the line a block-exit OP_CLOSE
+	// (which fires __close) is attributed to, matching reference diagnostics.
+	blockLastLine int
+
 	locals      []localVar
 	scopes      []scopeInfo
 	labels      []labelInfo
@@ -866,7 +872,20 @@ func (c *compiler) leaveScope(line int) {
 			}
 		}
 		if needClose {
-			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
+			// For a plain block scope (do/if/else), the block-exit OP_CLOSE
+			// that fires __close must be attributed to the block's last
+			// statement, not the construct's closing token — reference Lua emits
+			// this in leaveblock with ls->lastline. blockLastLine tracks the AST
+			// end line of that statement. Loop scopes are excluded: their close
+			// sites (per-iteration body close, and the generic-for iterator
+			// to-be-closed slot) are emitted explicitly elsewhere and reference
+			// attributes the loop-scope close to the loop header line, so they
+			// keep the supplied line to preserve line-hook parity.
+			closeLine := line
+			if !scope.isLoop && fs.blockLastLine != 0 {
+				closeLine = fs.blockLastLine
+			}
+			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), closeLine)
 		}
 	}
 

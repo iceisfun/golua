@@ -185,7 +185,9 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 		// Close upvalues for body locals before jumping back.
 		scope := fs.scopes[len(fs.scopes)-1]
 		if fs.needsClose(scope.nLocals) {
-			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
+			// __close fires here; attribute to the last body statement
+			// (ls->lastline in reference Lua), not the 'while' line.
+			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), c.fs.blockLastLine)
 		}
 
 		// Jump back to loop start (unconditional) — use last emitted line
@@ -216,7 +218,9 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	// This ensures each iteration gets its own closed upvalue copy.
 	scope := fs.scopes[len(fs.scopes)-1]
 	if fs.needsClose(scope.nLocals) {
-		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
+		// __close fires here; attribute to the last body statement
+		// (ls->lastline in reference Lua), not the 'while' line.
+		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), c.fs.blockLastLine)
 	}
 
 	// Jump back to condition — use the last emitted line (typically the
@@ -255,13 +259,23 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	// Constant conditions can skip the generic boolean materialization path,
 	// which keeps repeat/until instruction shape much closer to Lua 5.4.
 	if isConstTrue(s.Cond) {
+		// The loop exits after one pass; __close fires at scope exit, which
+		// reference Lua attributes to the until-condition line (ls->lastline
+		// after the condition is consumed), not the body's last statement.
+		// Emit the firing OP_CLOSE explicitly at that line, mirroring the
+		// generic path; leaveScope's cleanup close is a runtime no-op on the
+		// already-closed TBC slot.
+		scope := fs.scopes[len(fs.scopes)-1]
+		if fs.needsClose(scope.nLocals) {
+			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), s.Cond.Pos().Line)
+		}
 		c.leaveScope(line)
 		return
 	}
 	if isConstFalsy(s.Cond) {
 		scope := fs.scopes[len(fs.scopes)-1]
 		if fs.needsClose(scope.nLocals) {
-			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), line)
+			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), s.Cond.Pos().Line)
 		}
 		backJump := fs.emitJump(c.lastEmittedLine())
 		offset := loopStart - fs.pc()
@@ -407,7 +421,9 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 		}
 	}
 	if needClose {
-		fs.emit(ABC(OP_CLOSE, base+3, 0, 0, 0), line)
+		// __close fires here; attribute to the last body statement
+		// (ls->lastline in reference Lua), not the 'for' line.
+		fs.emit(ABC(OP_CLOSE, base+3, 0, 0, 0), c.fs.blockLastLine)
 	}
 
 	// FORLOOP — jumps back to just after FORPREP
@@ -542,7 +558,9 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// This ensures each iteration gets its own closed upvalue copy.
 	scope := fs.scopes[len(fs.scopes)-1]
 	if fs.needsClose(scope.nLocals + 4) {
-		fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), line)
+		// __close of body locals fires here; attribute to the last body
+		// statement (ls->lastline in reference Lua), not the 'for' line.
+		fs.emit(ABC(OP_CLOSE, base+4, 0, 0, 0), c.fs.blockLastLine)
 	}
 
 	// TFORCALL — calls the iterator. Use the line of the last iterator
