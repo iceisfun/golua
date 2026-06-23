@@ -138,7 +138,10 @@ func (vm *VM) varInfo(reg int) string {
 			proto := frame.closure.Proto
 			pc := frame.pc - 1
 			name, what := regObjName(proto, pc, reg)
-			if name != "" {
+			// Guard on 'what', not 'name': regObjName signals "not found" with
+			// an empty 'what', so an empty 'name' with a non-empty 'what' is a
+			// legitimately-empty constant (e.g. 0 & "" -> "(constant '')").
+			if what != "" {
 				return fmt.Sprintf(" (%s '%s')", what, name)
 			}
 		}
@@ -156,7 +159,8 @@ func (vm *VM) runtimeErrorForNumber(reg int) error {
 			proto := frame.closure.Proto
 			pc := frame.pc - 1
 			name, what := regObjName(proto, pc, reg)
-			if name != "" {
+			// Guard on 'what' (the empty string is a valid constant name).
+			if what != "" {
 				return vm.runtimeError("number (%s '%s') has no integer representation", what, name)
 			}
 		}
