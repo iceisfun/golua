@@ -57,9 +57,11 @@ func (p *DefaultOsProvider) Date(ctx context.Context, format string, timestamp i
 	t := time.Unix(timestamp, 0)
 
 	// Check for ! prefix (UTC)
+	utc := false
 	if strings.HasPrefix(format, "!") {
 		t = t.UTC()
 		format = format[1:]
+		utc = true
 	}
 
 	// Lua 5.4 returns an error when C's gmtime/localtime returns NULL for
@@ -70,7 +72,7 @@ func (p *DefaultOsProvider) Date(ctx context.Context, format string, timestamp i
 		return "", fmt.Errorf("date result cannot be represented in this installation")
 	}
 
-	return strftimeFormat(format, t)
+	return strftimeFormat(format, t, utc)
 }
 
 // DateTable returns a map of date/time components for the given timestamp.
@@ -245,10 +247,7 @@ func altModifierValid(mod, base byte) bool {
 	return false
 }
 
-func strftimeFormat(format string, t time.Time) (string, error) {
-	// First expand compound specifiers so the main loop only handles primitives.
-	format = expandCompoundSpecifiers(format)
-
+func strftimeFormat(format string, t time.Time, utc bool) (string, error) {
 	var result strings.Builder
 	i := 0
 	for i < len(format) {
@@ -267,6 +266,21 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 					return "", fmt.Errorf("invalid conversion specifier '%%%s'", format[i:])
 				}
 				i++ // consume modifier; format the base specifier
+			}
+			// Compound specifiers (%c %x %X %D %F %r %R %T) expand to a sequence
+			// of primitives. Formatting the expansion recursively — rather than
+			// rewriting the format string up front — keeps the original format
+			// intact for the invalid-specifier error message (so '%Q%R' reports
+			// '%Q%R', not the expanded '%Q%H:%M') and lets primitives like %Y
+			// use their natural width.
+			if exp, ok := compoundExpansion(format[i]); ok {
+				s, err := strftimeFormat(exp, t, utc)
+				if err != nil {
+					return "", err
+				}
+				result.WriteString(s)
+				i++
+				continue
 			}
 			switch format[i] {
 			case 'Y':
@@ -296,16 +310,11 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 				result.WriteString(t.Format("January"))
 			case 'b', 'h':
 				result.WriteString(t.Format("Jan"))
-			case 'c':
-				result.WriteString(t.Format("Mon Jan _2 15:04:05 2006"))
-			case 'X':
-				result.WriteString(t.Format("15:04:05"))
-			case 'x':
-				result.WriteString(t.Format("01/02/06"))
 			case 'Z':
 				zone := t.Format("MST")
-				// C strftime uses "GMT" for UTC; Go uses "UTC". Match C behavior.
-				if zone == "UTC" {
+				// C's gmtime path names the UTC zone "GMT"; localtime under
+				// TZ=UTC names it "UTC". Only remap on the gmtime ('!') path.
+				if utc && zone == "UTC" {
 					zone = "GMT"
 				}
 				result.WriteString(zone)
@@ -314,8 +323,9 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 			case '%':
 				result.WriteByte('%')
 			case 'C':
-				// Century: first 2 digits of the year
-				result.WriteString(fmt.Sprintf("%02d", t.Year()/100))
+				// Century (year/100), natural width — matches the reference's
+				// natural-width %Y/%G (year 305 -> "3", not "03").
+				result.WriteString(fmt.Sprintf("%d", t.Year()/100))
 			case 'e':
 				// Space-padded day of month
 				result.WriteString(fmt.Sprintf("%2d", t.Day()))
@@ -378,38 +388,24 @@ func strftimeFormat(format string, t time.Time) (string, error) {
 	return result.String(), nil
 }
 
-// expandCompoundSpecifiers replaces compound strftime specifiers with their
-// primitive equivalents before the main formatting pass.
-func expandCompoundSpecifiers(format string) string {
-	var result strings.Builder
-	i := 0
-	for i < len(format) {
-		if format[i] == '%' && i+1 < len(format) {
-			switch format[i+1] {
-			case 'D':
-				result.WriteString("%m/%d/%y")
-				i += 2
-				continue
-			case 'F':
-				result.WriteString("%Y-%m-%d")
-				i += 2
-				continue
-			case 'r':
-				result.WriteString("%I:%M:%S %p")
-				i += 2
-				continue
-			case 'R':
-				result.WriteString("%H:%M")
-				i += 2
-				continue
-			case 'T':
-				result.WriteString("%H:%M:%S")
-				i += 2
-				continue
-			}
-		}
-		result.WriteByte(format[i])
-		i++
+// compoundExpansion maps a compound strftime specifier to its primitive
+// (C/POSIX-locale) equivalent. The caller formats the expansion recursively, so
+// primitives like %Y keep their natural width and the original format string is
+// preserved for error reporting.
+func compoundExpansion(conv byte) (string, bool) {
+	switch conv {
+	case 'c':
+		return "%a %b %e %H:%M:%S %Y", true
+	case 'x', 'D':
+		return "%m/%d/%y", true
+	case 'X', 'T':
+		return "%H:%M:%S", true
+	case 'F':
+		return "%Y-%m-%d", true
+	case 'r':
+		return "%I:%M:%S %p", true
+	case 'R':
+		return "%H:%M", true
 	}
-	return result.String()
+	return "", false
 }
