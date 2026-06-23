@@ -124,3 +124,17 @@ do
     print(pcall(string.packsize, "!16s8"))
     --> =false	bad argument #1 to 'string.packsize' (variable-length format)
 end
+
+-- 'X' resolves its next option fully (getoption) before the alignment check,
+-- so 'Xc' with no size reports the missing-size error first, while a sized 'Xc3'
+-- (char array has no alignment) is rejected as an invalid next option. (parity)
+do
+    print(pcall(string.packsize, "Xc"))
+    --> =false	missing size for format option 'c'
+    print(pcall(string.pack, "Xc"))
+    --> =false	missing size for format option 'c'
+    print(pcall(string.unpack, "Xc", "x"))
+    --> =false	missing size for format option 'c'
+    print(pcall(string.packsize, "Xc3"))
+    --> =false	bad argument #1 to 'string.packsize' (invalid next option for option 'X')
+end
