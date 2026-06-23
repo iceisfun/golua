@@ -287,7 +287,9 @@ func strftimeFormat(format string, t time.Time, utc bool) (string, error) {
 				// Natural-width year (no zero-padding); matches glibc strftime.
 				result.WriteString(fmt.Sprintf("%d", t.Year()))
 			case 'y':
-				result.WriteString(t.Format("06"))
+				// Floored year-of-century (year -2 -> "98"), matching glibc's
+				// floored division for negative years.
+				result.WriteString(fmt.Sprintf("%02d", floorMod100(t.Year())))
 			case 'm':
 				result.WriteString(t.Format("01"))
 			case 'd':
@@ -323,9 +325,9 @@ func strftimeFormat(format string, t time.Time, utc bool) (string, error) {
 			case '%':
 				result.WriteByte('%')
 			case 'C':
-				// Century (year/100), natural width — matches the reference's
-				// natural-width %Y/%G (year 305 -> "3", not "03").
-				result.WriteString(fmt.Sprintf("%d", t.Year()/100))
+				// Century via floored division (natural width): year 305 -> "3",
+				// year -2 -> "-1" (so %C*100 + %y == %Y holds for negative years).
+				result.WriteString(fmt.Sprintf("%d", (t.Year()-floorMod100(t.Year()))/100))
 			case 'e':
 				// Space-padded day of month
 				result.WriteString(fmt.Sprintf("%2d", t.Day()))
@@ -347,9 +349,9 @@ func strftimeFormat(format string, t time.Time, utc bool) (string, error) {
 				// Weekday number: Sunday=0
 				result.WriteString(fmt.Sprintf("%d", int(t.Weekday())))
 			case 'g':
-				// ISO 8601 2-digit year
+				// ISO 8601 2-digit year, floored for negative years
 				isoYear, _ := t.ISOWeek()
-				result.WriteString(fmt.Sprintf("%02d", isoYear%100))
+				result.WriteString(fmt.Sprintf("%02d", floorMod100(isoYear)))
 			case 'G':
 				// ISO 8601 week-based year, natural width (matches glibc strftime).
 				isoYear, _ := t.ISOWeek()
@@ -386,6 +388,17 @@ func strftimeFormat(format string, t time.Time, utc bool) (string, error) {
 		i++
 	}
 	return result.String(), nil
+}
+
+// floorMod100 returns n mod 100 in the range [0,99] using floored (not
+// truncated) division, matching glibc strftime's %y/%g/%C for negative years
+// (e.g. year -2 -> 98, century -1).
+func floorMod100(n int) int {
+	m := n % 100
+	if m < 0 {
+		m += 100
+	}
+	return m
 }
 
 // compoundExpansion maps a compound strftime specifier to its primitive
