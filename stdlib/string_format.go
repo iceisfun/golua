@@ -169,7 +169,11 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				goSpec = goSpec + ".6"
 			}
 			goSpec = goSpec + string(specChar)
-			if n, ok := val.ToNumber(); ok {
+			// Coerce integer-first (like Lua's luaO_str2num), so a string such
+			// as "-0" parses to the integer 0 and converts to +0.0 — not the
+			// float -0.0 a direct string->float parse would yield.
+			if nv, ok := coerceToNumber(val); ok {
+				n, _ := nv.ToNumber()
 				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
 					result.WriteString(special)
 				} else if (specChar == 'g' || specChar == 'G') && strings.Contains(spec, "#") {
@@ -182,7 +186,9 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			}
 		case 'a', 'A':
 			// Go's fmt package does not support %a/%A for floats.
-			if n, ok := val.ToNumber(); ok {
+			// Coerce integer-first so "-0" -> integer 0 -> +0.0 (see e/f/g above).
+			if nv, ok := coerceToNumber(val); ok {
+				n, _ := nv.ToNumber()
 				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
 					result.WriteString(special)
 				} else {
