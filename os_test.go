@@ -282,3 +282,34 @@ func TestOs_Date_AltModifiers(t *testing.T) {
 	`
 	runLuaWithOs(t, source, "test_os_date_alt_modifiers", provider)
 }
+
+// TestOs_DateStrftimeParity pins strftime parity fixes against reference Lua
+// 5.5 (found by the golua-conformance datefuzz tester). All cases use the '!'
+// (gmtime/UTC) form so they are timezone-independent.
+func TestOs_DateStrftimeParity(t *testing.T) {
+	provider := vm.NewDefaultOsProvider()
+	source := `
+		-- %c / %F use a natural-width year (not zero-padded to 4 digits)
+		assert(os.date("!%c", -62135510400) == "Tue Jan  2 00:00:00 1",
+			"%c year width: " .. os.date("!%c", -62135510400))
+		assert(os.date("!%F", -62135510400) == "1-01-02",
+			"%F year width: " .. os.date("!%F", -62135510400))
+
+		-- %C (century = year/100) is natural width, matching %Y/%G
+		assert(os.date("!%C", -62135510400) == "0", "%C year 1: " .. os.date("!%C", -62135510400))
+		assert(os.date("!%C", 1719100000) == "20", "%C year 2024: " .. os.date("!%C", 1719100000))
+
+		-- %Z on the gmtime path names the UTC zone "GMT"
+		assert(os.date("!%Z", 0) == "GMT", "%Z gmtime: " .. os.date("!%Z", 0))
+
+		-- An invalid specifier reports the ORIGINAL format from the bad char on;
+		-- compound specifiers (%R/%T) are not pre-expanded into the message.
+		local ok, msg = pcall(os.date, "%Q%R", 0)
+		assert(not ok and msg:find("invalid conversion specifier '%Q%R'", 1, true),
+			"compound leak %R: " .. tostring(msg))
+		ok, msg = pcall(os.date, "!%Q%T", 0)
+		assert(not ok and msg:find("invalid conversion specifier '%Q%T'", 1, true),
+			"compound leak %T: " .. tostring(msg))
+	`
+	runLuaWithOs(t, source, "test_os_date_strftime_parity", provider)
+}
