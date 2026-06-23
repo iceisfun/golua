@@ -70,7 +70,7 @@ type LuaTimeInput struct {
 // When provided to a VM, the stdlib os library becomes available.
 // Without a provider, os.* functions are not registered.
 //
-// Lua 5.4 Reference: §6.9 (operating system facilities).
+// Lua 5.5 Reference: §6.10 (operating system facilities).
 type LuaOsProvider interface {
 	// Clock returns CPU time used by the program in seconds.
 	Clock(ctx context.Context) float64

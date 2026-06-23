@@ -9,7 +9,7 @@
 // that initializes all fields. The AST is semantically neutral — it represents
 // syntactic structure only and carries no type or scope information.
 //
-// Lua 5.4 Reference: §3 – The Language (§3.3 Statements, §3.4 Expressions).
+// Lua 5.5 Reference: §3 – The Language (§3.3 Statements, §3.4 Expressions).
 package ast
 
 import "github.com/iceisfun/golua/v2/token"

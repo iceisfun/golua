@@ -14,7 +14,7 @@ type LuaIoCaps struct {
 // When provided to a VM, the stdlib io library becomes available.
 // Without a provider, io.* functions are not registered.
 //
-// Lua 5.4 Reference: §6.8 (input and output facilities).
+// Lua 5.5 Reference: §6.9 (input and output facilities).
 type LuaIoProvider interface {
 	// Open opens a file with the given mode.
 	// mode follows Lua conventions: "r", "w", "a", "rb", "wb", "ab"

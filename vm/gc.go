@@ -26,7 +26,7 @@ type gcQueue struct {
 // The finalizer closure captures the VM's gcQueue (not the VM itself) to avoid
 // preventing the VM from being garbage collected.
 //
-// Lua 5.4 Reference: §2.5.3 (garbage-collection metamethods).
+// Lua 5.5 Reference: §2.5.3 (garbage-collection metamethods).
 func (vm *VM) RegisterGcFinalizer(t *Table) {
 	mt := t.Metatable()
 	if mt == nil {
@@ -56,7 +56,7 @@ func (vm *VM) RegisterGcFinalizer(t *Table) {
 // userdata analog of RegisterGcFinalizer; full userdata (e.g. io file handles)
 // can carry a __gc metamethod that must run when the value becomes unreachable.
 //
-// Lua 5.4 Reference: §2.5.3 (garbage-collection metamethods).
+// Lua 5.5 Reference: §2.5.3 (garbage-collection metamethods).
 func (vm *VM) RegisterGcFinalizerUserdata(u *Userdata) {
 	mt := u.Metatable()
 	if mt == nil {

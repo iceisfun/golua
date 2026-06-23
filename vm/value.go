@@ -1,8 +1,8 @@
-// Package vm implements the Lua 5.4 virtual machine.
+// Package vm implements the Lua 5.5 virtual machine.
 //
 // The VM executes bytecode produced by the [compiler] package using a
 // register-based architecture. Each function invocation gets a stack frame
-// with registers addressed by index. The VM supports the full Lua 5.4
+// with registers addressed by index. The VM supports the full Lua 5.5
 // feature set: closures with upvalue capture, coroutines via goroutine-based
 // cooperative scheduling, metamethods for all operators, and protected calls
 // (pcall/xpcall) via Go's panic/recover.
@@ -31,7 +31,7 @@
 // coroutine gets its own [VM] instance sharing globals with the parent.
 // Yield/resume synchronize through paired channels.
 //
-// Lua 5.4 Reference: §2.1 (values and types), §2.4 (metatables and metamethods),
+// Lua 5.5 Reference: §2.1 (values and types), §2.4 (metatables and metamethods),
 // §2.5 (garbage collection), §2.6 (coroutines), §2.7 (error handling).
 package vm
 

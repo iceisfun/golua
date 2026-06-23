@@ -1,4 +1,4 @@
-// Package golua implements a Lua 5.4 virtual machine in pure Go.
+// Package golua implements a Lua 5.5 virtual machine in pure Go.
 //
 // The implementation is split into several sub-packages:
 //

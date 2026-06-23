@@ -17,8 +17,8 @@
 //   - OP_CLOSE is emitted at scope boundaries where captured locals exist,
 //     and before goto jumps that cross local-variable declarations.
 //
-// Lua 5.4 Reference: §3.3.2 (local variables), §3.4 (expressions),
-// §3.3.11 (to-be-closed variables).
+// Lua 5.5 Reference: §3.3.7 (variable declarations), §3.4 (expressions),
+// §3.3.8 (to-be-closed variables).
 package compiler
 
 import "fmt"

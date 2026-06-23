@@ -1,4 +1,4 @@
-// Package stdlib implements the Lua 5.4 standard library for the GoLua VM.
+// Package stdlib implements the Lua 5.5 standard library for the GoLua VM.
 //
 // Call [Open] to register all standard library functions in a VM. The
 // following modules are always registered: basic functions (print, assert,
@@ -14,7 +14,7 @@
 //   - exec: requires [vm.LuaProcessProvider] (e.g. [vm.DefaultProcessProvider])
 //   - package.loadlib: requires [vm.LuaLoadLibProvider] (host-defined native module hook)
 //
-// GoLua extensions beyond Lua 5.4: bit32 (from Lua 5.2), chan (Go channels),
+// GoLua extensions beyond Lua 5.5: bit32 (from Lua 5.2), chan (Go channels),
 // time (millisecond timing), exec (process control), and glob (Go-style
 // pattern matching). The optional HTTP module lives in [stdlib/http].
 //
@@ -31,7 +31,7 @@
 // These panics are intentional and always caught. They never escape to the
 // Go caller.
 //
-// Lua 5.4 Reference: §6 (standard libraries).
+// Lua 5.5 Reference: §6 (standard libraries).
 package stdlib
 
 import (

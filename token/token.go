@@ -1,11 +1,11 @@
 // Package token defines the lexical token types, keywords, and source positions
-// for a Lua 5.4 implementation.
+// for a Lua 5.5 implementation.
 //
 // Single-character tokens (operators, delimiters) use their Unicode code point
 // as the token type value. Multi-character operators and keywords start at 256
 // to avoid collisions with the single-character range.
 //
-// Lua 5.4 Reference: §3.1 – Lexical Conventions.
+// Lua 5.5 Reference: §3.1 – Lexical Conventions.
 package token
 
 import "fmt"

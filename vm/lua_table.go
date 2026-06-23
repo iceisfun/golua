@@ -4,10 +4,10 @@ package vm
 // implements this interface. Custom implementations may be provided for
 // specialized use cases (virtual filesystems, proxy objects, etc.).
 //
-// All methods follow Lua 5.4 raw access semantics — metamethods are NOT
+// All methods follow Lua 5.5 raw access semantics — metamethods are NOT
 // invoked by Get/Set. The VM handles metamethod dispatch separately.
 //
-// Lua 5.4 Reference: §2.1 (tables), §6.1 (table library).
+// Lua 5.5 Reference: §2.1 (tables), §6.7 (table library).
 type LuaTable interface {
 	// Get returns the value associated with key, or Nil if absent.
 	Get(key Value) Value

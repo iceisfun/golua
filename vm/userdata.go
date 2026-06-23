@@ -6,7 +6,7 @@ import "fmt"
 // Go value and an optional metatable. Methods on userdata are dispatched
 // via the metatable's __index field.
 //
-// Lua 5.4 Reference: §2.1 (userdata).
+// Lua 5.5 Reference: §2.1 (userdata).
 type Userdata struct {
 	Data       interface{} // Arbitrary Go value
 	metatable  LuaTable    // Optional metatable

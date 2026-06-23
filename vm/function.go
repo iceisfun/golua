@@ -16,7 +16,7 @@ const closureInlineUpvalues = 4
 // but has its own upvalue bindings, allowing closures created at different
 // call sites to capture different variables.
 //
-// Lua 5.4 Reference: §3.4.11 (function definitions), §2.5.1 (upvalues).
+// Lua 5.5 Reference: §3.4.11 (function definitions), §3.5 (upvalues).
 type Closure struct {
 	Proto       *compiler.Proto // compiled bytecode and metadata
 	Upvalues    []*Upvalue      // captured variables from enclosing scopes
@@ -79,7 +79,7 @@ type NativeFunc func(vm *VM) int
 // the value is copied from the stack into the Upvalue itself, and the
 // stack reference is released.
 //
-// Lua 5.4 Reference: §3.5 (visibility rules).
+// Lua 5.5 Reference: §3.5 (visibility rules).
 type Upvalue struct {
 	vm       *VM   // Reference to VM for open upvalues
 	stackIdx int   // Absolute stack index for open upvalues
