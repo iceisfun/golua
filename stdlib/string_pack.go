@@ -313,7 +313,17 @@ func getXAlign(format string, i *int, fs *formatState) int {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return int(size)
-	case 'c', 'z', '<', '>', '=', '!', 'X':
+	case 'c':
+		// Reference Lua resolves the next option fully (getoption) before the
+		// X-alignment check, so a 'c' missing its size reports "missing size"
+		// first; a sized 'c' is a char array (no alignment) and is rejected as
+		// an invalid next option.
+		if *i >= len(format) || format[*i] < '0' || format[*i] > '9' {
+			panic("missing size for format option 'c'")
+		}
+		_, *i = parsePackSize(format, *i, 0)
+		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+	case 'z', '<', '>', '=', '!', 'X':
 		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
 	case ' ':
 		// skip spaces and try next
@@ -686,7 +696,17 @@ func getXAlignUnpack(format string, i *int, fs *formatState) int {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return int(size)
-	case 'c', 'z', '<', '>', '=', '!', 'X':
+	case 'c':
+		// Reference Lua resolves the next option fully (getoption) before the
+		// X-alignment check, so a 'c' missing its size reports "missing size"
+		// first; a sized 'c' is a char array (no alignment) and is rejected as
+		// an invalid next option.
+		if *i >= len(format) || format[*i] < '0' || format[*i] > '9' {
+			panic("missing size for format option 'c'")
+		}
+		_, *i = parsePackSize(format, *i, 0)
+		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+	case 'z', '<', '>', '=', '!', 'X':
 		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
@@ -1030,7 +1050,17 @@ func getXAlignPacksize(format string, i *int, fs *formatState) int {
 			panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 		}
 		return int(size)
-	case 'c', 'z', '<', '>', '=', '!', 'X':
+	case 'c':
+		// Reference Lua resolves the next option fully (getoption) before the
+		// X-alignment check, so a 'c' missing its size reports "missing size"
+		// first; a sized 'c' is a char array (no alignment) and is rejected as
+		// an invalid next option.
+		if *i >= len(format) || format[*i] < '0' || format[*i] > '9' {
+			panic("missing size for format option 'c'")
+		}
+		_, *i = parsePackSize(format, *i, 0)
+		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+	case 'z', '<', '>', '=', '!', 'X':
 		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
