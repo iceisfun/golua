@@ -307,6 +307,15 @@ func TestOs_DateStrftimeParity(t *testing.T) {
 		assert(os.date("!%C", -62135510400) == "0", "%C year 1: " .. os.date("!%C", -62135510400))
 		assert(os.date("!%C", 1719100000) == "20", "%C year 2024: " .. os.date("!%C", 1719100000))
 
+		-- %y/%C/%g use FLOORED division for negative years, so the invariant
+		-- %C*100 + %y == %Y holds. Year -2 -> %C "-1", %y "98".
+		assert(os.date("!%Y", -62200000000) == "-2", "%Y year -2: " .. os.date("!%Y", -62200000000))
+		assert(os.date("!%y", -62200000000) == "98", "%y year -2: " .. os.date("!%y", -62200000000))
+		assert(os.date("!%C", -62200000000) == "-1", "%C year -2: " .. os.date("!%C", -62200000000))
+		local C = tonumber(os.date("!%C", -62200000000))
+		local y = tonumber(os.date("!%y", -62200000000))
+		assert(C * 100 + y == -2, "%C*100+%y invariant: " .. (C * 100 + y))
+
 		-- %Z on the gmtime path names the UTC zone "GMT"
 		assert(os.date("!%Z", 0) == "GMT", "%Z gmtime: " .. os.date("!%Z", 0))
 
