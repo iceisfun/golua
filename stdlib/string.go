@@ -386,7 +386,12 @@ func stringGsub(v *vm.VM) int {
 				checkCaptures(matchCaps)
 				replacement, substituted = callGsubFunc(v, repl, matchCaps, s[pos:end])
 			} else if repl.IsTable() {
-				checkCaptures(matchCaps)
+				// Table replacement keys off only the FIRST capture (Lua's
+				// push_onecapture(0)), so only that capture must be finished —
+				// unlike the function path, which materializes every capture.
+				if matchCaps[0].unfinished {
+					panic("unfinished capture")
+				}
 				replacement, substituted = lookupGsubTable(v, repl, matchCaps, s[pos:end])
 			}
 

@@ -89,15 +89,24 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			// Validate spec structure: %[flags][width][.precision]
 			validateFormatStructure(spec, specChar)
 
-			// Validate width and precision (Lua 5.4: must be < 100)
-			validateFormatWidthPrec(spec, specChar)
-
-			// Validate flag/conversion combinations (Lua 5.4 restrictions).
-			// For integer conversions, Lua checks argument availability/type first.
-			// For 's', Lua checks the "string contains zeros" condition before the
-			// flag/conversion check, so defer validateConversion to the 's' case.
-			if specChar != 'd' && specChar != 'i' && specChar != 'u' && specChar != 'o' && specChar != 'x' && specChar != 'X' && specChar != 's' {
+			// Validate the conversion character / flag combination BEFORE width
+			// and precision. An invalid conversion character (e.g. 'F') reports
+			// "invalid conversion '<spec>' to 'format'", which the reference
+			// raises ahead of the "invalid conversion specification" width/
+			// precision error (so '%123F' reports the former, '%100d' the latter).
+			// Integer conversions check argument availability/type first, and 's'
+			// checks "string contains zeros" first, so those defer both checks to
+			// their case bodies.
+			deferred := specChar == 'd' || specChar == 'i' || specChar == 'u' ||
+				specChar == 'o' || specChar == 'x' || specChar == 'X' || specChar == 's'
+			if !deferred {
 				validateConversion(spec, specChar)
+			}
+
+			// Validate width and precision (Lua: must be < 100). Deferred for
+			// 's' so the "string contains zeros" check fires first.
+			if specChar != 's' {
+				validateFormatWidthPrec(spec, specChar)
 			}
 		}
 
@@ -232,6 +241,10 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				if strings.ContainsRune(str, 0) {
 					callerArgError(v, argIdx+1, "string.format", "string contains zeros")
 				}
+				// Width/precision validated after the zeros check (reference
+				// order: '%100s' on a zero-containing string reports "string
+				// contains zeros", not the spec error).
+				validateFormatWidthPrec(spec, specChar)
 				validateConversion(spec, specChar)
 			}
 			if spec == "%" {
