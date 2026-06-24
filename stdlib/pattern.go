@@ -123,34 +123,49 @@ func (ms *matchState) match(si int, pp int) int {
 		}
 
 		modPos := pp + elemLen
+		var suffix byte
 		if modPos < len(ms.p) {
-			switch ms.p[modPos] {
-			case '*':
-				return ms.matchGreedy(si, modPos+1, elem, 0)
-			case '+':
-				return ms.matchGreedy(si, modPos+1, elem, 1)
-			case '-':
-				return ms.matchLazy(si, modPos+1, elem)
-			case '?':
-				if si < len(ms.s) && elem.matches(ms.s[si]) {
-					res := ms.match(si+1, modPos+1)
-					if res != -1 {
-						return res
-					}
-				}
-				// Try matching rest without consuming (tail-call via continue)
+			suffix = ms.p[modPos]
+		}
+
+		singleMatches := si < len(ms.s) && elem.matches(ms.s[si])
+
+		if !singleMatches {
+			// The element does not match here. For '*', '-' and '?' this is the
+			// "zero repetitions" case: skip the element and its suffix and keep
+			// going in the SAME frame (Lua's `p = ep + 1; goto init`), so a long
+			// run of always-empty quantifiers — e.g. ("a*"):rep(250) against ""
+			// — folds away without consuming match-recursion depth. Recursing
+			// here instead would falsely trip the "pattern too complex" guard.
+			if suffix == '*' || suffix == '-' || suffix == '?' {
 				pp = modPos + 1
 				continue
 			}
-		}
-
-		// Single required match
-		if si >= len(ms.s) || !elem.matches(ms.s[si]) {
+			// '+' or no suffix: the element is required, so the match fails.
 			return -1
 		}
-		// Advance (tail-call optimization via continue)
-		si++
-		pp += elemLen
+
+		// The element matches at least once here.
+		switch suffix {
+		case '*':
+			return ms.matchGreedy(si, modPos+1, elem, 0)
+		case '+':
+			return ms.matchGreedy(si, modPos+1, elem, 1)
+		case '-':
+			return ms.matchLazy(si, modPos+1, elem)
+		case '?':
+			res := ms.match(si+1, modPos+1)
+			if res != -1 {
+				return res
+			}
+			// Try matching the rest without consuming (tail-call via continue).
+			pp = modPos + 1
+			continue
+		default:
+			// No suffix: a single required match. Advance (tail-call via continue).
+			si++
+			pp += elemLen
+		}
 	}
 }
 
