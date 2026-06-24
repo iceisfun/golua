@@ -337,9 +337,17 @@ func (p *parser) nearToken() string {
 	case token.NAME, token.INT, token.FLOAT:
 		return "'" + p.tok.Literal + "'"
 	case token.STRING:
-		// Use raw source text (with delimiters) if available, matching Lua 5.4.
-		if p.tok.Raw != "" {
+		// Lua's txtToken renders a fully-scanned string from the lexer buffer,
+		// which holds the DECODED contents plus its delimiters. So a short
+		// string with escapes shows the decoded text: "\65\66\67" -> '"ABC"'.
+		// Long strings ([[...]] / [==[...]==]) have no escapes and the buffer
+		// holds them verbatim, so keep Raw for those (Raw[0] == '[').
+		if len(p.tok.Raw) > 0 && p.tok.Raw[0] == '[' {
 			return "'" + p.tok.Raw + "'"
+		}
+		if len(p.tok.Raw) > 0 {
+			delim := string(p.tok.Raw[0])
+			return "'" + delim + p.tok.Literal + delim + "'"
 		}
 		return "'" + p.tok.Literal + "'"
 	case token.EOS:
