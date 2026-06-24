@@ -103,16 +103,35 @@ func (ms *matchState) match(si int, pp int) int {
 		if ch == '%' && pp+1 < len(ms.p) {
 			next := ms.p[pp+1]
 			if next == 'b' {
-				return ms.matchBalance(si, pp)
+				nsi, ok := ms.matchBalance(si, pp)
+				if !ok {
+					return -1
+				}
+				// Lua folds %b in the same frame (`p += 4; goto init`), so a
+				// long run of %b does not consume match-recursion depth.
+				si, pp = nsi, pp+4
+				continue
 			}
 			if next == 'f' {
-				return ms.matchFrontier(si, pp)
+				nsi, npp, ok := ms.matchFrontier(si, pp)
+				if !ok {
+					return -1
+				}
+				// %f is zero-width and tail-folds (`p = ep; goto init`).
+				si, pp = nsi, npp
+				continue
 			}
 			if next == '0' {
 				panic("invalid capture index %0")
 			}
 			if next >= '1' && next <= '9' {
-				return ms.matchBackRef(si, pp)
+				nsi, ok := ms.matchBackRef(si, pp)
+				if !ok {
+					return -1
+				}
+				// Back-references tail-fold (`p += 2; goto init`).
+				si, pp = nsi, pp+2
+				continue
 			}
 		}
 
@@ -218,23 +237,27 @@ func (ms *matchState) captureToClose() int {
 	panic("invalid pattern capture")
 }
 
-func (ms *matchState) matchBalance(si, pp int) int {
+// matchBalance returns the string position just past a %bxy balanced run and
+// true, or (_, false) on failure. The caller advances the pattern by 4 and
+// continues in the same frame (Lua's `p += 4; goto init`), so a long run of %b
+// does not consume match-recursion depth.
+func (ms *matchState) matchBalance(si, pp int) (int, bool) {
 	if pp+3 >= len(ms.p) {
 		panic("malformed pattern (missing arguments to '%b')")
 	}
 	open := ms.p[pp+2]
 	close := ms.p[pp+3]
 	if si >= len(ms.s) || ms.s[si] != open {
-		return -1
+		return 0, false
 	}
 	if open == close {
 		// Same char: match from first to next occurrence
 		for i := si + 1; i < len(ms.s); i++ {
 			if ms.s[i] == close {
-				return ms.match(i+1, pp+4)
+				return i + 1, true
 			}
 		}
-		return -1
+		return 0, false
 	}
 	depth := 1
 	i := si + 1
@@ -247,18 +270,21 @@ func (ms *matchState) matchBalance(si, pp int) int {
 		i++
 	}
 	if depth != 0 {
-		return -1
+		return 0, false
 	}
-	return ms.match(i, pp+4)
+	return i, true
 }
 
-func (ms *matchState) matchFrontier(si, pp int) int {
+// matchFrontier returns (si, pp-past-the-set, true) when the %f frontier
+// condition holds at si (it is zero-width), or (_, _, false) otherwise. The
+// caller continues in the same frame (Lua's `p = ep; goto init`).
+func (ms *matchState) matchFrontier(si, pp int) (int, int, bool) {
 	if pp+2 >= len(ms.p) || ms.p[pp+2] != '[' {
 		panic("missing '[' after '%f' in pattern")
 	}
 	set, setLen := parseCharSetAt(ms.p, pp+2)
 	if set == nil {
-		return -1
+		return 0, 0, false
 	}
 	var prev byte = 0
 	if si > 0 {
@@ -269,12 +295,15 @@ func (ms *matchState) matchFrontier(si, pp int) int {
 		curr = ms.s[si]
 	}
 	if set.matches(curr) && !set.matches(prev) {
-		return ms.match(si, pp+2+setLen)
+		return si, pp + 2 + setLen, true
 	}
-	return -1
+	return 0, 0, false
 }
 
-func (ms *matchState) matchBackRef(si, pp int) int {
+// matchBackRef returns (si-past-the-backref, true) when capture %l matches at
+// si, or (_, false) otherwise. The caller advances the pattern by 2 and
+// continues in the same frame (Lua's `p += 2; goto init`).
+func (ms *matchState) matchBackRef(si, pp int) (int, bool) {
 	l := int(ms.p[pp+1] - '1')
 	if l < 0 || l >= ms.level {
 		panic(fmt.Sprintf("invalid capture index %%%d", l+1))
@@ -284,16 +313,16 @@ func (ms *matchState) matchBackRef(si, pp int) int {
 		panic(fmt.Sprintf("invalid capture index %%%d", l+1))
 	}
 	if c.slen == capPosition {
-		return -1 // position captures produce numbers, not strings; backref can't match
+		return 0, false // position captures produce numbers, not strings; backref can't match
 	}
 	capStr := ms.s[c.init : c.init+c.slen]
 	if si+len(capStr) > len(ms.s) {
-		return -1
+		return 0, false
 	}
 	if ms.s[si:si+len(capStr)] != capStr {
-		return -1
+		return 0, false
 	}
-	return ms.match(si+len(capStr), pp+2)
+	return si + len(capStr), true
 }
 
 // matchGreedy handles * (minCount=0) and + (minCount=1).
