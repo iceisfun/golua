@@ -680,6 +680,14 @@ func coWrap(v *vm.VM) int {
 						msg := v.PrependCallerLocation(le.Value.AsString())
 						panic(&vm.LuaError{Value: vm.NewString(msg)})
 					}
+					// Lua 5.5: a nil error object is converted to the string
+					// "<no error object>" at throw time (luaG_errormsg), so by
+					// the time luaB_auxwrap re-raises it is a string and gets the
+					// caller location prepended just like any other string error.
+					if le.Value.IsNil() {
+						msg := v.PrependCallerLocation("<no error object>")
+						panic(&vm.LuaError{Value: vm.NewString(msg)})
+					}
 					panic(le)
 				}
 				panic(&vm.LuaError{Value: vm.NewString(v.PrependCallerLocation(err.Error()))})
