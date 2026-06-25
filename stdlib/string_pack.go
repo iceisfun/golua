@@ -441,6 +441,15 @@ func packFloat64(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, argIdx
 }
 
 func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int, argIdx *int) {
+	// Reject at the Go-safe limit: a huge fixed-size directive — e.g.
+	// string.pack("c1000000000", x) — would otherwise grow the buffer past what
+	// Go can allocate and trigger an UNCATCHABLE runtime fatal OOM that aborts
+	// the host (a sandbox escape). Convert it to a catchable Lua error, matching
+	// the cap string.rep/concat/gsub use.
+	if int64(size) > maxStrResultSize-int64(buf.Len()) {
+		panic(fmt.Sprintf("bad argument #1 to '%s' (result too long)", fs.funcName))
+	}
+
 	s := getPackString(v, *argIdx)
 	*argIdx++
 
