@@ -94,6 +94,21 @@ func (u *undumper) readInt() int {
 	return int(u.readUnsigned(math.MaxInt32))
 }
 
+// readCount reads an element count that will drive a slice allocation and
+// verifies it cannot exceed the bytes remaining in the chunk. Every array
+// element consumes at least one byte from the stream, so a count larger than
+// the remaining input is necessarily a malformed chunk. Without this guard a
+// corrupt count (up to ~2e9 via readInt) drives make([]T, count) straight into
+// an uncatchable Go fatal OOM — a sandbox escape, since load() accepts binary
+// chunks and recover() does not catch runtime.throw OOM.
+func (u *undumper) readCount() int {
+	n := u.readInt()
+	if n > len(u.data)-u.pos {
+		panic(u.error("truncated chunk"))
+	}
+	return n
+}
+
 func (u *undumper) readInteger() int64 {
 	raw := u.readBytes(8)
 	return int64(binary.LittleEndian.Uint64(raw))
@@ -187,7 +202,7 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 	p.MaxStack = int(u.readByte())
 
 	// Instructions
-	nCode := u.readInt()
+	nCode := u.readCount()
 	p.Code = make([]Instruction, nCode)
 	for i := 0; i < nCode; i++ {
 		p.Code[i] = u.readInstruction()
@@ -210,7 +225,7 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 	}
 
 	// Constants
-	nK := u.readInt()
+	nK := u.readCount()
 	p.Constants = make([]Value, nK)
 	for i := 0; i < nK; i++ {
 		t := u.readByte()
@@ -233,7 +248,7 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 	}
 
 	// Upvalues
-	nUpvals := u.readInt()
+	nUpvals := u.readCount()
 	p.Upvalues = make([]UpvalDesc, nUpvals)
 	for i := 0; i < nUpvals; i++ {
 		p.Upvalues[i].InStack = u.readByte() != 0
@@ -242,7 +257,7 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 	}
 
 	// Nested protos
-	nProtos := u.readInt()
+	nProtos := u.readCount()
 	p.Protos = make([]*Proto, nProtos)
 	for i := 0; i < nProtos; i++ {
 		sub, err := u.loadFunction(p.Source)
@@ -254,7 +269,7 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 
 	// Debug info
 	// Line info (one per instruction)
-	nLineInfo := u.readInt()
+	nLineInfo := u.readCount()
 	if nLineInfo > 0 {
 		p.Lines = make([]int, nLineInfo)
 		prev := p.LineDef
@@ -273,7 +288,7 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 	}
 
 	// Local variables
-	nLocVars := u.readInt()
+	nLocVars := u.readCount()
 	if nLocVars > 0 {
 		p.Locals = make([]LocalVar, nLocVars)
 		for i := 0; i < nLocVars; i++ {
