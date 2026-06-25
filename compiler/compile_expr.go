@@ -680,7 +680,13 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 		if imm, ok := smallIntConst(e.Right); ok {
 			// a + imm  →  ADDI reg, leftReg, imm; MMBINI leftReg, imm, TM_ADD, 0
 			leftReg, tmp := c.operandToReg(e.Left)
-			c.fixDischargedLine(line)
+			if tmp {
+				// Only fix the discharged-operand line when operandToReg
+				// actually emitted an instruction. If e.Left was a local read
+				// in place, nothing was emitted and fixDischargedLine would
+				// wrongly relabel the previous statement's instruction.
+				c.fixDischargedLine(line)
+			}
 			fs.emit(ABC(OP_ADDI, reg, leftReg, imm+OffsetSC, 0), line)
 			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_ADD), 0), line)
 			if tmp {
@@ -714,7 +720,11 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 			// (MMBINI carries the original imm so the __sub metamethod
 			//  receives the user-written argument value.)
 			leftReg, tmp := c.operandToReg(e.Left)
-			c.fixDischargedLine(line)
+			if tmp {
+				// See the ADDI case above: skip the line fix when no
+				// instruction was emitted for the left operand.
+				c.fixDischargedLine(line)
+			}
 			fs.emit(ABC(OP_ADDI, reg, leftReg, -imm+OffsetSC, 0), line)
 			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_SUB), 0), line)
 			if tmp {
