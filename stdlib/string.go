@@ -306,6 +306,10 @@ const maxStrResultSize = 1<<30 - 1
 
 // string.gsub(s, pattern, repl [, n])
 func stringGsub(v *vm.VM) int {
+	// C-level function: neither a replacement function nor a replacement table's
+	// __index may yield across this boundary, matching reference Lua. This
+	// subsumes the per-call guard inside callGsubFunc.
+	defer v.EnterNonYieldable()()
 	s := getString(v, 1, "string.gsub")
 	pattern := getString(v, 2, "string.gsub")
 	repl := v.Get(3)
@@ -484,9 +488,8 @@ func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch str
 		}
 	}
 
-	// Use ProtectedCall but re-panic on error (Lua propagates gsub function errors)
-	exitNonYieldable := v.EnterNonYieldable()
-	defer exitNonYieldable()
+	// Use ProtectedCall but re-panic on error (Lua propagates gsub function
+	// errors). The non-yieldable boundary is established once at stringGsub entry.
 	results, err := v.ProtectedCall(fn, args)
 	if err != nil {
 		panic(err)

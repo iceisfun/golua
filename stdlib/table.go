@@ -83,6 +83,10 @@ func tableSetIdx(v *vm.VM, obj vm.Value, key int, value vm.Value) {
 
 // table.concat(list [, sep [, i [, j]]])
 func tableConcat(v *vm.VM) int {
+	// C-level function: metamethods it triggers (__len, __index) must not yield
+	// across this boundary, matching reference Lua ("attempt to yield across a
+	// C-call boundary").
+	defer v.EnterNonYieldable()()
 	obj := tableCheckLike(v, 1, "table.concat", tabR|tabL)
 
 	// Snapshot all args before any metamethod calls (__len, __index).
@@ -145,6 +149,9 @@ func tableConcat(v *vm.VM) int {
 
 // table.insert(list, [pos,] value)
 func tableInsert(v *vm.VM) int {
+	// C-level function: metamethods (__len, __index, __newindex) must not yield
+	// across this boundary, matching reference Lua.
+	defer v.EnterNonYieldable()()
 	obj := tableCheckLike(v, 1, "table.insert", tabRW|tabL)
 
 	n := v.ArgCount()
@@ -182,6 +189,9 @@ func tableInsert(v *vm.VM) int {
 // table.remove(list [, pos])
 // Lua 5.4 semantics: pos defaults to #list. If pos != #list, validate 1 <= pos <= #list.
 func tableRemove(v *vm.VM) int {
+	// C-level function: metamethods (__len, __index, __newindex) must not yield
+	// across this boundary, matching reference Lua.
+	defer v.EnterNonYieldable()()
 	obj := tableCheckLike(v, 1, "table.remove", tabRW|tabL)
 
 	length := tableObjLen(v, v.Get(1))
@@ -222,6 +232,11 @@ func tableRemove(v *vm.VM) int {
 // table.sort(list [, comp])
 // Sorts in-place through metamethods, matching Lua 5.4's auxsort behavior.
 func tableSort(v *vm.VM) int {
+	// C-level function: metamethods (__len, __index, __newindex, the default '<'
+	// comparator's __lt) and the user comparator must not yield across this
+	// boundary, matching reference Lua. This subsumes the comparator-call guard
+	// inside sortComp.
+	defer v.EnterNonYieldable()()
 	obj := tableCheckLike(v, 1, "table.sort", tabRW|tabL)
 
 	length := tableObjLen(v, v.Get(1))
@@ -305,8 +320,7 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 		}
 		return lt
 	}
-	exitNonYieldable := v.EnterNonYieldable()
-	defer exitNonYieldable()
+	// The non-yieldable boundary is established once at tableSort entry.
 	res, e := v.ProtectedCall(comp, []vm.Value{a, b})
 	if e != nil {
 		if luaErr, ok := e.(*vm.LuaError); ok {
@@ -424,6 +438,9 @@ func auxSort(v *vm.VM, obj vm.Value, lo, up int, comp vm.Value, err *any) {
 
 // table.unpack(list [, i [, j]])
 func tableUnpack(v *vm.VM) int {
+	// C-level function: metamethods (__len, __index) must not yield across this
+	// boundary, matching reference Lua.
+	defer v.EnterNonYieldable()()
 	list := v.Get(1)
 
 	// Snapshot optional args before __len metamethod can clobber slots.
@@ -502,6 +519,9 @@ func tablePack(v *vm.VM) int {
 
 // table.move(a1, f, e, t [,a2])
 func tableMove(v *vm.VM) int {
+	// C-level function: metamethods (__index, __newindex) must not yield across
+	// this boundary, matching reference Lua.
+	defer v.EnterNonYieldable()()
 	// Check numeric args before table args (matches Lua 5.4 luaB_move order)
 	f := getInt(v, 2, "table.move")
 	e := getInt(v, 3, "table.move")
