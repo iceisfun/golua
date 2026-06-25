@@ -101,12 +101,17 @@ func makeChannelHandle(v *vm.VM, ch *vm.LuaChannel) vm.Value {
 
 // extractChannel extracts a *LuaChannel from a Lua channel handle table,
 // using the per-VM channel registry.
+// chanIDKey is the cached "__chan_id" key Value. extractChannel runs on every
+// channel op, so building the key with vm.NewString per call would box the
+// string into Value.ptr (an interface) and heap-allocate each time.
+var chanIDKey = vm.NewString("__chan_id")
+
 func extractChannel(v *vm.VM, handle vm.Value) *vm.LuaChannel {
 	t := handle.AsTable()
 	if t == nil {
 		return nil
 	}
-	idVal := t.Get(vm.NewString("__chan_id"))
+	idVal := t.Get(chanIDKey)
 	if idVal.IsNil() {
 		return nil
 	}
