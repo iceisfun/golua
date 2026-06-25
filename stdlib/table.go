@@ -115,14 +115,25 @@ func tableConcat(v *vm.VM) int {
 	}
 
 	var parts []string
+	var total int64 // accumulated result size (incl. separators)
 	for idx := i; idx <= j; idx++ {
 		val := tableGetIdx(v, obj, int(idx))
+		var part string
 		if val.IsString() {
-			parts = append(parts, val.AsString())
+			part = val.AsString()
 		} else if val.IsNumber() {
-			parts = append(parts, val.String())
+			part = val.String()
 		} else {
 			panic(fmt.Sprintf("invalid value (%s) at index %d in table for 'concat'", val.Type(), idx))
+		}
+		parts = append(parts, part)
+		// Cap the accumulated result at the Go-safe limit string.rep/concat/gsub
+		// use. Concatenating many large elements would otherwise build a result
+		// past what Go can allocate and trigger an UNCATCHABLE runtime fatal OOM
+		// that aborts the host (a sandbox escape); reject with a catchable error.
+		total += int64(len(part)) + int64(len(sep))
+		if total > maxStrResultSize {
+			panic("resulting string too large")
 		}
 		if idx == j {
 			break // avoid int64 overflow on idx++
