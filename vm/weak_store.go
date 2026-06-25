@@ -430,7 +430,7 @@ func sweepAllWeakTables() int {
 		}
 		weakTablePtrs[j] = weakTablePtrs[i]
 		j++
-		ws := t.weak
+		ws := t.weakBackend()
 		if ws == nil {
 			continue
 		}
