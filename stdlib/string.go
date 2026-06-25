@@ -324,6 +324,13 @@ func stringFind(v *vm.VM) int {
 	return nret + len(caps)
 }
 
+// maxStrResultSize bounds strings built incrementally by string library
+// functions (gsub), matching the cap string.rep/concat use. It must reject
+// before the result reaches a size Go's allocator fatally OOMs on (which
+// recover()/pcall cannot catch), keeping an adversarial input a catchable Lua
+// error instead of a host-process abort.
+const maxStrResultSize = 1<<30 - 1
+
 // string.gsub(s, pattern, repl [, n])
 func stringGsub(v *vm.VM) int {
 	s := getString(v, 1, "string.gsub")
@@ -398,6 +405,14 @@ func stringGsub(v *vm.VM) int {
 			if substituted {
 				changed = true
 			}
+			// Cap the accumulated result like string.rep/concat (1<<30). An
+			// unbounded gsub (many matches × a large replacement) would otherwise
+			// grow the builder past what Go can allocate and trigger an
+			// UNCATCHABLE runtime fatal OOM that aborts the host — a sandbox
+			// escape. Reject before that with a catchable Lua error.
+			if result.Len() > maxStrResultSize-len(replacement) {
+				panic("resulting string too large")
+			}
 			result.WriteString(replacement)
 			count++
 			lastMatch = end
@@ -426,6 +441,9 @@ func stringGsub(v *vm.VM) int {
 
 	// Append remaining text
 	if pos <= len(s) {
+		if result.Len() > maxStrResultSize-len(s[pos:]) {
+			panic("resulting string too large")
+		}
 		result.WriteString(s[pos:])
 	}
 
