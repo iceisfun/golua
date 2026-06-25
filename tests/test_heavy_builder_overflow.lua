@@ -10,10 +10,12 @@
 -- whole file is gated behind -full.
 
 do
-  -- string.pack: a fixed-size directive over the cap is rejected pre-allocation.
-  local ok, msg = pcall(function() return string.pack("c" .. (1 << 40), "x") end)
+  -- string.pack: a fixed-size directive over the 1<<30 cap (but under the 2^31
+  -- size-digit limit, so it reaches the cap rather than a parse error) is
+  -- rejected before allocation.
+  local ok, msg = pcall(function() return string.pack("c1500000000", "x") end)
   assert(not ok and string.find(msg, "result too long"),
-    "pack c<huge> must be a catchable 'result too long', got: " .. tostring(msg))
+    "pack over-cap must be a catchable 'result too long', got: " .. tostring(msg))
   print("pack over-cap caught: " .. tostring(msg))
 
   -- table.concat: a joined result over the cap is a catchable error, not a crash.
