@@ -465,10 +465,24 @@ func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int64, a
 	if int64(len(s)) > size {
 		panic(fmt.Sprintf("bad argument #%d to '%s' (string longer than given size)", *argIdx-1, fs.funcName))
 	}
+	// Reserve the whole directive (string + padding) up front. Without this the
+	// zero-padding below grows the bytes.Buffer by repeated doubling, peaking at
+	// ~2x the result and OOMing near the cap where reference Lua succeeds. One
+	// Grow keeps it at ~1x.
+	buf.Grow(int(size))
 	buf.WriteString(s)
-	// pad with zeros
-	for j := int64(len(s)); j < size; j++ {
-		buf.WriteByte(0)
+	// pad with zeros, in chunks (a byte-at-a-time loop is needlessly slow for a
+	// large declared size).
+	if pad := int(size) - len(s); pad > 0 {
+		var zeros [4096]byte
+		for pad > 0 {
+			n := pad
+			if n > len(zeros) {
+				n = len(zeros)
+			}
+			buf.Write(zeros[:n])
+			pad -= n
+		}
 	}
 }
 
