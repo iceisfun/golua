@@ -47,6 +47,31 @@ const (
 	statusNormal    coroutineStatus = "normal"
 )
 
+// Cached status result Values. coroutine.status is called in tight polling
+// loops (`while coroutine.status(co) ~= "dead"`), and storing a string into the
+// Value.ptr interface heap-allocates, so build each of the four status strings
+// once instead of per call. Values are immutable, so sharing is safe.
+var (
+	statusValSuspended = vm.NewString(string(statusSuspended))
+	statusValRunning   = vm.NewString(string(statusRunning))
+	statusValDead      = vm.NewString(string(statusDead))
+	statusValNormal    = vm.NewString(string(statusNormal))
+)
+
+// statusValue maps a coroutineStatus to its cached Value.
+func statusValue(s coroutineStatus) vm.Value {
+	switch s {
+	case statusRunning:
+		return statusValRunning
+	case statusDead:
+		return statusValDead
+	case statusNormal:
+		return statusValNormal
+	default:
+		return statusValSuspended
+	}
+}
+
 // Coroutine represents a Lua coroutine
 type Coroutine struct {
 	id             int
@@ -158,7 +183,7 @@ func coCreate(v *vm.VM) int {
 // coroutine.resume(co [, val1, ...]) -> ok, results...
 func coResume(v *vm.VM) int {
 	coTable := getThreadTable(v, 1, "coroutine.resume")
-	idVal := coTable.Get(vm.NewString("__coroutine_id"))
+	idVal := coTable.GetString("__coroutine_id")
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.resume", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
@@ -462,7 +487,7 @@ func coYield(v *vm.VM) int {
 // coroutine.status(co) -> string
 func coStatus(v *vm.VM) int {
 	coTable := getThreadTable(v, 1, "coroutine.status")
-	idVal := coTable.Get(vm.NewString("__coroutine_id"))
+	idVal := coTable.GetString("__coroutine_id")
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.status", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
@@ -473,10 +498,10 @@ func coStatus(v *vm.VM) int {
 	// Its status depends on whether the caller is the main thread itself.
 	if int(id) == 0 {
 		if v.CoroutineID() == 0 {
-			v.Set(0, vm.NewString(string(statusRunning)))
+			v.Set(0, statusValRunning)
 		} else {
 			// Main thread is suspended while a coroutine runs
-			v.Set(0, vm.NewString(string(statusNormal)))
+			v.Set(0, statusValNormal)
 		}
 		return 1
 	}
@@ -487,7 +512,7 @@ func coStatus(v *vm.VM) int {
 	reg.mu.Unlock()
 
 	if co == nil {
-		v.Set(0, vm.NewString(string(statusDead)))
+		v.Set(0, statusValDead)
 		return 1
 	}
 
@@ -495,7 +520,7 @@ func coStatus(v *vm.VM) int {
 	status := co.status
 	co.mu.Unlock()
 
-	v.Set(0, vm.NewString(string(status)))
+	v.Set(0, statusValue(status))
 	return 1
 }
 
@@ -686,7 +711,7 @@ func coWrap(v *vm.VM) int {
 // coroutine.close(co) -> ok [, errmsg]
 func coClose(v *vm.VM) int {
 	coTable := getThreadTable(v, 1, "coroutine.close")
-	idVal := coTable.Get(vm.NewString("__coroutine_id"))
+	idVal := coTable.GetString("__coroutine_id")
 	if idVal.IsNil() {
 		callerArgError(v, 1, "coroutine.close", fmt.Sprintf("thread expected, got %s", coArgType(v, 1)))
 	}
@@ -841,7 +866,8 @@ func coIsYieldable(v *vm.VM) int {
 			v.Set(0, vm.NewBool(coVM.IsYieldableContext()))
 			return 1
 		}
-		// No VM ref yet — check coroutine status via ID
+		// No VM ref yet — check coroutine status via ID.
+		// tbl is the LuaTable interface here (no GetString); not a hot path.
 		idVal := tbl.Get(vm.NewString("__coroutine_id"))
 		if !idVal.IsNil() {
 			id, _ := idVal.ToInt()
