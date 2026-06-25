@@ -688,6 +688,9 @@ var nextFunc = vm.NewNativeFunc(luaNext)
 // ipairsIter is the shared iterator function returned by ipairs().
 // A single Value is reused so that ipairs{} == ipairs{} holds.
 var ipairsIter = vm.NewNativeFunc(func(v *vm.VM) int {
+	// C-level iterator: the __index it may trigger must not yield across this
+	// boundary, matching reference Lua.
+	defer v.EnterNonYieldable()()
 	tval := v.Get(1)
 	i := v.Get(2)
 	idx, _ := i.ToInt()
