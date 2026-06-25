@@ -936,7 +936,18 @@ func (vm *VM) execute() ([]Value, error) {
 				v1 := vm.stack[frame.base+a]
 				v2 := vm.stack[frame.base+a+1]
 				if v1.typ == typeString && v2.typ == typeString {
-					vm.stack[frame.base+a] = NewString(v1.ptr.(string) + v2.ptr.(string))
+					s1 := v1.ptr.(string)
+					s2 := v2.ptr.(string)
+					// Guard the result size before allocating, exactly like the
+					// multi-operand path below. Without this, an unbounded concat
+					// (e.g. `s = s .. s` doubling) drives the result past what Go
+					// can allocate and triggers an UNCATCHABLE runtime fatal OOM
+					// that aborts the host process — a sandbox escape. The guard
+					// turns it into a catchable Lua error.
+					if len(s1) > (1<<30)-len(s2) {
+						return nil, vm.runtimeError("string length overflow")
+					}
+					vm.stack[frame.base+a] = NewString(s1 + s2)
 					break
 				}
 			}
