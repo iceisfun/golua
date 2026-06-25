@@ -919,7 +919,10 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 		if !fs.needsCloseTBC(0) {
 			if call, ok := s.Values[0].(*ast.FuncCallExpr); ok {
 				base := fs.freeReg
-				c.compileFuncCall(call, base, 0, line) // compile the call
+				// Use the call's own line (not the 'return' line) so a runtime
+				// call error reports the line of the call, matching reference
+				// Lua and golua's non-tail call paths.
+				c.compileFuncCall(call, base, 0, call.P.Line) // compile the call
 				// Replace the CALL with TAILCALL
 				lastPC := fs.pc() - 1
 				inst := fs.proto.Code[lastPC]
@@ -929,7 +932,8 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 				return
 			} else if call, ok := s.Values[0].(*ast.MethodCallExpr); ok {
 				base := fs.freeReg
-				c.compileMethodCall(call, base, 0, line) // compile the method call
+				// Use the call's own line (see the FuncCall case above).
+				c.compileMethodCall(call, base, 0, call.P.Line) // compile the method call
 				// Replace the CALL with TAILCALL
 				lastPC := fs.pc() - 1
 				inst := fs.proto.Code[lastPC]
