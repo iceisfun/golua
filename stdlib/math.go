@@ -616,12 +616,20 @@ func mathType(v *vm.VM) int {
 	if !val.IsNumber() {
 		v.Set(0, vm.Nil)
 	} else if val.IsInt() {
-		v.Set(0, vm.NewString("integer"))
+		v.Set(0, mathTypeInteger)
 	} else {
-		v.Set(0, vm.NewString("float"))
+		v.Set(0, mathTypeFloat)
 	}
 	return 1
 }
+
+// Cached math.type result Values — storing a string into Value.ptr (an
+// interface) heap-allocates, so build the two results once instead of per call
+// (math.type is common in numeric-dispatch hot loops). Values are immutable.
+var (
+	mathTypeInteger = vm.NewString("integer")
+	mathTypeFloat   = vm.NewString("float")
+)
 
 func mathUlt(v *vm.VM) int {
 	m := getInt(v, 1, "math.ult")

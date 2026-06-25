@@ -58,6 +58,10 @@ var (
 	statusValNormal    = vm.NewString(string(statusNormal))
 )
 
+// coIDKey is the cached "__coroutine_id" key Value, for the few lookups that go
+// through the LuaTable interface (which has no boxing-free GetString).
+var coIDKey = vm.NewString("__coroutine_id")
+
 // statusValue maps a coroutineStatus to its cached Value.
 func statusValue(s coroutineStatus) vm.Value {
 	switch s {
@@ -866,9 +870,10 @@ func coIsYieldable(v *vm.VM) int {
 			v.Set(0, vm.NewBool(coVM.IsYieldableContext()))
 			return 1
 		}
-		// No VM ref yet — check coroutine status via ID.
-		// tbl is the LuaTable interface here (no GetString); not a hot path.
-		idVal := tbl.Get(vm.NewString("__coroutine_id"))
+		// No VM ref yet — check coroutine status via ID. tbl is the LuaTable
+		// interface here (no GetString), so use the cached key Value to avoid
+		// boxing "__coroutine_id" into an interface on each call.
+		idVal := tbl.Get(coIDKey)
 		if !idVal.IsNil() {
 			id, _ := idVal.ToInt()
 			reg := getCoRegistry(v)
