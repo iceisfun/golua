@@ -39,9 +39,46 @@ type Table struct {
 	iterHash  bool             // true after current next() traversal enters hash part
 	metatable LuaTable         // per-table metatable for operator/event overrides
 	isThread  bool             // true if this table represents a coroutine thread
-	vmRef     *VM              // reference to coroutine VM (only set for thread tables)
-	weakMode  weakTableMode    // controls whether table has weak keys, values, or both
-	weak      *weakStore       // non-nil when weakMode != 0; replaces normal storage
+	extra     *tableExtra      // lazily allocated; holds rarely-used thread/weak state
+}
+
+// tableExtra holds Table fields that only a tiny minority of tables ever use:
+// the coroutine-VM back-reference (thread tables) and weak-table storage (tables
+// with __mode set). Keeping them off the main Table struct shrinks the
+// common-case footprint and, more importantly, removes two pointer words from
+// the GC scan of every ordinary table. It is allocated lazily — `extra` stays
+// nil for the overwhelming majority of tables. The hot table fields (isThread,
+// metatable, the storage maps, the iteration cursor) remain inline.
+type tableExtra struct {
+	vmRef    *VM           // reference to coroutine VM (only set for thread tables)
+	weakMode weakTableMode // controls whether table has weak keys, values, or both
+	weak     *weakStore    // non-nil when weakMode != 0; replaces normal storage
+}
+
+// ensureExtra returns the table's extra block, allocating it on first use.
+func (t *Table) ensureExtra() *tableExtra {
+	if t.extra == nil {
+		t.extra = &tableExtra{}
+	}
+	return t.extra
+}
+
+// weakBackend returns the table's weak storage, or nil if the table is not a
+// weak table. Cheap on the common path (one pointer load, like the old
+// `t.weak != nil` check).
+func (t *Table) weakBackend() *weakStore {
+	if t.extra != nil {
+		return t.extra.weak
+	}
+	return nil
+}
+
+// weakModeOf returns the table's weak mode (weakNone for ordinary tables).
+func (t *Table) weakModeOf() weakTableMode {
+	if t.extra != nil {
+		return t.extra.weakMode
+	}
+	return weakNone
 }
 
 // skInline is the capacity of a table's inline string-key store. A table with
@@ -79,10 +116,15 @@ func (t *Table) SetThread(v bool) { t.isThread = v }
 func (t *Table) IsThread() bool { return t.isThread }
 
 // SetVMRef stores a reference to the coroutine VM on this thread table.
-func (t *Table) SetVMRef(vm *VM) { t.vmRef = vm }
+func (t *Table) SetVMRef(vm *VM) { t.ensureExtra().vmRef = vm }
 
 // VMRef returns the coroutine VM reference, or nil if not set.
-func (t *Table) VMRef() *VM { return t.vmRef }
+func (t *Table) VMRef() *VM {
+	if t.extra != nil {
+		return t.extra.vmRef
+	}
+	return nil
+}
 
 // maxTableEntries caps the array part of a table to bound runaway growth
 // (e.g. an unbounded `t[#t+1] = v` loop inside pcall). Without this cap the
@@ -151,7 +193,7 @@ func NewTableWithSize(narray, nhash int) *Table {
 // slots with Nil. This allows subsequent SetInt calls to place values
 // directly into the array part even if some intermediate indices are nil.
 func (t *Table) EnsureArraySize(n int) {
-	if t.weak != nil {
+	if t.weakBackend() != nil {
 		return // weak tables don't use array part
 	}
 	if n > len(t.array) {
@@ -447,8 +489,8 @@ func (t *Table) getKeyValue(k Value) (Value, bool) {
 
 // Get retrieves a value from the table (raw access, no metamethods).
 func (t *Table) Get(key Value) Value {
-	if t.weak != nil {
-		return t.weak.get(key)
+	if ws := t.weakBackend(); ws != nil {
+		return ws.get(key)
 	}
 	if key.IsNil() {
 		return Nil
@@ -499,8 +541,8 @@ func (t *Table) Get(key Value) Value {
 
 // GetInt retrieves by integer key (1-based like Lua).
 func (t *Table) GetInt(i int) Value {
-	if t.weak != nil {
-		return t.weak.get(NewInt(int64(i)))
+	if ws := t.weakBackend(); ws != nil {
+		return ws.get(NewInt(int64(i)))
 	}
 	if i >= 1 && i <= len(t.array) {
 		return t.array[i-1]
@@ -515,8 +557,8 @@ func (t *Table) GetInt(i int) Value {
 
 // GetString retrieves by string key.
 func (t *Table) GetString(s string) Value {
-	if t.weak != nil {
-		return t.weak.get(NewString(s))
+	if ws := t.weakBackend(); ws != nil {
+		return ws.get(NewString(s))
 	}
 	if t.sstr != nil {
 		if i := t.sstr.find(s); i >= 0 {
@@ -535,8 +577,8 @@ func (t *Table) GetString(s string) Value {
 // Set sets a value in the table (raw access, no metamethods).
 // Returns an error for invalid keys (nil, NaN).
 func (t *Table) Set(key, value Value) error {
-	if t.weak != nil {
-		return t.weak.set(key, value)
+	if ws := t.weakBackend(); ws != nil {
+		return ws.set(key, value)
 	}
 	if key.IsNil() {
 		return fmt.Errorf("table index is nil")
@@ -611,8 +653,8 @@ func (t *Table) MustSet(key, value Value) {
 
 // SetInt sets by integer key (1-based).
 func (t *Table) SetInt(i int, value Value) {
-	if t.weak != nil {
-		t.weak.set(NewInt(int64(i)), value)
+	if ws := t.weakBackend(); ws != nil {
+		ws.set(NewInt(int64(i)), value)
 		return
 	}
 	if i >= 1 && i <= len(t.array) {
@@ -649,8 +691,8 @@ func (t *Table) SetInt(i int, value Value) {
 
 // SetString sets by string key.
 func (t *Table) SetString(s string, value Value) {
-	if t.weak != nil {
-		t.weak.set(NewString(s), value)
+	if ws := t.weakBackend(); ws != nil {
+		ws.set(NewString(s), value)
 		return
 	}
 	t.setStrHash(s, value)
@@ -660,8 +702,8 @@ func (t *Table) SetString(s string, value Value) {
 // The index must be within the current array bounds (1 <= i <= len(array)).
 // This is used by table.pack to fill pre-sized arrays that may contain nils.
 func (t *Table) RawSetArray(i int, value Value) {
-	if t.weak != nil {
-		t.weak.set(NewInt(int64(i)), value)
+	if ws := t.weakBackend(); ws != nil {
+		ws.set(NewInt(int64(i)), value)
 		return
 	}
 	t.array[i-1] = value
@@ -722,8 +764,8 @@ func (t *Table) rehashToArray() {
 // search. If the array part is fully populated, probe the hash part with
 // a doubling search.
 func (t *Table) Len() int {
-	if t.weak != nil {
-		return t.weak.length()
+	if ws := t.weakBackend(); ws != nil {
+		return ws.length()
 	}
 	asize := len(t.array)
 	if asize > 0 {
@@ -866,18 +908,18 @@ func (t *Table) updateWeakMode() {
 		}
 	}
 
-	if newMode == t.weakMode {
+	if newMode == t.weakModeOf() {
 		return
 	}
 
 	// Transition: tear down old mode, set up new mode.
-	if t.weakMode != weakNone {
+	if t.weakModeOf() != weakNone {
 		t.disableWeakMode()
 	}
 	if newMode != weakNone {
 		t.enableWeakMode(newMode)
 	}
-	t.weakMode = newMode
+	t.ensureExtra().weakMode = newMode
 }
 
 // enableWeakMode migrates all entries from normal storage to a weakStore.
@@ -905,7 +947,7 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 	t.keys = nil
 	t.deadKeys = 0
 
-	t.weak = ws
+	t.ensureExtra().weak = ws
 
 	// Register for global sweep so ProcessGcFinalizers can implement
 	// ephemeron semantics via iterative GC+sweep cycles.
@@ -914,12 +956,13 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 
 // disableWeakMode migrates alive entries from weakStore back to normal storage.
 func (t *Table) disableWeakMode() {
-	if t.weak == nil {
+	ws := t.weakBackend()
+	if ws == nil {
 		return
 	}
 
-	pairs := t.weak.migrate()
-	t.weak = nil
+	pairs := ws.migrate()
+	t.extra.weak = nil
 
 	for _, p := range pairs {
 		t.Set(p.k, p.v)
@@ -935,8 +978,8 @@ func (t *Table) disableWeakMode() {
 // deterministic as long as the table is not modified.
 // Array entries with nil values (holes) are skipped, matching Lua semantics.
 func (t *Table) Next(key Value) (Value, Value, error) {
-	if t.weak != nil {
-		return t.weak.next(key)
+	if ws := t.weakBackend(); ws != nil {
+		return ws.next(key)
 	}
 	if key.IsNil() {
 		// Start iteration: snapshot the hash key count so that keys added
@@ -1101,8 +1144,8 @@ func (t *Table) nextHashAfter(k Value) (Value, Value, bool) {
 
 // ForEach calls fn for each key-value pair in the table.
 func (t *Table) ForEach(fn func(key, value Value) bool) {
-	if t.weak != nil {
-		t.weak.forEach(fn)
+	if ws := t.weakBackend(); ws != nil {
+		ws.forEach(fn)
 		return
 	}
 	for i, v := range t.array {

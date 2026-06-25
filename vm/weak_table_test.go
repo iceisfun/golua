@@ -266,7 +266,7 @@ func TestWeakStore_SweepCleansDeadEntries(t *testing.T) {
 	runtime.GC()
 
 	// Sweep should clean up dead entries.
-	wt.weak.sweep()
+	wt.weakBackend().sweep()
 
 	keys := collectNext(wt)
 	if len(keys) != 1 {
