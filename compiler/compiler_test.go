@@ -445,16 +445,28 @@ func TestGotoIntoScopeError(t *testing.T) {
 }
 
 func TestLogicalAnd(t *testing.T) {
+	// Result to a temporary (return slot): short-circuits with TEST in place,
+	// reusing one register (so chains don't exhaust registers).
 	p := compile(t, "local a, b = 1, 2; return a and b")
-	if !hasOp(p, OP_TESTSET) {
-		t.Error("expected TESTSET for 'and'")
+	if !hasOp(p, OP_TEST) {
+		t.Error("expected TEST for 'and' to a temporary")
+	}
+	// Result to a live local: uses TESTSET via a fresh temp so the local isn't
+	// clobbered before the right operand reads it.
+	p2 := compile(t, "local a, b = 1, 2; a = a and b; return a")
+	if !hasOp(p2, OP_TESTSET) {
+		t.Error("expected TESTSET for 'and' into a live local")
 	}
 }
 
 func TestLogicalOr(t *testing.T) {
 	p := compile(t, "local a, b = 1, 2; return a or b")
-	if !hasOp(p, OP_TESTSET) {
-		t.Error("expected TESTSET for 'or'")
+	if !hasOp(p, OP_TEST) {
+		t.Error("expected TEST for 'or' to a temporary")
+	}
+	p2 := compile(t, "local a, b = 1, 2; a = a or b; return a")
+	if !hasOp(p2, OP_TESTSET) {
+		t.Error("expected TESTSET for 'or' into a live local")
 	}
 }
 
