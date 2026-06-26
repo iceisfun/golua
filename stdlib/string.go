@@ -164,8 +164,10 @@ func stringRep(v *vm.VM) int {
 	}
 	// The size is representable but may exceed the sandbox cap (or be
 	// unallocatable in reference Lua); mirror reference's "not enough memory".
+	// Raise it as a bare LuaError (no file:line: prefix) because reference Lua
+	// never applies luaL_where to a memory error (LUA_ERRMEM is bare).
 	if totalSize > maxSize {
-		panic("not enough memory")
+		panic(&vm.LuaError{Value: vm.NewString("not enough memory")})
 	}
 
 	var result strings.Builder
