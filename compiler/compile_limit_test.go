@@ -44,3 +44,25 @@ func TestTooManyLocalsStopsAtLimit(t *testing.T) {
 		t.Fatalf("compiling %d locals took %v — O(n^2) regression (compiler must stop at first error)", n, elapsed)
 	}
 }
+
+// TestDeepIndexChainReusesRegister is a regression guard for chained
+// index/field expressions (t.a.b.c... / t[1][1][1]...) reserving a fresh
+// register per level. That overflowed the 255-register limit at chain depth
+// ~255 on programs reference Lua compiles fine; the compiler must reuse one
+// register down the chain (GETFIELD reg, reg, k).
+func TestDeepIndexChainReusesRegister(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+	}{
+		{"field", "local t = {}\nreturn t" + strings.Repeat(".f", 500)},
+		{"index", "local t = {}\nreturn t" + strings.Repeat("[1]", 500)},
+	} {
+		block, err := parser.Parse("<test>", tc.src)
+		if err != nil {
+			t.Fatalf("%s: parse error: %v", tc.name, err)
+		}
+		if _, cerr := Compile("<test>", block); cerr != nil {
+			t.Fatalf("%s: chain depth 500 should compile (reference does), got: %v", tc.name, cerr)
+		}
+	}
+}

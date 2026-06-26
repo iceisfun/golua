@@ -1383,17 +1383,18 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 			tableReg = localReg
 		}
 	}
-	needFree := false
 	if tableReg < 0 {
-		tableReg = fs.reserveReg()
-		needFree = true
-		c.compileExprToReg(e.Table, tableReg)
+		// Compute the table sub-expression directly into the destination and
+		// index it in place (GETFIELD reg, reg, k). This reuses one register
+		// for a whole chain (t.a.b.c...), matching reference Lua; reserving a
+		// fresh register per level instead overflowed the 255-register limit at
+		// chain depth ~255 on programs the reference compiles fine. freeReg is
+		// always > reg here, so the sub-expression's own temps land above reg.
+		c.compileExprToReg(e.Table, reg)
+		tableReg = reg
 	}
 	fieldK := fs.stringConstant(e.Field)
 	fs.emitGetField(reg, tableReg, fieldK, e.P.Line)
-	if needFree {
-		fs.freeReg = tableReg
-	}
 }
 
 // compileIndexExpr compiles t[key] into GETI (constant int 0-255) or GETTABLE.
@@ -1408,21 +1409,23 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 			tableReg = localReg
 		}
 	}
-	needFree := false
 	if tableReg < 0 {
-		tableReg = fs.reserveReg()
-		needFree = true
-		c.compileExprToReg(e.Table, tableReg)
+		// Compute the table sub-expression into the destination and index in
+		// place, reusing one register for a chain (t[a][b]...) — see
+		// compileFieldExpr. Reserving a fresh register per level overflowed the
+		// 255-register limit at chain depth ~255 on valid programs.
+		c.compileExprToReg(e.Table, reg)
+		tableReg = reg
 	}
 	if n, ok := e.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
 		fs.emit(ABC(OP_GETI, reg, tableReg, int(n.Value), 0), e.P.Line)
 	} else {
+		// The key needs its own register above reg; reserve and free it so the
+		// table register (= reg) is preserved while the key is evaluated.
 		keyReg := fs.reserveReg()
 		c.compileExprToReg(e.Key, keyReg)
 		fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), e.P.Line)
-	}
-	if needFree {
-		fs.freeReg = tableReg
+		fs.freeReg = keyReg
 	}
 }
 
