@@ -130,6 +130,15 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 	}
 	stmts := block.Stmts
 	for i := 0; i < len(stmts); i++ {
+		// Stop at the first compile error, like reference Lua's longjmp on
+		// luaX_syntaxerror. c.error only records the first error and is
+		// otherwise a no-op, so without this the compiler keeps walking every
+		// remaining statement after (e.g.) a "too many local variables" error —
+		// with per-statement work that is O(active locals), that is O(n^2) over
+		// a large chunk, a compile-time DoS via load() of untrusted source.
+		if c.err != nil {
+			return
+		}
 		stmt := stmts[i]
 		// When compiling a label, tell it whether it's at the end of
 		// the block (followed only by other labels). Lua 5.4 treats
