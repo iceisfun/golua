@@ -16,6 +16,27 @@ Affected operations include `^` (pow), `math.sin/cos/tan`, `math.asin/acos/atan`
 `math.exp`, `math.log`, and `math.sqrt` for non-exact arguments. Exact results
 (`2^53`, `math.sqrt(4)`, integer powers) are identical on both.
 
+### Large-argument trig is *more* than last-ULP
+
+For trig functions of **large** arguments the difference grows well past one ULP
+— hundreds to thousands of ULP — because the result depends on *argument
+reduction* (computing `x mod 2π` for a huge `x`), which Go's `math` and the
+platform libm implement differently:
+
+```lua
+string.format("%a", math.tan(0x1.0b7f1eae38000p+39))  -- ~86 ULP apart
+string.format("%a", math.cos(0x1.6013f070d1452p+927)) -- ~1270 ULP apart
+```
+
+This is the *same* Go-vs-libm root cause, not a distinct bug. It is also
+mathematically unavoidable: once `|x|` exceeds `2^52`, consecutive doubles are
+spaced more than `2π` apart, so the stored value cannot even identify which
+period it lands in — there is no meaningful "correct" `tan`/`cos` to converge
+on. `tan` is the worst because its poles amplify any reduction error. The
+`mathfuzz` finder therefore feeds random doubles only to the *exact* functions
+(`sqrt`/`floor`/`ceil`/`abs`/`modf`/…), never to transcendentals, so it does not
+manufacture this expected noise.
+
 ## Why this won't change
 
 golua computes these with Go's [`math`](https://pkg.go.dev/math) package;
