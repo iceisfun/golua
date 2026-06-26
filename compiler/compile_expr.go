@@ -807,7 +807,12 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 // consecutive registers and emits a single OP_CONCAT covering all of them.
 func (c *compiler) compileConcat(e *ast.BinopExpr, reg int) {
 	fs := c.fs
-	line := e.P.Line
+	// The single folded OP_CONCAT is emitted once the whole chain is parsed, so
+	// reference Lua attributes it to the LAST (textually rightmost) '..' operator
+	// — which is what a runtime concat error reports. BinopExpr.P is the operator
+	// token, so the deepest/rightmost '..' node carries that line. Operand
+	// discharges keep their own lines (compileExprToReg below).
+	line := concatOpLine(e)
 
 	// Flatten concat chain: a .. b .. c → [a, b, c] in consecutive regs
 	exprs := c.flattenConcat(e)
@@ -836,6 +841,26 @@ func (c *compiler) compileConcat(e *ast.BinopExpr, reg int) {
 	fs.freeReg = base + 1
 }
 
+// concatOpLine returns the line of the last (textually rightmost) '..' operator
+// in a concat chain. BinopExpr.P is the operator token position, and operators
+// are parsed in source order, so the maximum P.Line over all '..' nodes in the
+// chain is the last operator — the line reference Lua gives the folded OP_CONCAT.
+func concatOpLine(e *ast.BinopExpr) int {
+	line := e.P.Line
+	var walk func(n ast.Expr)
+	walk = func(n ast.Expr) {
+		if b, ok := n.(*ast.BinopExpr); ok && b.Op == ".." {
+			if b.P.Line > line {
+				line = b.P.Line
+			}
+			walk(b.Left)
+			walk(b.Right)
+		}
+	}
+	walk(e)
+	return line
+}
+
 // flattenConcat recursively collects all operands of a .. chain into a flat slice.
 func (c *compiler) flattenConcat(e ast.Expr) []ast.Expr {
 	if binop, ok := e.(*ast.BinopExpr); ok && binop.Op == ".." {
@@ -851,6 +876,11 @@ func (c *compiler) flattenConcat(e ast.Expr) []ast.Expr {
 func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
+	// The comparison instruction itself (and the boolean it materializes) is
+	// emitted after the right operand is parsed, so reference Lua attributes it
+	// to the right operand's end line — which is what a runtime comparison error
+	// reports. The left-operand discharge keeps its own line.
+	opLine := exprEndLine(e)
 
 	leftReg := fs.freeReg
 	fs.reserveReg()
@@ -885,12 +915,12 @@ func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 	}
 
 	// comparison + conditional jump → boolean
-	fs.emit(ABC(op, leftReg, rightReg, 0, k), line)
-	jmpFalse := fs.emitJump(line) // skip next if comparison fails
-	fs.emit(ABC(OP_LOADTRUE, reg, 0, 0, 0), line)
-	jmpEnd := fs.emitJump(line)
+	fs.emit(ABC(op, leftReg, rightReg, 0, k), opLine)
+	jmpFalse := fs.emitJump(opLine) // skip next if comparison fails
+	fs.emit(ABC(OP_LOADTRUE, reg, 0, 0, 0), opLine)
+	jmpEnd := fs.emitJump(opLine)
 	c.patchJump(jmpFalse)
-	fs.emit(ABC(OP_LOADFALSE, reg, 0, 0, 0), line)
+	fs.emit(ABC(OP_LOADFALSE, reg, 0, 0, 0), opLine)
 	c.patchJump(jmpEnd)
 
 	fs.freeReg = leftReg
