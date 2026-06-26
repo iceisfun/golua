@@ -3,6 +3,7 @@ package rpc
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 )
@@ -96,7 +97,7 @@ func (r *Router) HandleHTTP() http.HandlerFunc {
 			return
 		}
 
-		result, err := h(rpcReq.Params)
+		result, err := call(h, rpcReq.Params)
 		if err != nil {
 			code := InternalError
 			if rpcErr, ok := err.(*Error); ok {
@@ -124,3 +125,14 @@ func (r *Router) HandleHTTP() http.HandlerFunc {
 }
 
 func (e *Error) Error() string { return e.Message }
+
+// call invokes a handler, converting any panic into a JSON-RPC InternalError so
+// a single buggy method can't tear down the HTTP connection or the server.
+func call(h Handler, params json.RawMessage) (result any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &Error{Code: InternalError, Message: fmt.Sprintf("handler panic: %v", r)}
+		}
+	}()
+	return h(params)
+}

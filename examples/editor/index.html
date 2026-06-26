@@ -14,12 +14,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 #run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 #run-btn kbd { font-size: 11px; opacity: 0.7; margin-left: 6px; }
 #editor-wrap { flex: 1; min-height: 0; }
-#output-panel { height: 180px; background: #1e1e1e; border-top: 2px solid #0e639c; display: flex; flex-direction: column; }
+#output-panel { height: 200px; background: #1e1e1e; border-top: 2px solid #0e639c; display: flex; flex-direction: column; }
 #output-header { padding: 6px 16px; font-size: 12px; font-weight: 600; background: #252526; color: #ddd; display: flex; justify-content: space-between; align-items: center; }
+#output-meta { font-weight: 400; color: #888; font-size: 11px; margin-left: 10px; }
 #copy-btn { background: none; border: none; color: #888; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 3px; }
 #copy-btn:hover { color: #ddd; background: #333; }
 #output { flex: 1; overflow: auto; padding: 8px 16px; font-family: "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
 #output.error { color: #f48771; }
+#output.muted { color: #777; }
+#statusbar { display: flex; align-items: center; gap: 16px; padding: 3px 16px; background: #007acc; color: #fff; font-size: 12px; }
+#statusbar.has-errors { background: #6f1313; }
+#statusbar.has-warnings { background: #6b5500; }
 </style>
 </head>
 <body>
@@ -29,9 +34,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-
 </div>
 <div id="editor-wrap"></div>
 <div id="output-panel">
-  <div id="output-header"><span>Output</span><button id="copy-btn" title="Copy output">&#x2398;</button></div>
-  <div id="output"></div>
+  <div id="output-header">
+    <span>Output<span id="output-meta"></span></span>
+    <button id="copy-btn" title="Copy output">&#x2398;</button>
+  </div>
+  <div id="output" class="muted">Press Ctrl+Enter or click Run to execute.</div>
 </div>
+<div id="statusbar"><span id="status-diag">Loading…</span></div>
 
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
 <script>
@@ -57,6 +66,9 @@ for i, c in ipairs(colors) do
 end
 `;
 
+// Monaco's MarkerSeverity values; the check package returns these directly.
+const SEVERITY = { HINT: 1, INFO: 2, WARNING: 4, ERROR: 8 };
+
 require.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs" } });
 require(["vs/editor/editor.main"], function () {
   const editor = monaco.editor.create(document.getElementById("editor-wrap"), {
@@ -68,38 +80,38 @@ require(["vs/editor/editor.main"], function () {
     lineNumbers: "on",
     scrollBeyondLastLine: false,
     automaticLayout: true,
+    tabSize: 4,
+    renderWhitespace: "selection",
   });
 
   const model = editor.getModel();
 
-  // Live diagnostics with debounce
+  // Live diagnostics, debounced so we don't hit the server on every keystroke.
   let checkTimer = null;
   model.onDidChangeContent(() => {
     clearTimeout(checkTimer);
     checkTimer = setTimeout(() => runCheck(model), 300);
   });
+  runCheck(model); // initial pass
 
-  // Initial check
-  runCheck(model);
-
-  // Run button
+  // Run via button or Ctrl/Cmd+Enter.
   const runBtn = document.getElementById("run-btn");
-  runBtn.addEventListener("click", () => runCode(model));
+  runBtn.addEventListener("click", () => runCode(editor, model));
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runCode(editor, model));
 
-  // Ctrl+Enter shortcut
-  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runCode(model));
-
-  // Copy output
+  // Copy output to the clipboard.
   document.getElementById("copy-btn").addEventListener("click", () => {
-    const text = document.getElementById("output").textContent;
-    navigator.clipboard.writeText(text).then(() => {
+    navigator.clipboard.writeText(document.getElementById("output").textContent).then(() => {
       const btn = document.getElementById("copy-btn");
-      btn.textContent = "\u2714";
+      btn.textContent = "✔";
       setTimeout(() => btn.innerHTML = "&#x2398;", 1500);
     });
   });
 });
 
+// runCheck fetches diagnostics and renders them as Monaco markers ("squiggles"),
+// keeping diagnostics (owner "golua") and runtime errors (owner "golua-run")
+// in separate marker layers so they don't clobber each other.
 async function runCheck(model) {
   try {
     const res = await fetch("/api/check", {
@@ -108,27 +120,38 @@ async function runCheck(model) {
       body: JSON.stringify({ source: model.getValue() }),
     });
     const data = await res.json();
-    const markers = (data.diagnostics || []).map(d => ({
+    const diags = data.diagnostics || [];
+
+    const markers = diags.map(d => ({
       severity: d.severity,
       message: d.message,
       startLineNumber: d.startLineNumber,
       startColumn: d.startColumn,
       endLineNumber: d.endLineNumber,
+      // The check package reports a point (end == start). Nudge the end column
+      // so Monaco draws a visible squiggle rather than a zero-width marker.
       endColumn: d.endColumn + 1,
     }));
     monaco.editor.setModelMarkers(model, "golua", markers);
+    updateStatus(diags);
   } catch (e) {
     console.error("check failed:", e);
+    setStatus("diagnostics unavailable", "error");
   }
 }
 
-async function runCode(model) {
+// runCode executes the source and renders output, timing, and (if the run
+// failed on a specific line) an inline error marker.
+async function runCode(editor, model) {
   const outputEl = document.getElementById("output");
+  const metaEl = document.getElementById("output-meta");
   const runBtn = document.getElementById("run-btn");
 
   runBtn.disabled = true;
-  outputEl.textContent = "Running...";
-  outputEl.className = "";
+  outputEl.className = "muted";
+  outputEl.textContent = "Running…";
+  metaEl.textContent = "";
+  monaco.editor.setModelMarkers(model, "golua-run", []); // clear prior run errors
 
   try {
     const res = await fetch("/api/run", {
@@ -138,11 +161,27 @@ async function runCode(model) {
     });
     const data = await res.json();
 
+    metaEl.textContent = data.durationMs != null ? `${data.durationMs} ms` : "";
+
     if (data.error) {
       outputEl.className = "error";
-      outputEl.textContent = data.output ? data.output + "\n" + data.error : data.error;
+      outputEl.textContent = data.output ? data.output + "\n\n" + data.error : data.error;
+
+      // Mark the failing line in the gutter when the server pinpointed it.
+      if (data.errorLine > 0) {
+        const lineLen = model.getLineMaxColumn(data.errorLine);
+        monaco.editor.setModelMarkers(model, "golua-run", [{
+          severity: SEVERITY.ERROR,
+          message: data.error,
+          startLineNumber: data.errorLine,
+          startColumn: 1,
+          endLineNumber: data.errorLine,
+          endColumn: lineLen,
+        }]);
+        editor.revealLineInCenter(data.errorLine);
+      }
     } else {
-      outputEl.className = "";
+      outputEl.className = data.output ? "" : "muted";
       outputEl.textContent = data.output || "(no output)";
     }
   } catch (e) {
@@ -151,6 +190,25 @@ async function runCode(model) {
   } finally {
     runBtn.disabled = false;
   }
+}
+
+// updateStatus summarizes diagnostics in the bottom status bar.
+function updateStatus(diags) {
+  const errors = diags.filter(d => d.severity === SEVERITY.ERROR).length;
+  const warnings = diags.filter(d => d.severity === SEVERITY.WARNING).length;
+  if (errors) {
+    setStatus(`${errors} error${errors > 1 ? "s" : ""}` + (warnings ? `, ${warnings} warning${warnings > 1 ? "s" : ""}` : ""), "error");
+  } else if (warnings) {
+    setStatus(`${warnings} warning${warnings > 1 ? "s" : ""}`, "warning");
+  } else {
+    setStatus("No issues", "");
+  }
+}
+
+function setStatus(text, kind) {
+  const bar = document.getElementById("statusbar");
+  document.getElementById("status-diag").textContent = text;
+  bar.className = kind === "error" ? "has-errors" : kind === "warning" ? "has-warnings" : "";
 }
 </script>
 </body>

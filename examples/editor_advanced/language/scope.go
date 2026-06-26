@@ -62,7 +62,6 @@ type SymbolTable struct {
 // Analyze walks the AST and builds a symbol table with nested scopes.
 func Analyze(block *ast.Block, source string) *SymbolTable {
 	a := &analyzer{
-		source:    source,
 		lineCount: strings.Count(source, "\n") + 1,
 	}
 
@@ -140,42 +139,50 @@ func scopeContains(s *Scope, line int) bool {
 }
 
 type analyzer struct {
-	source    string
 	lineCount int
 	scopes    []*Scope
 }
 
-func (a *analyzer) pushScope(parent *Scope, pos token.Pos) *Scope {
+// pushScope creates a child scope spanning [pos.Line, endLine]. The end line
+// comes from the AST node's End() span (the closing keyword / function body),
+// which the parser now tracks accurately — far more reliable than the old
+// "next sibling minus one" watermark heuristic, which mis-bounded the last
+// statement in a block and every if/elseif/else branch.
+func (a *analyzer) pushScope(parent *Scope, pos token.Pos, endLine int) *Scope {
+	if endLine <= 0 || endLine > parent.EndLine {
+		endLine = parent.EndLine // fall back to the enclosing scope's bound
+	}
+	if endLine < pos.Line {
+		endLine = pos.Line
+	}
 	child := &Scope{
 		Parent:   parent,
 		StartPos: pos,
-		EndLine:  parent.EndLine, // will be refined by watermark
+		EndLine:  endLine,
 	}
 	parent.Children = append(parent.Children, child)
 	a.scopes = append(a.scopes, child)
 	return child
 }
 
-// watermark sets the EndLine of scope based on the next statement position.
-func (a *analyzer) watermark(scope *Scope, nextPos token.Pos) {
-	if nextPos.Line > 0 && nextPos.Line-1 < scope.EndLine {
-		scope.EndLine = nextPos.Line - 1
-		if scope.EndLine < scope.StartPos.Line {
-			scope.EndLine = scope.StartPos.Line
-		}
-	}
-}
-
 func (a *analyzer) walkBlock(block *ast.Block, scope *Scope) {
 	if block == nil {
 		return
 	}
-	for i, s := range block.Stmts {
-		a.walkStmt(s, scope, block.Stmts, i)
+	for _, s := range block.Stmts {
+		a.walkStmt(s, scope)
 	}
 }
 
-func (a *analyzer) walkStmt(s ast.Stmt, scope *Scope, siblings []ast.Stmt, idx int) {
+// endLineOf returns the 1-based line of a node's closing span, or 0 if unknown.
+func endLineOf(n ast.Node) int {
+	if n == nil {
+		return 0
+	}
+	return n.End().Line
+}
+
+func (a *analyzer) walkStmt(s ast.Stmt, scope *Scope) {
 	switch s := s.(type) {
 	case *ast.LocalStmt:
 		for i, name := range s.Names {
@@ -208,13 +215,9 @@ func (a *analyzer) walkStmt(s ast.Stmt, scope *Scope, siblings []ast.Stmt, idx i
 			Detail:   funcParams(s.Func),
 		})
 		// Function body gets its own scope with params.
-		bodyScope := a.pushScope(scope, s.Func.Pos())
+		bodyScope := a.pushScope(scope, s.Func.Pos(), endLineOf(s.Func))
 		a.addParams(bodyScope, s.Func)
 		a.walkBlock(s.Func.Body, bodyScope)
-		// Refine end line using next sibling.
-		if idx+1 < len(siblings) {
-			a.watermark(bodyScope, siblings[idx+1].Pos())
-		}
 
 	case *ast.FuncStmt:
 		// Record as global function.
@@ -229,7 +232,7 @@ func (a *analyzer) walkStmt(s ast.Stmt, scope *Scope, siblings []ast.Stmt, idx i
 			})
 		}
 		// Function body scope.
-		bodyScope := a.pushScope(scope, s.Func.Pos())
+		bodyScope := a.pushScope(scope, s.Func.Pos(), endLineOf(s.Func))
 		if s.IsMethod {
 			bodyScope.Symbols = append(bodyScope.Symbols, &Symbol{
 				Name: "self",
@@ -239,9 +242,6 @@ func (a *analyzer) walkStmt(s ast.Stmt, scope *Scope, siblings []ast.Stmt, idx i
 		}
 		a.addParams(bodyScope, s.Func)
 		a.walkBlock(s.Func.Body, bodyScope)
-		if idx+1 < len(siblings) {
-			a.watermark(bodyScope, siblings[idx+1].Pos())
-		}
 
 	case *ast.GlobalFuncStmt:
 		scope.Symbols = append(scope.Symbols, &Symbol{
@@ -251,27 +251,21 @@ func (a *analyzer) walkStmt(s ast.Stmt, scope *Scope, siblings []ast.Stmt, idx i
 			FuncExpr: s.Func,
 			Detail:   funcParams(s.Func),
 		})
-		bodyScope := a.pushScope(scope, s.Func.Pos())
+		bodyScope := a.pushScope(scope, s.Func.Pos(), endLineOf(s.Func))
 		a.addParams(bodyScope, s.Func)
 		a.walkBlock(s.Func.Body, bodyScope)
-		if idx+1 < len(siblings) {
-			a.watermark(bodyScope, siblings[idx+1].Pos())
-		}
 
 	case *ast.ForNumStmt:
-		forScope := a.pushScope(scope, s.Pos())
+		forScope := a.pushScope(scope, s.Pos(), endLineOf(s))
 		forScope.Symbols = append(forScope.Symbols, &Symbol{
 			Name: s.Name.Name,
 			Kind: KindForVar,
 			Pos:  s.Name.Pos(),
 		})
 		a.walkBlock(s.Body, forScope)
-		if idx+1 < len(siblings) {
-			a.watermark(forScope, siblings[idx+1].Pos())
-		}
 
 	case *ast.ForInStmt:
-		forScope := a.pushScope(scope, s.Pos())
+		forScope := a.pushScope(scope, s.Pos(), endLineOf(s))
 		for _, name := range s.Names {
 			forScope.Symbols = append(forScope.Symbols, &Symbol{
 				Name: name.Name,
@@ -284,54 +278,34 @@ func (a *analyzer) walkStmt(s ast.Stmt, scope *Scope, siblings []ast.Stmt, idx i
 			a.walkExpr(iter, scope)
 		}
 		a.walkBlock(s.Body, forScope)
-		if idx+1 < len(siblings) {
-			a.watermark(forScope, siblings[idx+1].Pos())
-		}
 
 	case *ast.DoStmt:
-		doScope := a.pushScope(scope, s.Pos())
+		doScope := a.pushScope(scope, s.Pos(), endLineOf(s))
 		a.walkBlock(s.Body, doScope)
-		if idx+1 < len(siblings) {
-			a.watermark(doScope, siblings[idx+1].Pos())
-		}
 
 	case *ast.WhileStmt:
 		a.walkExpr(s.Cond, scope)
-		whileScope := a.pushScope(scope, s.Pos())
+		whileScope := a.pushScope(scope, s.Pos(), endLineOf(s))
 		a.walkBlock(s.Body, whileScope)
-		if idx+1 < len(siblings) {
-			a.watermark(whileScope, siblings[idx+1].Pos())
-		}
 
 	case *ast.RepeatStmt:
-		repeatScope := a.pushScope(scope, s.Pos())
+		repeatScope := a.pushScope(scope, s.Pos(), endLineOf(s))
 		a.walkBlock(s.Body, repeatScope)
 		a.walkExpr(s.Cond, repeatScope) // cond can see body locals
-		if idx+1 < len(siblings) {
-			a.watermark(repeatScope, siblings[idx+1].Pos())
-		}
 
 	case *ast.IfStmt:
 		a.walkExpr(s.Cond, scope)
-		thenScope := a.pushScope(scope, s.Pos())
+		// Each branch is its own scope, bounded by that branch's block span.
+		thenScope := a.pushScope(scope, s.Pos(), endLineOf(s.Then))
 		a.walkBlock(s.Then, thenScope)
-		if idx+1 < len(siblings) {
-			a.watermark(thenScope, siblings[idx+1].Pos())
-		}
 		for _, elif := range s.ElseIfs {
 			a.walkExpr(elif.Cond, scope)
-			elifScope := a.pushScope(scope, elif.Pos())
+			elifScope := a.pushScope(scope, elif.Pos(), endLineOf(elif.Then))
 			a.walkBlock(elif.Then, elifScope)
-			if idx+1 < len(siblings) {
-				a.watermark(elifScope, siblings[idx+1].Pos())
-			}
 		}
 		if s.Else != nil {
-			elseScope := a.pushScope(scope, s.Pos())
+			elseScope := a.pushScope(scope, s.Else.Pos(), endLineOf(s.Else))
 			a.walkBlock(s.Else, elseScope)
-			if idx+1 < len(siblings) {
-				a.watermark(elseScope, siblings[idx+1].Pos())
-			}
 		}
 
 	case *ast.AssignStmt:
@@ -381,7 +355,7 @@ func (a *analyzer) walkExpr(e ast.Expr, scope *Scope) {
 	}
 	switch e := e.(type) {
 	case *ast.FuncExpr:
-		bodyScope := a.pushScope(scope, e.Pos())
+		bodyScope := a.pushScope(scope, e.Pos(), endLineOf(e))
 		a.addParams(bodyScope, e)
 		a.walkBlock(e.Body, bodyScope)
 

@@ -127,8 +127,18 @@ func registerMethods(router *rpc.Router, mgr *session.Manager) {
 
 func diagnosticsFor(text string) map[string]any {
 	result := check.Check("editor", text)
+	// Monaco's IMarkerData is strictly 1-based; the parser can report column 0
+	// for end-of-input errors, so clamp every coordinate to a valid position.
+	diags := make([]check.Diagnostic, len(result.Diagnostics))
+	for i, d := range result.Diagnostics {
+		d.StartLineNumber = max(d.StartLineNumber, 1)
+		d.StartColumn = max(d.StartColumn, 1)
+		d.EndLineNumber = max(d.EndLineNumber, d.StartLineNumber)
+		d.EndColumn = max(d.EndColumn, d.StartColumn)
+		diags[i] = d
+	}
 	return map[string]any{
-		"diagnostics": result.Diagnostics,
+		"diagnostics": diags,
 	}
 }
 
@@ -172,6 +182,11 @@ func executeLua(source string) (output string, retErr error) {
 		return "", fmt.Errorf("compile error: %w", err)
 	}
 
+	// The context bounds wall-clock time; the limits bound CPU/stack so a
+	// runaway script (e.g. `while true do end`) can't wedge the server. No
+	// io/os/debug providers are registered, so the sandbox cannot touch the
+	// host filesystem, environment, or processes. (The language metadata in
+	// language/stdlib.go mirrors exactly this set of modules.)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -185,6 +200,11 @@ func executeLua(source string) (output string, retErr error) {
 		vm.WithCaptureOutput(true),
 	)
 	stdlib.Open(v)
+
+	// Close shuts down providers, runs close hooks, and discards pending GC
+	// finalizers — important when a script leaves suspended coroutines or
+	// to-be-closed (<close>) variables behind.
+	defer v.Close(ctx)
 
 	defer func() {
 		if r := recover(); r != nil {

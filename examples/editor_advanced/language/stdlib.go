@@ -1,5 +1,18 @@
 package language
 
+// This file is the curated metadata that powers completion detail and hover
+// docs. Signatures and descriptions are hand-written (the VM cannot introspect
+// human-readable prose), but the *set* of symbols is kept honest against the
+// real library by TestStdlibMetadataMatchesVM in stdlib_drift_test.go, which
+// opens a live VM and fails if this table lists a symbol the VM does not export
+// (or omits one it does). Run `go test ./examples/editor_advanced/language` to
+// detect drift after a stdlib change.
+//
+// Scope note: the entries below mirror exactly what the Run sandbox in main.go
+// registers (basic globals + string, math, table, coroutine, bit32, utf8, and
+// load). Provider-gated modules (io, os, debug, chan, time, exec) are not
+// enabled in the sandbox, so they are intentionally absent here.
+
 // SymbolKindStdlib is used for stdlib entries in completion sorting.
 const SymbolKindStdlib = "stdlib"
 
@@ -19,6 +32,7 @@ var globals = []StdlibEntry{
 	{Name: "tostring", Signature: "tostring(v)", Doc: "Converts v to a string.", Kind: "function"},
 	{Name: "tonumber", Signature: "tonumber(v [, base])", Doc: "Converts v to a number.", Kind: "function"},
 	{Name: "error", Signature: "error(message [, level])", Doc: "Raises an error with the given message.", Kind: "function"},
+	{Name: "warn", Signature: "warn(msg, ...)", Doc: "Emits a warning built by concatenating its string arguments.", Kind: "function"},
 	{Name: "pcall", Signature: "pcall(f, ...)", Doc: "Calls f in protected mode. Returns status and results.", Kind: "function"},
 	{Name: "xpcall", Signature: "xpcall(f, handler, ...)", Doc: "Like pcall but with a custom error handler.", Kind: "function"},
 	{Name: "pairs", Signature: "pairs(t)", Doc: "Returns an iterator for all key-value pairs in table t.", Kind: "function"},
@@ -33,7 +47,7 @@ var globals = []StdlibEntry{
 	{Name: "setmetatable", Signature: "setmetatable(t, mt)", Doc: "Sets the metatable of t to mt.", Kind: "function"},
 	{Name: "collectgarbage", Signature: "collectgarbage([opt [, arg]])", Doc: "Controls the garbage collector.", Kind: "function"},
 	{Name: "load", Signature: "load(chunk [, name [, mode [, env]]])", Doc: "Loads a Lua chunk from a string or function.", Kind: "function"},
-	{Name: "unpack", Signature: "unpack(list [, i [, j]])", Doc: "Returns elements from a table.", Kind: "function"},
+	{Name: "require", Signature: "require(modname)", Doc: "Loads and returns the given module (preloaded modules only in the sandbox).", Kind: "function"},
 	{Name: "_G", Signature: "_G", Doc: "The global environment table.", Kind: "value"},
 	{Name: "_VERSION", Signature: "_VERSION", Doc: "Lua version string.", Kind: "value"},
 	// Table namespaces (for completion as identifiers)
@@ -41,8 +55,10 @@ var globals = []StdlibEntry{
 	{Name: "math", Signature: "math", Doc: "Mathematical functions library.", Kind: "table"},
 	{Name: "table", Signature: "table", Doc: "Table manipulation library.", Kind: "table"},
 	{Name: "coroutine", Signature: "coroutine", Doc: "Coroutine manipulation library.", Kind: "table"},
-	{Name: "bit32", Signature: "bit32", Doc: "Bitwise operations library.", Kind: "table"},
+	{Name: "bit32", Signature: "bit32", Doc: "Bitwise operations library (Lua 5.2 compatibility).", Kind: "table"},
 	{Name: "utf8", Signature: "utf8", Doc: "UTF-8 support library.", Kind: "table"},
+	{Name: "glob", Signature: "glob", Doc: "Go-style glob pattern matching (GoLua extension).", Kind: "table"},
+	{Name: "package", Signature: "package", Doc: "Module system control table.", Kind: "table"},
 }
 
 var tables = map[string][]StdlibEntry{
@@ -60,6 +76,10 @@ var tables = map[string][]StdlibEntry{
 		{Name: "gsub", Signature: "string.gsub(s, pattern, repl [, n])", Doc: "Replaces occurrences of pattern in s.", Kind: "function", Parent: "string"},
 		{Name: "match", Signature: "string.match(s, pattern [, init])", Doc: "Returns captures from the first match.", Kind: "function", Parent: "string"},
 		{Name: "gmatch", Signature: "string.gmatch(s, pattern)", Doc: "Returns an iterator over all matches.", Kind: "function", Parent: "string"},
+		{Name: "pack", Signature: "string.pack(fmt, ...)", Doc: "Packs values into a binary string per the format.", Kind: "function", Parent: "string"},
+		{Name: "unpack", Signature: "string.unpack(fmt, s [, pos])", Doc: "Unpacks values from a binary string per the format.", Kind: "function", Parent: "string"},
+		{Name: "packsize", Signature: "string.packsize(fmt)", Doc: "Returns the byte size of a fixed-size pack format.", Kind: "function", Parent: "string"},
+		{Name: "dump", Signature: "string.dump(f [, strip])", Doc: "Returns a binary chunk of a Lua function.", Kind: "function", Parent: "string"},
 	},
 	"math": {
 		{Name: "abs", Signature: "math.abs(x)", Doc: "Returns the absolute value of x.", Kind: "function", Parent: "math"},
@@ -72,6 +92,8 @@ var tables = map[string][]StdlibEntry{
 		{Name: "exp", Signature: "math.exp(x)", Doc: "Returns e^x.", Kind: "function", Parent: "math"},
 		{Name: "floor", Signature: "math.floor(x)", Doc: "Returns the largest integer <= x.", Kind: "function", Parent: "math"},
 		{Name: "fmod", Signature: "math.fmod(x, y)", Doc: "Returns the remainder of x/y.", Kind: "function", Parent: "math"},
+		{Name: "frexp", Signature: "math.frexp(x)", Doc: "Returns m and e such that x = m * 2^e (GoLua extension).", Kind: "function", Parent: "math"},
+		{Name: "ldexp", Signature: "math.ldexp(m, e)", Doc: "Returns m * 2^e (GoLua extension).", Kind: "function", Parent: "math"},
 		{Name: "log", Signature: "math.log(x [, base])", Doc: "Returns the logarithm of x.", Kind: "function", Parent: "math"},
 		{Name: "max", Signature: "math.max(x, ...)", Doc: "Returns the maximum value.", Kind: "function", Parent: "math"},
 		{Name: "min", Signature: "math.min(x, ...)", Doc: "Returns the minimum value.", Kind: "function", Parent: "math"},
@@ -98,6 +120,7 @@ var tables = map[string][]StdlibEntry{
 		{Name: "unpack", Signature: "table.unpack(list [, i [, j]])", Doc: "Returns elements from a list.", Kind: "function", Parent: "table"},
 		{Name: "pack", Signature: "table.pack(...)", Doc: "Packs arguments into a table with field n.", Kind: "function", Parent: "table"},
 		{Name: "move", Signature: "table.move(a1, f, e, t [, a2])", Doc: "Moves elements between tables.", Kind: "function", Parent: "table"},
+		{Name: "create", Signature: "table.create(n [, nrec])", Doc: "Creates a table pre-sized for n array slots (GoLua/5.5 extension).", Kind: "function", Parent: "table"},
 	},
 	"coroutine": {
 		{Name: "create", Signature: "coroutine.create(f)", Doc: "Creates a new coroutine from function f.", Kind: "function", Parent: "coroutine"},
@@ -130,6 +153,22 @@ var tables = map[string][]StdlibEntry{
 		{Name: "len", Signature: "utf8.len(s [, i [, j]])", Doc: "Returns the number of UTF-8 characters.", Kind: "function", Parent: "utf8"},
 		{Name: "offset", Signature: "utf8.offset(s, n [, i])", Doc: "Returns the byte position of the n-th character.", Kind: "function", Parent: "utf8"},
 		{Name: "charpattern", Signature: "utf8.charpattern", Doc: "Pattern matching a single UTF-8 character.", Kind: "value", Parent: "utf8"},
+	},
+	"glob": {
+		{Name: "match", Signature: "glob.match(pattern, name)", Doc: "Reports whether name matches the Go-style glob pattern.", Kind: "function", Parent: "glob"},
+		{Name: "match_words", Signature: "glob.match_words(pattern, name)", Doc: "Splits on whitespace and matches each word against the pattern.", Kind: "function", Parent: "glob"},
+		{Name: "match_named", Signature: "glob.match_named(pattern, text)", Doc: "Returns matched and a table of named captures.", Kind: "function", Parent: "glob"},
+		{Name: "has_pattern", Signature: "glob.has_pattern(s)", Doc: "Reports whether s contains glob metacharacters.", Kind: "function", Parent: "glob"},
+	},
+	"package": {
+		{Name: "loaded", Signature: "package.loaded", Doc: "Table of already-loaded modules.", Kind: "table", Parent: "package"},
+		{Name: "preload", Signature: "package.preload", Doc: "Table of preload loaders, keyed by module name.", Kind: "table", Parent: "package"},
+		{Name: "searchers", Signature: "package.searchers", Doc: "List of module searcher functions.", Kind: "table", Parent: "package"},
+		{Name: "path", Signature: "package.path", Doc: "Search path for Lua modules.", Kind: "value", Parent: "package"},
+		{Name: "cpath", Signature: "package.cpath", Doc: "Search path for C modules.", Kind: "value", Parent: "package"},
+		{Name: "config", Signature: "package.config", Doc: "Compile-time path configuration string.", Kind: "value", Parent: "package"},
+		{Name: "searchpath", Signature: "package.searchpath(name, path [, sep [, rep]])", Doc: "Searches for name in a path template.", Kind: "function", Parent: "package"},
+		{Name: "loadlib", Signature: "package.loadlib(libname, funcname)", Doc: "Loads a dynamic library (disabled without a loadlib provider).", Kind: "function", Parent: "package"},
 	},
 }
 
