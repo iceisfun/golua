@@ -40,6 +40,7 @@ lua5.5.0            wontfix/<issue-name>/example.lua    # reference
 | [`os-time-isdst-no-dst-zone`](os-time-isdst-no-dst-zone/) | `os.time{...isdst=true}` under a no-DST zone errors instead of applying glibc's −3600 hack. |
 | [`weak-tables-and-gc`](weak-tables-and-gc/) | Weak tables, `__gc`, and collection *timing* follow the Go GC, not Lua's incremental collector. |
 | [`untrusted-binary-chunks`](untrusted-binary-chunks/) | Executing a crafted `load(…,"b")` binary chunk can hang/crash — inherently unsafe in golua *and* reference Lua (no bytecode verifier); loading is hardened to a catchable error. |
+| [`load-stack-overflow-traceback`](load-stack-overflow-traceback/) | Reference's `load()` embeds a stack traceback into the `"C stack overflow"` error message (golua returns the clean message); plus related compiler-limit near-token and C-stack-vs-fixed-limit wording divergences. |
 
 ## Filing an issue
 
