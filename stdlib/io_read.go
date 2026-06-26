@@ -90,7 +90,9 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			// "not enough memory" error.
 			const maxReadBytes = 1 << 30 // 1 GiB
 			if count > maxReadBytes {
-				panic("not enough memory")
+				// Bare LuaError: reference's memory error (LUA_ERRMEM) carries no
+				// file:line: prefix.
+				panic(&vm.LuaError{Value: vm.NewString("not enough memory")})
 			}
 			if count == 0 {
 				// Read 0 bytes: test if at EOF
