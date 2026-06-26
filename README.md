@@ -730,10 +730,12 @@ expose `load` to untrusted code, **restrict it to text mode** (`load(src, name,
 
 GoLua backs each coroutine with a goroutine. A coroutine driven to completion or
 `coroutine.close()`-d is fully reclaimed. An **abandoned *suspended* coroutine**
-(never resumed to the end and never closed) leaks its goroutine for the life of
-the process — Go cannot reap a parked goroutine. In long-lived embeddings that
-create many coroutines, make sure each is run to completion or
-`coroutine.close()`-d. See
+(never resumed to the end and never closed) keeps its goroutine parked — Go
+cannot reap a parked goroutine. **`VM.Close(ctx)` reaps the goroutines of all
+still-suspended coroutines**, so the standard `v := vm.New(); defer v.Close(ctx)`
+lifecycle reclaims them; only a single long-lived VM that is never closed and
+keeps abandoning suspended coroutines accumulates them (close or complete each
+one there). See
 [`wontfix/coroutine-goroutine-leak`](wontfix/coroutine-goroutine-leak/).
 
 ### Known divergences from reference Lua

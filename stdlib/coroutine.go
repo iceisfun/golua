@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sync"
@@ -136,6 +137,69 @@ func openCoroutine(v *vm.VM) {
 	mainThread.SetThread(true)
 	mainThread.SetVMRef(v)
 	v.SetThreadObj(vm.NewTable(mainThread))
+
+	// On VM.Close, reap the goroutines of any still-suspended coroutines so an
+	// abandoned suspended coroutine (never run to completion, never
+	// coroutine.close()'d) doesn't leak its goroutine past the VM's lifetime.
+	// See reapCoroutines and wontfix/coroutine-goroutine-leak.
+	v.OnClose(func(ctx context.Context) { reapCoroutines(v, ctx) })
+}
+
+// reapCoroutines force-terminates every still-suspended coroutine tracked by the
+// VM's registry, so their backing goroutines exit. Registered as a VM close hook
+// (runs on VM.Close). Go cannot reap a parked goroutine, but closing its resume
+// channel unblocks it; the goroutine then runs its <close> handlers and returns
+// — the same mechanism coroutine.close() uses. This bounds the
+// coroutine-goroutine leak to the VM's lifetime: create a VM, use it, Close it,
+// and abandoned suspended coroutines are reclaimed.
+func reapCoroutines(v *vm.VM, ctx context.Context) {
+	reg := getCoRegistry(v)
+	reg.mu.Lock()
+	pending := make([]*Coroutine, 0, len(reg.coroutines))
+	for _, co := range reg.coroutines {
+		pending = append(pending, co)
+	}
+	reg.coroutines = make(map[int]*Coroutine)
+	reg.mu.Unlock()
+
+	for _, co := range pending {
+		reapCoroutine(co, ctx)
+	}
+}
+
+// reapCoroutine terminates one suspended coroutine's goroutine. It mirrors the
+// suspended-close path of coClose (close resumeCh -> the goroutine unwinds via
+// CloseAllTBC and returns), but: (1) only acts on started, suspended coroutines
+// with an un-closed resume channel; (2) recovers per-coroutine so one handler's
+// error doesn't abort the sweep; (3) bounds the wait by ctx so a blocking
+// <close> handler can't hang VM.Close.
+func reapCoroutine(co *Coroutine, ctx context.Context) {
+	defer func() { _ = recover() }()
+
+	co.mu.Lock()
+	reap := co.started && co.status == statusSuspended && !co.resumeChClosed
+	if reap {
+		co.status = statusRunning
+		co.resumeChClosed = true
+	}
+	co.mu.Unlock()
+	if !reap {
+		return
+	}
+
+	close(co.resumeCh)
+	var done <-chan struct{}
+	if ctx != nil {
+		done = ctx.Done()
+	}
+	select {
+	case <-co.doneCh:
+	case <-done: // ctx cancelled/expired: stop waiting (goroutine still unwinds)
+	}
+
+	co.mu.Lock()
+	co.status = statusDead
+	co.mu.Unlock()
 }
 
 // coroutine.create(f) -> thread

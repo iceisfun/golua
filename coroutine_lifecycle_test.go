@@ -14,6 +14,7 @@ package golua_test
 // regression guards, and records the abandoned-leak as the known limitation.
 
 import (
+	"context"
 	"runtime"
 	"testing"
 	"time"
@@ -97,4 +98,41 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestVMCloseReapsCoroutines verifies that VM.Close reclaims the goroutines of
+// abandoned *suspended* coroutines — bounding the documented goroutine leak to
+// the VM's lifetime (create -> use -> Close). After Close, goroutine count must
+// return to baseline.
+func TestVMCloseReapsCoroutines(t *testing.T) {
+	const N = 500
+	base := goroutinesAfterSettle()
+
+	v := vm.New()
+	stdlib.Open(v)
+	block, err := parser.Parse("=reap", "for i=1,"+itoa(N)+
+		" do coroutine.resume(coroutine.create(function() for j=1,50 do coroutine.yield(j) end end)) end")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	proto, err := compiler.Compile("=reap", block)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if _, err := v.Run(proto); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// N abandoned suspended coroutines -> ~N extra parked goroutines.
+	if leaked := goroutinesAfterSettle() - base; leaked < N/2 {
+		t.Fatalf("expected ~%d suspended-coroutine goroutines before Close, got %d", N, leaked)
+	}
+
+	if err := v.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if remaining := goroutinesAfterSettle() - base; remaining > 50 {
+		t.Fatalf("VM.Close did not reap suspended-coroutine goroutines: %d still live", remaining)
+	}
 }
