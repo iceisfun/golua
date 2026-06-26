@@ -152,10 +152,13 @@ func (vm *VM) Traceback(msg string, level int) string {
 			loc = fmt.Sprintf("%s:%d:", source, line)
 		}
 
-		// Determine function name
-		if i == 0 && proto.LineDef == 0 {
-			fmt.Fprintf(&b, "%s in main chunk", loc)
-		} else {
+		// Determine function name. Reference Lua's pushfuncname resolves a name
+		// from the call site / globals / code first and only falls back to
+		// "main chunk" for a main function (LineDef == 0) when no name was found,
+		// independent of stack position. Previously this was gated on i == 0, so
+		// a loaded chunk's main function reached via pcall/xpcall at a
+		// non-outermost frame was mislabeled "in function '?'".
+		{
 			// Try to get the function name from the caller's call site
 			name := ""
 			nameWhat := ""
@@ -202,6 +205,10 @@ func (vm *VM) Traceback(msg string, level int) string {
 				fmt.Fprintf(&b, "%s in metamethod '%s'", loc, name)
 			} else if nameWhat == nwHook {
 				fmt.Fprintf(&b, "%s in hook '%s'", loc, name)
+			} else if proto.LineDef == 0 && (name == "" || name == "?") {
+				// Main chunk with no resolved name — reference pushfuncname's
+				// linedefined==0 fallback, at any stack position.
+				fmt.Fprintf(&b, "%s in main chunk", loc)
 			} else if len(name) > 0 && name[0] == '<' {
 				// Anonymous function: "in function <file:line>" (no quotes)
 				fmt.Fprintf(&b, "%s in function %s", loc, name)
