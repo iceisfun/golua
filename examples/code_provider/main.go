@@ -11,7 +11,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/iceisfun/golua/v2/compiler"
 	"github.com/iceisfun/golua/v2/parser"
@@ -154,6 +153,9 @@ func main() {
 		log.Fatalf("Compile error: %v", err)
 	}
 
+	// Name the running chunk so the provider's audit log can report which
+	// script requested each dofile() (caller.ScriptName).
+	v.SetChunkName("main.lua")
 	_, err = v.Run(proto)
 	if err != nil {
 		log.Fatalf("Runtime error: %v", err)
@@ -189,17 +191,8 @@ func main() {
 
 	block2, _ := parser.Parse("restricted.lua", restrictedSource)
 	proto2, _ := compiler.Compile("restricted.lua", block2)
+	v2.SetChunkName("restricted.lua")
 	v2.Run(proto2)
 
 	fmt.Println("\n=== Complete ===")
-}
-
-// Helper to check if a path is within allowed directory
-func isPathAllowed(path string, allowedDirs []string) bool {
-	for _, dir := range allowedDirs {
-		if strings.HasPrefix(path, dir) {
-			return true
-		}
-	}
-	return false
 }

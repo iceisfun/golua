@@ -27,15 +27,26 @@ Controls how Lua opens and reads files. Implement this to back `io.open`, `io.cl
 
 ```go
 type LuaIoProvider interface {
-    Open(name string, mode string) (LuaFile, error)
-    Capabilities() LuaIoCaps
+    Open(ctx context.Context, name, mode string) (LuaFile, error)
+    Capabilities(ctx context.Context) LuaIoCaps
+    Stdin(ctx context.Context) LuaFile
+    Stdout(ctx context.Context) LuaFile
+    Stderr(ctx context.Context) LuaFile
+    TmpName(ctx context.Context) (string, error)
+    TmpFile(ctx context.Context) (LuaFile, error)
+    Remove(ctx context.Context, name string) error
+    Rename(ctx context.Context, oldname, newname string) error
 }
 
 type LuaFile interface {
-    Read(format string) (string, error)  // "a", "l", "L", "n"
-    ReadBytes(n int) (string, error)
-    Close() error
+    Read(ctx context.Context, format string) (string, error)  // "a", "l", "L", "n"
+    ReadBytes(ctx context.Context, n int) (string, error)
+    Write(ctx context.Context, data string) error
+    Seek(ctx context.Context, whence string, offset int64) (int64, error)
+    Flush(ctx context.Context) error
+    Close(ctx context.Context) error
     IsClosed() bool
+    // ... plus SetVBuf; see vm/io_provider.go for the full interface
 }
 
 type LuaIoCaps struct {
@@ -52,13 +63,13 @@ Controls what system information Lua can access. Implement this to back `os.cloc
 
 ```go
 type LuaOsProvider interface {
-    Clock() float64
-    Time(dateTable map[string]int) (int64, error)
-    Date(format string, timestamp int64) (string, error)
-    DateTable(timestamp int64, utc bool) map[string]int
-    Getenv(name string) (string, bool)
-    SetLocale(locale, category string) (string, bool)
-    Capabilities() LuaOsCaps
+    Clock(ctx context.Context) float64
+    Time(ctx context.Context, dateTable *LuaTimeInput) (int64, *LuaDateTime, error)
+    Date(ctx context.Context, format string, timestamp int64) (string, error)
+    DateTable(ctx context.Context, timestamp int64, utc bool) *LuaDateTime
+    Getenv(ctx context.Context, name string) (string, bool)
+    SetLocale(ctx context.Context, locale, category string) (string, bool)
+    Capabilities(ctx context.Context) LuaOsCaps
 }
 
 type LuaOsCaps struct {

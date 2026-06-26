@@ -34,7 +34,7 @@ Loaded again:	20
 
 [Provider] Loading 'utils.lua' (requested by: restricted.lua)
 Utils loaded:	10
-Expected error:	access denied: config.lua
+Expected error:	[string "restricted.lua"]:8: access denied: config.lua
 
 === Complete ===
 ```
@@ -44,10 +44,10 @@ Expected error:	access denied: config.lua
 ```go
 type LuaCodeProvider interface {
     // LoadChunk resolves and returns Lua source code
-    LoadChunk(name string, caller *LuaCallerContext) (source []byte, chunkName string, err error)
+    LoadChunk(ctx context.Context, name string, caller *LuaCallerContext) (source []byte, chunkName string, err error)
 
     // Capabilities declares what's allowed
-    Capabilities() LuaLoaderCaps
+    Capabilities(ctx context.Context) LuaLoaderCaps
 }
 
 type LuaCallerContext struct {
@@ -82,7 +82,7 @@ type SafeFileProvider struct {
     allowed  []string
 }
 
-func (p *SafeFileProvider) LoadChunk(name string, caller *LuaCallerContext) ([]byte, string, error) {
+func (p *SafeFileProvider) LoadChunk(ctx context.Context, name string, caller *LuaCallerContext) ([]byte, string, error) {
     // Validate path is within allowed directories
     fullPath := filepath.Join(p.basePath, name)
     if !isWithinAllowed(fullPath, p.allowed) {
@@ -96,9 +96,9 @@ func (p *SafeFileProvider) LoadChunk(name string, caller *LuaCallerContext) ([]b
 ### Logging/Auditing
 
 ```go
-func (p *AuditProvider) LoadChunk(name string, caller *LuaCallerContext) ([]byte, string, error) {
+func (p *AuditProvider) LoadChunk(ctx context.Context, name string, caller *LuaCallerContext) ([]byte, string, error) {
     log.Printf("AUDIT: %s loading %s at depth %d",
         caller.ScriptName, name, caller.CallDepth)
-    return p.inner.LoadChunk(name, caller)
+    return p.inner.LoadChunk(ctx, name, caller)
 }
 ```

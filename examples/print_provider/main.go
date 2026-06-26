@@ -104,10 +104,9 @@ func main() {
 	fmt.Println()
 
 	// --- Demo 3: Per-VM warn isolation ---
+	// Warnings are OFF by default in Lua; "@on"/"@off" toggle the state. That
+	// state lives in each VM, so toggling it in one VM cannot affect another.
 	fmt.Println("--- Per-VM warn isolation ---")
-	warnSource := `warn("@off") warn("should be silent")`
-	warnBlock, _ := parser.Parse("vm1", warnSource)
-	warnProto, _ := compiler.Compile("vm1", warnBlock)
 
 	c1 := &CollectingPrintProvider{}
 	c2 := &CollectingPrintProvider{}
@@ -124,11 +123,15 @@ func main() {
 	}
 	stdlib.Open(vm2)
 
-	// vm1 turns off warnings
+	// vm1 enables warnings, then turns them back off — nothing is captured.
+	warnSource := `warn("@on") warn("@off") warn("should be silent")`
+	warnBlock, _ := parser.Parse("vm1", warnSource)
+	warnProto, _ := compiler.Compile("vm1", warnBlock)
 	vm1.Run(warnProto)
 
-	// vm2 should still have warnings enabled
-	checkSource := `warn("vm2 still warns")`
+	// vm2 enables warnings independently and stays on — its message is captured,
+	// proving vm1's "@off" did not leak across VM boundaries.
+	checkSource := `warn("@on") warn("vm2 still warns")`
 	checkBlock, _ := parser.Parse("vm2", checkSource)
 	checkProto, _ := compiler.Compile("vm2", checkBlock)
 	vm2.Run(checkProto)
