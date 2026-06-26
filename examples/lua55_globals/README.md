@@ -124,15 +124,18 @@ print(y)              -- COMPILE ERROR: variable 'y' not declared
 z = 1                 -- COMPILE ERROR: variable 'z' not declared
 ```
 
-### Each function body resets
+### Declarations propagate into nested functions
 
-A nested function starts fresh with its own implicit `global *`:
+Global declarations are lexically scoped, so a nested function inherits the
+enclosing chunk's declarations -- both the explicit mode and the declared
+names. It does NOT start fresh with its own implicit `global *`:
 
 ```lua
 global x              -- explicit mode in outer chunk
 
 local f = function()
-    y = 1             -- OK: inner function has its own implicit global *
+    x = 1             -- OK: 'x' is declared in the enclosing scope
+    y = 1             -- COMPILE ERROR: 'y' not declared (explicit mode inherited)
 end
 ```
 

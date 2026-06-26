@@ -55,8 +55,9 @@ when the host explicitly sets a `LuaTimeProvider` before calling `stdlib.Open()`
 
 ```go
 type LuaTimeProvider interface {
-    Now() int64
-    Tick(key string, ms int64) bool
+    Now(ctx context.Context) int64
+    Tick(ctx context.Context, key string, ms int64) bool
+    Once(ctx context.Context, key string) bool
 }
 ```
 

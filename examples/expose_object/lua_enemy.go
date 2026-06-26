@@ -39,11 +39,8 @@ func EnemyToLua(e *Enemy) *vm.Table {
 	}))
 
 	t.SetString("is_alive", vm.NewNativeFunc(func(v *vm.VM) int {
-		if e.IsAlive() {
-			v.Set(0, vm.True)
-		} else {
-			v.Set(0, vm.False)
-		}
+		// vm.NewBool marshals a Go bool to a Lua boolean.
+		v.Set(0, vm.NewBool(e.IsAlive()))
 		return 1
 	}))
 
