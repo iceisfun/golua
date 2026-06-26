@@ -721,13 +721,16 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	for i := nTargets - 1; i >= 0; i-- {
 		pc := precomputed[i]
 		if pc.tableReg >= 0 {
-			// Pre-evaluated indexed/field target
+			// Pre-evaluated indexed/field target. Emit the store at the target's
+			// own field/key line (not the statement line) so a runtime index
+			// error on it reports the right line, matching reference Lua.
+			storeLine := exprEndLine(s.Targets[i])
 			if pc.intKey >= 0 {
-				fs.emit(ABC(OP_SETI, pc.tableReg, pc.intKey, valBase+i, 0), line)
+				fs.emit(ABC(OP_SETI, pc.tableReg, pc.intKey, valBase+i, 0), storeLine)
 			} else if pc.keyReg >= 0 {
-				fs.emit(ABC(OP_SETTABLE, pc.tableReg, pc.keyReg, valBase+i, 0), line)
+				fs.emit(ABC(OP_SETTABLE, pc.tableReg, pc.keyReg, valBase+i, 0), storeLine)
 			} else if pc.fieldK >= 0 {
-				fs.emitSetField(pc.tableReg, pc.fieldK, valBase+i, line)
+				fs.emitSetField(pc.tableReg, pc.fieldK, valBase+i, storeLine)
 			}
 		} else {
 			c.assignToTarget(s.Targets[i], valBase+i, line)
@@ -794,26 +797,31 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		// local), so an RHS reassignment of that local is observed by the
 		// store. Mirror that by using the local register directly; otherwise
 		// snapshot the operand into a temp before the RHS.
+		// The store is emitted at the target field's line (reference's current
+		// line after parsing the indexed target), not the statement line — so a
+		// runtime "index a nil value" on the target reports the field's line.
+		storeLine := exprEndLine(target)
 		startReg := fs.freeReg
 		tableReg := c.indexAssignOperand(t.Table, nil)
 		valReg := fs.reserveReg()
 		c.compileExprToReg(value, valReg)
 		fieldK := fs.stringConstant(t.Field)
-		fs.emitSetField(tableReg, fieldK, valReg, line)
+		fs.emitSetField(tableReg, fieldK, valReg, storeLine)
 		fs.freeReg = startReg
 
 	case *ast.IndexExpr:
+		storeLine := exprEndLine(target)
 		startReg := fs.freeReg
 		tableReg := c.indexAssignOperand(t.Table, nil)
 		if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
 			valReg := fs.reserveReg()
 			c.compileExprToReg(value, valReg)
-			fs.emit(ABC(OP_SETI, tableReg, int(n.Value), valReg, 0), line)
+			fs.emit(ABC(OP_SETI, tableReg, int(n.Value), valReg, 0), storeLine)
 		} else {
 			keyReg := c.indexAssignOperand(t.Key, nil)
 			valReg := fs.reserveReg()
 			c.compileExprToReg(value, valReg)
-			fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, valReg, 0), line)
+			fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, valReg, 0), storeLine)
 		}
 		fs.freeReg = startReg
 
