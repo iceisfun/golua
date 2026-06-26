@@ -56,6 +56,8 @@ func TestDeepIndexChainReusesRegister(t *testing.T) {
 	}{
 		{"field", "local t = {}\nreturn t" + strings.Repeat(".f", 500)},
 		{"index", "local t = {}\nreturn t" + strings.Repeat("[1]", 500)},
+		{"and", "return " + strings.Repeat("1 and ", 500) + "1"},
+		{"or", "return " + strings.Repeat("nil or ", 500) + "1"},
 	} {
 		block, err := parser.Parse("<test>", tc.src)
 		if err != nil {

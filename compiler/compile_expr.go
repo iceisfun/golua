@@ -1020,13 +1020,31 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 		return
 	}
 
-	tmp := fs.reserveReg()
-	c.compileExprToReg(e.Left, tmp)
-	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 0), line) // skip if falsy, keep value
-	jmp := fs.emitJump(line)                       // jump to end (short-circuit)
+	if reg < fs.nActVar {
+		// reg is a live local (assignment target): evaluate the left operand
+		// into a fresh temp so it can't clobber the local before the right
+		// operand reads it (e.g. n = (n==0) or stack(n-1)). TESTSET copies the
+		// kept value into reg on the short-circuit path.
+		tmp := fs.reserveReg()
+		c.compileExprToReg(e.Left, tmp)
+		fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 0), line) // skip if falsy, keep value
+		jmp := fs.emitJump(line)
+		c.compileExprToReg(e.Right, reg)
+		c.patchJump(jmp)
+		fs.freeReg = tmp
+		return
+	}
+	// reg is a temporary: evaluate the left operand into it and test in place,
+	// so a chain (a and b and c ...) reuses one register instead of a fresh
+	// temp per level (which overflowed the 255-register limit at ~255 operands
+	// on programs reference Lua compiles). TEST reg,k=0 skips the short-circuit
+	// JMP when reg is truthy -> evaluate the right operand into reg; otherwise
+	// the JMP keeps reg = the (falsy) left value.
+	c.compileExprToReg(e.Left, reg)
+	fs.emit(ABC(OP_TEST, reg, 0, 0, 0), line)
+	jmp := fs.emitJump(line)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
-	fs.freeReg = tmp
 }
 
 // compileOr compiles "a or b" — short-circuits to a if a is truthy.
@@ -1053,13 +1071,26 @@ func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 		return
 	}
 
-	tmp := fs.reserveReg()
-	c.compileExprToReg(e.Left, tmp)
-	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 1), line) // skip if truthy, keep value
-	jmp := fs.emitJump(line)                       // jump to end (short-circuit)
+	if reg < fs.nActVar {
+		// reg is a live local: use a fresh temp for the left operand — see
+		// compileAnd.
+		tmp := fs.reserveReg()
+		c.compileExprToReg(e.Left, tmp)
+		fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 1), line) // skip if truthy, keep value
+		jmp := fs.emitJump(line)
+		c.compileExprToReg(e.Right, reg)
+		c.patchJump(jmp)
+		fs.freeReg = tmp
+		return
+	}
+	// reg is a temporary: test in place so an or-chain reuses one register.
+	// TEST reg,k=1 skips the short-circuit JMP when reg is falsy -> evaluate the
+	// right operand into reg; otherwise the JMP keeps reg = the (truthy) left.
+	c.compileExprToReg(e.Left, reg)
+	fs.emit(ABC(OP_TEST, reg, 0, 0, 1), line)
+	jmp := fs.emitJump(line)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
-	fs.freeReg = tmp
 }
 
 // ---------------------------------------------------------------------------
@@ -1383,18 +1414,27 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 			tableReg = localReg
 		}
 	}
+	needFree := false
 	if tableReg < 0 {
-		// Compute the table sub-expression directly into the destination and
-		// index it in place (GETFIELD reg, reg, k). This reuses one register
-		// for a whole chain (t.a.b.c...), matching reference Lua; reserving a
-		// fresh register per level instead overflowed the 255-register limit at
-		// chain depth ~255 on programs the reference compiles fine. freeReg is
-		// always > reg here, so the sub-expression's own temps land above reg.
-		c.compileExprToReg(e.Table, reg)
-		tableReg = reg
+		if reg < fs.nActVar {
+			// reg is a live local (assignment target): use a fresh temp so the
+			// table sub-expression can't clobber the local prematurely.
+			tableReg = fs.reserveReg()
+			needFree = true
+		} else {
+			// reg is a temporary: index it in place so a chain (t.a.b.c...)
+			// reuses one register instead of one per level (which overflowed
+			// the 255-register limit at depth ~255 on programs reference Lua
+			// compiles fine). Inner chain levels then also see a temp and reuse.
+			tableReg = reg
+		}
+		c.compileExprToReg(e.Table, tableReg)
 	}
 	fieldK := fs.stringConstant(e.Field)
 	fs.emitGetField(reg, tableReg, fieldK, e.P.Line)
+	if needFree {
+		fs.freeReg = tableReg
+	}
 }
 
 // compileIndexExpr compiles t[key] into GETI (constant int 0-255) or GETTABLE.
@@ -1409,23 +1449,35 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 			tableReg = localReg
 		}
 	}
+	needFree := false
 	if tableReg < 0 {
-		// Compute the table sub-expression into the destination and index in
-		// place, reusing one register for a chain (t[a][b]...) — see
-		// compileFieldExpr. Reserving a fresh register per level overflowed the
-		// 255-register limit at chain depth ~255 on valid programs.
-		c.compileExprToReg(e.Table, reg)
-		tableReg = reg
+		if reg < fs.nActVar {
+			// reg is a live local: use a fresh temp so neither the table
+			// sub-expression nor a non-constant key clobbers the local before
+			// it is read (e.g. x = a[x][x]).
+			tableReg = fs.reserveReg()
+			needFree = true
+		} else {
+			// reg is a temporary: index it in place so a chain (t[a][b]...)
+			// reuses one register — see compileFieldExpr.
+			tableReg = reg
+		}
+		c.compileExprToReg(e.Table, tableReg)
 	}
 	if n, ok := e.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
 		fs.emit(ABC(OP_GETI, reg, tableReg, int(n.Value), 0), e.P.Line)
+		if needFree {
+			fs.freeReg = tableReg
+		}
 	} else {
-		// The key needs its own register above reg; reserve and free it so the
-		// table register (= reg) is preserved while the key is evaluated.
 		keyReg := fs.reserveReg()
 		c.compileExprToReg(e.Key, keyReg)
 		fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), e.P.Line)
-		fs.freeReg = keyReg
+		if needFree {
+			fs.freeReg = tableReg // frees tableReg and keyReg (keyReg > tableReg)
+		} else {
+			fs.freeReg = keyReg // reg is caller-owned; free only the key temp
+		}
 	}
 }
 
