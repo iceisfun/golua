@@ -81,6 +81,29 @@ Staging area for new tests before promotion to `tests/doctest/`. Run with the do
 go test ./tests -run TestProposed -v
 ```
 
+### 9. Embedding, concurrency, and soak tests (root `*_test.go`, `package golua_test`)
+
+Property/stress tests for the Go-specific surfaces that have no PUC-Lua
+equivalent (so they use invariants, not differential comparison):
+
+- `embed_api_test.go` — Go↔Lua value-marshaling round-trips, native-function
+  calling conventions, calling Lua from Go, and the API-level sandbox guarantee
+  (a panicking Go native is a catchable Lua error).
+- `concurrency_race_test.go` — many VMs, a shared read-only proto, and channels
+  run concurrently. **Run under the race detector** for full value:
+  ```bash
+  go test . -run 'TestConcurrent|TestEmbed' -race
+  ```
+- `coroutine_lifecycle_test.go` — pins that completed/closed coroutines reap
+  their goroutine (and records the abandoned-suspended leak; see
+  `wontfix/coroutine-goroutine-leak`).
+- `soak_test.go` — endurance tests, **gated** so they don't run by default. Each
+  runs a workload hard for a duration (default 10m) checking a stability
+  invariant (determinism / heap-bound / goroutine-bound):
+  ```bash
+  GOLUA_SOAK=1 GOLUA_SOAK_DURATION=2m go test -run TestSoak -timeout 0 .
+  ```
+
 ## Doctest Helper Functions
 
 Available as the `doctest` global table in all doctest and proposed test files:
@@ -122,7 +145,15 @@ Without `--test`, the CLI uses its normal interactive environment instead:
 
 ## Conformance Status
 
-All imported Lua 5.4 conformance tests pass. The `new/` directory was previously used as a staging area for conformance tests under development — it is now empty, as all tests have been resolved and promoted to `tests/stdlib/`.
+All imported Lua conformance tests pass. Beyond the in-tree suite, behavior is
+validated byte-for-byte against the reference interpreters (`lua5.5.0` on
+`master`, `lua5.4.8` on `lua_5_4_8`) by the differential / property-based
+finders in the sibling [`golua-conformance`](https://github.com/iceisfun/golua-conformance)
+repo (pack / pattern / format / coercion / math / date / utf8 / coroutine /
+pairs / compiler-limit / debug grinders, plus oracle-free sandbox and bytecode
+robustness fuzzers and a semantic program generator). Each divergence those
+tools find is pinned here as a doctest or Go test; the small set of *intentional*
+divergences is documented in [`wontfix/`](wontfix/).
 
 ## Adding New Tests
 

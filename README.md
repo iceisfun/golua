@@ -700,6 +700,51 @@ The default IO provider ([`JailedIoProvider`](docs/io_provider.md)) enforces:
 - read-only access
 - path traversal prevention
 
+### Runtime safety guarantee — and its one limit
+
+Beyond capability gating, GoLua guarantees that **sandboxed Lua *source* cannot
+crash or hang the host process**. This is continuously fuzzed (see
+[`golua-conformance`](https://github.com/iceisfun/golua-conformance)) and holds
+because Go failure modes that don't exist in C Lua are defended at every boundary:
+
+- A Go native function that panics — including a `nil` dereference or other
+  runtime panic — surfaces as a **catchable Lua error** (`pcall` returns
+  `false`), and the VM stays usable. It does **not** propagate out of `pcall`.
+  (At the top level, `vm.Run` *does* propagate a native panic — wrap host entry
+  points in `ProtectedCall` or recover if you call untrusted code outside `pcall`.)
+- Every unbounded string/table builder (`string.rep`, `..`, `string.gsub`,
+  `string.pack`, `table.concat`, `io:read(n)`) is capped (~`1<<30`) and raises a
+  *catchable* error rather than an uncatchable Go `runtime.throw` OOM.
+- Deeply nested source and adversarial bytecode-loader inputs yield catchable
+  errors, not fatal stack/OOM aborts.
+
+**The one limit:** executing an untrusted **binary chunk** is *not* safe — in
+GoLua or in reference Lua (no Lua ships a bytecode verifier; the manual says a
+crafted chunk "can crash the interpreter"). *Loading* a malformed chunk is a
+catchable error, but a crafted-but-valid chunk can loop or misbehave. When you
+expose `load` to untrusted code, **restrict it to text mode** (`load(src, name,
+"t")`), which rejects binary input. See
+[`wontfix/untrusted-binary-chunks`](wontfix/untrusted-binary-chunks/).
+
+### Coroutine resource lifecycle
+
+GoLua backs each coroutine with a goroutine. A coroutine driven to completion or
+`coroutine.close()`-d is fully reclaimed. An **abandoned *suspended* coroutine**
+(never resumed to the end and never closed) leaks its goroutine for the life of
+the process — Go cannot reap a parked goroutine. In long-lived embeddings that
+create many coroutines, make sure each is run to completion or
+`coroutine.close()`-d. See
+[`wontfix/coroutine-goroutine-leak`](wontfix/coroutine-goroutine-leak/).
+
+### Known divergences from reference Lua
+
+A small set of behaviors deliberately differ from PUC-Rio Lua — IEEE-754
+correctness, Go-vs-C-library/platform quirks, or sandbox/design choices — and
+are documented once in [`wontfix/`](wontfix/) so they aren't re-reported (e.g.
+signed-zero constant folding, last-ULP transcendentals, the `#` border on holey
+tables, weak-table/GC timing). If you hit a difference, check there first; the
+remainder of GoLua is validated byte-for-byte against `lua5.5.0` / `lua5.4.8`.
+
 ## Running Tests
 
 ```bash
