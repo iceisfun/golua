@@ -111,10 +111,13 @@ async function runCheck(model) {
     const markers = (data.diagnostics || []).map(d => ({
       severity: d.severity,
       message: d.message,
+      // Stable diagnostic code (e.g. "unexpected-symbol") from the check package.
+      code: d.code,
       startLineNumber: d.startLineNumber,
       startColumn: d.startColumn,
       endLineNumber: d.endLineNumber,
-      endColumn: d.endColumn + 1,
+      // The check package already widens the span to a visible width.
+      endColumn: d.endColumn,
     }));
     monaco.editor.setModelMarkers(model, "golua", markers);
   } catch (e) {

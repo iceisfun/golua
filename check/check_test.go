@@ -71,12 +71,13 @@ func TestCheckPositionAccuracy(t *testing.T) {
 	if d.StartColumn < 1 {
 		t.Errorf("StartColumn should be >= 1, got %d", d.StartColumn)
 	}
-	// End should equal start (no span tracking yet).
+	// The span stays on one line, but the end column is widened so the editor
+	// renders a visible squiggle rather than a zero-width marker.
 	if d.EndLineNumber != d.StartLineNumber {
 		t.Errorf("EndLineNumber should equal StartLineNumber")
 	}
-	if d.EndColumn != d.StartColumn {
-		t.Errorf("EndColumn should equal StartColumn")
+	if d.EndColumn < d.StartColumn {
+		t.Errorf("EndColumn (%d) should be >= StartColumn (%d)", d.EndColumn, d.StartColumn)
 	}
 }
 
@@ -93,6 +94,88 @@ func TestCheckBlockNeverNil(t *testing.T) {
 		if r.Block == nil {
 			t.Errorf("Block is nil for input %q", input)
 		}
+	}
+}
+
+func TestCheckMultipleErrors(t *testing.T) {
+	// Two independent errors on separate lines. The single-error parser would
+	// only report the first; multi-error recovery must surface both.
+	r := Check("test", "x = )\ny = )\n")
+	if len(r.Diagnostics) < 2 {
+		t.Fatalf("expected >= 2 diagnostics from multi-error recovery, got %d: %+v",
+			len(r.Diagnostics), r.Diagnostics)
+	}
+	if r.Diagnostics[0].StartLineNumber == r.Diagnostics[1].StartLineNumber {
+		t.Errorf("expected diagnostics on different lines, both on line %d",
+			r.Diagnostics[0].StartLineNumber)
+	}
+}
+
+func TestCheckDiagnosticCodes(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"if true then", CodeTokenExpected}, // 'end' expected
+		{"x = )", CodeUnexpectedSymbol},     // unexpected symbol near ')'
+		{"local x = 'abc", CodeUnfinishedString},
+		{"return 1 +", CodeUnexpectedSymbol}, // unexpected symbol near <eof>
+	}
+	for _, tc := range cases {
+		r := Check("test", tc.input)
+		if len(r.Diagnostics) == 0 {
+			t.Errorf("%q: expected a diagnostic, got none", tc.input)
+			continue
+		}
+		if got := r.Diagnostics[0].Code; got != tc.want {
+			t.Errorf("%q: code = %q, want %q (msg: %q)",
+				tc.input, got, tc.want, r.Diagnostics[0].Message)
+		}
+	}
+}
+
+func TestClassifyStable(t *testing.T) {
+	// Unit-test the classifier directly so message-only paths that are awkward
+	// to trigger end-to-end are still covered and pinned.
+	cases := []struct {
+		msg  string
+		want string
+	}{
+		{"unexpected symbol near '@'", CodeUnexpectedSymbol},
+		{"'end' expected (to close 'if' at line 1) near <eof>", CodeTokenExpected},
+		{"<eof> expected near 'end'", CodeEOFExpected},
+		{"<name> or '...' expected near ')'", CodeNameExpected},
+		{"function arguments expected near 'x'", CodeFunctionArgs},
+		{"unfinished string near <eof>", CodeUnfinishedString},
+		{"invalid escape sequence near '\\q'", CodeInvalidEscape},
+		{"malformed number near '3x'", CodeMalformedNumber},
+		{"unknown attribute 'foo'", CodeUnknownAttribute},
+		{"multiple to-be-closed variables in local list", CodeMultipleTBC},
+		{"C stack overflow", CodeNestingTooDeep},
+		{"too many local variables (limit is 200) in main function", CodeTooManyLocals},
+		{"chunk has too many lines", CodeInputTooLong},
+		{"something totally unrecognized", CodeSyntaxError},
+	}
+	for _, tc := range cases {
+		if got := classify(tc.msg); got != tc.want {
+			t.Errorf("classify(%q) = %q, want %q", tc.msg, got, tc.want)
+		}
+	}
+}
+
+func TestCheckRecoveryBounded(t *testing.T) {
+	// Pathological input: every line is a syntax error. Recovery must terminate
+	// and never exceed the cap.
+	var b []byte
+	for range 100 {
+		b = append(b, "x = )\n"...)
+	}
+	r := Check("test", string(b))
+	if len(r.Diagnostics) == 0 {
+		t.Fatal("expected diagnostics")
+	}
+	if len(r.Diagnostics) > maxDiagnostics {
+		t.Fatalf("diagnostics %d exceeded cap %d", len(r.Diagnostics), maxDiagnostics)
 	}
 }
 
