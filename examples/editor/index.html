@@ -125,12 +125,14 @@ async function runCheck(model) {
     const markers = diags.map(d => ({
       severity: d.severity,
       message: d.message,
+      // Stable diagnostic code (e.g. "unexpected-symbol"); shown by Monaco
+      // alongside the message and usable for filtering / quick-fix routing.
+      code: d.code,
       startLineNumber: d.startLineNumber,
       startColumn: d.startColumn,
       endLineNumber: d.endLineNumber,
-      // The check package reports a point (end == start). Nudge the end column
-      // so Monaco draws a visible squiggle rather than a zero-width marker.
-      endColumn: d.endColumn + 1,
+      // The check package already widens the span to a visible width.
+      endColumn: d.endColumn,
     }));
     monaco.editor.setModelMarkers(model, "golua", markers);
     updateStatus(diags);
