@@ -82,6 +82,19 @@ func (vm *VM) closeUpvaluesWithError(level int, errVal Value) {
 // even if one errors. If any handler errors, the last error is re-raised after
 // all handlers have been called.
 func (vm *VM) callCloseHandlers(indices []int, errVal Value, useMsgHandler bool) {
+	// Guard against unbounded Go-stack recursion. When an erroring __close
+	// handler declares its own to-be-closed variable that errors again, the Lua
+	// callStack is unwound by the per-handler recover below, so checkCallDepth
+	// never fires — but each recovery recurses back into callCloseHandlers on
+	// the Go stack, overflowing the host process (a host crash).
+	// Bound the close-chain depth (the counter is shared with coroutine.close)
+	// and raise a catchable "C stack overflow" instead, matching reference Lua.
+	if vm.EnterCloseChain() {
+		vm.ExitCloseChain()
+		panic(&LuaError{Value: NewString(vm.runtimeError("%s", "C stack overflow").Error())})
+	}
+	defer vm.ExitCloseChain()
+
 	var lastPanic interface{}
 	for i := len(indices) - 1; i >= 0; i-- {
 		savedTbcLen := len(vm.tbcVars)
@@ -194,6 +207,30 @@ func (vm *VM) CloseAllTBC() {
 						errVal = le.Value
 					} else {
 						errVal = NewString(fmt.Sprintf("%v", r))
+					}
+					// Close any to-be-closed variables the failed handler
+					// declared in its own scope. This mirrors normal scope-exit
+					// unwinding: a recursive erroring __close chain then hits the
+					// close-depth guard in callCloseHandlers and surfaces
+					// "C stack overflow" like reference Lua, instead of dropping
+					// the inner variables and returning the innermost error.
+					if len(vm.tbcVars) > 0 {
+						inner := make([]int, len(vm.tbcVars))
+						copy(inner, vm.tbcVars)
+						vm.tbcVars = nil
+						func() {
+							defer func() {
+								if ir := recover(); ir != nil {
+									lastPanic = ir
+									if le, ok := ir.(*LuaError); ok {
+										errVal = le.Value
+									} else {
+										errVal = NewString(fmt.Sprintf("%v", ir))
+									}
+								}
+							}()
+							vm.callCloseHandlers(inner, errVal, false)
+						}()
 					}
 				}
 			}()
