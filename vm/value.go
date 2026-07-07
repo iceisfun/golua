@@ -104,11 +104,17 @@ func (vm *VM) stringPointerID(s string) any {
 // Integer and float are distinct subtypes of "number" following Lua 5.4
 // semantics. Arithmetic operations preserve integer type when possible.
 type Value struct {
-	typ     valueType
-	num     float64 // float value, or 1.0/0.0 for bool true/false
-	integer int64   // integer value
-	ptr     any     // string, *Table, *Closure, or NativeFunc
+	typ valueType
+	n   uint64 // numeric word: float64 bits (float, and 1.0/0.0 for bool), or int64 bits (integer)
+	ptr any    // string, *Table, *Closure, or NativeFunc
 }
+
+// fval decodes the numeric word as a float64. Meaningful when typ is
+// typeFloat (or typeBool, where the word holds the bits of 1.0/0.0).
+func (v Value) fval() float64 { return math.Float64frombits(v.n) }
+
+// ival decodes the numeric word as an int64. Meaningful when typ is typeInt.
+func (v Value) ival() int64 { return int64(v.n) }
 
 // valueType tags the kind of Lua value stored in a Value struct.
 type valueType byte
@@ -132,7 +138,7 @@ var Nil = Value{typ: typeNil}
 func NewBool(b bool) Value {
 	v := Value{typ: typeBool}
 	if b {
-		v.num = 1
+		v.n = math.Float64bits(1)
 	}
 	return v
 }
@@ -145,12 +151,12 @@ var (
 
 // NewInt creates an integer value.
 func NewInt(i int64) Value {
-	return Value{typ: typeInt, integer: i}
+	return Value{typ: typeInt, n: uint64(i)}
 }
 
 // NewFloat creates a float value.
 func NewFloat(f float64) Value {
-	return Value{typ: typeFloat, num: f}
+	return Value{typ: typeFloat, n: math.Float64bits(f)}
 }
 
 // NewString creates a string value.
@@ -298,23 +304,30 @@ func (v Value) Type() string {
 
 // AsBool returns the boolean value.
 func (v Value) AsBool() bool {
-	return v.num != 0
+	switch v.typ {
+	case typeBool:
+		return v.n != 0
+	case typeFloat:
+		return v.fval() != 0
+	default:
+		return false
+	}
 }
 
 // AsInt returns the integer value (also works for floats that are whole numbers).
 func (v Value) AsInt() int64 {
 	if v.typ == typeInt {
-		return v.integer
+		return v.ival()
 	}
-	return int64(v.num)
+	return int64(v.fval())
 }
 
 // AsFloat returns the float value.
 func (v Value) AsFloat() float64 {
 	if v.typ == typeInt {
-		return float64(v.integer)
+		return float64(v.ival())
 	}
-	return v.num
+	return v.fval()
 }
 
 // AsString returns the string value.
@@ -547,9 +560,9 @@ func StringToNumericValue(s string) (Value, bool) {
 func (v Value) ToNumber() (float64, bool) {
 	switch v.typ {
 	case typeInt:
-		return float64(v.integer), true
+		return float64(v.ival()), true
 	case typeFloat:
-		return v.num, true
+		return v.fval(), true
 	case typeString:
 		s := TrimASCIISpace(v.ptr.(string))
 		if s == "" {
@@ -596,9 +609,9 @@ func (v Value) ToNumber() (float64, bool) {
 func (v Value) ToInt() (int64, bool) {
 	switch v.typ {
 	case typeInt:
-		return v.integer, true
+		return v.ival(), true
 	case typeFloat:
-		f := v.num
+		f := v.fval()
 		i := int64(f)
 		if float64(i) == f {
 			return i, true
@@ -629,7 +642,7 @@ func (v Value) ToBool() bool {
 		return false
 	}
 	if v.typ == typeBool {
-		return v.num != 0
+		return v.n != 0
 	}
 	return true
 }
@@ -640,14 +653,14 @@ func (v Value) String() string {
 	case typeNil:
 		return "nil"
 	case typeBool:
-		if v.num != 0 {
+		if v.n != 0 {
 			return "true"
 		}
 		return "false"
 	case typeInt:
-		return fmt.Sprintf("%d", v.integer)
+		return fmt.Sprintf("%d", v.ival())
 	case typeFloat:
-		f := v.num
+		f := v.fval()
 		if math.IsInf(f, 1) {
 			return "inf"
 		}
@@ -789,9 +802,9 @@ func (v Value) Equal(other Value) bool {
 		// Special case: int and float can be equal
 		if v.IsNumber() && other.IsNumber() {
 			if v.typ == typeInt {
-				return intFloatEqual(v.integer, other.num)
+				return intFloatEqual(v.ival(), other.fval())
 			}
-			return intFloatEqual(other.integer, v.num)
+			return intFloatEqual(other.ival(), v.fval())
 		}
 		return false
 	}
@@ -799,11 +812,13 @@ func (v Value) Equal(other Value) bool {
 	case typeNil:
 		return true
 	case typeBool:
-		return v.num == other.num
+		return v.n == other.n
 	case typeInt:
-		return v.integer == other.integer
+		return v.n == other.n
 	case typeFloat:
-		return v.num == other.num
+		// Decode before comparing: bit equality differs from float equality
+		// for NaN (never equal) and ±0.0 (equal despite distinct bits).
+		return v.fval() == other.fval()
 	case typeString:
 		return v.ptr.(string) == other.ptr.(string)
 	case typeTable, typeFunction:
@@ -827,15 +842,15 @@ func (v Value) RawEqual(other Value) bool {
 func (v Value) LessThan(other Value) (bool, bool) {
 	if v.IsNumber() && other.IsNumber() {
 		if v.typ == typeInt && other.typ == typeInt {
-			return v.integer < other.integer, true
+			return v.ival() < other.ival(), true
 		}
 		if v.typ == typeInt {
-			return intFloatLessThan(v.integer, other.num), true
+			return intFloatLessThan(v.ival(), other.fval()), true
 		}
 		if other.typ == typeInt {
-			return floatIntLessThan(v.num, other.integer), true
+			return floatIntLessThan(v.fval(), other.ival()), true
 		}
-		return v.num < other.num, true
+		return v.fval() < other.fval(), true
 	}
 	if v.IsString() && other.IsString() {
 		return v.AsString() < other.AsString(), true
@@ -847,23 +862,23 @@ func (v Value) LessThan(other Value) (bool, bool) {
 func (v Value) LessEqual(other Value) (bool, bool) {
 	if v.IsNumber() && other.IsNumber() {
 		if v.typ == typeInt && other.typ == typeInt {
-			return v.integer <= other.integer, true
+			return v.ival() <= other.ival(), true
 		}
 		if v.typ == typeInt {
 			// i <= f: NaN must return false
-			if math.IsNaN(other.num) {
+			if math.IsNaN(other.fval()) {
 				return false, true
 			}
-			return !floatIntLessThan(other.num, v.integer), true
+			return !floatIntLessThan(other.fval(), v.ival()), true
 		}
 		if other.typ == typeInt {
 			// f <= i: NaN must return false
-			if math.IsNaN(v.num) {
+			if math.IsNaN(v.fval()) {
 				return false, true
 			}
-			return !intFloatLessThan(other.integer, v.num), true
+			return !intFloatLessThan(other.ival(), v.fval()), true
 		}
-		return v.num <= other.num, true
+		return v.fval() <= other.fval(), true
 	}
 	if v.IsString() && other.IsString() {
 		return v.AsString() <= other.AsString(), true

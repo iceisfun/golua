@@ -37,7 +37,7 @@ func luaNumMod(a, b float64) float64 {
 func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, error) {
 	// Float fast path: both operands are already floats (common in numeric code)
 	if v1.typ == typeFloat && v2.typ == typeFloat {
-		n1, n2 := v1.num, v2.num
+		n1, n2 := v1.fval(), v2.fval()
 		switch op {
 		case compiler.OP_ADD:
 			return NewFloat(n1 + n2), nil
@@ -140,7 +140,7 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, er
 func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 	// Float fast path: both operands are already floats
 	if v.typ == typeFloat && kv.typ == typeFloat {
-		n1, n2 := v.num, kv.num
+		n1, n2 := v.fval(), kv.fval()
 		switch op {
 		case compiler.OP_ADDK:
 			return NewFloat(n1 + n2), nil

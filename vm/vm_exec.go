@@ -643,7 +643,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if v.IsInt() {
 				vm.stack[frame.base+a] = NewInt(v.AsInt() + int64(sc))
 			} else if v.IsFloat() {
-				vm.stack[frame.base+a] = NewFloat(v.num + float64(sc))
+				vm.stack[frame.base+a] = NewFloat(v.fval() + float64(sc))
 			} else {
 				// Non-numeric: dispatch to the metamethod implied by the
 				// following MMBINI. The compiler emits ADDI for both x + n
@@ -746,12 +746,12 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v1 := vm.stack[frame.base+b]
 			v2 := vm.stack[frame.base+c]
-			// Inline the number fast paths to avoid passing two 40-byte Value
+			// Inline the number fast paths to avoid passing two 32-byte Value
 			// structs by value to arith() on the hot arithmetic path. These
 			// mirror arith()'s fast paths exactly; mixed-number, string,
 			// metamethod and error reporting fall through to vm.arith.
 			if v1.typ == typeFloat && v2.typ == typeFloat {
-				n1, n2 := v1.num, v2.num
+				n1, n2 := v1.fval(), v2.fval()
 				var r float64
 				switch op {
 				case compiler.OP_ADD:
@@ -771,7 +771,7 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = NewFloat(r)
 			} else if v1.typ == typeInt && v2.typ == typeInt && op != compiler.OP_DIV && op != compiler.OP_POW {
-				i1, i2 := v1.integer, v2.integer
+				i1, i2 := v1.ival(), v2.ival()
 				var r int64
 				switch op {
 				case compiler.OP_ADD:

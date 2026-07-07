@@ -123,7 +123,9 @@ func (ws *weakStore) set(key, value Value) error {
 	if key.IsNil() {
 		return fmt.Errorf("table index is nil")
 	}
-	if key.IsFloat() && key.num != key.num {
+	// Decode the float before the NaN self-compare: a raw bit comparison
+	// (key.n != key.n) is always false and would admit NaN keys.
+	if key.IsFloat() && key.fval() != key.fval() {
 		return fmt.Errorf("table index is NaN")
 	}
 	ws.mu.Lock()
