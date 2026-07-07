@@ -2,6 +2,19 @@ package vm
 
 import "fmt"
 
+// valueIsThread reports whether v is a coroutine thread. Threads are backed by
+// *Table (isThread=true) so Value.IsTable() returns true for them; the __index
+// chain-follow must exclude threads and treat them as non-table values, matching
+// reference Lua which raises "attempt to index a thread value".
+func valueIsThread(v Value) bool {
+	if v.IsTable() {
+		if tbl, ok := v.AsTable().(*Table); ok {
+			return tbl.IsThread()
+		}
+	}
+	return false
+}
+
 // tableGet gets a value from a table, handling __index metamethod.
 // The loop structure matches Lua 5.4's luaV_finishget: the initial table check
 // is "free" (not counted), and each loop iteration performs one redirect + check.
@@ -29,7 +42,7 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 			return Nil, nil
 		}
 
-		if index.IsTable() {
+		if index.IsTable() && !valueIsThread(index) {
 			// __index is a table, follow the chain
 			t = index.AsTable()
 			// Check the redirected-to table
@@ -79,7 +92,7 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 			return Nil, nil
 		}
 
-		if index.IsTable() {
+		if index.IsTable() && !valueIsThread(index) {
 			// __index is a table, follow the chain
 			t = index.AsTable()
 			// Check the redirected-to table
@@ -134,7 +147,7 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 			return Nil, nil
 		}
 
-		if index.IsTable() {
+		if index.IsTable() && !valueIsThread(index) {
 			// __index is a table, follow the chain
 			t = index.AsTable()
 			// Check the redirected-to table
