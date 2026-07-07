@@ -101,6 +101,14 @@ func dateTimeFromTime(t time.Time, hasDST bool) *LuaDateTime {
 
 func resolveLocalTime(input LuaTimeInput) (time.Time, error) {
 	base := time.Date(input.Year, time.Month(input.Month), input.Day, input.Hour, input.Min, input.Sec, 0, time.Local)
+	// os.time bounds the RAW year field to C's int tm_year width before we get
+	// here, but field normalization can still roll the year past that limit
+	// (e.g. sec=60 carries into the next minute/hour/.../year). C's mktime
+	// returns -1 in that case; reject a normalized year outside int32+1900 so
+	// os.time errors instead of silently returning a timestamp.
+	if y := base.Year(); y > math.MaxInt32+1900 || y < math.MinInt32+1900 {
+		return time.Time{}, fmt.Errorf("time result cannot be represented in this installation")
+	}
 	if !input.HasIsDST {
 		return base, nil
 	}
