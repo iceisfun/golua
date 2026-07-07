@@ -1,0 +1,171 @@
+package golua_test
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/iceisfun/golua/compiler"
+	"github.com/iceisfun/golua/parser"
+	"github.com/iceisfun/golua/stdlib"
+	"github.com/iceisfun/golua/vm"
+)
+
+// runLuaCapture compiles and runs source with print() captured, returning the
+// joined output lines. Used by the codegen regression tests to assert on
+// computed values against reference Lua 5.5 behavior.
+func runLuaCapture(t *testing.T, source string) string {
+	t.Helper()
+	block, err := parser.Parse("test", source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	proto, err := compiler.Compile("test", block)
+	if err != nil {
+		t.Fatalf("compile error: %v", err)
+	}
+	v := vm.New(vm.WithCaptureOutput(true))
+	stdlib.Open(v)
+	if _, err := v.Run(proto); err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	return strings.Join(v.OutputLines(), "\n")
+}
+
+// numeric-for per-iteration OP_CLOSE must not be skipped when the
+// loop body declares an inlined <const> local. Closures must capture a fresh
+// loop variable per iteration.
+func TestForNumInlinedConstCapture(t *testing.T) {
+	got := runLuaCapture(t, `
+local CL = {}
+for i = 1, 2 do
+  local c <const> = 5
+  CL[#CL+1] = function() return i + c end
+end
+print(CL[1](), CL[2]())`)
+	if got != "6\t7" {
+		t.Fatalf("closures shared loop var: got %q want %q", got, "6\t7")
+	}
+}
+
+func TestForNumInlinedConstClose(t *testing.T) {
+	got := runLuaCapture(t, `
+for i = 1, 2 do
+  local x <close> = setmetatable({}, {__close=function() print("close", i) end})
+  local c <const> = 5
+end`)
+	if got != "close\t1\nclose\t2" {
+		t.Fatalf("<close> fired with wrong per-iteration value: got %q", got)
+	}
+}
+
+// call operands in concat/and/or chains and chained calls
+// must reuse registers per operand/level instead of compounding, otherwise long
+// (but valid) expressions spuriously overflow the register file.
+func TestConcatChainRegisters(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("local function f(n) return n end\nprint(")
+	for i := 0; i < 60; i++ {
+		if i > 0 {
+			b.WriteString("..")
+		}
+		b.WriteString("f(1)")
+	}
+	b.WriteString(")")
+	got := runLuaCapture(t, b.String())
+	if got != strings.Repeat("1", 60) {
+		t.Fatalf("concat chain miscompiled: got %q", got)
+	}
+}
+
+func TestAndOrChainRegisters(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("local function f(n) return n end\nprint(")
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			b.WriteString(" and ")
+		}
+		b.WriteString("f(1)")
+	}
+	b.WriteString(")")
+	if got := runLuaCapture(t, b.String()); got != "1" {
+		t.Fatalf("and chain miscompiled: got %q", got)
+	}
+}
+
+// a long non-constant left-associative arithmetic chain must
+// compile in linear time (constant folding must not re-walk the left spine at
+// every node). Guards against the O(n^2) compile-time DoS.
+func TestCompileDoSLinear(t *testing.T) {
+	build := func(n int) string {
+		var b strings.Builder
+		b.WriteString("local x=1 return ")
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				b.WriteString("+")
+			}
+			b.WriteString("x")
+		}
+		return b.String()
+	}
+	compile := func(src string) {
+		block, err := parser.Parse("dos", src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := compiler.Compile("dos", block); err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+	}
+	// A large chain must compile quickly; a 15s budget is ~100x the observed
+	// linear time and would blow out under the old quadratic behavior.
+	done := make(chan struct{})
+	go func() { compile(build(60000)); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("compiling a 60k-term non-constant chain took too long (quadratic?)")
+	}
+	// Constant chains must still fold to a single value.
+	if got := runLuaCapture(t, "print("+strings.Repeat("1+", 4999)+"1)"); got != "5000" {
+		t.Fatalf("constant fold broken: got %q want 5000", got)
+	}
+}
+
+// a bare in-register local left operand must be read live at
+// execution time, so a mutation the right operand makes to it (via a shared
+// upvalue) is observed — matching reference Lua's exp2anyreg.
+func TestBinaryLeftOperandLive(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{`local u=1 local function bump() u=12; return 2 end print(u + bump())`, "14"},
+		{`local u=10 local function bump() u=5; return 20 end print(u < bump())`, "true"},
+		{`local a=3 local function b() a=100; return 1 end print(a > b())`, "true"},
+		{`local u=10 local function m() u=1; return 2 end print(u <= m())`, "true"},
+	}
+	for _, c := range cases {
+		if got := runLuaCapture(t, c.src); got != c.want {
+			t.Fatalf("%s => got %q want %q", c.src, got, c.want)
+		}
+	}
+}
+
+func TestChainedCallRegisters(t *testing.T) {
+	got := runLuaCapture(t, `
+local function f() return f end
+local g = f
+for i = 1, 300 do g = g() end
+print(g == f)`)
+	if got != "true" {
+		t.Fatalf("chained call miscompiled: got %q", got)
+	}
+	// Deep chained call must compile without a Go panic / register overflow.
+	var b strings.Builder
+	b.WriteString("local function f() return f end local g=f local x = g")
+	for i := 0; i < 1000; i++ {
+		b.WriteString("()")
+	}
+	b.WriteString(" print(x==f)")
+	if got := runLuaCapture(t, b.String()); got != "true" {
+		t.Fatalf("deep chained call miscompiled: got %q", got)
+	}
+}
