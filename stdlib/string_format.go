@@ -383,7 +383,10 @@ func formatIntHex(spec string, conv byte, val uint64) string {
 
 	goSpec := spec
 	if !hasHash {
-		goSpec = strings.Replace(goSpec, "#", "", 1)
+		// Remove ALL '#' flags: a repeated '#' (e.g. "%##x" on value 0) would
+		// otherwise leave one behind, and Go's fmt always emits the 0x/0X prefix
+		// under '#' even for zero, which C printf omits.
+		goSpec = strings.ReplaceAll(goSpec, "#", "")
 	}
 	goSpec += string(conv)
 	result := fmt.Sprintf(goSpec, val)
@@ -987,7 +990,10 @@ func validateFormatWidthPrec(spec string, conv byte) {
 		i++
 	}
 	if i > start {
-		if w, err := strconv.Atoi(spec[start:i]); err == nil && w >= 100 {
+		// spec[start:i] is all digits; an Atoi error can only be overflow, which
+		// is far past the limit — reject it rather than letting an oversized
+		// width slip through to Go's fmt as garbage.
+		if w, err := strconv.Atoi(spec[start:i]); err != nil || w >= 100 {
 			panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 		}
 	}
@@ -999,7 +1005,7 @@ func validateFormatWidthPrec(spec string, conv byte) {
 			i++
 		}
 		if i > start {
-			if p, err := strconv.Atoi(spec[start:i]); err == nil && p >= 100 {
+			if p, err := strconv.Atoi(spec[start:i]); err != nil || p >= 100 {
 				panic(fmt.Sprintf("invalid conversion specification: '%s%c'", spec, conv))
 			}
 		}
@@ -1070,8 +1076,14 @@ func formatStringByBytes(spec, str string) string {
 	// Parse width and precision from spec (e.g. "%-10.5")
 	s := spec[1:] // skip '%'
 	leftAlign := false
-	if len(s) > 0 && s[0] == '-' {
-		leftAlign = true
+	// Consume flags, which reference Lua's checkformat allows to repeat. For %s
+	// only '-' (left-align) is meaningful; the others are accepted and ignored.
+	// Stopping after a single '-' left "%--5.2s" with width=0 and the precision
+	// unparsed, returning the string untruncated and unpadded.
+	for len(s) > 0 && (s[0] == '-' || s[0] == '+' || s[0] == ' ' || s[0] == '#' || s[0] == '0') {
+		if s[0] == '-' {
+			leftAlign = true
+		}
 		s = s[1:]
 	}
 	width := 0
