@@ -765,41 +765,62 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 		}
 	}
 
-	// Arithmetic / bitwise — when reg is a named local we must use a fresh
-	// temp for the left operand so the right side can still read the local.
-	// Example: b = a + b — compiling left into b's register would overwrite
-	// it before the right side reads it.
-	// When reg is NOT a local (it's a temp or the target of a parent binop),
-	// we reuse it for the left operand. This keeps left-associative chains
-	// like a+b+c+d in O(1) registers instead of O(n).
+	// Arithmetic / bitwise. An operand that is a bare in-register local is
+	// read in place: its register is used directly as the B/C operand so
+	// OP_<op> reads it live at execution time — after the other operand may
+	// have mutated it through a shared upvalue — matching reference Lua's
+	// exp2anyreg. Compiling it into a temp would both waste a MOVE and
+	// snapshot the value before the other operand runs.
+	//
+	// base snapshots the register top so the epilogue can free every temp
+	// reserved here. It must not drop below nActVar: in-place operand
+	// registers sit below the temp area and must never be handed back to
+	// the allocator (the recurring freeReg bug family).
+	base := fs.freeReg
+	if base < fs.nActVar {
+		base = fs.nActVar
+	}
 	var leftReg int
-	if reg < fs.nActVar {
+	if lr, ok := plainLocalReg(fs, e.Left); ok {
+		// In-place local read: no instruction emitted, so skip
+		// fixDischargedLine — it would relabel the previous statement's
+		// discharge instruction (see the ADDI case above).
+		leftReg = lr
+	} else if reg < fs.nActVar {
+		// reg is a named local: use a fresh temp for the left operand so the
+		// right side can still read the local. Example: b = f(a) + b —
+		// compiling left into b's register would overwrite it before the
+		// right side reads it.
 		leftReg = fs.reserveReg()
 		c.compileExprToReg(e.Left, leftReg)
 		c.fixDischargedLine(line)
-	} else if lr, ok := plainLocalReg(fs, e.Left); ok {
-		// Bare in-register local: use its register directly as the B operand so
-		// OP_<op> reads R[B] live at execution time — after the right operand
-		// may have mutated the local through a shared upvalue — matching
-		// reference Lua's exp2anyreg. Compiling it into reg would snapshot the
-		// value with a MOVE before the right operand runs.
-		leftReg = lr
+		// A call/constructor operand leaves freeReg inflated past its own
+		// result slot; reclaim so the right operand lands just above it
+		// (same per-operand reset as compileConcat).
+		fs.freeReg = leftReg + 1
 	} else {
+		// reg is a temp or the target of a parent binop: reuse it for the
+		// left operand. This keeps left-associative chains like a+b+c+d in
+		// O(1) registers instead of O(n).
 		leftReg = reg
 		c.compileExprToReg(e.Left, leftReg)
 		c.fixDischargedLine(line)
+		// Reclaim call/constructor inflation (see above). base >= reg+1 here
+		// because compileExprToReg's preamble reserved reg before dispatch.
+		fs.freeReg = base
 	}
-	// Use the current free-register top (rather than reserveReg, which would
+	// Right operand: read a plain local in place; otherwise discharge into
+	// the current free-register top (rather than reserveReg, which would
 	// pre-advance freeReg) so a right operand that is itself a call/table
 	// constructor lands directly at rightReg instead of being compiled one
 	// slot higher and MOVEd back. The pre-advance would make compileExprToReg
 	// see reg < savedFreeReg and take its temp+MOVE branch, leaving a stale
 	// register gap below the call target — observable as a spurious
 	// "(temporary)" slot in debug.getlocal (see db.lua temp-slot test).
-	rightReg := fs.freeReg
-	c.compileExprToReg(e.Right, rightReg)
-	if fs.freeReg < rightReg+1 {
-		fs.freeReg = rightReg + 1
+	rightReg, rightInPlace := plainLocalReg(fs, e.Right)
+	if !rightInPlace {
+		rightReg = fs.freeReg
+		c.compileExprToReg(e.Right, rightReg)
 	}
 
 	var op OpCode
@@ -836,14 +857,12 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 
 	fs.emit(ABC(op, reg, leftReg, rightReg, 0), line)
 	fs.emit(ABC(OP_MMBIN, leftReg, rightReg, int(mmOp), 0), line)
-	if reg < fs.nActVar {
-		// Local target: leftReg is a reserved temp below rightReg — free both.
-		fs.freeReg = leftReg
-	} else {
-		// Temp target: result lives in reg; free the right temp (and, when the
-		// left operand is a bare local read in place, reg itself is kept).
-		fs.freeReg = rightReg
-	}
+	// Free every temp reserved for the operands by restoring the entry
+	// snapshot. Restoring to leftReg/rightReg instead would be wrong when an
+	// operand was a local read in place: those registers sit below the temp
+	// area (possibly below live locals) and must stay allocated. For a temp
+	// target, base >= reg+1, so the result register stays protected.
+	fs.freeReg = base
 }
 
 // compileConcat flattens a chain of .. operators (e.g. a .. b .. c) into
@@ -1154,9 +1173,14 @@ func (c *compiler) compileUnop(e *ast.UnopExpr, reg int) {
 	fs := c.fs
 	line := e.P.Line
 
-	// Compile operand into a (possibly temporary) register
-	opReg := reg
-	c.compileExprToReg(e.Operand, opReg)
+	// Read a plain in-register local operand in place (reference Lua's
+	// exp2anyreg) instead of snapshotting it into reg with a MOVE;
+	// otherwise compile the operand into reg.
+	opReg, inPlace := plainLocalReg(fs, e.Operand)
+	if !inPlace {
+		opReg = reg
+		c.compileExprToReg(e.Operand, opReg)
+	}
 
 	switch e.Op {
 	case "-":
