@@ -444,6 +444,13 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	// avoids inflating instruction counts (which affects debug count hooks).
 	needClose := false
 	for i := len(fs.locals) - 1; i >= 0; i-- {
+		// Inlined <const> locals consume no register (reg = -1); they must be
+		// skipped rather than terminating the scan, otherwise a captured loop
+		// variable or a <close> local appended below one is never seen and the
+		// per-iteration OP_CLOSE is wrongly omitted.
+		if fs.locals[i].inlined {
+			continue
+		}
 		if fs.locals[i].reg < base+2 {
 			break
 		}
@@ -617,11 +624,13 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		fs.emit(ABC(OP_CLOSE, base+3, 0, 0, 0), c.fs.blockLastLine)
 	}
 
-	// TFORCALL — calls the iterator. Use the line of the last iterator
-	// expression (matching Lua 5.4 which uses the line after parsing iterators).
+	// TFORCALL — calls the iterator. Reference (lparser.c forlist) captures the
+	// line right after consuming 'in', i.e. the FIRST token of the iterator
+	// explist, and fixlines OP_TFORCALL/OP_TFORLOOP to it — so an error raised
+	// inside the iterator reports the explist start line.
 	iterLine := line
 	if len(s.Iters) > 0 {
-		iterLine = s.Iters[len(s.Iters)-1].Pos().Line
+		iterLine = s.Iters[0].Pos().Line
 	}
 	tforCallPC := fs.emit(ABC(OP_TFORCALL, base, 0, nVars, 0), iterLine)
 	_ = tforCallPC

@@ -451,7 +451,7 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 		// fallback paths continue to work; runtime semantics still
 		// match (assigning a global indexes the local _ENV value).
 		if lastAttrib == attribConst && s.Names[lastIdx].Name != envUpvalueName {
-			if v, ok := tryFoldConstScalar(s.Values[lastIdx]); ok {
+			if v, ok := c.tryFoldConstScalar(s.Values[lastIdx]); ok {
 				inlineLast = true
 				inlineVal = v
 			}
@@ -727,13 +727,17 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	// table/key registers for indexed targets.
 	// Lua 5.4 assigns right-to-left so that in `t[1], t[1] = "a", "b"`,
 	// t[1] ends up as "a" (the leftmost assignment wins).
+	// Reference emits every store after the whole '=' explist is parsed, so
+	// they all carry ls->lastline = the explist end line (the last value's end),
+	// not each target's own line.
+	rhsStoreLine := line
+	if len(s.Values) > 0 {
+		rhsStoreLine = exprEndLine(s.Values[len(s.Values)-1])
+	}
 	for i := nTargets - 1; i >= 0; i-- {
 		pc := precomputed[i]
 		if pc.tableReg >= 0 {
-			// Pre-evaluated indexed/field target. Emit the store at the target's
-			// own field/key line (not the statement line) so a runtime index
-			// error on it reports the right line, matching reference Lua.
-			storeLine := exprEndLine(s.Targets[i])
+			storeLine := rhsStoreLine
 			if pc.intKey >= 0 {
 				fs.emit(ABC(OP_SETI, pc.tableReg, pc.intKey, valBase+i, 0), storeLine)
 			} else if pc.keyReg >= 0 {
@@ -806,10 +810,12 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		// local), so an RHS reassignment of that local is observed by the
 		// store. Mirror that by using the local register directly; otherwise
 		// snapshot the operand into a temp before the RHS.
-		// The store is emitted at the target field's line (reference's current
-		// line after parsing the indexed target), not the statement line — so a
-		// runtime "index a nil value" on the target reports the field's line.
-		storeLine := exprEndLine(target)
+		// The store (SETFIELD/SETTABLE/SETI) is emitted by reference's restassign
+		// *after* the '=' explist is parsed, so it carries ls->lastline = the RHS
+		// end line — a runtime "index a nil value" on the target reports the RHS
+		// line, not the target's line (compileSetGlobal already
+		// uses the value line).
+		storeLine := exprEndLine(value)
 		startReg := fs.freeReg
 		tableReg := c.indexAssignOperand(t.Table, nil)
 		valReg := fs.reserveReg()
@@ -819,7 +825,7 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		fs.freeReg = startReg
 
 	case *ast.IndexExpr:
-		storeLine := exprEndLine(target)
+		storeLine := exprEndLine(value)
 		startReg := fs.freeReg
 		tableReg := c.indexAssignOperand(t.Table, nil)
 		if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
