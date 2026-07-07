@@ -493,9 +493,10 @@ func (vm *VM) execute() ([]Value, error) {
 			key := proto.Constants[b].SVal
 			value := vm.getRK(frame, c, inst.K())
 			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
-				// Fast path: concrete *Table with no metatable
+				// Fast path: concrete *Table with no metatable. Pass the
+				// cached constant Value so a first-time key needs no boxing.
 				if ct.metatable == nil {
-					ct.SetString(key, value)
+					ct.setStringValue(consts[b], value)
 				} else {
 					if err := vm.tableSetString(table.ptr.(LuaTable), key, value); err != nil {
 						return nil, err

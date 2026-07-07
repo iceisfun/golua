@@ -31,7 +31,7 @@ type Table struct {
 	array     []Value          // sequential integer-keyed part (indices 1..n)
 	hash      map[any]Value    // associative part for non-string, non-integer, non-sequential keys
 	strHash   map[string]Value // associative part for string keys (avoids any boxing)
-	sstr      *smallStrStore   // inline string-key store; nil once migrated to strHash
+	sstr      smallStrStore    // inline string-key store; nil = unused or migrated to strHash
 	intHash   map[int64]Value  // associative part for integer keys outside array range (avoids any boxing)
 	keys      []Value          // insertion-ordered hash keys (may contain dead keys)
 	deadKeys  int              // count of keys in t.keys not in t.hash/strHash/intHash
@@ -88,21 +88,32 @@ func (t *Table) weakModeOf() weakTableMode {
 // has 7 fields — without ever allocating a Go map for them.
 const skInline = 8
 
+// strEntry is one slot of a table's inline string-key store.
+type strEntry struct {
+	name string
+	val  Value
+}
+
 // smallStrStore is a table's inline store for its first few string keys. It is
 // a value-lookup accelerator only: the table's ordered keys slice (t.keys)
 // still records every string key for deterministic next()/pairs iteration,
 // exactly as it does for map-backed keys. Entries here are unordered (iteration
 // order comes from t.keys), so deletion is an O(1) swap-remove.
-type smallStrStore struct {
-	names [skInline]string
-	vals  [skInline]Value
-	n     uint8
-}
+//
+// The store is a slice so that the very common 1-2-string-key table (e.g.
+// {left=,right=} tree nodes) pays for two slots, not skInline of them. It
+// starts at capacity 2 (or the NEWTABLE nhash hint, visible as cap(t.keys))
+// and grows straight to skInline — one realloc, never an append cascade.
+// A nil store means "no inline store" (no string keys yet, or already
+// migrated to strHash); a non-nil store — even one emptied by deletions —
+// means the table is in inline mode. setStrHash relies on that distinction,
+// so shrinking must never replace a non-nil store with nil.
+type smallStrStore []strEntry
 
 // find returns the index of name in the store, or -1 if absent.
-func (s *smallStrStore) find(name string) int {
-	for i := 0; i < int(s.n); i++ {
-		if s.names[i] == name {
+func (s smallStrStore) find(name string) int {
+	for i := range s {
+		if s[i].name == name {
 			return i
 		}
 	}
@@ -311,18 +322,21 @@ func (t *Table) setHash(keyValue Value, hk any, value Value) {
 //
 // On the map path, both insert and delete detect key novelty with a len()
 // compare around the single map operation rather than a separate hashed probe.
-func (t *Table) setStrHash(s string, value Value) {
+//
+// boxedKey, when it is a string Value, is the caller's already-boxed form of s
+// (e.g. an interpreter constant or a Set key); it is threaded through to
+// addStrKey so appending a new key to t.keys need not re-box s into `any`.
+// Callers that only hold the Go string pass Nil.
+func (t *Table) setStrHash(s string, boxedKey, value Value) {
 	if value.IsNil() {
 		// Delete. The key stays in t.keys as a dead tombstone so an
 		// in-progress next() keeps its position; deadKeys is bumped.
 		if t.sstr != nil {
 			if i := t.sstr.find(s); i >= 0 {
-				last := int(t.sstr.n) - 1
-				t.sstr.names[i] = t.sstr.names[last]
-				t.sstr.vals[i] = t.sstr.vals[last]
-				t.sstr.names[last] = ""
-				t.sstr.vals[last] = Nil
-				t.sstr.n--
+				last := len(t.sstr) - 1
+				t.sstr[i] = t.sstr[last]
+				t.sstr[last] = strEntry{} // release the string and value for GC
+				t.sstr = t.sstr[:last]    // stays non-nil even when emptied
 				t.deadKeys++
 			}
 			return
@@ -340,14 +354,19 @@ func (t *Table) setStrHash(s string, value Value) {
 	// Insert or update.
 	if t.sstr != nil {
 		if i := t.sstr.find(s); i >= 0 {
-			t.sstr.vals[i] = value // update in place
+			t.sstr[i].val = value // update in place
 			return
 		}
-		if int(t.sstr.n) < skInline {
-			t.sstr.names[t.sstr.n] = s
-			t.sstr.vals[t.sstr.n] = value
-			t.sstr.n++
-			t.addStrKey(s)
+		if n := len(t.sstr); n < skInline {
+			if n == cap(t.sstr) {
+				// Grow straight to the full inline capacity: one realloc
+				// total (2 -> 8), never a 2 -> 4 -> 8 append cascade.
+				grown := make(smallStrStore, n, skInline)
+				copy(grown, t.sstr)
+				t.sstr = grown
+			}
+			t.sstr = append(t.sstr, strEntry{name: s, val: value})
+			t.addStrKey(s, boxedKey)
 			return
 		}
 		// Inline store full and s is new: migrate to the map, then fall
@@ -358,21 +377,31 @@ func (t *Table) setStrHash(s string, value Value) {
 		oldLen := len(t.strHash)
 		t.strHash[s] = value
 		if len(t.strHash) != oldLen {
-			t.addStrKey(s)
+			t.addStrKey(s, boxedKey)
 		}
 		return
 	}
-	// First string key on this table: create the inline store.
-	t.sstr = &smallStrStore{}
-	t.sstr.names[0] = s
-	t.sstr.vals[0] = value
-	t.sstr.n = 1
-	t.addStrKey(s)
+	// First string key on this table: create the inline store. Most
+	// string-keyed tables only ever hold a key or two, so start at
+	// capacity 2 unless a constructor hint (NEWTABLE nhash, visible as
+	// cap(t.keys)) promises more.
+	c := 2
+	if kc := cap(t.keys); kc > c {
+		if kc > skInline {
+			kc = skInline
+		}
+		c = kc
+	}
+	t.sstr = make(smallStrStore, 1, c)
+	t.sstr[0] = strEntry{name: s, val: value}
+	t.addStrKey(s, boxedKey)
 }
 
 // addStrKey records a newly-inserted string key in the ordered keys slice,
-// reviving its dead-key tombstone if one already exists there.
-func (t *Table) addStrKey(s string) {
+// reviving its dead-key tombstone if one already exists there. boxed, when it
+// is a string Value, is the caller's already-boxed form of s and is stored
+// as-is; otherwise s is boxed here, only on this new-key path.
+func (t *Table) addStrKey(s string, boxed Value) {
 	if t.deadKeys > 0 {
 		for _, hk := range t.keys {
 			if hk.typ == typeString && hk.ptr.(string) == s {
@@ -381,15 +410,18 @@ func (t *Table) addStrKey(s string) {
 			}
 		}
 	}
-	t.reuseOrAppendKey(Value{typ: typeString, ptr: s})
+	if boxed.typ != typeString {
+		boxed = Value{typ: typeString, ptr: s}
+	}
+	t.reuseOrAppendKey(boxed)
 }
 
 // migrateStrStoreToMap moves every entry from the inline string store into the
 // strHash map and frees the store. Called when the inline store overflows.
 func (t *Table) migrateStrStoreToMap() {
 	sh := t.ensureStrHash()
-	for i := 0; i < int(t.sstr.n); i++ {
-		sh[t.sstr.names[i]] = t.sstr.vals[i]
+	for i := range t.sstr {
+		sh[t.sstr[i].name] = t.sstr[i].val
 	}
 	t.sstr = nil
 }
@@ -433,7 +465,7 @@ func (t *Table) getKeyValue(k Value) (Value, bool) {
 		s := k.ptr.(string)
 		if t.sstr != nil {
 			if i := t.sstr.find(s); i >= 0 {
-				return t.sstr.vals[i], true
+				return t.sstr[i].val, true
 			}
 			return Nil, false
 		}
@@ -487,7 +519,7 @@ func (t *Table) Get(key Value) Value {
 		s := key.ptr.(string)
 		if t.sstr != nil {
 			if i := t.sstr.find(s); i >= 0 {
-				return t.sstr.vals[i]
+				return t.sstr[i].val
 			}
 			return Nil
 		}
@@ -532,7 +564,7 @@ func (t *Table) GetString(s string) Value {
 	}
 	if t.sstr != nil {
 		if i := t.sstr.find(s); i >= 0 {
-			return t.sstr.vals[i]
+			return t.sstr[i].val
 		}
 		return Nil
 	}
@@ -605,7 +637,7 @@ func (t *Table) Set(key, value Value) error {
 
 	// String keys use the dedicated string hash map
 	if key.typ == typeString {
-		t.setStrHash(key.ptr.(string), value)
+		t.setStrHash(key.ptr.(string), key, value)
 		return nil
 	}
 
@@ -666,7 +698,19 @@ func (t *Table) SetString(s string, value Value) {
 		ws.set(NewString(s), value)
 		return
 	}
-	t.setStrHash(s, value)
+	t.setStrHash(s, Nil, value)
+}
+
+// setStringValue is SetString for callers that already hold the key in its
+// boxed Value form (e.g. the interpreter's cached constant Values); it avoids
+// re-boxing the key string when a new key is appended to t.keys. key must be
+// a string Value.
+func (t *Table) setStringValue(key, value Value) {
+	if ws := t.weakBackend(); ws != nil {
+		ws.set(key, value)
+		return
+	}
+	t.setStrHash(key.ptr.(string), key, value)
 }
 
 // RawSetArray sets an array slot directly without triggering shrinkArray.
