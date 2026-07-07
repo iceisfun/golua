@@ -418,6 +418,12 @@ func StringToNumericValue(s string) (Value, bool) {
 	if s == "" {
 		return Nil, false
 	}
+	// Reject Go-style underscore digit separators ("1_0"), which strconv accepts
+	// but the Lua numeral grammar does not — string arithmetic/coercion must fail
+	// on them, matching tonumber and the lexer.
+	if strings.IndexByte(s, '_') >= 0 {
+		return Nil, false
+	}
 	// Try hex integer
 	if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
 		hex := s[2:]
@@ -549,7 +555,10 @@ func (v Value) ToNumber() (float64, bool) {
 		if s == "" {
 			return 0, false
 		}
-		// Reject textual inf/nan tokens
+		// Reject underscore digit separators and inf/nan tokens.
+		if strings.IndexByte(s, '_') >= 0 {
+			return 0, false
+		}
 		if rejectInfNan(s) {
 			return 0, false
 		}
@@ -596,44 +605,18 @@ func (v Value) ToInt() (int64, bool) {
 		}
 		return 0, false
 	case typeString:
-		// Try parsing string as number, then convert to int
-		s := TrimASCIISpace(v.ptr.(string))
-		if s == "" {
+		// Convert the string to a numeric Value first, then to an integer. This
+		// routes hex integers through StringToNumericValue's digit-by-digit
+		// modular wraparound, so a hex literal with more than 16 significant
+		// digits (e.g. "0x10000000000000000" == 2^64) coerces to integer 0 as in
+		// reference Lua, instead of failing ParseInt/ParseUint and reporting "no
+		// integer representation". Also inherits the underscore and
+		// inf/nan rejection there.
+		nv, ok := StringToNumericValue(v.ptr.(string))
+		if !ok {
 			return 0, false
 		}
-		// Try hex integer first (including signed +0x/-0x)
-		hexStart := 0
-		hexSign := int64(1)
-		if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
-			hexStart = 2
-		} else if len(s) > 3 && (s[0] == '+' || s[0] == '-') &&
-			s[1] == '0' && (s[2] == 'x' || s[2] == 'X') {
-			hexStart = 3
-			if s[0] == '-' {
-				hexSign = -1
-			}
-		}
-		if hexStart > 0 {
-			if i, err := strconv.ParseInt(s[hexStart:], 16, 64); err == nil {
-				return i * hexSign, true
-			}
-			// Try unsigned hex for values like 0xFFFFFFFFFFFFFFFF
-			if u, err := strconv.ParseUint(s[hexStart:], 16, 64); err == nil {
-				return int64(u) * hexSign, true
-			}
-		}
-		// Try direct decimal integer parse (preserves precision for maxint)
-		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return i, true
-		}
-		// Try as float (including hex floats via ToNumber), then check if it's a whole number
-		if f, ok := v.ToNumber(); ok {
-			i := int64(f)
-			if float64(i) == f {
-				return i, true
-			}
-		}
-		return 0, false
+		return nv.ToInt()
 	default:
 		return 0, false
 	}
@@ -897,132 +880,31 @@ func (e *LuaError) Error() string {
 }
 
 // ParseHexFloat parses a hex float string like "0x.1", "0xA.8", "0x.1p4".
-// Lua 5.4 allows hex floats without the mandatory 'p' exponent that Go requires.
+// Lua allows hex floats without the binary 'p' exponent that Go's ParseFloat
+// requires, so a missing exponent is normalized to "p0" and the conversion is
+// delegated to strconv.ParseFloat — which is correctly rounded from the exact
+// hex value, avoiding the double-rounding/truncation of a manual accumulation. Returns false for anything that is not a valid hex float.
 func ParseHexFloat(s string) (float64, bool) {
-	// Handle optional sign
-	sign := 1.0
 	body := s
 	if len(body) > 0 && (body[0] == '+' || body[0] == '-') {
-		if body[0] == '-' {
-			sign = -1.0
-		}
 		body = body[1:]
 	}
-	// Strip 0x/0X prefix
 	if len(body) < 2 || body[0] != '0' || (body[1] != 'x' && body[1] != 'X') {
 		return 0, false
 	}
-	body = body[2:]
-	if len(body) == 0 {
+	// Reject Go-style underscore digit separators, which strconv accepts but
+	// Lua does not.
+	if strings.IndexByte(s, '_') >= 0 {
 		return 0, false
 	}
-
-	// Split into integer.fraction and optional pExponent
-	var intPart, fracPart string
-	var expPart string
-	pIdx := strings.IndexAny(body, "pP")
-	if pIdx >= 0 {
-		expPart = body[pIdx+1:]
-		body = body[:pIdx]
+	t := s
+	if strings.IndexAny(s, "pP") < 0 {
+		t = s + "p0"
 	}
-	dotIdx := strings.IndexByte(body, '.')
-	if dotIdx >= 0 {
-		intPart = body[:dotIdx]
-		fracPart = body[dotIdx+1:]
-	} else {
-		intPart = body
+	if f, err := strconv.ParseFloat(t, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+		return f, true
 	}
-
-	// Must have at least one hex digit somewhere
-	if intPart == "" && fracPart == "" {
-		return 0, false
-	}
-
-	// Parse integer and fractional hex digits, tracking binary exponent
-	// separately to handle very long digit strings without overflow.
-	var value float64
-	binExp := 0
-	const maxSigDigits = 15 // enough for float64 precision (60 bits > 53)
-	sigDigits := 0
-	gotNonZero := false
-
-	for _, c := range intPart {
-		d := hexDigit(c)
-		if d < 0 {
-			return 0, false
-		}
-		if d != 0 {
-			gotNonZero = true
-		}
-		if gotNonZero {
-			if sigDigits < maxSigDigits {
-				value = value*16 + float64(d)
-				sigDigits++
-			} else {
-				// Beyond precision: digit contributes to exponent only
-				binExp += 4
-			}
-		} else {
-			// Leading zeros don't affect value or exponent
-		}
-	}
-
-	// Parse fractional part
-	if fracPart != "" {
-		fracExp := 0
-		for _, c := range fracPart {
-			d := hexDigit(c)
-			if d < 0 {
-				return 0, false
-			}
-			fracExp -= 4
-			if d != 0 {
-				gotNonZero = true
-			}
-			if gotNonZero && sigDigits < maxSigDigits {
-				value = value*16 + float64(d)
-				binExp += fracExp
-				fracExp = 0
-				sigDigits++
-			} else if !gotNonZero {
-				// Leading fractional zeros adjust the exponent
-				binExp += fracExp
-				fracExp = 0
-			}
-			// Digits beyond precision are dropped
-		}
-	}
-
-	// Parse binary exponent
-	if pIdx >= 0 && expPart == "" {
-		return 0, false // 'p'/'P' present but no exponent digits
-	}
-	if expPart != "" {
-		expSign := 1
-		if len(expPart) > 0 && (expPart[0] == '+' || expPart[0] == '-') {
-			if expPart[0] == '-' {
-				expSign = -1
-			}
-			expPart = expPart[1:]
-		}
-		if expPart == "" {
-			return 0, false
-		}
-		exp := 0
-		for _, c := range expPart {
-			if c < '0' || c > '9' {
-				return 0, false
-			}
-			exp = exp*10 + int(c-'0')
-			if exp > 100000 {
-				// Cap to avoid int overflow; result will be 0 or ±Inf
-				exp = 100000
-			}
-		}
-		binExp += expSign * exp
-	}
-
-	return sign * math.Ldexp(value, binExp), true
+	return 0, false
 }
 
 // hexDigit returns the numeric value of a hex digit (0-15), or -1 if invalid.
