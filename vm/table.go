@@ -855,11 +855,12 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 	t.keys = nil
 	t.deadKeys = 0
 
-	t.ensureExtra().weak = ws
-
-	// Register for global sweep so ProcessGcFinalizers can implement
-	// ephemeron semantics via iterative GC+sweep cycles.
-	registerWeakTable(t)
+	// Publish the weak backend and register for the global sweep atomically
+	// under the registry lock. sweepAllWeakTables() may run concurrently in a
+	// *different* VM and read this table's extra.weak pointer; without the lock
+	// that read races the pointer write here. weakStore internals
+	// are already guarded by ws.mu — only the pointer swap needed protection.
+	publishWeakBackend(t, ws)
 }
 
 // disableWeakMode migrates alive entries from weakStore back to normal storage.
@@ -870,7 +871,10 @@ func (t *Table) disableWeakMode() {
 	}
 
 	pairs := ws.migrate()
-	t.extra.weak = nil
+	// Clear the weak backend pointer under the registry lock so a concurrent
+	// cross-VM sweepAllWeakTables() never reads a torn extra.weak pointer. ws.migrate() above already drained entries under ws.mu, so
+	// a sweep that observed the old pointer just sweeps an empty store.
+	clearWeakBackend(t)
 
 	for _, p := range pairs {
 		t.Set(p.k, p.v)
