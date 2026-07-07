@@ -91,23 +91,24 @@ type packDirective struct {
 // Returns the parsed size and updated index. If no digits, returns dflt.
 //
 // Sizes are accumulated as int64 to match Lua 5.5, where pack sizes are
-// size_t/lua_Integer (64-bit). The digit loop stops accumulating once the value
-// exceeds (MAX_SIZE-9)/10 (mirroring C getnum); a further digit overflows and
-// raises "invalid format".
+// size_t/lua_Integer (64-bit). This mirrors C getnum (lstrlib.c) exactly: a
+// do-while that STOPS consuming digits (without error) once the accumulator
+// exceeds (MAX_SIZE-9)/10 while more digits remain — the excess digits are left
+// in the format string and the next option parser rejects them as an
+// "invalid format option". It does not raise on overflow itself.
 func parsePackSize(fmt string, pos int, dflt int64) (int64, int) {
 	if pos >= len(fmt) || fmt[pos] < '0' || fmt[pos] > '9' {
 		return dflt, pos
 	}
-	var n int64
-	for pos < len(fmt) && fmt[pos] >= '0' && fmt[pos] <= '9' {
-		d := int64(fmt[pos] - '0')
-		if n > (maxPackSize-d)/10 {
-			panic(luaFmtErr("invalid format"))
-		}
-		n = n*10 + d
+	var a int64
+	for {
+		a = a*10 + int64(fmt[pos]-'0')
 		pos++
+		if !(pos < len(fmt) && fmt[pos] >= '0' && fmt[pos] <= '9' && a <= (maxPackSize-9)/10) {
+			break
+		}
 	}
-	return n, pos
+	return a, pos
 }
 
 // maxPackSize mirrors Lua 5.5's MAX_SIZE, which on a 64-bit build equals
@@ -670,6 +671,13 @@ func stringUnpack(v *vm.VM) int {
 			natAlign := getXAlignUnpack(format, &i, fs)
 			align := fs.effectiveAlign(natAlign)
 			pad := addPadding(offset, align)
+			// Reference str_unpack bounds-checks ntoalign+size against the
+			// remaining data for EVERY option, including X-alignment (size 0),
+			// so alignment padding past the end of the data is a "data string
+			// too short" error rather than a silent success.
+			if offset+pad > len(data) {
+				panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+			}
 			offset += pad
 		default:
 			panic(fmt.Sprintf("invalid format option '%c'", ch))
