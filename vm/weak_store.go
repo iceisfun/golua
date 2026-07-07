@@ -409,11 +409,22 @@ var (
 	weakTablePtrs []weak.Pointer[Table]
 )
 
-// registerWeakTable adds a table to the global weak table registry.
-func registerWeakTable(t *Table) {
+// publishWeakBackend atomically sets t's weak backend and registers the table
+// for the global sweep, holding weakTablesMu so a concurrent cross-VM
+// sweepAllWeakTables() never reads a torn extra.weak pointer.
+func publishWeakBackend(t *Table, ws *weakStore) {
 	weakTablesMu.Lock()
 	defer weakTablesMu.Unlock()
+	t.ensureExtra().weak = ws
 	weakTablePtrs = append(weakTablePtrs, weak.Make(t))
+}
+
+// clearWeakBackend atomically clears t's weak backend under weakTablesMu, so the
+// pointer write does not race a concurrent cross-VM sweep's read.
+func clearWeakBackend(t *Table) {
+	weakTablesMu.Lock()
+	defer weakTablesMu.Unlock()
+	t.extra.weak = nil
 }
 
 // sweepAllWeakTables sweeps all registered weak tables, removing entries with
