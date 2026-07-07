@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"math"
+
 	"github.com/iceisfun/golua/v2/ast"
 )
 
@@ -743,7 +745,7 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 			} else if pc.keyReg >= 0 {
 				fs.emit(ABC(OP_SETTABLE, pc.tableReg, pc.keyReg, valBase+i, 0), storeLine)
 			} else if pc.fieldK >= 0 {
-				fs.emitSetField(pc.tableReg, pc.fieldK, valBase+i, storeLine)
+				fs.emitSetField(pc.tableReg, pc.fieldK, valBase+i, 0, storeLine)
 			}
 		} else {
 			c.assignToTarget(s.Targets[i], valBase+i, line)
@@ -794,10 +796,10 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 			c.checkGlobalWrite(t.Name, target)
 			nameK := fs.stringConstant(t.Name)
-			tempReg := fs.reserveReg()
-			c.compileExprToReg(value, tempReg)
-			fs.emitSetField(envReg, nameK, tempReg, line)
-			fs.freeReg = tempReg
+			startReg := fs.freeReg
+			valC, valK := c.storeValueOperand(value)
+			fs.emitSetField(envReg, nameK, valC, valK, line)
+			fs.freeReg = startReg
 			return
 		}
 		// Global: _ENV[name]
@@ -818,10 +820,9 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		storeLine := exprEndLine(value)
 		startReg := fs.freeReg
 		tableReg := c.indexAssignOperand(t.Table, nil)
-		valReg := fs.reserveReg()
-		c.compileExprToReg(value, valReg)
+		valC, valK := c.storeValueOperand(value)
 		fieldK := fs.stringConstant(t.Field)
-		fs.emitSetField(tableReg, fieldK, valReg, storeLine)
+		fs.emitSetField(tableReg, fieldK, valC, valK, storeLine)
 		fs.freeReg = startReg
 
 	case *ast.IndexExpr:
@@ -829,14 +830,12 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		startReg := fs.freeReg
 		tableReg := c.indexAssignOperand(t.Table, nil)
 		if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
-			valReg := fs.reserveReg()
-			c.compileExprToReg(value, valReg)
-			fs.emit(ABC(OP_SETI, tableReg, int(n.Value), valReg, 0), storeLine)
+			valC, valK := c.storeValueOperand(value)
+			fs.emit(ABC(OP_SETI, tableReg, int(n.Value), valC, valK), storeLine)
 		} else {
 			keyReg := c.indexAssignOperand(t.Key, nil)
-			valReg := fs.reserveReg()
-			c.compileExprToReg(value, valReg)
-			fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, valReg, 0), storeLine)
+			valC, valK := c.storeValueOperand(value)
+			fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, valC, valK), storeLine)
 		}
 		fs.freeReg = startReg
 
@@ -876,6 +875,40 @@ func (c *compiler) indexAssignOperand(e ast.Expr, conflictsLater func(reg int) b
 	return reg
 }
 
+// storeValueOperand compiles the value operand of a store instruction
+// (SETTABUP/SETTABLE/SETI/SETFIELD), returning the C operand and its k flag.
+// Mirrors reference Lua's exp2RK, which luaK_storevar applies to the stored
+// value:
+//   - a constant scalar (nil/true/false/number/string) whose constant index
+//     fits in the C field is referenced from the constant pool (k=1);
+//   - a bare local variable is referenced in its live register (no copy),
+//     like indexAssignOperand does for the table and key operands — no
+//     conflict guard is needed since the value is the last operand evaluated;
+//   - anything else is compiled into a freshly reserved temporary.
+//
+// Float zeros (and NaN) are never routed to the pool from here: addConstant
+// dedupes via a Go map whose == collapses 0.0 and -0.0 into one entry, which
+// would lose the sign of a folded -0.0 (reference constant folding likewise
+// keeps zero results out of the pool).
+func (c *compiler) storeValueOperand(value ast.Expr) (int, int) {
+	fs := c.fs
+	if v, ok := c.tryFoldConstScalar(value); ok {
+		safe := true
+		if v.Type == ValFloat && (v.FVal == 0 || math.IsNaN(v.FVal)) {
+			safe = false
+		}
+		if safe {
+			if v.Type == ValString {
+				v = StringValue(c.internString(v.SVal))
+			}
+			if kIdx := fs.addConstant(v); kIdx <= MaxArgC {
+				return kIdx, 1
+			}
+		}
+	}
+	return c.indexAssignOperand(value, nil), 0
+}
+
 // assignToTarget stores the value in srcReg into an assignment target
 // (local, upvalue, global, field, or index).
 func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
@@ -910,20 +943,20 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 			c.checkGlobalWrite(t.Name, target)
 			nameK := fs.stringConstant(t.Name)
-			fs.emitSetField(envReg, nameK, srcReg, line)
+			fs.emitSetField(envReg, nameK, srcReg, 0, line)
 			return
 		}
 		// Global: _ENV[name]
 		c.checkGlobalWrite(t.Name, target)
 		envUV := c.resolveEnv()
 		nameK := fs.stringConstant(t.Name)
-		fs.emitSetTabUp(envUV, nameK, srcReg, line)
+		fs.emitSetTabUp(envUV, nameK, srcReg, 0, line)
 
 	case *ast.FieldExpr:
 		tableReg := fs.reserveReg()
 		c.compileExprToReg(t.Table, tableReg)
 		fieldK := fs.stringConstant(t.Field)
-		fs.emitSetField(tableReg, fieldK, srcReg, line)
+		fs.emitSetField(tableReg, fieldK, srcReg, 0, line)
 		fs.freeReg = tableReg
 
 	case *ast.IndexExpr:
@@ -947,20 +980,20 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 func (c *compiler) compileSetGlobal(name string, value ast.Expr, line int) {
 	fs := c.fs
 	nameK := fs.stringConstant(name)
-	tempReg := fs.reserveReg()
-	c.compileExprToReg(value, tempReg)
+	startReg := fs.freeReg
+	valC, valK := c.storeValueOperand(value)
 	// In Lua 5.4's one-pass compiler, the store instruction (SETTABUP)
 	// gets the parser's current line after the full RHS is parsed. For
 	// multi-line expressions, this is the last line of the expression,
 	// not the assignment target's line.
 	storeLine := exprEndLine(value)
 	if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
-		fs.emitSetField(envReg, nameK, tempReg, storeLine)
+		fs.emitSetField(envReg, nameK, valC, valK, storeLine)
 	} else {
 		envUV := c.resolveEnv()
-		fs.emitSetTabUp(envUV, nameK, tempReg, storeLine)
+		fs.emitSetTabUp(envUV, nameK, valC, valK, storeLine)
 	}
-	fs.freeReg = tempReg
+	fs.freeReg = startReg
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,12 +1289,12 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 		} else if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 			c.checkGlobalWrite(name.Name, s.Name)
 			nameK := fs.stringConstant(name.Name)
-			fs.emitSetField(envReg, nameK, reg, line)
+			fs.emitSetField(envReg, nameK, reg, 0, line)
 		} else {
 			c.checkGlobalWrite(name.Name, s.Name)
 			envUV := c.resolveEnv()
 			nameK := fs.stringConstant(name.Name)
-			fs.emitSetTabUp(envUV, nameK, reg, line)
+			fs.emitSetTabUp(envUV, nameK, reg, 0, line)
 		}
 
 	case *ast.FieldExpr:
@@ -1269,7 +1302,7 @@ func (c *compiler) compileFuncStmt(s *ast.FuncStmt) {
 		tableReg := fs.reserveReg()
 		c.compileExprToReg(name.Table, tableReg)
 		fieldK := fs.stringConstant(name.Field)
-		fs.emitSetField(tableReg, fieldK, reg, line)
+		fs.emitSetField(tableReg, fieldK, reg, 0, line)
 		fs.freeReg = tableReg
 	}
 
@@ -1439,10 +1472,10 @@ func (c *compiler) compileGlobalInit(names []*ast.NameExpr, values []ast.Expr, l
 		fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
 		fs.freeReg = base + nNames // free the check register
 		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
-			fs.emitSetField(envReg, nameK, valReg, line)
+			fs.emitSetField(envReg, nameK, valReg, 0, line)
 		} else {
 			envUV := c.resolveEnv()
-			fs.emitSetTabUp(envUV, nameK, valReg, line)
+			fs.emitSetTabUp(envUV, nameK, valReg, 0, line)
 		}
 	}
 	fs.freeReg = base
@@ -1493,10 +1526,10 @@ func (c *compiler) compileGlobalFuncStmt(s *ast.GlobalFuncStmt) {
 	fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
 	fs.freeReg = reg + 1 // free the check register
 	if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
-		fs.emitSetField(envReg, nameK, reg, line)
+		fs.emitSetField(envReg, nameK, reg, 0, line)
 	} else {
 		envUV := c.resolveEnv()
-		fs.emitSetTabUp(envUV, nameK, reg, line)
+		fs.emitSetTabUp(envUV, nameK, reg, 0, line)
 	}
 
 	fs.freeReg = reg

@@ -670,10 +670,11 @@ func (fs *funcState) emitGetField(reg, tableReg, kIdx int, line int) {
 }
 
 // emitSetTabUp emits OP_SETTABUP or, when kIdx > MaxArgC, a fallback
-// sequence (GETUPVAL + LOADK/LOADKX + SETTABLE).
-func (fs *funcState) emitSetTabUp(upIdx, kIdx, valReg int, line int) {
+// sequence (GETUPVAL + LOADK/LOADKX + SETTABLE). The value operand is a
+// register when valK == 0 or a constant index when valK == 1 (the k flag).
+func (fs *funcState) emitSetTabUp(upIdx, kIdx, valC, valK int, line int) {
 	if kIdx <= MaxArgC {
-		fs.emit(ABC(OP_SETTABUP, upIdx, kIdx, valReg, 0), line)
+		fs.emit(ABC(OP_SETTABUP, upIdx, kIdx, valC, valK), line)
 		return
 	}
 	saved := fs.freeReg
@@ -681,21 +682,22 @@ func (fs *funcState) emitSetTabUp(upIdx, kIdx, valReg int, line int) {
 	tmpKey := fs.reserveReg()
 	fs.emit(ABC(OP_GETUPVAL, tmpEnv, upIdx, 0, 0), line)
 	fs.loadConstant(tmpKey, kIdx, line)
-	fs.emit(ABC(OP_SETTABLE, tmpEnv, tmpKey, valReg, 0), line)
+	fs.emit(ABC(OP_SETTABLE, tmpEnv, tmpKey, valC, valK), line)
 	fs.freeReg = saved
 }
 
 // emitSetField emits OP_SETFIELD or, when kIdx > MaxArgC, a fallback
-// sequence (LOADK/LOADKX + SETTABLE).
-func (fs *funcState) emitSetField(tableReg, kIdx, valReg int, line int) {
+// sequence (LOADK/LOADKX + SETTABLE). The value operand is a register when
+// valK == 0 or a constant index when valK == 1 (the k flag).
+func (fs *funcState) emitSetField(tableReg, kIdx, valC, valK int, line int) {
 	if kIdx <= MaxArgC {
-		fs.emit(ABC(OP_SETFIELD, tableReg, kIdx, valReg, 0), line)
+		fs.emit(ABC(OP_SETFIELD, tableReg, kIdx, valC, valK), line)
 		return
 	}
 	saved := fs.freeReg
 	tmpKey := fs.reserveReg()
 	fs.loadConstant(tmpKey, kIdx, line)
-	fs.emit(ABC(OP_SETTABLE, tableReg, tmpKey, valReg, 0), line)
+	fs.emit(ABC(OP_SETTABLE, tableReg, tmpKey, valC, valK), line)
 	fs.freeReg = saved
 }
 

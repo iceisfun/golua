@@ -384,7 +384,12 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := frame.closure.Upvalues[a].Get()
 			key := consts[b]
-			value := vm.getRK(frame, c, inst.K())
+			var value Value
+			if inst.K() != 0 {
+				value = consts[c]
+			} else {
+				value = vm.stack[frame.base+c]
+			}
 			if t := table.AsTable(); t != nil {
 				if err := vm.tableSet(t, key, value); err != nil {
 					return nil, err
@@ -404,7 +409,12 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+a]
 			key := vm.stack[frame.base+b]
-			value := vm.getRK(frame, c, inst.K())
+			var value Value
+			if inst.K() != 0 {
+				value = consts[c]
+			} else {
+				value = vm.stack[frame.base+c]
+			}
 			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
 				if ct.metatable == nil {
 					if err := ct.Set(key, value); err != nil {
@@ -453,7 +463,12 @@ func (vm *VM) execute() ([]Value, error) {
 		case compiler.OP_SETI:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+a]
-			value := vm.getRK(frame, c, inst.K())
+			var value Value
+			if inst.K() != 0 {
+				value = consts[c]
+			} else {
+				value = vm.stack[frame.base+c]
+			}
 			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
 				if ct.metatable == nil {
 					ct.SetInt(b, value)
@@ -503,7 +518,12 @@ func (vm *VM) execute() ([]Value, error) {
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := vm.stack[frame.base+a]
 			key := proto.Constants[b].SVal
-			value := vm.getRK(frame, c, inst.K())
+			var value Value
+			if inst.K() != 0 {
+				value = consts[c]
+			} else {
+				value = vm.stack[frame.base+c]
+			}
 			if ct, ok := table.ptr.(*Table); ok && table.typ == typeTable && !ct.isThread {
 				// Fast path: concrete *Table with no metatable. Pass the
 				// cached constant Value so a first-time key needs no boxing.
@@ -2022,15 +2042,6 @@ func (vm *VM) CheckStack(n int) bool {
 		limit = DefaultMaxStackSlots
 	}
 	return limit < 0 || n < limit
-}
-
-// getRK returns either a constant (when k != 0) or a register value.
-// Used by instructions that encode an operand as "register or constant".
-func (vm *VM) getRK(frame *callFrame, c, k int) Value {
-	if k != 0 {
-		return frame.closure.ConstValues()[c]
-	}
-	return vm.stack[frame.base+c]
 }
 
 // doCall dispatches an OP_CALL instruction. It collects arguments from the
