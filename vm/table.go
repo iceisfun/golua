@@ -232,7 +232,7 @@ func (t *Table) setIntHash(k int64, value Value) {
 		revived := false
 		if t.deadKeys > 0 {
 			for _, hk := range t.keys {
-				if hk.typ == typeInt && hk.integer == k {
+				if hk.typ == typeInt && hk.ival() == k {
 					t.deadKeys--
 					revived = true
 					break
@@ -240,7 +240,7 @@ func (t *Table) setIntHash(k int64, value Value) {
 			}
 		}
 		if !revived {
-			t.reuseOrAppendKey(Value{typ: typeInt, integer: k})
+			t.reuseOrAppendKey(Value{typ: typeInt, n: uint64(k)})
 		}
 	}
 	ih[k] = value
@@ -252,12 +252,12 @@ func hashKey(v Value) any {
 	case typeNil:
 		return nil
 	case typeBool:
-		return v.num != 0
+		return v.n != 0
 	case typeInt:
-		return v.integer
+		return v.ival()
 	case typeFloat:
 		// If float is an integer, use int key for consistency
-		f := v.num
+		f := v.fval()
 		if i := int64(f); float64(i) == f {
 			return i
 		}
@@ -446,7 +446,7 @@ func (t *Table) getKeyValue(k Value) (Value, bool) {
 		if t.intHash == nil {
 			return Nil, false
 		}
-		v, exists := t.intHash[k.integer]
+		v, exists := t.intHash[k.ival()]
 		return v, exists
 	default:
 		if t.hash == nil {
@@ -554,8 +554,9 @@ func (t *Table) Set(key, value Value) error {
 		return fmt.Errorf("table index is nil")
 	}
 
-	// Check for NaN
-	if key.IsFloat() && key.num != key.num {
+	// Check for NaN. Decode the float before the self-compare: a raw bit
+	// comparison (key.n != key.n) is always false and would admit NaN keys.
+	if key.IsFloat() && key.fval() != key.fval() {
 		return fmt.Errorf("table index is NaN")
 	}
 
@@ -695,7 +696,7 @@ func (t *Table) shrinkArray() {
 func (t *Table) rehashToArray() {
 	for {
 		nextIdx := int64(len(t.array) + 1)
-		nextIdxKey := Value{typ: typeInt, integer: nextIdx}
+		nextIdxKey := Value{typ: typeInt, n: uint64(nextIdx)}
 		// Check integer hash first (most common case)
 		if t.intHash != nil {
 			if v, ok := t.intHash[nextIdx]; ok && !v.IsNil() {
