@@ -1414,31 +1414,29 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 			// Hash-style field
 			switch key := f.Key.(type) {
 			case *ast.StringExpr:
-				valReg := fs.reserveReg()
-				c.compileExprToReg(f.Value, valReg)
+				startReg := fs.freeReg
+				valC, valK := c.storeValueOperand(f.Value)
 				kIdx := fs.stringConstant(key.Value)
-				fs.emitSetField(reg, kIdx, valReg, line)
-				fs.freeReg = valReg
+				fs.emitSetField(reg, kIdx, valC, valK, line)
+				fs.freeReg = startReg
 			case *ast.NumberExpr:
 				if key.Value >= 0 && key.Value <= int64(MaxArgC) {
-					valReg := fs.reserveReg()
-					c.compileExprToReg(f.Value, valReg)
-					fs.emit(ABC(OP_SETI, reg, int(key.Value), valReg, 0), line)
-					fs.freeReg = valReg
+					startReg := fs.freeReg
+					valC, valK := c.storeValueOperand(f.Value)
+					fs.emit(ABC(OP_SETI, reg, int(key.Value), valC, valK), line)
+					fs.freeReg = startReg
 				} else {
 					keyReg := fs.reserveReg()
 					c.compileExprToReg(f.Key, keyReg)
-					valReg := fs.reserveReg()
-					c.compileExprToReg(f.Value, valReg)
-					fs.emit(ABC(OP_SETTABLE, reg, keyReg, valReg, 0), line)
+					valC, valK := c.storeValueOperand(f.Value)
+					fs.emit(ABC(OP_SETTABLE, reg, keyReg, valC, valK), line)
 					fs.freeReg = keyReg
 				}
 			default:
 				keyReg := fs.reserveReg()
 				c.compileExprToReg(f.Key, keyReg)
-				valReg := fs.reserveReg()
-				c.compileExprToReg(f.Value, valReg)
-				fs.emit(ABC(OP_SETTABLE, reg, keyReg, valReg, 0), line)
+				valC, valK := c.storeValueOperand(f.Value)
+				fs.emit(ABC(OP_SETTABLE, reg, keyReg, valC, valK), line)
 				fs.freeReg = keyReg
 			}
 		}
