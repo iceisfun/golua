@@ -644,12 +644,7 @@ func (t *Table) Set(key, value Value) error {
 					if len(t.array) >= maxTableEntries {
 						return fmt.Errorf("not enough memory")
 					}
-					// First append from an unprealloc'd table: jump straight to
-					// cap=4 to avoid the 0→1→2→4 realloc cascade that dominates
-					// `t={}; for i=1,N do t[i]=v end`-style fills.
-					if cap(t.array) == 0 {
-						t.array = make([]Value, 0, 4)
-					}
+					t.growArrayForAppend()
 					t.array = append(t.array, value)
 					// If this key previously existed in integer hash, clear it to
 					// avoid dual storage (array + hash) for the same numeric index.
@@ -708,10 +703,7 @@ func (t *Table) SetInt(i int, value Value) {
 		if len(t.array) >= maxTableEntries {
 			panic("not enough memory")
 		}
-		// First append: jump to cap=4 to avoid the 0→1→2→4 realloc cascade.
-		if cap(t.array) == 0 {
-			t.array = make([]Value, 0, 4)
-		}
+		t.growArrayForAppend()
 		t.array = append(t.array, value)
 		// Clear stale integer-hash entry for this key to prevent duplicate
 		// traversal via pairs/next after promotion into the array part.
@@ -752,6 +744,28 @@ func (t *Table) RawSetArray(i int, value Value) {
 		return
 	}
 	t.array[i-1] = value
+}
+
+// growArrayForAppend makes room for one more element in a full array part.
+// Small arrays grow 4x (0→4→16→64) instead of relying on append's 2x
+// doubling, halving the realloc cascade for the common
+// `t = {}; for i = 1, n do t[i] = v end` fill pattern; from cap 64 up,
+// growth is left to append's normal policy. The explicit make is bounded
+// (cap ≤ 256 Values ≈ 10 KB), far below maxTableEntries, so the runaway
+// OOM cap in the callers is unaffected. Note cap(t.array) is faintly
+// observable via next(): integer keys in (len, cap] are treated as
+// deleted former array slots rather than "invalid key to 'next'"; this
+// lenience window already existed with append slack and merely widens.
+func (t *Table) growArrayForAppend() {
+	if c := cap(t.array); len(t.array) == c && c < 64 {
+		nc := c * 4
+		if nc == 0 {
+			nc = 4
+		}
+		na := make([]Value, len(t.array), nc)
+		copy(na, t.array)
+		t.array = na
+	}
 }
 
 // ShrinkArray removes trailing nils from the array part.
