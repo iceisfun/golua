@@ -378,7 +378,7 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 		// fallback paths continue to work; runtime semantics still
 		// match (assigning a global indexes the local _ENV value).
 		if lastAttrib == attribConst && s.Names[lastIdx].Name != envUpvalueName {
-			if v, ok := tryFoldConstScalar(s.Values[lastIdx]); ok {
+			if v, ok := c.tryFoldConstScalar(s.Values[lastIdx]); ok {
 				inlineLast = true
 				inlineVal = v
 			}

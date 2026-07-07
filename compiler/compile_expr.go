@@ -334,6 +334,22 @@ func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 	return reg, true
 }
 
+// plainLocalReg returns the register of expr when it is a plain, non-inlined
+// local variable already living in a register (readable in place as an
+// instruction operand), matching operandToReg's in-place case. Returns ok=false
+// otherwise. Used to read a binary/comparison left operand live at execution
+// time instead of snapshotting it into a temp with a MOVE.
+func plainLocalReg(fs *funcState, expr ast.Expr) (int, bool) {
+	if name, ok := expr.(*ast.NameExpr); ok {
+		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
+			if localReg, ok := fs.lookupLocal(name.Name); ok {
+				return localReg, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // smallIntConst checks whether an expression is a small integer constant
 // that fits in the signed C field (sC range: -OffsetSC to +OffsetSC, i.e.
 // -127 to +127). If so, it returns the value and true.
@@ -357,13 +373,13 @@ func smallIntConst(e ast.Expr) (int, bool) {
 // This matches Lua 5.4's compile-time constant folding, which allows
 // long chains like 1+1+1+...+1 to compile into a single constant without
 // consuming registers.
-func foldArith(e *ast.BinopExpr) ast.Expr {
+func (c *compiler) foldArith(e *ast.BinopExpr) ast.Expr {
 	// Extract numeric values from both sides, recursing into sub-expressions.
-	lIsInt, lInt, lFloat, lOk := numericValue(e.Left)
+	lIsInt, lInt, lFloat, lOk := c.numericValue(e.Left)
 	if !lOk {
 		return nil
 	}
-	rIsInt, rInt, rFloat, rOk := numericValue(e.Right)
+	rIsInt, rInt, rFloat, rOk := c.numericValue(e.Right)
 	if !rOk {
 		return nil
 	}
@@ -488,26 +504,41 @@ func foldIntOp(op string, a, b int64) (int64, bool) {
 // folding sub-expressions. Returns (isInteger, intVal, floatVal, ok).
 // When isInteger is true, both intVal and floatVal are set (floatVal =
 // float64(intVal)) for use in mixed-type arithmetic.
-func numericValue(e ast.Expr) (bool, int64, float64, bool) {
+func (c *compiler) numericValue(e ast.Expr) (bool, int64, float64, bool) {
 	switch n := e.(type) {
 	case *ast.NumberExpr:
 		return true, n.Value, float64(n.Value), true
 	case *ast.FloatExpr:
 		return false, 0, n.Value, true
 	case *ast.BinopExpr:
-		folded := foldArith(n)
-		if folded == nil {
-			return false, 0, 0, false
+		if r, ok := c.foldMemo[n]; ok {
+			return r.isInt, r.iv, r.fv, r.ok
 		}
-		return numericValue(folded)
+		isInt, iv, fv, ok := c.numericValueBinop(n)
+		c.foldMemo[n] = foldResult{isInt, iv, fv, ok}
+		return isInt, iv, fv, ok
 	case *ast.UnopExpr:
-		folded := foldUnaryArith(n)
-		if folded == nil {
-			return false, 0, 0, false
+		if r, ok := c.foldMemo[n]; ok {
+			return r.isInt, r.iv, r.fv, r.ok
 		}
-		return numericValue(folded)
+		isInt, iv, fv, ok := false, int64(0), 0.0, false
+		if folded := c.foldUnaryArith(n); folded != nil {
+			isInt, iv, fv, ok = c.numericValue(folded)
+		}
+		c.foldMemo[n] = foldResult{isInt, iv, fv, ok}
+		return isInt, iv, fv, ok
 	}
 	return false, 0, 0, false
+}
+
+// numericValueBinop computes the folded numeric value of a binop node (the
+// caller memoizes the result).
+func (c *compiler) numericValueBinop(n *ast.BinopExpr) (bool, int64, float64, bool) {
+	folded := c.foldArith(n)
+	if folded == nil {
+		return false, 0, 0, false
+	}
+	return c.numericValue(folded)
 }
 
 // lookupInlinedAny searches the current function and all enclosing
@@ -576,7 +607,7 @@ func (c *compiler) emitInlinedConst(reg int, v Value, line int) {
 //
 // Function and table initializers are intentionally not inlined: even
 // `<const>` locals bound to those keep a real register and a debug entry.
-func tryFoldConstScalar(expr ast.Expr) (Value, bool) {
+func (c *compiler) tryFoldConstScalar(expr ast.Expr) (Value, bool) {
 	switch e := expr.(type) {
 	case *ast.NilExpr:
 		return NilValue(), true
@@ -591,17 +622,17 @@ func tryFoldConstScalar(expr ast.Expr) (Value, bool) {
 	case *ast.StringExpr:
 		return StringValue(e.Value), true
 	case *ast.ParenExpr:
-		return tryFoldConstScalar(e.Inner)
+		return c.tryFoldConstScalar(e.Inner)
 	case *ast.UnopExpr:
 		// Numeric unary folds (-x, ~x).
-		if folded := foldUnaryArith(e); folded != nil {
-			return tryFoldConstScalar(folded)
+		if folded := c.foldUnaryArith(e); folded != nil {
+			return c.tryFoldConstScalar(folded)
 		}
 		return Value{}, false
 	case *ast.BinopExpr:
 		// Arithmetic/bitwise binary folds (1+2, 3*4, 0xff&0x0f, ...).
-		if folded := foldArith(e); folded != nil {
-			return tryFoldConstScalar(folded)
+		if folded := c.foldArith(e); folded != nil {
+			return c.tryFoldConstScalar(folded)
 		}
 		return Value{}, false
 	}
@@ -609,8 +640,8 @@ func tryFoldConstScalar(expr ast.Expr) (Value, bool) {
 }
 
 // foldUnaryArith attempts constant folding for unary minus and bitwise not.
-func foldUnaryArith(e *ast.UnopExpr) ast.Expr {
-	isInt, iv, fv, ok := numericValue(e.Operand)
+func (c *compiler) foldUnaryArith(e *ast.UnopExpr) ast.Expr {
+	isInt, iv, fv, ok := c.numericValue(e.Operand)
 	if !ok {
 		return nil
 	}
@@ -668,7 +699,7 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	// Constant folding: if both operands are compile-time constants,
 	// evaluate the result now and emit a single load instruction.
 	// This prevents long chains like 1+1+1+...+1 from exhausting registers.
-	if folded := foldArith(e); folded != nil {
+	if folded := c.foldArith(e); folded != nil {
 		c.compileExprToReg(folded, reg)
 		return
 	}
@@ -744,11 +775,20 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	var leftReg int
 	if reg < fs.nActVar {
 		leftReg = fs.reserveReg()
+		c.compileExprToReg(e.Left, leftReg)
+		c.fixDischargedLine(line)
+	} else if lr, ok := plainLocalReg(fs, e.Left); ok {
+		// Bare in-register local: use its register directly as the B operand so
+		// OP_<op> reads R[B] live at execution time — after the right operand
+		// may have mutated the local through a shared upvalue — matching
+		// reference Lua's exp2anyreg. Compiling it into reg would snapshot the
+		// value with a MOVE before the right operand runs.
+		leftReg = lr
 	} else {
 		leftReg = reg
+		c.compileExprToReg(e.Left, leftReg)
+		c.fixDischargedLine(line)
 	}
-	c.compileExprToReg(e.Left, leftReg)
-	c.fixDischargedLine(line)
 	// Use the current free-register top (rather than reserveReg, which would
 	// pre-advance freeReg) so a right operand that is itself a call/table
 	// constructor lands directly at rightReg instead of being compiled one
@@ -796,10 +836,13 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 
 	fs.emit(ABC(op, reg, leftReg, rightReg, 0), line)
 	fs.emit(ABC(OP_MMBIN, leftReg, rightReg, int(mmOp), 0), line)
-	if leftReg == reg {
-		fs.freeReg = rightReg // only free the right temp; reg is caller-managed
+	if reg < fs.nActVar {
+		// Local target: leftReg is a reserved temp below rightReg — free both.
+		fs.freeReg = leftReg
 	} else {
-		fs.freeReg = leftReg // free both temps
+		// Temp target: result lives in reg; free the right temp (and, when the
+		// left operand is a bare local read in place, reg itself is kept).
+		fs.freeReg = rightReg
 	}
 }
 
@@ -824,11 +867,14 @@ func (c *compiler) compileConcat(e *ast.BinopExpr, reg int) {
 
 	for i, expr := range exprs {
 		c.compileExprToReg(expr, base+i)
-		if base+i >= fs.freeReg {
-			fs.freeReg = base + i + 1
-			if fs.freeReg > fs.maxReg {
-				fs.maxReg = fs.freeReg
-			}
+		// Each operand occupies exactly one register (base+i). A call operand
+		// leaves freeReg inflated past its own argument registers, so reset it
+		// unconditionally — otherwise the next operand's target (base+i+1) sits
+		// below freeReg and takes the temp+MOVE fallback, compounding registers
+		// per operand and spuriously overflowing the register file.
+		fs.freeReg = base + i + 1
+		if fs.freeReg > fs.maxReg {
+			fs.maxReg = fs.freeReg
 		}
 	}
 
@@ -882,12 +928,16 @@ func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 	// reports. The left-operand discharge keeps its own line.
 	opLine := exprEndLine(e)
 
-	leftReg := fs.freeReg
-	fs.reserveReg()
-	c.compileExprToReg(e.Left, leftReg)
-	c.fixDischargedLine(line)
-	rightReg := fs.reserveReg()
-	c.compileExprToReg(e.Right, rightReg)
+	// Read both operands via operandToReg so a bare in-register local is used
+	// in place: OP_LT/OP_LE/OP_EQ then read the register live at execution time,
+	// after the other operand may have mutated it through a shared upvalue,
+	// matching reference Lua's exp2anyreg. base restores freeReg.
+	base := fs.freeReg
+	leftReg, leftTmp := c.operandToReg(e.Left)
+	if leftTmp {
+		c.fixDischargedLine(line)
+	}
+	rightReg, _ := c.operandToReg(e.Right)
 
 	var op OpCode
 	k := 1 // test sense
@@ -923,7 +973,7 @@ func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 	fs.emit(ABC(OP_LOADFALSE, reg, 0, 0, 0), opLine)
 	c.patchJump(jmpEnd)
 
-	fs.freeReg = leftReg
+	fs.freeReg = base
 }
 
 // ---------------------------------------------------------------------------
@@ -948,12 +998,14 @@ func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int
 	fs := c.fs
 	line := e.P.Line
 
-	leftReg := fs.freeReg
-	fs.reserveReg()
-	c.compileExprToReg(e.Left, leftReg)
-	c.fixDischargedLine(line)
-	rightReg := fs.reserveReg()
-	c.compileExprToReg(e.Right, rightReg)
+	// See compileComparison: read operands in place so an in-register local is
+	// compared live. base restores freeReg after the operands.
+	base := fs.freeReg
+	leftReg, leftTmp := c.operandToReg(e.Left)
+	if leftTmp {
+		c.fixDischargedLine(line)
+	}
+	rightReg, _ := c.operandToReg(e.Right)
 
 	var op OpCode
 	k := 0
@@ -986,7 +1038,7 @@ func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int
 
 	fs.emit(ABC(op, leftReg, rightReg, 0, k), line)
 	jmp := fs.emitJump(line) // JMP to false/true path
-	fs.freeReg = leftReg
+	fs.freeReg = base
 	return jmp
 }
 
@@ -1037,6 +1089,10 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 	// register instead of a fresh temp per level (which overflowed the 255-
 	// register limit at ~255 operands on programs reference Lua compiles).
 	c.compileExprToReg(e.Left, reg)
+	// A call left operand leaves freeReg inflated past reg; reset it so the
+	// right operand compiles in place at reg instead of taking the temp+MOVE
+	// fallback (which compounds registers per level and overflows long chains).
+	fs.freeReg = reg + 1
 	fs.emit(ABC(OP_TEST, reg, 0, 0, 0), line) // skip JMP if truthy -> eval right
 	jmp := fs.emitJump(line)
 	c.compileExprToReg(e.Right, reg)
@@ -1081,6 +1137,8 @@ func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 	}
 	// reg is a temporary: test in place so an or-chain reuses one register.
 	c.compileExprToReg(e.Left, reg)
+	// See compileAnd: reset inflated freeReg from a call left operand.
+	fs.freeReg = reg + 1
 	fs.emit(ABC(OP_TEST, reg, 0, 0, 1), line) // skip JMP if falsy -> eval right
 	jmp := fs.emitJump(line)
 	c.compileExprToReg(e.Right, reg)
@@ -1125,26 +1183,30 @@ func (c *compiler) compileUnop(e *ast.UnopExpr, reg int) {
 func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, line int) {
 	fs := c.fs
 
-	// Ensure base is allocated
-	if base >= fs.freeReg {
-		fs.freeReg = base + 1
-		if fs.freeReg > fs.maxReg {
-			fs.maxReg = fs.freeReg
-		}
+	// base is always a fresh call-frame register: callers that target a live
+	// local wrap the call in a temp+MOVE, and the CALL overwrites base upward
+	// with its results, so nothing above base is live here. Normalize freeReg
+	// down to base before compiling the function expression so that a chained
+	// call (f(x)(y)) reuses base for its single result instead of taking the
+	// temp+MOVE fallback at base+1 — the latter grew the register frame by one
+	// per chain level and overflowed the register file (Go index panic).
+	if base < fs.freeReg {
+		fs.freeReg = base
 	}
 
-	// Function goes into base
+	// Function goes into base.
 	c.compileExprToReg(e.Func, base)
 
-	// Reset freeReg after compiling function expression. If e.Func is a
-	// chained call (e.g. f(x)(y)), compileExprToReg inflates freeReg for
-	// the inner call's arguments. Without this reset, compileExprMultiRet
-	// for the last argument would start at the inflated freeReg, leaving a
-	// gap of stale register values that the outer B=0 CALL picks up.
+	// Reset freeReg after compiling the function expression. If e.Func is a
+	// chained call (e.g. f(x)(y)), compileExprToReg inflates freeReg for the
+	// inner call's arguments; reset so arguments compile into base+1, base+2...
 	fs.freeReg = base + 1
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
+	// Guard the advance so a call frame that runs past the register limit is a
+	// clean compile error rather than an out-of-range slice index at runtime.
+	fs.checkRegLimit()
 
 	// Arguments into base+1, base+2, ...
 	nArgs := len(e.Args)
