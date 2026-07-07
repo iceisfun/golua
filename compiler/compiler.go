@@ -94,7 +94,7 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 	if endLine == 0 {
 		endLine = blockMaxLine(block)
 	}
-	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: endLine}
+	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: endLine, foldMemo: make(map[ast.Expr]foldResult)}
 	p := c.compileChunk(source, block)
 	if c.err != nil {
 		return nil, c.err
@@ -303,6 +303,19 @@ type compiler struct {
 	limits     CompilerLimits
 	stringPool map[string]string // intern pool for string constants
 	endLine    int               // last line of the source (for compile error messages)
+	// foldMemo caches constant-folding results per AST node so a binop/unop
+	// subtree is folded at most once. Without it, folding a left-associative
+	// chain re-walked the entire left spine at every node (O(n^2) compile time,
+	// a source-level DoS).
+	foldMemo map[ast.Expr]foldResult
+}
+
+// foldResult is a memoized numericValue outcome for one AST node.
+type foldResult struct {
+	isInt bool
+	iv    int64
+	fv    float64
+	ok    bool
 }
 
 // internString returns a string that shares the same backing memory as
