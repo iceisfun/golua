@@ -40,6 +40,39 @@ func NewClosure(proto *compiler.Proto) *Closure {
 	return cl
 }
 
+// closureWithUpvalue fuses a Closure with the single stack slot it captures, so
+// that creating one costs one allocation instead of two.
+//
+// Fusing is only safe when the closure has exactly one upvalue. Upvalues are
+// shared: every closure capturing the same stack slot gets the same *Upvalue,
+// and a pointer to an element of a Go heap object keeps the entire object
+// alive. So a fused block outlives its closure whenever a sibling closure
+// shares the captured slot. With one upvalue the block holds nothing else that
+// could leak — retention is bounded by the Closure header and its (immutable,
+// already-live) Proto. With two or more it would pin the closure's *other*
+// closed upvalues, keeping arbitrary user values reachable long after the
+// closure that captured them died. That is why newFusedClosure refuses nups!=1.
+type closureWithUpvalue struct {
+	cl Closure
+	up Upvalue
+}
+
+// newFusedClosure builds a closure whose only upvalue is a fresh capture of
+// stackIdx, co-allocated with the closure itself. The caller must have checked
+// that proto has exactly one upvalue, that it is captured from the stack, and
+// that no open upvalue exists for stackIdx yet (otherwise that one must be
+// shared instead of a new one created). The new upvalue is returned so the
+// caller can register it in vm.openUpvalues.
+func newFusedClosure(vm *VM, proto *compiler.Proto, stackIdx int) (*Closure, *Upvalue) {
+	b := &closureWithUpvalue{
+		up: Upvalue{vm: vm, stackIdx: stackIdx, isOpen: true},
+	}
+	b.cl.Proto = proto
+	b.cl.Upvalues = b.cl.inlineUpvalues[:1]
+	b.cl.Upvalues[0] = &b.up
+	return &b.cl, &b.up
+}
+
 // ConstValues returns the cached runtime Value conversions of the Proto's constants.
 // The cache is built on first call and reused thereafter, avoiding repeated
 // NewString allocations when loading string constants in hot loops.
