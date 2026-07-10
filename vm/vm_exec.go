@@ -9,6 +9,24 @@ import (
 	"github.com/iceisfun/golua/compiler"
 )
 
+// makeClosure instantiates subProto as a closure of the running frame, binding
+// each upvalue either to a live stack slot or to one of the enclosing closure's
+// upvalues. Kept out of the execute() dispatch switch so the switch body stays
+// compact; OP_CLOSURE is rare enough that the call costs nothing.
+func (vm *VM) makeClosure(frame *callFrame, subProto *compiler.Proto) *Closure {
+	cl := NewClosure(subProto)
+	for i, uvDesc := range subProto.Upvalues {
+		if uvDesc.InStack {
+			// Capture from current stack
+			cl.Upvalues[i] = vm.findOrCreateUpvalue(frame.base + uvDesc.Index)
+		} else {
+			// Capture from enclosing closure's upvalues
+			cl.Upvalues[i] = frame.closure.Upvalues[uvDesc.Index]
+		}
+	}
+	return cl
+}
+
 // call invokes a closure with the given arguments and returns results.
 func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error) {
 	vm.checkCallDepth()
@@ -1833,22 +1851,7 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_CLOSURE:
 			a, bx := inst.A(), inst.Bx()
-			subProto := proto.Protos[bx]
-			newClosure := NewClosure(subProto)
-
-			// Set up upvalues
-			for i, uvDesc := range subProto.Upvalues {
-				if uvDesc.InStack {
-					// Capture from current stack
-					idx := frame.base + uvDesc.Index
-					newClosure.Upvalues[i] = vm.findOrCreateUpvalue(idx)
-				} else {
-					// Capture from enclosing closure's upvalues
-					newClosure.Upvalues[i] = frame.closure.Upvalues[uvDesc.Index]
-				}
-			}
-
-			vm.stack[frame.base+a] = NewFunction(newClosure)
+			vm.stack[frame.base+a] = NewFunction(vm.makeClosure(frame, proto.Protos[bx]))
 
 		case compiler.OP_VARARG:
 			a, c := inst.A(), inst.C()
