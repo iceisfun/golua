@@ -1210,10 +1210,26 @@ func (vm *VM) ExitCloseChain() {
 	atomic.AddInt32(vm.closeDepth, -1)
 }
 
+// metaArgsInline bounds the argument buffer that the callMetamethod* wrappers
+// build on the Go stack. No metamethod takes more than three arguments
+// (__newindex passes table, key and value), so the heap fallback in
+// callMetamethodArgs never fires for the metamethods Lua itself dispatches.
+const metaArgsInline = 4
+
 // callMetamethod calls a metamethod with 2 arguments and returns the first result.
 // name is the metamethod name without "__" prefix (e.g. "index", "add").
 func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
-	return vm.callMetamethodArgs(name, fn, arg1, arg2)
+	var buf [metaArgsInline]Value
+	buf[0], buf[1] = arg1, arg2
+	return vm.callMetamethodN(name, fn, buf[:2], 1)
+}
+
+// callMetamethod3 calls a metamethod with 3 arguments.
+// name is the metamethod name without "__" prefix (e.g. "newindex").
+func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, error) {
+	var buf [metaArgsInline]Value
+	buf[0], buf[1], buf[2] = arg1, arg2, arg3
+	return vm.callMetamethodN(name, fn, buf[:3], 0)
 }
 
 // callMetamethodArgs invokes a metamethod with an explicit argument list
@@ -1222,6 +1238,25 @@ func (vm *VM) callMetamethod(name string, fn, arg1, arg2 Value) (Value, error) {
 // close and (object, errobj) on an error close (see Lua 5.5 lfunc.c
 // callclosemethod, which omits the error argument when there is no error).
 func (vm *VM) callMetamethodArgs(name string, fn, arg1 Value, extra ...Value) (Value, error) {
+	nargs := 1 + len(extra)
+	if nargs <= metaArgsInline {
+		var buf [metaArgsInline]Value
+		buf[0] = arg1
+		copy(buf[1:], extra)
+		return vm.callMetamethodN(name, fn, buf[:nargs], 1)
+	}
+	args := make([]Value, 0, nargs)
+	args = append(args, arg1)
+	args = append(args, extra...)
+	return vm.callMetamethodN(name, fn, args, 1)
+}
+
+// callMetamethodN is the shared body behind the callMetamethod* wrappers. It
+// never retains args: the closure path copies them onto the VM stack, the
+// native path writes them into the native frame, and callValue rebuilds the
+// list to prepend self. That lets the wrappers pass a Go-stack buffer and keeps
+// metamethod dispatch allocation-free.
+func (vm *VM) callMetamethodN(name string, fn Value, args []Value, nResults int) (Value, error) {
 	vm.metaCallDepth++
 	defer func() { vm.metaCallDepth-- }()
 
@@ -1230,10 +1265,7 @@ func (vm *VM) callMetamethodArgs(name string, fn, arg1 Value, extra ...Value) (V
 		vm.pendingCallNameWhat = nwMetamethod
 		// Some __close contexts should retain getinfo() naming but suppress the
 		// synthetic "in metamethod 'close'" label in traceback output.
-		args := make([]Value, 0, 1+len(extra))
-		args = append(args, arg1)
-		args = append(args, extra...)
-		results, err := vm.call(fn.AsClosure(), args, 1)
+		results, err := vm.call(fn.AsClosure(), args, nResults)
 		if err != nil {
 			return Nil, err
 		}
@@ -1246,15 +1278,13 @@ func (vm *VM) callMetamethodArgs(name string, fn, arg1 Value, extra ...Value) (V
 	if fn.IsNativeFunc() {
 		// Save state
 		savedTop := vm.top
-		frame := &vm.callStack[len(vm.callStack)-1]
 
 		// Set up for native call at top of stack
 		nativeBase := vm.top
-		nargs := 1 + len(extra)
+		nargs := len(args)
 		vm.ensureStack(nativeBase + nargs + stackSafetyMargin)
-		vm.stack[nativeBase+1] = arg1
-		for i, e := range extra {
-			vm.stack[nativeBase+2+i] = e
+		for i, a := range args {
+			vm.stack[nativeBase+1+i] = a
 		}
 
 		nativeFrame := callFrame{
@@ -1269,9 +1299,9 @@ func (vm *VM) callMetamethodArgs(name string, fn, arg1 Value, extra ...Value) (V
 		vm.callStack = append(vm.callStack, nativeFrame)
 		vm.top = nativeBase + 1 + nargs
 
-		nResults := fn.AsNativeFunc()(vm)
+		nRes := fn.AsNativeFunc()(vm)
 		var result Value
-		if nResults > 0 {
+		if nRes > 0 {
 			result = vm.stack[nativeBase]
 		} else {
 			result = Nil
@@ -1280,81 +1310,12 @@ func (vm *VM) callMetamethodArgs(name string, fn, arg1 Value, extra ...Value) (V
 		// Restore state
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 		vm.top = savedTop
-		_ = frame // silence unused warning
 
 		return result, nil
 	}
 
 	// Not a direct function — try __call metamethod chain (callable tables, etc.)
-	args := make([]Value, 0, 1+len(extra))
-	args = append(args, arg1)
-	args = append(args, extra...)
 	result, err := vm.callValue(name, fn, args)
-	if err != nil {
-		return Nil, err
-	}
-	return result, nil
-}
-
-// callMetamethod3 calls a metamethod with 3 arguments.
-// name is the metamethod name without "__" prefix (e.g. "newindex").
-func (vm *VM) callMetamethod3(name string, fn, arg1, arg2, arg3 Value) (Value, error) {
-	vm.metaCallDepth++
-	defer func() { vm.metaCallDepth-- }()
-
-	if fn.IsFunction() {
-		vm.pendingCallName = name
-		vm.pendingCallNameWhat = nwMetamethod
-		results, err := vm.call(fn.AsClosure(), []Value{arg1, arg2, arg3}, 0)
-		if err != nil {
-			return Nil, err
-		}
-		if len(results) > 0 {
-			return results[0], nil
-		}
-		return Nil, nil
-	}
-
-	if fn.IsNativeFunc() {
-		// Save state
-		savedTop := vm.top
-
-		// Set up for native call at top of stack
-		nativeBase := vm.top
-		vm.ensureStack(nativeBase + stackSafetyMargin)
-		vm.stack[nativeBase+1] = arg1
-		vm.stack[nativeBase+2] = arg2
-		vm.stack[nativeBase+3] = arg3
-
-		nativeFrame := callFrame{
-			base:                  nativeBase,
-			argc:                  3,
-			funcValue:             fn,
-			callName:              name,
-			callNameWhat:          nwMetamethod,
-			suppressTracebackName: vm.pendingSuppressTracebackName,
-		}
-		vm.pendingSuppressTracebackName = false
-		vm.callStack = append(vm.callStack, nativeFrame)
-		vm.top = nativeBase + 4
-
-		nResults := fn.AsNativeFunc()(vm)
-		var result Value
-		if nResults > 0 {
-			result = vm.stack[nativeBase]
-		} else {
-			result = Nil
-		}
-
-		// Restore state
-		vm.callStack = vm.callStack[:len(vm.callStack)-1]
-		vm.top = savedTop
-
-		return result, nil
-	}
-
-	// Not a direct function — try __call metamethod chain (callable tables, etc.)
-	result, err := vm.callValue(name, fn, []Value{arg1, arg2, arg3})
 	if err != nil {
 		return Nil, err
 	}
