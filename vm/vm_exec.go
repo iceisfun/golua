@@ -14,6 +14,21 @@ import (
 // upvalues. Kept out of the execute() dispatch switch so the switch body stays
 // compact; OP_CLOSURE is rare enough that the call costs nothing.
 func (vm *VM) makeClosure(frame *callFrame, subProto *compiler.Proto) *Closure {
+	// A single fresh stack capture (`function() return i end`) is by far the
+	// most common closure shape, and the only one that can safely share an
+	// allocation with its upvalue — see closureWithUpvalue.
+	if len(subProto.Upvalues) == 1 && subProto.Upvalues[0].InStack {
+		idx := frame.base + subProto.Upvalues[0].Index
+		if existing := vm.findOpenUpvalue(idx); existing != nil {
+			cl := NewClosure(subProto)
+			cl.Upvalues[0] = existing
+			return cl
+		}
+		cl, uv := newFusedClosure(vm, subProto, idx)
+		vm.openUpvalues = append(vm.openUpvalues, uv)
+		return cl
+	}
+
 	cl := NewClosure(subProto)
 	for i, uvDesc := range subProto.Upvalues {
 		if uvDesc.InStack {

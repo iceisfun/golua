@@ -4,14 +4,22 @@ import "fmt"
 
 // Upvalue management
 
-// findOrCreateUpvalue returns an existing open upvalue for the given stack
-// index, or creates a new one if none exists yet.
-func (vm *VM) findOrCreateUpvalue(stackIdx int) *Upvalue {
-	// Look for existing open upvalue at this index
+// findOpenUpvalue returns the open upvalue already bound to the given stack
+// index, or nil if no closure has captured that slot yet.
+func (vm *VM) findOpenUpvalue(stackIdx int) *Upvalue {
 	for _, uv := range vm.openUpvalues {
 		if uv.stackIdx == stackIdx {
 			return uv
 		}
+	}
+	return nil
+}
+
+// findOrCreateUpvalue returns an existing open upvalue for the given stack
+// index, or creates a new one if none exists yet.
+func (vm *VM) findOrCreateUpvalue(stackIdx int) *Upvalue {
+	if uv := vm.findOpenUpvalue(stackIdx); uv != nil {
+		return uv
 	}
 
 	// Create new open upvalue
