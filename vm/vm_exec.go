@@ -11,8 +11,10 @@ import (
 
 // makeClosure instantiates subProto as a closure of the running frame, binding
 // each upvalue either to a live stack slot or to one of the enclosing closure's
-// upvalues. Kept out of the execute() dispatch switch so the switch body stays
-// compact; OP_CLOSURE is rare enough that the call costs nothing.
+// upvalues. Kept out of the execute() dispatch switch to keep the switch body
+// readable; OP_CLOSURE is rare enough that the call costs nothing. Lifting it
+// does shrink execute(), but do not read a benchmark win into that -- see the
+// code-placement caveat in PERF.md.
 func (vm *VM) makeClosure(frame *callFrame, subProto *compiler.Proto) *Closure {
 	// A single fresh stack capture (`function() return i end`) is by far the
 	// most common closure shape, and the only one that can safely share an
