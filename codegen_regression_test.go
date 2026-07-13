@@ -1,6 +1,7 @@
 package golua_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -240,6 +241,27 @@ print(table.concat(log2, ","))`, "B1,work2,B2"},
 	for _, c := range cases {
 		if got := runLuaCapture(t, c.src); got != c.want {
 			t.Fatalf("%s => got %q want %q", c.src, got, c.want)
+		}
+	}
+}
+
+// nested table constructors must cost one register per level (checked): the
+// old temp+MOVE path cost two and its manual freeReg bumps skipped the
+// MaxRegs check, so >=129-deep constructors silently wrapped 8-bit register
+// operands past 255 and built corrupt structures.
+func TestDeepNestedConstructor(t *testing.T) {
+	for _, depth := range []int{64, 129, 150, 190} {
+		src := "local t = " + strings.Repeat("{", depth) + "42" + strings.Repeat("}", depth) +
+			"\nlocal c, n = t, 0\nwhile type(c) == 'table' and c[1] ~= nil do c = c[1]; n = n + 1 end\nprint(n, c)"
+		want := fmt.Sprintf("%d\t42", depth)
+		if got := runLuaCapture(t, src); got != want {
+			t.Fatalf("depth %d: got %q want %q", depth, got, want)
+		}
+		src = "local t = " + strings.Repeat("{k=", depth) + "1" + strings.Repeat("}", depth) +
+			"\nlocal c, n = t, 0\nwhile type(c) == 'table' and c.k ~= nil do c = c.k; n = n + 1 end\nprint(n, c)"
+		want = fmt.Sprintf("%d\t1", depth)
+		if got := runLuaCapture(t, src); got != want {
+			t.Fatalf("hash depth %d: got %q want %q", depth, got, want)
 		}
 	}
 }

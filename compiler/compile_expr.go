@@ -177,13 +177,15 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		fs.emit(ABx(OP_CLOSURE, reg, protoIdx), closureLine)
 
 	case *ast.TableConstructor: // e.g. {1, 2, key="val"}
-		// When reg < savedFreeReg the target is an existing local. Compiling
-		// the constructor directly at reg would clobber it with NEWTABLE
-		// before expressions that reference it (e.g. table.unpack(t)) are
-		// evaluated. Additionally, scratch space at reg+1, reg+2, ... for
-		// array values before SETLIST could clobber other locals. Use a temp
-		// register and move the result in both cases.
-		if reg < savedFreeReg {
+		// When reg holds a live local (reassignment target), compiling the
+		// constructor directly at reg would clobber it with NEWTABLE before
+		// expressions that reference it (e.g. t = {table.unpack(t)}) are
+		// evaluated, and scratch space at reg+1, reg+2, ... could clobber
+		// other locals. Use a temp register and move. A scratch target
+		// (reg >= regTop) compiles in place: everything above it is dead,
+		// and the direct path costs one register per constructor nesting
+		// level like reference Lua instead of two.
+		if reg < fs.regTop() {
 			tmp := fs.freeReg
 			c.compileTableConstructor(e, tmp)
 			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
@@ -1328,6 +1330,7 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 		if fs.freeReg > fs.maxReg {
 			fs.maxReg = fs.freeReg
 		}
+		fs.checkRegLimit()
 	}
 
 	// Count array and hash parts
@@ -1391,11 +1394,10 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 			arrIdx++
 			pendingList++
 			arrReg := reg + pendingList
-			if arrReg >= fs.freeReg {
-				fs.freeReg = arrReg + 1
-				if fs.freeReg > fs.maxReg {
-					fs.maxReg = fs.freeReg
-				}
+			if fs.freeReg <= arrReg {
+				// Let the value compile directly into the next pending slot;
+				// compileExprToReg reserves it with the register-limit check.
+				fs.freeReg = arrReg
 			}
 
 			// Check if this is the last array element, the last field overall,
@@ -1414,6 +1416,8 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 			}
 
 			c.compileExprToReg(f.Value, arrReg)
+			// Keep exactly the pending slots reserved (drop stale value temps)
+			fs.freeReg = arrReg + 1
 
 			// Flush when pending items reach the dynamic threshold
 			if pendingList >= flushThreshold {
