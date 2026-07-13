@@ -3,6 +3,11 @@ package golua_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/iceisfun/golua/v2/compiler"
+	"github.com/iceisfun/golua/v2/parser"
+	"github.com/iceisfun/golua/v2/stdlib"
+	"github.com/iceisfun/golua/v2/vm"
 )
 
 // string->number coercion. Each snippet prints one line;
@@ -113,5 +118,36 @@ print(select(2, pcall(string.rep, "ab", "zzz")))`)
 		!strings.Contains(lines[1], "number has no integer representation") ||
 		!strings.Contains(lines[2], "number expected, got string") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// gmatch iterators expose the reference C-closure upvalue layout:
+// subject, pattern, and a state userdata in upvalue 3.
+func TestGmatchUpvalueLayout(t *testing.T) {
+	block, err := parser.Parse("test", `
+local it = string.gmatch("hello", "l+")
+for i = 1, 4 do
+  local name, val = debug.getupvalue(it, i)
+  print(i, name, type(val))
+end`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	proto, err := compiler.Compile("test", block)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	v := vm.New(vm.WithCaptureOutput(true))
+	if err := v.SetDebugProvider(vm.NewDefaultDebugProvider()); err != nil {
+		t.Fatal(err)
+	}
+	stdlib.Open(v)
+	if _, err := v.Run(proto); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := strings.Join(v.OutputLines(), "\n")
+	want := "1\t\tstring\n2\t\tstring\n3\t\tuserdata\n4\tnil\tnil"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
 	}
 }

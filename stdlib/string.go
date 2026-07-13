@@ -600,6 +600,13 @@ func stringMatch(v *vm.VM) int {
 	return len(caps)
 }
 
+// gmatchState is the mutable iteration state of a gmatch iterator,
+// exposed as its third upvalue like reference GMatchState.
+type gmatchState struct {
+	pos       int // 0-based scan position
+	lastMatch int // 0-based end of last match, -1 = none
+}
+
 // string.gmatch(s, pattern [, init])
 func stringGmatch(v *vm.VM) int {
 	s := getString(v, 1, "string.gmatch")
@@ -617,22 +624,24 @@ func stringGmatch(v *vm.VM) int {
 		init = 1
 	}
 
-	pos := init - 1 // 0-based
-	lastMatch := -1 // 0-based end of last match, -1 = none
+	// Iterator state lives in a heap struct so the third C-closure upvalue
+	// can expose it as a userdata, mirroring reference gmatch's GMatchState
+	// (subject, pattern, state — visible via debug.getupvalue).
+	st := &gmatchState{pos: init - 1, lastMatch: -1}
 
 	iter := vm.NewNativeFuncWithNups(func(v *vm.VM) int {
-		for pos <= len(s) {
-			end, caps, ok := luaMatchAt(s, pattern, pos)
-			if ok && end != lastMatch {
+		for st.pos <= len(s) {
+			end, caps, ok := luaMatchAt(s, pattern, st.pos)
+			if ok && end != st.lastMatch {
 				// Valid match
-				matchStart := pos
-				lastMatch = end
+				matchStart := st.pos
+				st.lastMatch = end
 
 				// Advance for next iteration
-				if end == pos {
-					pos++ // empty match: move forward 1
+				if end == st.pos {
+					st.pos++ // empty match: move forward 1
 				} else {
-					pos = end
+					st.pos = end
 				}
 
 				// Return captures or whole match
@@ -650,15 +659,16 @@ func stringGmatch(v *vm.VM) int {
 				v.Set(0, vm.NewString(s[matchStart:end]))
 				return 1
 			}
-			pos++
+			st.pos++
 		}
 		return 0
 	}, 3)
 
-	// Store upvalues for debug.getupvalue introspection (matches Lua 5.4 C closure)
+	// Store upvalues for debug.getupvalue introspection (matches the
+	// reference C closure: subject, pattern, state userdata)
 	iter.SetNativeFuncUpvalue(1, vm.NewString(s))
 	iter.SetNativeFuncUpvalue(2, vm.NewString(pattern))
-	// Upvalue 3 is internal position state (userdata in Lua 5.4)
+	iter.SetNativeFuncUpvalue(3, vm.NewUserdataValue(st, nil))
 
 	v.Set(0, iter)
 	return 1
