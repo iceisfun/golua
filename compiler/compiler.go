@@ -209,6 +209,14 @@ type scopeInfo struct {
 	firstLabel     int   // index into labels slice
 	firstGoto      int   // index into pendGotos slice
 	savedGlobalEnv globalEnv
+
+	// headerLocals counts the loop control locals (hidden for-state slots and
+	// loop variables) declared in this scope before its body. Reference Lua
+	// declares these outside the body block (lparser.c forbody enterblock), so
+	// a block-end label in the body must not resolve below them: dropping
+	// lower would let a forward goto's OP_CLOSE close the generic-for's
+	// to-be-closed slot (or a captured loop variable) mid-iteration.
+	headerLocals int
 }
 
 // labelInfo records a ::label:: definition for goto resolution.

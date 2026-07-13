@@ -1188,10 +1188,13 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 
 	// Determine effective nLocals for this label. If the label is at
 	// the end of a block, locals in the current scope are about to go
-	// out of scope, so use the enclosing scope's nLocals instead.
+	// out of scope, so use the enclosing scope's nLocals instead — floored
+	// at the scope's loop-header locals (hidden for-state slots and loop
+	// variables), which reference Lua declares outside the body block and
+	// which remain live across a body-end label.
 	labelNLocals := fs.nActVar
 	if atBlockEnd {
-		labelNLocals = scope.nLocals
+		labelNLocals = scope.nLocals + scope.headerLocals
 	}
 
 	fs.labels = append(fs.labels, labelInfo{
