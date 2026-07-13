@@ -455,8 +455,13 @@ func stringGsub(v *vm.VM) int {
 
 	// Optimization: when no substitution changed any text, return the
 	// original string object (same pointer identity, matching Lua 5.4).
-	if !changed {
+	// A number subject must still come back as a string: reference
+	// luaL_checklstring coerces the argument slot in place before the
+	// no-change shortcut copies it.
+	if !changed && v.Get(1).IsString() {
 		v.Set(0, v.Get(1))
+	} else if !changed {
+		v.Set(0, vm.NewString(s))
 	} else {
 		v.Set(0, vm.NewString(result.String()))
 	}
