@@ -32,7 +32,10 @@ const (
 
 func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 	val := v.Get(idx)
-	if val.IsTable() {
+	// Threads are backed by a *Table but must not pass as tables here
+	// (reference checktab's lua_istable excludes LUA_TTHREAD); they can
+	// still qualify via metafields below, like any other value.
+	if val.IsTable() && !val.AsTable().IsThread() {
 		return val
 	}
 	if ((need&tabR) == 0 || !v.GetMetafield(val, vm.MetaIndex).IsNil()) &&
