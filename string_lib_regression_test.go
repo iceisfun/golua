@@ -99,3 +99,19 @@ print(select(2, pcall(assert(load(string.dump(f2))))))`)
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+// numeric strings that coerce to a non-integral number at checkinteger sites
+// must report "number has no integer representation" (reference interror
+// decides via lua_isnumber, true for numeric strings), not a type error.
+func TestCheckIntegerNumericStringMessage(t *testing.T) {
+	got := runLuaCapture(t, `
+print(select(2, pcall(string.rep, "ab", "2.5")))
+print(select(2, pcall(table.unpack, {1,2}, "1.5")))
+print(select(2, pcall(string.rep, "ab", "zzz")))`)
+	lines := strings.Split(got, "\n")
+	if !strings.Contains(lines[0], "number has no integer representation") ||
+		!strings.Contains(lines[1], "number has no integer representation") ||
+		!strings.Contains(lines[2], "number expected, got string") {
+		t.Fatalf("got %q", got)
+	}
+}
