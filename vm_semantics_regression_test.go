@@ -142,3 +142,90 @@ print(pcall(table.move, {1,2,3}, 1, 3, 1, co))`)
 		}
 	}
 }
+
+// The compiler never emits the immediate-comparison opcodes (LTI/LEI/GTI/GEI),
+// but a binary chunk loaded from the wire can contain them. Their slow paths
+// dispatch __lt/__le, and a metamethod that deepens the call stack far enough
+// to reallocate it left the cached frame pointer stale, so the conditional
+// skip (pc++) was written to dead memory and the comparison took the wrong
+// branch. Build the scenario by compiling a normal chunk and patching its
+// OP_LT into each immediate form, the way a crafted chunk would arrive.
+func TestImmediateCompareMetamethodStaleFrame(t *testing.T) {
+	// deep() must recurse through plain CALLs (a tail call reuses its frame
+	// and never grows the call stack, which this bug needs).
+	const srcTemplate = `
+local function deep(n)
+	if n ~= 0 then
+		local r = deep(n - 1)
+		return r
+	end
+	return 0
+end
+local mt = {}
+mt.__lt = function(a, b) deep(200) return %s end
+mt.__le = function(a, b) deep(200) return %s end
+local probe = function(t) return t < 5 end
+return probe(setmetatable({}, mt))
+`
+	compile := func(mmResult bool) *compiler.Proto {
+		t.Helper()
+		lit := "false"
+		if mmResult {
+			lit = "true"
+		}
+		src := strings.ReplaceAll(srcTemplate, "%s", lit)
+		block, err := parser.Parse("test", src)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		proto, err := compiler.Compile("test", block)
+		if err != nil {
+			t.Fatalf("compile error: %v", err)
+		}
+		return proto
+	}
+
+	// findLT locates the single OP_LT in the proto tree (probe's `t < 5`).
+	var findLT func(p *compiler.Proto) (*compiler.Proto, int)
+	findLT = func(p *compiler.Proto) (*compiler.Proto, int) {
+		for i, inst := range p.Code {
+			if inst.OpCode() == compiler.OP_LT {
+				return p, i
+			}
+		}
+		for _, sub := range p.Protos {
+			if fp, fi := findLT(sub); fp != nil {
+				return fp, fi
+			}
+		}
+		return nil, 0
+	}
+
+	for _, op := range []compiler.OpCode{compiler.OP_LTI, compiler.OP_LEI, compiler.OP_GTI, compiler.OP_GEI} {
+		// Read the compiled k flag first: the stale-frame write only happens
+		// on the pc++ path, which requires the comparison result to differ
+		// from k, so pick the metamethod's return value accordingly.
+		probeProto, ltIdx := findLT(compile(false))
+		if probeProto == nil {
+			t.Fatal("no OP_LT found in compiled template")
+		}
+		lt := probeProto.Code[ltIdx]
+		mmResult := lt.K() == 0
+
+		proto := compile(mmResult)
+		probeProto, ltIdx = findLT(proto)
+		// Same register in A, the constant 5 as the signed-B immediate, same k.
+		probeProto.Code[ltIdx] = compiler.ABC(op, lt.A(), 5+compiler.OffsetSC, 0, lt.K())
+
+		v := vm.New()
+		stdlib.Open(v)
+		results, err := v.Run(proto)
+		if err != nil {
+			t.Fatalf("%v: runtime error: %v", op, err)
+		}
+		if len(results) != 1 || !results[0].IsBool() || results[0].AsBool() != mmResult {
+			t.Fatalf("%v: comparison took the wrong branch after call-stack growth: got %v want %v",
+				op, results, mmResult)
+		}
+	}
+}
