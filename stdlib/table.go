@@ -326,7 +326,7 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 		return lt
 	}
 	// The non-yieldable boundary is established once at tableSort entry.
-	res, e := v.ProtectedCall(comp, []vm.Value{a, b})
+	res, e := v.ProtectedCallNoTBCClose(comp, []vm.Value{a, b})
 	if e != nil {
 		if luaErr, ok := e.(*vm.LuaError); ok {
 			*err = luaErr.Value

@@ -121,7 +121,7 @@ func luaToString(v *vm.VM) int {
 			// succeeds. On error, the re-panic needs the inner snapshot
 			// to be active, so we DON'T restore in that case.
 			savedECS := v.SaveLastErrorCallStack()
-			results, err := v.ProtectedCall(ts, []vm.Value{val})
+			results, err := v.ProtectedCallNoTBCClose(ts, []vm.Value{val})
 			if err != nil {
 				// Re-raise as LuaError to preserve the original file:line
 				// prefix. Don't restore savedECS — the inner snapshot from
@@ -571,7 +571,7 @@ func luaPairs(v *vm.VM) int {
 	arg := v.Get(1)
 
 	if mp := v.GetMetafield(arg, vm.MetaPairs); !mp.IsNil() {
-		results, err := v.ProtectedCall(mp, []vm.Value{arg})
+		results, err := v.ProtectedCallNoTBCClose(mp, []vm.Value{arg})
 		if err != nil {
 			panic(err)
 		}
@@ -873,7 +873,7 @@ func tolstring(v *vm.VM, val vm.Value) string {
 	if mt != nil {
 		if ts := mt.Get(vm.NewString(vm.MetaTostring)); !ts.IsNil() {
 			exitNonYieldable := v.EnterNonYieldable()
-			results, err := v.ProtectedCall(ts, []vm.Value{val})
+			results, err := v.ProtectedCallNoTBCClose(ts, []vm.Value{val})
 			exitNonYieldable()
 			if err != nil {
 				if le, ok := err.(*vm.LuaError); ok {
