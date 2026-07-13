@@ -1035,6 +1035,18 @@ func (vm *VM) ProtectedCallCoroutine(fn Value, args []Value) ([]Value, error) {
 	return vm.ProtectedCall(fn, args)
 }
 
+// ProtectedCallNoTBCClose is ProtectedCall without acting as a to-be-closed
+// boundary. Library code that calls back into Lua and unconditionally
+// re-raises the returned error (gsub replacement functions, sort
+// comparators, __tostring/__pairs dispatch) is an *unprotected* lua_call in
+// reference Lua: pending <close> variables from the callback must survive
+// until the enclosing real protected boundary (pcall/xpcall/host) — or stay
+// pending for coroutine.close when the error escapes the coroutine.
+func (vm *VM) ProtectedCallNoTBCClose(fn Value, args []Value) ([]Value, error) {
+	vm.skipTBCCleanup = true
+	return vm.ProtectedCall(fn, args)
+}
+
 // ClosePendingTBC closes all pending to-be-closed variables on this VM.
 // Used by coroutine.close and wrap error recovery. Returns the final error
 // value (which may be from a __close handler if one errors).

@@ -524,7 +524,7 @@ func callGsubFunc(v *vm.VM, fn vm.Value, captures []captureValue, wholeMatch str
 
 	// Use ProtectedCall but re-panic on error (Lua propagates gsub function
 	// errors). The non-yieldable boundary is established once at stringGsub entry.
-	results, err := v.ProtectedCall(fn, args)
+	results, err := v.ProtectedCallNoTBCClose(fn, args)
 	if err != nil {
 		panic(err)
 	}
@@ -811,7 +811,7 @@ func stringArithFallback(v *vm.VM, a, b vm.Value, ok1, ok2 bool, mmName string) 
 		}
 		mm := v.GetMetafield(other, mmName)
 		if !mm.IsNil() {
-			results, err := v.ProtectedCall(mm, []vm.Value{a, b})
+			results, err := v.ProtectedCallNoTBCClose(mm, []vm.Value{a, b})
 			if err != nil {
 				panic(err.Error())
 			}

@@ -327,3 +327,38 @@ func TestCoroutineClose_ErroredCoroutine(t *testing.T) {
 		t.Fatalf("runtime error: %v", err)
 	}
 }
+
+// <close> variables in callback frames invoked by Go-implemented stdlib
+// functions (gsub replacement, sort comparator) must NOT close during a
+// failing resume: reference leaves them pending until coroutine.close.
+func TestCallbackTBCDefersToCoroutineClose(t *testing.T) {
+	got := runLuaCapture(t, `
+local log = {}
+local function mk(tag)
+  return setmetatable({}, {__close=function() log[#log+1] = tag end})
+end
+local co = coroutine.create(function()
+  string.gsub("a", "a", function()
+    local t <close> = mk("gsub")
+    error("boom")
+  end)
+end)
+coroutine.resume(co)
+log[#log+1] = "resumed"
+coroutine.close(co)
+log[#log+1] = "closed"
+local co2 = coroutine.create(function()
+  table.sort({2,1}, function(a,b)
+    local t <close> = mk("sort")
+    coroutine.yield()
+  end)
+end)
+coroutine.resume(co2)
+log[#log+1] = "resumed2"
+coroutine.close(co2)
+print(table.concat(log, ","))`)
+	want := "resumed,gsub,closed,resumed2,sort"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
