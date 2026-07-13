@@ -402,6 +402,9 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 		startPC: fs.pc(),
 	})
 	fs.nActVar++
+	// The 3 for-state slots and the loop variable stay live across a
+	// body-end label (see scopeInfo.headerLocals).
+	fs.scopes[len(fs.scopes)-1].headerLocals = 4
 
 	// Body
 	c.compileBlock(s.Body)
@@ -557,6 +560,9 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		fs.nActVar++
 	}
 	fs.checkRegLimit()
+	// The 4 for-state slots and the loop variables stay live across a
+	// body-end label (see scopeInfo.headerLocals).
+	fs.scopes[len(fs.scopes)-1].headerLocals = 4 + nVars
 
 	// Body
 	c.compileBlock(s.Body)

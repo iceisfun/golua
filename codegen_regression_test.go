@@ -207,3 +207,39 @@ print(u[4], u[5], u[6])`, "d\te\tCC"},
 		}
 	}
 }
+
+// a forward goto to a body-end label (goto-continue) inside a for loop must
+// not close the loop's own control locals: the generic-for closing value and
+// captured loop variables stay live across a body-end label.
+func TestGotoContinueForClose(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{`local log, n = {}, 0
+local tbc = setmetatable({}, {__close=function() log[#log+1]="CLOSE" end})
+for i in function() n=n+1 if n<=2 then return n end end, nil, nil, tbc do
+  log[#log+1] = "iter"..i
+  goto cont
+  ::cont::
+end
+print(table.concat(log, ","))`, "iter1,iter2,CLOSE"},
+		{`local fs = {}
+for i = 1, 3 do
+  fs[i] = function() return i end
+  if i == 2 then goto cont end
+  ::cont::
+end
+print(fs[1](), fs[2](), fs[3]())`, "1\t2\t3"},
+		{`local log2, m = {}, 0
+for i in function() m=m+1 if m<=2 then return m end end do
+  local b <close> = setmetatable({}, {__close=function() log2[#log2+1]="B"..i end})
+  if i == 1 then goto cont2 end
+  log2[#log2+1] = "work"..i
+  ::cont2::
+end
+print(table.concat(log2, ","))`, "B1,work2,B2"},
+	}
+	for _, c := range cases {
+		if got := runLuaCapture(t, c.src); got != c.want {
+			t.Fatalf("%s => got %q want %q", c.src, got, c.want)
+		}
+	}
+}
