@@ -227,8 +227,13 @@ done:
 		}
 	}
 
-	// Run — recover LuaExitError for os.exit support
-	exitCode, _, err = runProto(v, proto)
+	// Run — recover LuaExitError for os.exit support. Script arguments are
+	// passed as the main chunk's varargs, like the reference interpreter.
+	mainArgs := make([]vm.Value, len(scriptArgs))
+	for i, a := range scriptArgs {
+		mainArgs[i] = vm.NewString(a)
+	}
+	exitCode, _, err = runProtoArgs(v, proto, mainArgs)
 
 	v.Close(context.Background())
 
@@ -373,7 +378,11 @@ func compileChunk(name, displayName, source string) (proto *compiler.Proto, err 
 // runProto runs a compiled chunk, recovering the os.exit sentinel.
 // exited reports whether os.exit terminated the run (exitCode is then its
 // status, possibly 0).
-func runProto(v *vm.VM, proto *compiler.Proto) (exitCode int, exited bool, err error) {
+func runProto(v *vm.VM, proto *compiler.Proto) (int, bool, error) {
+	return runProtoArgs(v, proto, nil)
+}
+
+func runProtoArgs(v *vm.VM, proto *compiler.Proto, args []vm.Value) (exitCode int, exited bool, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if exitErr, ok := r.(*vm.LuaExitError); ok {
@@ -385,6 +394,6 @@ func runProto(v *vm.VM, proto *compiler.Proto) (exitCode int, exited bool, err e
 			panic(r)
 		}
 	}()
-	_, err = v.Run(proto)
+	_, err = v.RunArgs(proto, args)
 	return exitCode, exited, err
 }

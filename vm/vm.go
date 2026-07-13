@@ -253,6 +253,13 @@ func (vm *VM) GetGlobal(name string) Value {
 // first upvalue is automatically bound to the VM's global table (_ENV).
 // Errors from the Lua program are caught and returned as Go errors.
 func (vm *VM) Run(proto *compiler.Proto) ([]Value, error) {
+	return vm.RunArgs(proto, nil)
+}
+
+// RunArgs is Run with arguments passed to the main chunk as varargs — the
+// reference standalone interpreter hands script arguments to the chunk this
+// way (available as `...` in addition to the global arg table).
+func (vm *VM) RunArgs(proto *compiler.Proto, args []Value) ([]Value, error) {
 	// Create main closure
 	closure := NewClosure(proto)
 	// The main chunk has _ENV as its first upvalue
@@ -264,7 +271,7 @@ func (vm *VM) Run(proto *compiler.Proto) ([]Value, error) {
 		}
 	}
 
-	return vm.ProtectedCall(NewFunction(closure), nil)
+	return vm.ProtectedCall(NewFunction(closure), args)
 }
 
 // GetMsgHandler returns the current xpcall message handler.
