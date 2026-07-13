@@ -1,5 +1,15 @@
 # Bug hunt 2026-07-13 — differential vs lua5.5.0 (master, b51a63b)
 
+**STATUS 2026-07-13: ALL 17 CONFIRMED BUGS FIXED** on master (b51a63b..4e064e5, 16 commits)
+**and backported to lua_5_4_8** (6c59b4a..ccf330d, 16 commits) — every one reproduced on
+5.4.8 and was verified against /usr/bin/lua5.4.8 after porting. Regression tests live in
+the root *_regression_test.go files on both branches. One bonus fix found during
+verification: the CLI now passes script arguments as the main chunk's varargs (VM.RunArgs).
+Exceptions: #12 (named vararg virtual slot) is documented as DEFERRED in its finding file
+(debug-introspection-only; fixing it rides the future perf item that removes the per-call
+table allocation); #13 (0b literals) was dispositioned as a deliberate extension and
+documented in wontfix/binary-integer-literals/.
+
 8-lens multi-agent hunt, every finding adversarially re-verified against `/usr/bin/lua5.5.0`
 (minimized, checked against `wontfix/` and GC-scope). 30 raw findings → **17 CONFIRMED bugs**,
 8 error-message-only notes, 5 rejected/out-of-scope. Each `.md` in this directory has the
