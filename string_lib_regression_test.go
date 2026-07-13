@@ -52,3 +52,17 @@ func TestStringPack(t *testing.T) {
 		t.Errorf("unpack X past end: got %q", got)
 	}
 }
+
+// string.unpack must grow the stack per decoded value; >=252 results used to
+// run off the fixed frame and leak a Go index-out-of-range panic to the host.
+func TestStringUnpackManyResults(t *testing.T) {
+	got := runLuaCapture(t, `
+local n = 300
+print(select("#", string.unpack(string.rep("B", n), string.rep("\7", n))))
+local t = {string.unpack(string.rep("B", n), string.rep("\7", n))}
+print(#t, t[1], t[n], t[n+1])`)
+	want := "301\n301\t7\t7\t301"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}

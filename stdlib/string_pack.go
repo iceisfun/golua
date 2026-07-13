@@ -568,6 +568,14 @@ func stringUnpack(v *vm.VM) int {
 	}
 
 	nret := 0
+	// The frame has a fixed number of pre-allocated slots; each decoded value
+	// must grow the stack before being stored (reference str_unpack calls
+	// luaL_checkstack per value). Overflow panics catchably at the VM limit.
+	push := func(val vm.Value) {
+		v.EnsureStack(v.Base() + nret + 2)
+		v.Set(nret, val)
+		nret++
+	}
 
 	i := 0
 	for i < len(format) {
@@ -599,24 +607,19 @@ func stringUnpack(v *vm.VM) int {
 		switch ch {
 		case 'b', 'B':
 			val := unpackInt(data, &offset, fs, ch, 1, ch == 'b')
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'h', 'H':
 			val := unpackInt(data, &offset, fs, ch, 2, ch == 'h')
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'l', 'L':
 			val := unpackInt(data, &offset, fs, ch, 8, ch == 'l')
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'j', 'J':
 			val := unpackInt(data, &offset, fs, ch, 8, ch == 'j')
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'T':
 			val := unpackInt(data, &offset, fs, ch, 8, false)
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'i', 'I':
 			var size int
 			size, i = parsePackSize(format, i, 4)
@@ -624,16 +627,13 @@ func stringUnpack(v *vm.VM) int {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
 			val := unpackInt(data, &offset, fs, ch, size, ch == 'i')
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'f':
 			val := unpackFloat32(data, &offset, fs)
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'd', 'n':
 			val := unpackFloat64(data, &offset, fs, ch)
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'c':
 			if i >= len(format) || format[i] < '0' || format[i] > '9' {
 				panic("missing size for format option 'c'")
@@ -641,12 +641,10 @@ func stringUnpack(v *vm.VM) int {
 			var size int
 			size, i = parsePackSize(format, i, 0)
 			val := unpackFixedString(data, &offset, size, fs)
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'z':
 			val := unpackZeroTermString(data, &offset, fs)
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 's':
 			var size int
 			size, i = parsePackSize(format, i, 8)
@@ -654,8 +652,7 @@ func stringUnpack(v *vm.VM) int {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
 			val := unpackSizedString(data, &offset, fs, size)
-			v.Set(nret, val)
-			nret++
+			push(val)
 		case 'x':
 			applyAlignPad(&offset, fs, 1)
 			if offset+1 > len(data) {
@@ -680,8 +677,8 @@ func stringUnpack(v *vm.VM) int {
 	}
 
 	// Return values + next position (1-based)
-	v.Set(nret, vm.NewInt(int64(offset+1)))
-	return nret + 1
+	push(vm.NewInt(int64(offset + 1)))
+	return nret
 }
 
 // getXAlignUnpack parses X directive for unpack (same logic, different error source).
