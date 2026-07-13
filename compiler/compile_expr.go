@@ -85,11 +85,6 @@ func exprNear(expr ast.Expr) string {
 func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 	fs := c.fs
 
-	// Save freeReg before the advance. If there are active locals after reg,
-	// the original freeReg > reg+1, which matters for expressions that use
-	// reg+1... as scratch space (table constructors, function calls).
-	savedFreeReg := fs.freeReg
-
 	// Ensure the register is allocated
 	if reg >= fs.freeReg {
 		fs.freeReg = reg + 1
@@ -148,12 +143,12 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		c.compileUnop(e, reg)
 
 	case *ast.FuncCallExpr: // e.g. f(a, b) — single result in reg
-		// When reg < savedFreeReg the target is an existing local. Compiling
-		// the call directly at reg would clobber it with the function before
-		// arguments that reference it are evaluated. Use a temp register.
-		// Using savedFreeReg (the value before the preamble advance) avoids
-		// unnecessary temp+MOVE when reg is a fresh register at freeReg.
-		if reg < savedFreeReg {
+		// When reg holds a live local, compiling the call directly at reg
+		// would clobber it with the function before arguments that reference
+		// it are evaluated — use a temp register. A scratch target compiles
+		// in place (the call only writes reg and up, where nothing is live),
+		// so chains like t.a().a()... reuse one register per link.
+		if reg < fs.regTop() {
 			tmp := fs.freeReg
 			c.compileFuncCall(e, tmp, 2, e.P.Line) // C=2 → 1 result at tmp
 			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
@@ -162,7 +157,8 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		}
 
 	case *ast.MethodCallExpr: // e.g. obj:method(a) — single result in reg
-		if reg < savedFreeReg {
+		// Same live-local guard as FuncCallExpr above.
+		if reg < fs.regTop() {
 			tmp := fs.freeReg
 			c.compileMethodCall(e, tmp, 2, e.P.Line)
 			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
@@ -1262,28 +1258,29 @@ func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, 
 func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults int, line int) {
 	fs := c.fs
 
-	if base >= fs.freeReg {
-		fs.freeReg = base + 1
-		if fs.freeReg > fs.maxReg {
-			fs.maxReg = fs.freeReg
-		}
+	// base is always a fresh call-frame register (callers that target a live
+	// local wrap the call in a temp+MOVE). Normalize freeReg down to base and
+	// compile the receiver in place: SELF reads R[B] before writing, so with
+	// B == A it copies the receiver to base+1 while loading the method into
+	// base. A chain o:m():n()... then reuses one register pair per link
+	// instead of holding two per level, which overflowed the register file
+	// at ~128 links on chains reference Lua runs in constant registers.
+	if base < fs.freeReg {
+		fs.freeReg = base
 	}
-
-	// SELF: R[base+1] = R[obj]; R[base] = R[obj][method]
-	objReg := fs.reserveReg()
-	c.compileExprToReg(e.Object, objReg)
+	c.compileExprToReg(e.Object, base)
 	methodK := fs.stringConstant(e.Method)
-	fs.emitSelf(base, objReg, methodK, line)
+	fs.emitSelf(base, base, methodK, line)
 
-	// Unconditionally reset freeReg after compiling object and emitting SELF.
-	// If e.Object is a chained call (e.g. a:m():n()), compileExprToReg inflates
-	// freeReg for the inner call's arguments. The conditional check would fail
-	// to reset it, causing compileExprMultiRet for the last argument to start
-	// at the inflated freeReg and leave a gap of stale register values.
+	// Function at base, self at base+1; arguments start at base+2. Reset
+	// unconditionally: compiling the receiver may have inflated freeReg
+	// (e.g. inner call arguments), and compileExprMultiRet for the last
+	// argument must start at base+2, not at the inflated value.
 	fs.freeReg = base + 2
 	if fs.freeReg > fs.maxReg {
 		fs.maxReg = fs.freeReg
 	}
+	fs.checkRegLimit()
 
 	// Arguments start at base+2
 	nArgs := len(e.Args)
@@ -1304,7 +1301,7 @@ func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults i
 
 	// +1 for self
 	fs.emit(ABC(OP_CALL, base, nArgs+2, nResults, 0), line)
-	fs.freeReg = objReg
+	fs.freeReg = base + 1
 }
 
 // ---------------------------------------------------------------------------

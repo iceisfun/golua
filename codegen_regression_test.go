@@ -265,3 +265,25 @@ func TestDeepNestedConstructor(t *testing.T) {
 		}
 	}
 }
+
+// method-call and field-call chains must compile in constant registers:
+// the old inside-out compilation held two registers per link, rejecting
+// chains >=128 links that reference Lua runs fine.
+func TestLongCallChains(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`local o = setmetatable({n=0}, {__index=function(t,k) return function(self) self.n=self.n+1 return self end end})
+local r = o`)
+	b.WriteString(strings.Repeat(":m()", 500))
+	b.WriteString("\nprint(r.n)")
+	if got := runLuaCapture(t, b.String()); got != "500" {
+		t.Fatalf("method chain: got %q want %q", got, "500")
+	}
+	b.Reset()
+	b.WriteString(`local t; t = {a = function() t.n = (t.n or 0) + 1; return t end}
+local r = t`)
+	b.WriteString(strings.Repeat(".a()", 500))
+	b.WriteString("\nprint(r.n)")
+	if got := runLuaCapture(t, b.String()); got != "500" {
+		t.Fatalf("field chain: got %q want %q", got, "500")
+	}
+}
