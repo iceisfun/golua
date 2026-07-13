@@ -992,8 +992,8 @@ func (vm *VM) execute() ([]Value, error) {
 				v1 := vm.stack[frame.base+a]
 				v2 := vm.stack[frame.base+a+1]
 				if v1.typ == typeString && v2.typ == typeString {
-					s1 := v1.ptr.(string)
-					s2 := v2.ptr.(string)
+					s1 := v1.asString()
+					s2 := v2.asString()
 					// Guard the result size before allocating, exactly like the
 					// multi-operand path below. Without this, an unbounded concat
 					// (e.g. `s = s .. s` doubling) drives the result past what Go

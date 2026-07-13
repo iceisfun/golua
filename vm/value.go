@@ -42,6 +42,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"unsafe"
 )
 
 // nativeFuncBox wraps a NativeFunc in a heap-allocated struct so that it
@@ -101,12 +102,19 @@ func (vm *VM) stringPointerID(s string) any {
 // (nil, bool, int, float, string) and by identity for reference types
 // (table, function).
 //
+// Strings are stored unboxed as a data pointer in ptr plus a length in n,
+// so constructing a string Value does not allocate. As a consequence, Go's
+// built-in == on two string Values compares data pointers, not contents:
+// two Values holding equal string contents may compare unequal with ==.
+// Embedders must use Equal (or RawEqual) to compare Values, and must not
+// use Value as a Go map key.
+//
 // Integer and float are distinct subtypes of "number" following Lua 5.4
 // semantics. Arithmetic operations preserve integer type when possible.
 type Value struct {
 	typ valueType
-	n   uint64 // numeric word: float64 bits (float, and 1.0/0.0 for bool), or int64 bits (integer)
-	ptr any    // string, *Table, *Closure, or NativeFunc
+	n   uint64 // numeric word: float64 bits (float, and 1.0/0.0 for bool), or int64 bits (integer); string length
+	ptr any    // string data (*byte), *Table, *Closure, or NativeFunc
 }
 
 // fval decodes the numeric word as a float64. Meaningful when typ is
@@ -160,8 +168,25 @@ func NewFloat(f float64) Value {
 }
 
 // NewString creates a string value.
+//
+// Strings are stored unboxed: the byte-data pointer goes in ptr (pointer-shaped,
+// so the interface conversion does not allocate) and the length in n. This keeps
+// Value at 32 bytes and makes NewString allocation-free (previously every dynamic
+// string Value paid a runtime.convTstring heap allocation for the 16-byte header).
 func NewString(s string) Value {
-	return Value{typ: typeString, ptr: s}
+	if len(s) == 0 {
+		return Value{typ: typeString, n: 0, ptr: (*byte)(nil)}
+	}
+	return Value{typ: typeString, n: uint64(len(s)), ptr: unsafe.StringData(s)}
+}
+
+// asString decodes an unboxed string Value. Caller must have checked typ.
+func (v Value) asString() string {
+	p, _ := v.ptr.(*byte)
+	if p == nil {
+		return ""
+	}
+	return unsafe.String(p, int(v.n))
 }
 
 // NewTable creates a table value.
@@ -333,7 +358,7 @@ func (v Value) AsFloat() float64 {
 // AsString returns the string value.
 func (v Value) AsString() string {
 	if v.typ == typeString {
-		return v.ptr.(string)
+		return v.asString()
 	}
 	return ""
 }
@@ -564,7 +589,7 @@ func (v Value) ToNumber() (float64, bool) {
 	case typeFloat:
 		return v.fval(), true
 	case typeString:
-		s := TrimASCIISpace(v.ptr.(string))
+		s := TrimASCIISpace(v.asString())
 		if s == "" {
 			return 0, false
 		}
@@ -625,7 +650,7 @@ func (v Value) ToInt() (int64, bool) {
 		// reference Lua, instead of failing ParseInt/ParseUint and reporting "no
 		// integer representation". Also inherits the underscore and
 		// inf/nan rejection there.
-		nv, ok := StringToNumericValue(v.ptr.(string))
+		nv, ok := StringToNumericValue(v.asString())
 		if !ok {
 			return 0, false
 		}
@@ -679,7 +704,7 @@ func (v Value) String() string {
 		}
 		return s
 	case typeString:
-		return v.ptr.(string)
+		return v.asString()
 	case typeTable:
 		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
 			return fmt.Sprintf("thread: %p", v.ptr)
@@ -707,7 +732,7 @@ func (v Value) PointerString() string {
 	case typeTable:
 		return fmt.Sprintf("%p", v.ptr)
 	case typeString:
-		s := v.ptr.(string)
+		s := v.asString()
 		return fmt.Sprintf("0x%x", reflect.ValueOf(s).Pointer())
 	case typeFunction:
 		return fmt.Sprintf("%p", v.ptr)
@@ -726,7 +751,7 @@ func (v Value) PointerString() string {
 // garbage collected.
 func (vm *VM) PointerString(v Value) string {
 	if v.typ == typeString {
-		s := v.ptr.(string)
+		s := v.asString()
 		// Short strings (≤40 chars) are interned in Lua 5.4: equal strings
 		// share the same %p address.
 		// Long strings use reflect to get the underlying data pointer, matching
@@ -814,7 +839,7 @@ func (v Value) Equal(other Value) bool {
 		// for NaN (never equal) and ±0.0 (equal despite distinct bits).
 		return v.fval() == other.fval()
 	case typeString:
-		return v.ptr.(string) == other.ptr.(string)
+		return v.n == other.n && v.asString() == other.asString()
 	case typeTable, typeFunction:
 		return v.ptr == other.ptr
 	case typeNativeFunc:

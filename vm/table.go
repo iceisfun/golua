@@ -274,7 +274,7 @@ func hashKey(v Value) any {
 		}
 		return f
 	case typeString:
-		return v.ptr.(string)
+		return v.asString()
 	default:
 		// Tables, functions use pointer identity
 		return v.ptr
@@ -404,14 +404,14 @@ func (t *Table) setStrHash(s string, boxedKey, value Value) {
 func (t *Table) addStrKey(s string, boxed Value) {
 	if t.deadKeys > 0 {
 		for _, hk := range t.keys {
-			if hk.typ == typeString && hk.ptr.(string) == s {
+			if hk.typ == typeString && hk.asString() == s {
 				t.deadKeys--
 				return
 			}
 		}
 	}
 	if boxed.typ != typeString {
-		boxed = Value{typ: typeString, ptr: s}
+		boxed = NewString(s)
 	}
 	t.reuseOrAppendKey(boxed)
 }
@@ -462,7 +462,7 @@ func (t *Table) removeKey(k Value) {
 func (t *Table) getKeyValue(k Value) (Value, bool) {
 	switch k.typ {
 	case typeString:
-		s := k.ptr.(string)
+		s := k.asString()
 		if t.sstr != nil {
 			if i := t.sstr.find(s); i >= 0 {
 				return t.sstr[i].val, true
@@ -516,7 +516,7 @@ func (t *Table) Get(key Value) Value {
 
 	// String keys: inline store first, then the string hash map.
 	if key.typ == typeString {
-		s := key.ptr.(string)
+		s := key.asString()
 		if t.sstr != nil {
 			if i := t.sstr.find(s); i >= 0 {
 				return t.sstr[i].val
@@ -632,7 +632,7 @@ func (t *Table) Set(key, value Value) error {
 
 	// String keys use the dedicated string hash map
 	if key.typ == typeString {
-		t.setStrHash(key.ptr.(string), key, value)
+		t.setStrHash(key.asString(), key, value)
 		return nil
 	}
 
@@ -702,7 +702,7 @@ func (t *Table) setStringValue(key, value Value) {
 		ws.set(key, value)
 		return
 	}
-	t.setStrHash(key.ptr.(string), key, value)
+	t.setStrHash(key.asString(), key, value)
 }
 
 // RawSetArray sets an array slot directly without triggering shrinkArray.
