@@ -68,7 +68,14 @@ func getInt(v *vm.VM, idx int, fname string) int64 {
 	if i, ok := val.ToInt(); ok {
 		return i
 	}
-	if val.IsNumber() {
+	// Reference interror decides via lua_isnumber, which is true for numeric
+	// strings too: a string that coerces to a (non-integral) number reports
+	// the representation error, not a type error.
+	isNum := val.IsNumber()
+	if !isNum && val.IsString() {
+		_, isNum = vm.StringToNumericValue(val.AsString())
+	}
+	if isNum {
 		callerArgError(v, idx, fname, "number has no integer representation")
 	}
 	got := v.ObjTypeName(val)
