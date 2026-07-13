@@ -80,3 +80,22 @@ print(string.gsub(123, "9", "X"))`)
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+// dump/load must preserve per-instruction line info across >127-line gaps
+// via ABSLINEINFO escapes; a bare int8 delta wrapped to negative lines.
+func TestDumpLineInfoAbsEscape(t *testing.T) {
+	got := runLuaCapture(t, `
+for _, gap in ipairs{127, 128, 300} do
+  local src = "local function f()" .. string.rep("\n", gap) .. "error('x') end return f"
+  local f = assert(load(src, "@c"))()
+  local g = assert(load(string.dump(f)))
+  print(gap, select(2, pcall(g)))
+end
+local body = ("local a = 1;"):rep(200)
+local f2 = assert(load("local function q()\n" .. body .. "\nerror('y') end return q", "@w"))()
+print(select(2, pcall(assert(load(string.dump(f2))))))`)
+	want := "127\tc:128: x\n128\tc:129: x\n300\tc:301: x\nw:3: y"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}

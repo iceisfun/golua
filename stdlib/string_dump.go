@@ -218,17 +218,34 @@ func (d *dumper) dumpFunction(p *compiler.Proto) {
 		d.writeSize(0) // locvars
 		d.writeSize(0) // upvalnames
 	} else {
-		// Line info (one per instruction)
+		// Line info (one per instruction): signed byte deltas with an
+		// ABSLINEINFO (-0x80) escape into the absolute table when a delta
+		// doesn't fit in [-127,127] or 128 instructions passed since the
+		// last anchor — reference savelineinfo/dumpDebug conventions.
+		type absLine struct{ pc, line int }
+		var abs []absLine
 		d.writeSize(len(p.Lines))
 		if len(p.Lines) > 0 {
 			prev := p.LineDef
-			for _, line := range p.Lines {
-				d.writeByte(byte(int8(line - prev)))
+			iwthabs := 0
+			for pc, line := range p.Lines {
+				delta := line - prev
+				iwthabs++
+				if delta <= -0x80 || delta >= 0x80 || iwthabs > 128 {
+					abs = append(abs, absLine{pc: pc, line: line})
+					iwthabs = 1
+					delta = -0x80
+				}
+				d.writeByte(byte(int8(delta)))
 				prev = line
 			}
 		}
-		// Absolute line info (empty for simplicity)
-		d.writeSize(0)
+		// Absolute line info
+		d.writeSize(len(abs))
+		for _, a := range abs {
+			d.writeSize(a.pc)
+			d.writeSize(a.line)
+		}
 		// Local variables
 		d.writeSize(len(p.Locals))
 		for _, loc := range p.Locals {

@@ -299,23 +299,47 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 	}
 
 	// Debug info
-	// Line info (one per instruction)
+	// Line info (one per instruction): signed byte deltas; an ABSLINEINFO
+	// (-0x80) entry takes its absolute line from the abslineinfo table.
 	nLineInfo := u.readCount()
+	var deltas []int8
 	if nLineInfo > 0 {
-		p.Lines = make([]int, nLineInfo)
-		prev := p.LineDef
+		deltas = make([]int8, nLineInfo)
 		for i := 0; i < nLineInfo; i++ {
-			delta := int(int8(u.readByte()))
-			prev += delta
-			p.Lines[i] = prev
+			deltas[i] = int8(u.readByte())
 		}
 	}
 
 	// Absolute line info
-	nAbsLineInfo := u.readInt()
+	nAbsLineInfo := u.readCount()
+	absPCs := make([]int, nAbsLineInfo)
+	absLines := make([]int, nAbsLineInfo)
 	for i := 0; i < nAbsLineInfo; i++ {
-		u.readInt() // pc
-		u.readInt() // line
+		absPCs[i] = u.readInt()
+		absLines[i] = u.readInt()
+	}
+
+	if nLineInfo > 0 {
+		p.Lines = make([]int, nLineInfo)
+		prev := p.LineDef
+		absIdx := 0
+		for i := 0; i < nLineInfo; i++ {
+			if deltas[i] == -0x80 {
+				for absIdx < nAbsLineInfo && absPCs[absIdx] < i {
+					absIdx++
+				}
+				if absIdx >= nAbsLineInfo || absPCs[absIdx] != i {
+					// Malformed chunk: marker with no matching absolute
+					// entry. Keep this a catchable load error.
+					panic(u.error("bad absolute line info"))
+				}
+				prev = absLines[absIdx]
+				absIdx++
+			} else {
+				prev += int(deltas[i])
+			}
+			p.Lines[i] = prev
+		}
 	}
 
 	// Local variables
