@@ -607,7 +607,7 @@ func (vm *VM) IndexValue(val Value, key Value) (Value, error) {
 	if ct, ok := val.ptr.(*Table); ok && val.typ == typeTable && !ct.isThread && ct.metatable == nil {
 		return ct.Get(key), nil
 	}
-	if val.IsTable() {
+	if val.IsTable() && !val.AsTable().IsThread() {
 		return vm.tableGet(val.AsTable(), key)
 	}
 	return vm.indexValue(val, key)
@@ -621,7 +621,7 @@ func (vm *VM) IndexInt(val Value, key int) (Value, error) {
 	if ct, ok := val.ptr.(*Table); ok && val.typ == typeTable && !ct.isThread && ct.metatable == nil {
 		return ct.GetInt(key), nil
 	}
-	if val.IsTable() {
+	if val.IsTable() && !val.AsTable().IsThread() {
 		return vm.tableGetInt(val.AsTable(), key)
 	}
 	return vm.indexValue(val, NewInt(int64(key)))
@@ -643,7 +643,7 @@ func (vm *VM) ObjLen(val Value) (int, error) {
 		}
 		return 0, fmt.Errorf("object length is not an integer")
 	}
-	if val.IsTable() {
+	if val.IsTable() && !val.AsTable().IsThread() {
 		return val.AsTable().Len(), nil
 	}
 	return 0, vm.runtimeError("attempt to get length of a %s value", vm.ObjTypeName(val))

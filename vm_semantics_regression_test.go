@@ -125,3 +125,20 @@ print(table.remove(p, 1), #gets, #sets)`)
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+// thread values are backed by tables internally but must be rejected by
+// table-library entry points and ipairs like reference Lua's LUA_TTHREAD.
+func TestThreadRejectedByTableLib(t *testing.T) {
+	got := runLuaCapture(t, `
+local co = coroutine.create(function() end)
+print(pcall(table.unpack, co))
+print(pcall(table.sort, co))
+print(pcall(function() for _ in ipairs(co) do end end))
+print(pcall(table.insert, co, 1))
+print(pcall(table.move, {1,2,3}, 1, 3, 1, co))`)
+	for i, ln := range strings.Split(got, "\n") {
+		if !strings.HasPrefix(ln, "false\t") || !strings.Contains(ln, "thread") {
+			t.Fatalf("line %d should be a thread-type error: %q (all: %q)", i+1, ln, got)
+		}
+	}
+}
