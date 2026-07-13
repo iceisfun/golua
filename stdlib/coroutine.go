@@ -371,6 +371,13 @@ func coResume(v *vm.VM) int {
 		co.mu.Unlock()
 
 		if err != nil {
+			// os.exit inside the coroutine: the exit sentinel is not a
+			// coroutine error — re-panic it on the resumer's goroutine so it
+			// propagates through the resumer's ProtectedCall chain (and any
+			// enclosing coroutines) exactly as it does through pcall.
+			if exitErr, ok := err.(*vm.LuaExitError); ok {
+				panic(exitErr)
+			}
 			v.Set(0, vm.False)
 			// Preserve the original Lua error value if available
 			var errVal vm.Value
@@ -746,6 +753,12 @@ func coWrap(v *vm.VM) int {
 			co.mu.Unlock()
 
 			if err != nil {
+				// os.exit inside the coroutine: propagate the exit sentinel
+				// unchanged (reference exit() terminates without unwinding,
+				// so no TBC close pass here).
+				if exitErr, ok := err.(*vm.LuaExitError); ok {
+					panic(exitErr)
+				}
 				// Close TBC vars on the coroutine VM before re-raising.
 				// Lua 5.4: wrap closes TBC vars when the error propagates.
 				// If a __close handler errors, that error replaces the original.
