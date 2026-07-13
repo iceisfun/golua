@@ -66,3 +66,17 @@ print(#t, t[1], t[n], t[n+1])`)
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+// string.gsub with a number subject must return a string even on the
+// no-change fast path (reference coerces the argument slot in place).
+func TestStringGsubNumberSubject(t *testing.T) {
+	got := runLuaCapture(t, `
+print(type(string.gsub(1, "x", "y")))
+print(type(string.gsub(123, "%d", "%0")))
+print(type(string.gsub(12.5, "9", "X")))
+print(string.gsub(123, "9", "X"))`)
+	want := "string\nstring\nstring\n123\t0"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
