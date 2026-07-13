@@ -33,6 +33,7 @@ lua5.5.0            wontfix/<issue-name>/example.lua    # reference
 
 | Issue | One-line summary |
 |-------|------------------|
+| [`binary-integer-literals`](binary-integer-literals/) | Deliberate extension: `0b101` binary numerals are accepted; reference Lua rejects them ("malformed number"). |
 | [`signed-zero-const-fold`](signed-zero-const-fold/) | Compile-time `-0.0 - 0` keeps the IEEE sign (`-0.0`); reference's folder yields `+0.0`. |
 | [`libm-last-ulp`](libm-last-ulp/) | Transcendental math (`^`, `sin`, `exp`, …) can differ in the last ULP: Go `math` vs C `libm`. |
 | [`fmod-nan-sign`](fmod-nan-sign/) | `math.fmod`/`%` with a negative-NaN operand may print `-nan` vs `nan` (C-libm-dependent NaN sign). |
