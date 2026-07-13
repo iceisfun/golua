@@ -1198,6 +1198,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if lt != (k == 1) {
 				frame.pc++
 			}
@@ -1210,6 +1211,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if le != (k == 1) {
 				frame.pc++
 			}
@@ -1222,6 +1224,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if gt != (k == 1) {
 				frame.pc++
 			}
@@ -1234,6 +1237,7 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			frame = &vm.callStack[len(vm.callStack)-1]
 			if ge != (k == 1) {
 				frame.pc++
 			}
