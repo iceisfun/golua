@@ -103,3 +103,25 @@ print(pcall(os.time, {year=(1<<31)+1899, month=12, day=31, hour=23, min=59, sec=
 		t.Fatalf("os.time boundary (sec=59) should succeed: %q", lines[1])
 	}
 }
+
+// table.remove with the allowed past-the-end position (pos == #list+1) must
+// still perform the metamethod-aware read and nil-out of t[pos], like
+// reference tremove's unconditional lua_geti/lua_seti pair.
+func TestTableRemovePastEnd(t *testing.T) {
+	got := runLuaCapture(t, `
+local t = setmetatable({10,20,30}, {__len=function() return 2 end})
+print(table.remove(t, 3), rawget(t, 3))
+local u = setmetatable({}, {__len=function() return 2 end, __index=function(_,k) return k*2 end})
+print(table.remove(u, 3))
+local gets, sets = {}, {}
+local p = setmetatable({}, {
+  __len = function() return 0 end,
+  __index = function(_, k) gets[#gets+1] = k; return "G"..k end,
+  __newindex = function(tt, k, v) sets[#sets+1] = k.."="..tostring(v); rawset(tt, k, v) end,
+})
+print(table.remove(p, 1), #gets, #sets)`)
+	want := "30\tnil\n6\nG1\t1\t1"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}

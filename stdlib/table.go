@@ -208,13 +208,10 @@ func tableRemove(v *vm.VM) int {
 		}
 	}
 
-	// pos beyond array (length+1 case or empty table): return nil, no modification
-	if pos > length {
-		v.Set(0, vm.Nil)
-		return 1
-	}
-
-	// Get the value being removed
+	// Get the value being removed. Reference tremove does lua_geti/lua_seti
+	// unconditionally, including for the allowed past-the-end position
+	// (pos == #list+1), so the read and the final nil-out below stay
+	// metamethod-aware there too.
 	removed := tableGetIdx(v, obj, pos)
 
 	// Shift elements down
@@ -222,8 +219,13 @@ func tableRemove(v *vm.VM) int {
 		elem := tableGetIdx(v, obj, i+1)
 		tableSetIdx(v, obj, i, elem)
 	}
-	// Clear the last slot (or the removed slot when length == 0 and pos == 0)
-	tableSetIdx(v, obj, length, vm.Nil)
+	// Clear the vacated slot: t[#list] after a shift, t[pos] itself when no
+	// shift occurred (pos >= length, including pos == 0 on an empty table)
+	clearPos := pos
+	if length > clearPos {
+		clearPos = length
+	}
+	tableSetIdx(v, obj, clearPos, vm.Nil)
 
 	v.Set(0, removed)
 	return 1
