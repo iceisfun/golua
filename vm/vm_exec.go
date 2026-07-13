@@ -1824,6 +1824,11 @@ func (vm *VM) execute() ([]Value, error) {
 			n := vB
 			if n == 0 {
 				n = vm.top - (frame.base + a + 1)
+				// Restore vm.top to the frame's proper level now that the open
+				// call's result count has been consumed. Leaving it lowered would
+				// make a later metamethod or coercion dispatch (which places its
+				// callee frame at vm.top) overlap live caller registers.
+				vm.top = frame.base + proto.MaxStack
 			}
 
 			offset := vC

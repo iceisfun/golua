@@ -169,3 +169,41 @@ print(g == f)`)
 		t.Fatalf("deep chained call miscompiled: got %q", got)
 	}
 }
+
+// after a table constructor consumes an open call or varargs (OP_SETLIST with
+// B=0), vm.top must be restored to the frame's register ceiling. A stale low
+// vm.top let the next metamethod or string-coercion dispatch build its callee
+// frame on top of live caller registers, silently corrupting them.
+func TestSetListRestoresTop(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{`local function mr() return 1, 2, 3 end
+local obj = setmetatable({}, {__add = function() return 1000 end})
+local t = {1, mr()}
+print("a", "b", "c", "d", (obj + 1))`, "a\tb\tc\td\t1000"},
+		{`local function g() return 1, 2 end
+local function main(...)
+  local t = {g()}
+  local a, b, c = "A", "B", "C"
+  local y = "21" % 3
+  print(a, b, c, y)
+end
+main(1, "two", nil, 4)`, "A\tB\tC\t0"},
+		{`local function main(...)
+  local t = {...}
+  local a = "A"
+  local y = "21" % 3
+  print(a, y)
+end
+main(1, 2, 3, 4)`, "A\t0"},
+		{`local function mr() return 1, 2, 3 end
+local obj = setmetatable({}, {__concat = function() return "CC" end})
+local t = {1, mr()}
+local u = {"a", "b", "c", "d", "e", (obj .. 1)}
+print(u[4], u[5], u[6])`, "d\te\tCC"},
+	}
+	for _, c := range cases {
+		if got := runLuaCapture(t, c.src); got != c.want {
+			t.Fatalf("%s => got %q want %q", c.src, got, c.want)
+		}
+	}
+}
