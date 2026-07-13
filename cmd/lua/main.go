@@ -98,6 +98,10 @@ done:
 	var source string
 	var name string
 	var scriptArgs []string
+	// scriptArgvIdx is the position of the script in the original argv, used
+	// to place the interpreter name and pre-script options at negative arg
+	// indices like reference Lua (manual §7). -1 for -e runs (no script).
+	scriptArgvIdx := -1
 
 	if evalCode != "" {
 		source = evalCode
@@ -109,6 +113,7 @@ done:
 			return 1
 		}
 		filename := args[0]
+		scriptArgvIdx = len(argv) - len(args)
 		scriptArgs = args[1:]
 		src, err := os.ReadFile(filename)
 		if err != nil {
@@ -116,10 +121,6 @@ done:
 			return 1
 		}
 		source = string(src)
-		// Strip UTF-8 BOM if present (like Lua 5.4)
-		if len(source) >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF {
-			source = source[3:]
-		}
 		name = "@" + filename
 	}
 
@@ -133,14 +134,7 @@ done:
 	// Determine program name for error messages (like Lua 5.4 uses argv[0])
 	progName := filepath.Base(argv[0])
 
-	block, err := parser.Parse(displayName, source)
-	if err != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
-		return 1
-	}
-
-	// Compile — use the raw name so proto.Source stores it with the '@' prefix.
-	proto, err := compiler.Compile(name, block)
+	proto, err := compileChunk(name, displayName, source)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
 		return 1
@@ -178,29 +172,63 @@ done:
 	configureCLIProviders(v, testMode, scriptDir)
 	stdlib.Open(v)
 
-	// Set command line arguments — use displayName (without '@' prefix)
+	// Set command line arguments — use displayName (without '@' prefix).
+	// Reference Lua places the interpreter name and any pre-script options at
+	// negative indices (manual §7): argv[i] lands at arg[i - scriptIdx].
 	luaArgs := vm.NewEmptyTable()
 	luaArgs.SetInt(0, vm.NewString(displayName))
+	if scriptArgvIdx > 0 {
+		for i := 0; i < scriptArgvIdx; i++ {
+			luaArgs.SetInt(i-scriptArgvIdx, vm.NewString(argv[i]))
+		}
+	}
 	for i, arg := range scriptArgs {
 		luaArgs.SetInt(i+1, vm.NewString(arg))
 	}
 	v.SetGlobal("arg", vm.NewTable(luaArgs))
 
-	// Run — recover LuaExitError for os.exit support
+	// LUA_INIT_5_5 / LUA_INIT (reference handle_luainit): a value of the
+	// form '@filename' runs the file, anything else runs as code — before
+	// the main chunk. Errors abort the run like any script error.
+	initName := "=LUA_INIT_5_5"
+	initVal, haveInit := os.LookupEnv("LUA_INIT_5_5")
+	if !haveInit {
+		initName = "=LUA_INIT"
+		initVal, haveInit = os.LookupEnv("LUA_INIT")
+	}
 	var exitCode int
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				if exitErr, ok := r.(*vm.LuaExitError); ok {
-					exitCode = exitErr.Code
-					return
-				}
-				// Re-panic for unexpected panics
-				panic(r)
+	var exited bool
+	if haveInit && initVal != "" {
+		var initProto *compiler.Proto
+		if strings.HasPrefix(initVal, "@") {
+			fname := initVal[1:]
+			src, rerr := os.ReadFile(fname)
+			if rerr != nil {
+				fmt.Fprintf(stderr, "%s: cannot open %s\n", progName, fname)
+				return 1
 			}
-		}()
-		_, err = v.Run(proto)
-	}()
+			initProto, err = compileChunk("@"+fname, fname, string(src))
+		} else {
+			initProto, err = compileChunk(initName, initName[1:], initVal)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+			return 1
+		}
+		exitCode, exited, err = runProto(v, initProto)
+		if err != nil {
+			reportLuaError(v, err, progName, stderr)
+			v.Close(context.Background())
+			return 1
+		}
+		if exited {
+			v.Close(context.Background())
+			return exitCode
+		}
+	}
+
+	// Run — recover LuaExitError for os.exit support
+	exitCode, _, err = runProto(v, proto)
 
 	v.Close(context.Background())
 
@@ -313,4 +341,50 @@ func formatLuaValue(val vm.Value) string {
 		return s
 	}
 	return val.String()
+}
+
+// compileChunk parses and compiles a text chunk, or undumps a precompiled
+// binary chunk (LUA_SIGNATURE prefix) like reference luaL_loadfile.
+// name carries the '@'/'=' prefix for proto.Source; displayName is used in
+// parser error messages.
+func compileChunk(name, displayName, source string) (proto *compiler.Proto, err error) {
+	if strings.HasPrefix(source, "\x1bLua") {
+		// The undumper panics on malformed chunks; report as an error.
+		defer func() {
+			if r := recover(); r != nil {
+				proto = nil
+				err = fmt.Errorf("%v", r)
+			}
+		}()
+		proto, _, err = compiler.Undump([]byte(source), name)
+		return proto, err
+	}
+	// Strip UTF-8 BOM if present (like Lua 5.4)
+	if len(source) >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF {
+		source = source[3:]
+	}
+	block, err := parser.Parse(displayName, source)
+	if err != nil {
+		return nil, err
+	}
+	return compiler.Compile(name, block)
+}
+
+// runProto runs a compiled chunk, recovering the os.exit sentinel.
+// exited reports whether os.exit terminated the run (exitCode is then its
+// status, possibly 0).
+func runProto(v *vm.VM, proto *compiler.Proto) (exitCode int, exited bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if exitErr, ok := r.(*vm.LuaExitError); ok {
+				exitCode = exitErr.Code
+				exited = true
+				return
+			}
+			// Re-panic for unexpected panics
+			panic(r)
+		}
+	}()
+	_, err = v.Run(proto)
+	return exitCode, exited, err
 }
