@@ -146,6 +146,8 @@ type VM struct {
 	ctx           context.Context // nil = no cancellation checking
 	limits        Limits          // zero values = no limit
 	instrCount    int64           // only tracked when MaxInstructions > 0
+	instrSynced   int64           // value of instrCount at the last budget sync
+	instrBudget   *instrBudget    // instruction budget shared with the coroutine family
 	callDepthBase int             // inherited call depth from parent VM (for coroutines)
 	closeDepth    *int32          // shared counter tracking nested coroutine.close depth (atomic)
 	metaCallDepth int             // >0 when inside a metamethod call chain (for "C stack overflow" message)
@@ -177,6 +179,67 @@ type VM struct {
 	// Since the VM processes one instruction at a time (no concurrency),
 	// this buffer can be reused across returns without allocation.
 	retBuf [8]Value
+}
+
+// instrBudget is the Limits.MaxInstructions budget shared by a VM and every
+// coroutine descended from it, so the configured limit bounds the TOTAL work of
+// the family (the same way callDepthBase inherits the call-depth limit). Giving
+// each coroutine a fresh budget lets a script spawn coroutines forever without
+// ever tripping the limit.
+//
+// The counter on the hot path stays the plain per-VM VM.instrCount: only the
+// goroutine that owns a VM ever touches it. Work is published into the shared
+// total at the resume/yield/close handoffs (see VM.SyncInstructionBudget), which
+// is the only place two VMs of a family meet. The total is atomic because those
+// handoffs are not always ordered: a resume that gives up on a cancelled context
+// abandons the coroutine goroutine, which keeps running (and keeps publishing)
+// while the resumer carries on.
+type instrBudget struct {
+	total atomic.Int64
+}
+
+// SyncInstructionBudget publishes the instructions this VM has executed since
+// its last sync into the budget shared with its coroutine family, and adopts the
+// resulting family total as this VM's own count. Callers that implement
+// coroutines must call it on both sides of every handoff — before passing
+// control to another VM of the family and after regaining it — so that
+// Limits.MaxInstructions bounds the family as a whole. It is a no-op when no
+// instruction limit is configured.
+//
+// After a sync, InstructionCount reports the whole family's consumption, not
+// just this VM's.
+//
+// CALLING CONTRACT — this method is NOT safe for concurrent use. Only the
+// goroutine that currently owns v may call it: the shared total is atomic, but
+// the per-VM counters it reads and writes are plain fields, so calling it on a
+// VM another goroutine is still running tears the (count, synced) pair and can
+// either double-charge the family budget or roll it backwards. Ownership of a
+// coroutine's VM does not pass to a closer merely because the coroutine has
+// been observed dead: a coroutine goroutine publishes its dead status before it
+// finishes its own final sync (and a resume that gives up on a cancelled
+// context leaves that goroutine running). Establish a happens-before edge with
+// the coroutine goroutine — stdlib waits for the coroutine's done channel —
+// before syncing a VM you did not run.
+//
+// The method is exported because the coroutine implementation lives in package
+// stdlib, alongside the other cross-package handoff hooks on VM
+// (CallCoroutine, ClosePendingTBC, ClearCallStack, ReleaseDeadStack). Embedders
+// that do not implement their own coroutine scheduler never need to call it.
+func (vm *VM) SyncInstructionBudget() {
+	if vm.limits.MaxInstructions <= 0 || vm.instrBudget == nil {
+		return
+	}
+	delta := vm.instrCount - vm.instrSynced
+	if delta < 0 {
+		// The count only moves backwards when the host calls
+		// ResetInstructionCount, which resets the budget of the whole family.
+		vm.instrBudget.total.Store(vm.instrCount)
+		vm.instrSynced = vm.instrCount
+		return
+	}
+	total := vm.instrBudget.total.Add(delta)
+	vm.instrCount = total
+	vm.instrSynced = total
 }
 
 // Sentinel values for callFrame fields.
@@ -222,6 +285,7 @@ func New(opts ...VMOption) *VM {
 		callStack:     make([]callFrame, 0, 32),
 		globals:       NewEmptyTable(),
 		warnEnabled:   false,
+		instrBudget:   &instrBudget{},
 		closeDepth:    new(int32),
 		gcMode:        "generational",
 		gcRunning:     true,
@@ -414,6 +478,14 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 	// Save and clear skipTBCCleanup: this call's recovery uses the saved
 	// value, but nested ProtectedCalls (from pcall) see false so they
 	// still close TBC vars normally.
+	//
+	// Caveat: this one flag conflates three concerns in the recovery path
+	// below — running __close handlers, restoring vm.top, and closing open
+	// upvalues. Callers that re-raise immediately (ProtectedCallCoroutine and
+	// the ProtectedCallNoTBCClose sites) are fine, because the enclosing real
+	// protected boundary repairs all three. A caller that swallowed the error
+	// instead would leak an elevated vm.top and stale open upvalues; do not
+	// add such a caller without splitting the flag first.
 	skipTBC := vm.skipTBCCleanup
 	vm.skipTBCCleanup = false
 
@@ -897,6 +969,7 @@ func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
 		warnEnabled:       parent.warnEnabled,
 		ctx:               parent.ctx,
 		limits:            parent.limits,
+		instrBudget:       parent.instrBudget,
 		callDepthBase:     parent.callDepthBase + len(parent.callStack),
 		closeDepth:        parent.closeDepth,
 		captureOutput:     parent.captureOutput,
@@ -1069,6 +1142,14 @@ func (vm *VM) ClosePendingTBC(errVal Value, hasError bool) (finalErr error) {
 	defer func() {
 		vm.callStack = savedCallStack
 	}()
+	// The handlers run on the *resumer's* goroutine against the dead
+	// coroutine's VM, so the coroutine's yield/resume channels are still
+	// installed but nobody is servicing them: a coroutine.yield() in a handler
+	// would park that goroutine forever. Reference Lua closes these variables
+	// from C (lua_closethread), where yielding is not allowed, so enter a
+	// non-yieldable region and let yield raise the usual C-call-boundary error.
+	exit := vm.EnterNonYieldable()
+	defer exit()
 	tbcToClose := make([]int, len(vm.tbcVars))
 	copy(tbcToClose, vm.tbcVars)
 	vm.tbcVars = vm.tbcVars[:0]

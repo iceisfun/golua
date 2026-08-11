@@ -513,12 +513,27 @@ func (vm *VM) OnClose(hook func(context.Context)) {
 	vm.closeHooks = append(vm.closeHooks, hook)
 }
 
-// InstructionCount returns the current checkpoint visit count.
+// InstructionCount returns the current checkpoint visit count charged against
+// Limits.MaxInstructions. The budget covers this VM together with every
+// coroutine descended from it, so once a coroutine has run this is the family's
+// consumption, not just this VM's. Work done by a coroutine is folded in at the
+// resume/yield/close handoffs, so a count read while a coroutine is mid-run (or
+// while an abandoned coroutine goroutine is still executing) may lag by the
+// instructions that coroutine has not published yet.
+//
+// Call it from the goroutine that owns this VM.
 func (vm *VM) InstructionCount() int64 {
 	return vm.instrCount
 }
 
-// ResetInstructionCount resets the checkpoint visit counter to zero.
+// ResetInstructionCount resets the checkpoint visit counter to zero. Because
+// the budget is shared, resetting any member of a coroutine family clears the
+// budget for the whole family: this VM starts from zero immediately, and the
+// shared total is rewound to this VM's count at its next coroutine handoff.
+// Hosts recovering a timed-out sandbox for reuse should reset the VM they run
+// scripts on.
+//
+// Call it from the goroutine that owns this VM.
 func (vm *VM) ResetInstructionCount() {
 	vm.instrCount = 0
 }
