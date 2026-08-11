@@ -3,18 +3,21 @@ package vm
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 )
 
 // FullIoProvider is a full-capability IO provider that allows both reading
 // and writing files. It jails file access to a root directory for security.
 type FullIoProvider struct {
-	root   string
+	jail   *pathJail
 	noJail bool // when true, path-jailing is disabled (test-only, unsandboxed)
 	stdin  *stdFile
 	stdout *stdFile
@@ -22,19 +25,37 @@ type FullIoProvider struct {
 }
 
 // NewFullIoProvider creates a new FullIoProvider rooted at the given directory.
-// All file operations are restricted to paths within this directory.
+// All file operations are restricted to paths within this directory: relative
+// and absolute names alike are resolved (following symlinks) and refused unless
+// the final location lies inside the root. The OS temp directory is NOT
+// reachable from a jailed VM: it is world-writable on a typical host, so any
+// other process there could plant a file for the VM to read.
+//
+// An empty root means the process working directory, which is what it has
+// always meant (filepath.Abs("") returns the working directory).
+//
+// A host that wants a wider reach than one directory — a general-purpose
+// interpreter rather than a sandbox — opts into it with AllowRoot.
 func NewFullIoProvider(root string) *FullIoProvider {
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		absRoot = root
+	if root == "" {
+		root = "."
 	}
 	return &FullIoProvider{
-		root:   absRoot,
+		jail:   newPathJail(root),
 		stdin:  &stdFile{file: os.Stdin, name: "stdin", readable: true},
 		stdout: &stdFile{file: os.Stdout, name: "stdout", writable: true},
 		stderr: &stdFile{file: os.Stderr, name: "stderr", writable: true},
 	}
 }
+
+// AllowRoot widens the jail with another directory: after this call a name that
+// resolves inside dir is reachable as well as one inside the original root.
+// Relative names keep resolving against the original root.
+//
+// It exists for hosts that are not sandboxing — a standalone interpreter passing
+// "/" behaves like reference Lua, which has no filesystem restriction at all.
+// Call it before the provider is handed to a running VM.
+func (p *FullIoProvider) AllowRoot(dir string) { p.jail.allowRoot(dir) }
 
 // NewTestIoProvider creates an UNSANDBOXED, full read/write IO provider with no
 // path-jailing: every absolute or relative path the program names is passed
@@ -48,7 +69,7 @@ func NewFullIoProvider(root string) *FullIoProvider {
 // or NewJailedIoProvider (read-only) instead.
 func NewTestIoProvider() *FullIoProvider {
 	return &FullIoProvider{
-		root:   "",
+		jail:   newPathJail(""),
 		noJail: true,
 		stdin:  &stdFile{file: os.Stdin, name: "stdin", readable: true},
 		stdout: &stdFile{file: os.Stdout, name: "stdout", writable: true},
@@ -56,26 +77,403 @@ func NewTestIoProvider() *FullIoProvider {
 	}
 }
 
-// resolvePath resolves a filename to an absolute path within the root.
+// resolvePath resolves a filename to an absolute path within the root,
+// following symlinks in every component including the last — which is what
+// fopen() does, so it is what Open must do.
 func (p *FullIoProvider) resolvePath(name string) (string, error) {
 	// Unsandboxed (test-only) mode: pass the name straight through to the host
 	// filesystem with no jailing. Relative names resolve against the process cwd.
 	if p.noJail {
 		return name, nil
 	}
+	return p.jail.resolve(name)
+}
+
+// resolvePathLink is resolvePath for operations that act on the directory entry
+// itself rather than on what it points at. C's remove() and rename() unlink and
+// move the LINK; dereferencing the last component here would silently destroy
+// the target instead, so only the parent chain is resolved.
+func (p *FullIoProvider) resolvePathLink(name string) (string, error) {
+	if p.noJail {
+		return name, nil
+	}
+	return p.jail.resolveLink(name)
+}
+
+// pathJail confines filesystem names to one or more root directories. Both the
+// IO provider and the code provider use it, so a name that io.open refuses is
+// refused by dofile as well.
+//
+// Containment is decided on the FINAL resolved path, because every cheaper test
+// is escapable: a relative name is not safe just because it is relative
+// ("../x" climbs straight out), a string prefix is not a path boundary (root
+// "/srv/scripts" would also grant "/srv/scripts-evil/x"), and an unresolved
+// symlink inside the root is a door to anywhere the link points. Names that do
+// not exist yet (file creation) resolve through their deepest existing
+// ancestor, so a create cannot be aimed through a dangling link either.
+type pathJail struct {
+	mu sync.Mutex
+	// roots are absolute and, where the filesystem let them be inspected,
+	// symlink-free; roots[0] anchors relative names. A jail with no root at all
+	// admits nothing.
+	roots []jailRoot
+}
+
+// jailRoot is one directory a jail admits, resolved once when it is added.
+type jailRoot struct {
+	path string
+	// resolved records that the walk over path actually succeeded, so path is
+	// known to be symlink-free. Only such a root may be used as the starting
+	// point of a later resolution (see pathJail.resolveReal); one that could not
+	// be inspected — EACCES on a parent, a symlink loop — is still a valid
+	// containment boundary, it just cannot be trusted as a shortcut.
+	resolved bool
+}
+
+func newPathJail(root string) *pathJail {
+	j := &pathJail{}
+	if root != "" {
+		j.roots = []jailRoot{resolveJailRoot(root)}
+	}
+	return j
+}
+
+// resolveJailRoot turns a caller-supplied directory into a jail root, resolving
+// it once so that per-call resolution does not have to walk it again. A root
+// that cannot be resolved keeps its plain absolute form: a root that does not
+// exist yet still has a stable name.
+func resolveJailRoot(dir string) jailRoot {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return jailRoot{path: dir}
+	}
+	resolved, err := realPath(abs)
+	if err != nil {
+		return jailRoot{path: abs}
+	}
+	return jailRoot{path: resolved, resolved: true}
+}
+
+// allowRoot adds another root directory to the jail.
+func (j *pathJail) allowRoot(dir string) {
+	if dir == "" {
+		return
+	}
+	root := resolveJailRoot(dir)
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.roots = append(j.roots, root)
+}
+
+// anchor returns the root that relative names resolve against ("" when the jail
+// has no root at all, which admits nothing).
+func (j *pathJail) anchor() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if len(j.roots) == 0 {
+		return ""
+	}
+	return j.roots[0].path
+}
+
+// contains reports whether an already-resolved absolute path is inside the jail.
+func (j *pathJail) contains(path string) bool {
+	j.mu.Lock()
+	rooted := len(j.roots) > 0
+	for _, root := range j.roots {
+		if withinDir(root.path, path) {
+			j.mu.Unlock()
+			return true
+		}
+	}
+	j.mu.Unlock()
+	// A rootless jail admits nothing at all, not even a runtime-minted name.
+	return rooted && withinRuntimeTempDir(path)
+}
+
+// resolveBase returns a directory the resolution of candidate may start from:
+// one that is already known to be absolute and symlink-free and that candidate
+// lexically sits under. "" means the walk has to start at the filesystem root.
+func (j *pathJail) resolveBase(candidate string) string {
+	j.mu.Lock()
+	for _, root := range j.roots {
+		if root.resolved && withinDir(root.path, candidate) {
+			j.mu.Unlock()
+			return root.path
+		}
+	}
+	j.mu.Unlock()
+	if tmp := runtimeTempRoot(); tmp != "" && withinDir(tmp, candidate) {
+		return tmp
+	}
+	return ""
+}
+
+// resolveReal resolves candidate to its real path, starting the walk at
+// whichever jail root already covers it. The roots were resolved once when they
+// were added, so re-inspecting their components on every io.open, io.lines,
+// os.remove, os.rename, loadfile, dofile and require would be one lstat per
+// root component per call, on top of the ones the name itself needs.
+//
+// What that trades away is noticing that the root's OWN prefix was replaced by
+// a symlink after the jail was built — which takes write access to a directory
+// above the root, i.e. outside the jail entirely. An adversary who has that can
+// swap the root between the resolution and the open no matter how often it is
+// re-walked, because resolve-then-open is not atomic; re-walking never bought a
+// guarantee, only cost.
+func (j *pathJail) resolveReal(candidate string) (string, error) {
+	if base := j.resolveBase(candidate); base != "" {
+		return realPathUnder(base, candidate)
+	}
+	return realPath(candidate)
+}
+
+// candidate turns a caller-supplied name into the absolute, lexically clean
+// path resolution starts from.
+func (j *pathJail) candidate(name string) (string, error) {
+	root := j.anchor()
+	if root == "" {
+		return "", accessDenied(name)
+	}
 	if filepath.IsAbs(name) {
-		// Allow absolute paths that are within root
-		absName, err := filepath.Abs(name)
+		return filepath.Clean(name), nil
+	}
+	return filepath.Join(root, name), nil
+}
+
+// resolve returns the real path an operation must act on, following symlinks in
+// every component, and refuses anything that lands outside the jail.
+func (j *pathJail) resolve(name string) (string, error) {
+	candidate, err := j.candidate(name)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := j.resolveReal(candidate)
+	if err != nil {
+		return "", j.resolveError(name, candidate, err)
+	}
+	if !j.contains(resolved) {
+		return "", accessDenied(name)
+	}
+	return resolved, nil
+}
+
+// resolveLink is resolve for remove/rename: the parent chain is resolved (that
+// is what containment needs) but the final component is left alone, so the
+// operation hits the link and not the file it points at.
+func (j *pathJail) resolveLink(name string) (string, error) {
+	candidate, err := j.candidate(name)
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Dir(candidate)
+	base := filepath.Base(candidate)
+	if parent == candidate || base == "." || base == string(filepath.Separator) {
+		// A filesystem root or a bare "." has no final component to hold back.
+		return j.resolve(name)
+	}
+	realParent, err := j.resolveReal(parent)
+	if err != nil {
+		return "", j.resolveError(name, candidate, err)
+	}
+	resolved := filepath.Join(realParent, base)
+	if !j.contains(resolved) {
+		return "", accessDenied(name)
+	}
+	return resolved, nil
+}
+
+// resolveError decides what a resolution failure looks like to the caller. A
+// failure that is not about containment — EACCES on a directory the script may
+// legitimately name, ENAMETOOLONG, ELOOP — is an operational error and is
+// reported as the OS reports it, so a permission problem inside the jail does
+// not masquerade as a sandbox violation with the wrong errno. That only applies
+// to a name that is lexically inside the jail: for anything else the answer must
+// not depend on the state of the filesystem outside it.
+func (j *pathJail) resolveError(name, candidate string, err error) error {
+	if !j.contains(candidate) {
+		return accessDenied(name)
+	}
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		// Report the name the caller gave rather than the internal path the
+		// walk failed on.
+		return &fs.PathError{Op: pe.Op, Path: name, Err: pe.Err}
+	}
+	return err
+}
+
+// accessDeniedError marks a refusal by the jail, as opposed to a failure of the
+// operation itself. Callers that phrase their own messages (the code provider)
+// need to tell the two apart without matching on text.
+type accessDeniedError struct{ name string }
+
+func (e *accessDeniedError) Error() string { return "access denied: " + e.name }
+
+func accessDenied(name string) error { return &accessDeniedError{name: name} }
+
+func isAccessDenied(err error) bool {
+	var denied *accessDeniedError
+	return errors.As(err, &denied)
+}
+
+const (
+	// maxSymlinkHops bounds link following, as the kernel's own ELOOP limit does.
+	maxSymlinkHops = 40
+	// maxPathLen mirrors Linux PATH_MAX. The kernel refuses a longer name with
+	// ENAMETOOLONG without looking at it, so refusing it here costs a caller
+	// nothing and stops a script from turning free name construction ("a/" a
+	// hundred thousand times) into resolution work the VM cannot interrupt.
+	maxPathLen = 4096
+	// maxPathSteps bounds the components one resolution may visit. Only symlink
+	// expansion can push the count past maxPathLen/2, and only up to the hop
+	// limit, so no legitimate name comes close.
+	maxPathSteps = 16384
+)
+
+// realPath returns path — which must be absolute and lexically clean — with
+// every symlink resolved. Unlike filepath.EvalSymlinks it tolerates a path that
+// does not exist yet: a component that is absent is kept as written, which is
+// where a create would land.
+//
+// Resolution is a single forward walk that inspects each component once, so the
+// cost is linear in the length of the name. Resolving the whole prefix again per
+// component (what EvalSymlinks does when called level by level) is quadratic,
+// and every jailed entry point would inherit it as an uninterruptible CPU sink.
+func realPath(path string) (string, error) {
+	if err := checkPathLen(path); err != nil {
+		return "", err
+	}
+	sep := string(filepath.Separator)
+	volume := filepath.VolumeName(path)
+	return walkPath(volume+sep, splitPathComponents(path[len(volume):]), path)
+}
+
+// checkPathLen refuses an over-long name before anything splits or walks it.
+func checkPathLen(path string) error {
+	if len(path) > maxPathLen {
+		return &fs.PathError{Op: "open", Path: path, Err: syscall.ENAMETOOLONG}
+	}
+	return nil
+}
+
+// realPathUnder is realPath for a path already known to sit under base — an
+// absolute directory some jail resolved once and stored symlink-free. Only the
+// components below base are inspected: walking the root prefix again on every
+// jailed call is one lstat per root component for an answer the jail already
+// has. A symlink below base is still followed, and an absolute link target
+// restarts the walk at the filesystem root, so nothing is assumed about where
+// the name ends up — only about where it starts.
+func realPathUnder(base, path string) (string, error) {
+	if err := checkPathLen(path); err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(base, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		// Not actually under base after all; resolve it the long way.
+		return realPath(path)
+	}
+	return walkPath(base, splitPathComponents(rel), path)
+}
+
+// walkPath resolves pending, the components below base, against the filesystem.
+// base must be absolute and symlink-free; full is the whole name the caller
+// asked about and is used only for error reporting.
+func walkPath(base string, pending []string, full string) (string, error) {
+	sep := string(filepath.Separator)
+	resolved := base
+
+	hops, steps := 0, 0
+	for len(pending) > 0 {
+		if steps++; steps > maxPathSteps {
+			return "", &fs.PathError{Op: "open", Path: full, Err: syscall.ENAMETOOLONG}
+		}
+		name := pending[0]
+		pending = pending[1:]
+		switch name {
+		case ".":
+			continue
+		case "..":
+			// Resolved so far is symlink-free, so climbing lexically here is
+			// exactly what the kernel does with ".." after resolution.
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+
+		next := resolved
+		if !strings.HasSuffix(next, sep) {
+			next += sep
+		}
+		next += name
+
+		// Lstat rather than Readlink to decide: "this is not a symlink" is a
+		// portable answer from Lstat, while Readlink reports it with a
+		// different error on every platform.
+		info, err := os.Lstat(next)
+		if err != nil {
+			// ENOENT and ENOTDIR mean the name does not exist yet (a create
+			// target, or a path through a plain file, which the operation
+			// itself will reject) and the rest of the path is therefore
+			// link-free. Anything else — EACCES, ELOOP, ENAMETOOLONG — leaves
+			// containment undecidable, so it is surfaced rather than guessed at.
+			if !isMissingPathErr(err) {
+				return "", err
+			}
+			resolved = next
+			continue
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		target, err := os.Readlink(next)
 		if err != nil {
 			return "", err
 		}
-		// Check if path is within root or in temp directory
-		if !strings.HasPrefix(absName, p.root) && !strings.HasPrefix(absName, os.TempDir()) {
-			return "", fmt.Errorf("access denied: %s", name)
+		if hops++; hops > maxSymlinkHops {
+			return "", &fs.PathError{Op: "open", Path: full, Err: syscall.ELOOP}
 		}
-		return absName, nil
+		if len(target) > maxPathLen {
+			return "", &fs.PathError{Op: "open", Path: full, Err: syscall.ENAMETOOLONG}
+		}
+		if targetVol := filepath.VolumeName(target); filepath.IsAbs(target) {
+			resolved = targetVol + sep
+			target = target[len(targetVol):]
+		}
+		// A relative target continues from the link's own directory, which
+		// `resolved` still is: only `next` had the link's name appended.
+		pending = append(splitPathComponents(target), pending...)
 	}
-	return filepath.Join(p.root, name), nil
+	return resolved, nil
+}
+
+// isMissingPathErr reports whether a lookup failure means "nothing is there"
+// rather than "this path cannot be inspected".
+func isMissingPathErr(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
+// splitPathComponents splits a path into its non-empty components. Empty
+// entries (leading, trailing and doubled separators) carry no meaning and are
+// dropped, which keeps the walk free of special cases.
+func splitPathComponents(path string) []string {
+	return strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == rune(filepath.Separator)
+	})
+}
+
+// withinDir reports whether path is dir itself or lies beneath it. The
+// comparison is component-wise: a string prefix would also accept a sibling
+// directory whose name merely starts with dir's.
+func withinDir(dir, path string) bool {
+	if path == dir {
+		return true
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Open opens a file within the provider's root directory.
@@ -162,8 +560,106 @@ func (p *FullIoProvider) Stderr(ctx context.Context) LuaFile { return p.stderr }
 
 // TmpName creates a temporary file name. It creates a temp file, closes it,
 // removes it, and returns the path -- matching Lua 5.4 os.tmpname behavior.
+//
+// The name is minted in the runtime's own temp directory (see
+// runtimeTempDir), which every jail in this process admits. That is what makes
+// the name usable for what a script actually does with it — write a chunk to
+// it and load it back — because opening it and loading it are two different
+// providers holding two different jails, and the name has to satisfy both.
+// Minting there also keeps temp files out of the jail root, which for the
+// common read-only-root deployment could not hold them anyway and for a
+// writable one is the host's data directory, not a scratch space.
+//
+// Every name minted stays usable for the life of the process — nothing is
+// revoked to bound a set — and the directory outlives the process the way the
+// files C's tmpnam leaves behind do, a Go program having no reliable exit hook.
+// It is one empty directory per process, against one file per call.
 func (p *FullIoProvider) TmpName(ctx context.Context) (string, error) {
-	f, err := os.CreateTemp("", "lua_")
+	dir, err := runtimeTempDir("")
+	if err != nil {
+		return "", err
+	}
+	name, err := mintTmpName(dir)
+	if err == nil {
+		return name, nil
+	}
+	// A system temp reaper can delete the directory out from under a
+	// long-running process. Rebuild it once rather than failing a call the
+	// reference never fails.
+	retry, retryErr := runtimeTempDir(dir)
+	if retryErr != nil {
+		return "", err
+	}
+	return mintTmpName(retry)
+}
+
+// runtimeTempPrefix names the runtime's temp directory recognizably, so an
+// operator looking at a host's temp directory can tell what left it there.
+const runtimeTempPrefix = "golua-tmp-"
+
+var (
+	runtimeTempMu   sync.Mutex
+	runtimeTempPath string
+)
+
+// runtimeTempDir returns the directory os.tmpname mints names in, creating it
+// on first use: one directory inside the OS temp directory, mode 0700, with a
+// name nothing outside this process knows in advance. Passing the path of a
+// directory that has just failed replaces it (a temp reaper can delete it).
+//
+// It exists because a minted name is only useful if the script can go on to USE
+// it, and using it crosses two providers with two separate jails: the IO
+// provider mints the name and opens the file, while the code provider decides
+// whether a chunk at that path may run. Neither can learn the other's paths
+// unless every host remembers to wire them together, so the runtime mints into
+// the one place on the filesystem it created for exactly this purpose and every
+// jail recognizes on its own.
+//
+// The containment this keeps is the one that matters: the OS temp directory
+// itself stays unreachable from a jailed VM. It is world-writable on a typical
+// host, so anything else there could otherwise plant a file for the VM to read
+// or race a name between the mint and the open — a directory this process owns
+// at 0700 cannot be read, written, listed or raced from outside the process.
+// What a jail admits here is never a pre-existing file and never a name derived
+// from script input: only paths this runtime created. Within the process the
+// names are mutually reachable, which costs nothing a script does not already
+// have — a chunk it wrote itself is one it could equally have run with load().
+func runtimeTempDir(retire string) (string, error) {
+	runtimeTempMu.Lock()
+	defer runtimeTempMu.Unlock()
+	if runtimeTempPath != "" && runtimeTempPath != retire {
+		return runtimeTempPath, nil
+	}
+	dir, err := os.MkdirTemp("", runtimeTempPrefix)
+	if err != nil {
+		return "", err
+	}
+	runtimeTempPath = resolveJailRoot(dir).path
+	return runtimeTempPath, nil
+}
+
+// runtimeTempRoot returns the runtime temp directory if one has been created,
+// and "" otherwise. A containment check must not create anything, so a process
+// that never calls os.tmpname never grows a temp directory.
+func runtimeTempRoot() string {
+	runtimeTempMu.Lock()
+	defer runtimeTempMu.Unlock()
+	return runtimeTempPath
+}
+
+// withinRuntimeTempDir reports whether an already-resolved path is a name this
+// runtime minted (or one a script placed beside it, which is the same thing:
+// the directory holds nothing else).
+func withinRuntimeTempDir(path string) bool {
+	tmp := runtimeTempRoot()
+	return tmp != "" && withinDir(tmp, path)
+}
+
+// mintTmpName creates a uniquely named file in dir ("" = the OS temp
+// directory), then removes it and returns the name, as os.tmpname is specified
+// to do. Creating it first is what makes the name unique.
+func mintTmpName(dir string) (string, error) {
+	f, err := os.CreateTemp(dir, "lua_")
 	if err != nil {
 		return "", err
 	}
@@ -173,9 +669,11 @@ func (p *FullIoProvider) TmpName(ctx context.Context) (string, error) {
 	return name, nil
 }
 
-// Remove removes a file or empty directory.
+// Remove removes a file or empty directory. A symlink is unlinked itself, not
+// followed (C's remove() behaves that way, and a script maintaining links
+// inside its own data root must not have their targets destroyed).
 func (p *FullIoProvider) Remove(ctx context.Context, name string) error {
-	path, err := p.resolvePath(name)
+	path, err := p.resolvePathLink(name)
 	if err != nil {
 		return err
 	}
@@ -183,7 +681,9 @@ func (p *FullIoProvider) Remove(ctx context.Context, name string) error {
 }
 
 // TmpFile creates and opens a temporary file for read/write.
-// The file is automatically removed when closed.
+// The file is automatically removed when closed. The OS temp directory is safe
+// here even for a jailed VM: the file is unlinked immediately, so the script
+// only ever holds the handle and can never name (or reach) anything else.
 func (p *FullIoProvider) TmpFile(ctx context.Context) (LuaFile, error) {
 	f, err := os.CreateTemp("", "lua_tmpfile_")
 	if err != nil {
@@ -201,13 +701,17 @@ func (p *FullIoProvider) TmpFile(ctx context.Context) (LuaFile, error) {
 	}, nil
 }
 
-// Rename renames (moves) a file within the provider's root directory.
+// Rename renames (moves) a file within the provider's root directory. Both
+// endpoints are jailed: a rename out of the root leaks the file, a rename in
+// (from an attacker-planted path) smuggles one back. As with Remove, a symlink
+// endpoint is the link itself — C's rename() moves the link, leaving whatever
+// it points at where it is.
 func (p *FullIoProvider) Rename(ctx context.Context, oldname, newname string) error {
-	oldpath, err := p.resolvePath(oldname)
+	oldpath, err := p.resolvePathLink(oldname)
 	if err != nil {
 		return err
 	}
-	newpath, err := p.resolvePath(newname)
+	newpath, err := p.resolvePathLink(newname)
 	if err != nil {
 		return err
 	}
@@ -272,12 +776,103 @@ func (f *fullFile) ReadBytes(ctx context.Context, n int) (string, error) {
 		}
 		return "", nil
 	}
-	buf := make([]byte, n)
-	nRead, err := io.ReadFull(f.reader, buf)
-	if nRead == 0 && err != nil {
-		return "", err
+	return readAtMost(f.reader, n, availableFor(n, f.available))
+}
+
+// smallReadLimit is the largest count worth honouring blindly: a buffer this
+// size is not an allocation any host notices, so a small read need not pay the
+// two syscalls it costs to ask how long the file actually is (a tight
+// f:read(1) loop would).
+const smallReadLimit = 64 << 10
+
+// availableFor returns the buffer hint for a read of n bytes, consulting the
+// (syscall-backed) estimate only when n is large enough to be worth bounding.
+func availableFor(n int, estimate func() int) int {
+	if n <= smallReadLimit {
+		return n
 	}
-	return string(buf[:nRead]), nil
+	return estimate()
+}
+
+// available estimates how many bytes the file still holds, so ReadBytes can
+// size its buffer from what is really there instead of from a count a script
+// invents for free. Zero means "unknown" (pipe, device, terminal).
+func (f *fullFile) available() int {
+	info, err := f.file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return 0
+	}
+	pos, err := f.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0
+	}
+	// The descriptor sits ahead of the logical position by whatever the reader
+	// has already buffered.
+	return clampToInt(info.Size() - pos + int64(f.reader.Buffered()))
+}
+
+func clampToInt(n int64) int {
+	if n <= 0 {
+		return 0
+	}
+	if n > int64(maxIntValue) {
+		return maxIntValue
+	}
+	return int(n)
+}
+
+const maxIntValue = int(^uint(0) >> 1)
+
+// readAtMost reads up to n bytes, growing the destination with the data that
+// actually arrives. Sizing the buffer by the requested count instead would let
+// f:read(1<<30) on a one-byte file allocate a gigabyte — a Go runtime OOM that
+// no pcall can catch, and a process kill in a memory-capped container.
+//
+// avail is the caller's estimate of how much data is left (0 when unknown): a
+// legitimate large read of a large file is then a single allocation of exactly
+// the right size, and only an unknown-length stream pays for growing.
+func readAtMost(r *bufio.Reader, n, avail int) (string, error) {
+	const unknownStart = 64 << 10
+	size := n
+	if avail > 0 && avail < size {
+		size = avail
+	} else if avail <= 0 && size > unknownStart {
+		size = unknownStart
+	}
+	if size < 1 {
+		size = 1
+	}
+	buf := make([]byte, 0, size)
+	for len(buf) < n {
+		if len(buf) == cap(buf) {
+			grow := cap(buf) * 2
+			if grow > n {
+				grow = n
+			}
+			bigger := make([]byte, len(buf), grow)
+			copy(bigger, buf)
+			buf = bigger
+		}
+		nRead, err := r.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+nRead]
+		if err != nil {
+			// Short reads are success: only a request that yielded nothing at
+			// all reports the error (C's fread/feof behavior).
+			if len(buf) == 0 {
+				return "", err
+			}
+			break
+		}
+		if nRead == 0 {
+			// A reader that yields neither bytes nor an error would spin here;
+			// treat it as end of input rather than hang the VM.
+			break
+		}
+	}
+	if len(buf) == 0 {
+		return "", io.EOF
+	}
+	return string(buf), nil
 }
 
 func (f *fullFile) Write(ctx context.Context, data string) error {
@@ -401,25 +996,35 @@ func (f *fullFile) SetVBuf(ctx context.Context, mode string, size int) error {
 		}
 		f.bufMode = "full"
 		f.bufSize = size
-		if size > 0 {
-			f.writer = bufio.NewWriterSize(f.file, size)
-		} else {
-			f.writer = bufio.NewWriter(f.file)
-		}
+		f.writer = newSizedWriter(f.file, size)
 	case "line":
 		if f.writer != nil {
 			f.writer.Flush()
 		}
 		f.bufMode = "line"
-		if size > 0 {
-			f.writer = bufio.NewWriterSize(f.file, size)
-		} else {
-			f.writer = bufio.NewWriter(f.file)
-		}
+		f.writer = newSizedWriter(f.file, size)
 	default:
 		return fmt.Errorf("invalid option '%s'", mode)
 	}
 	return nil
+}
+
+// maxVBufSize bounds the buffer a setvbuf request may actually allocate. The
+// size is a hint (C stdio is free to ignore it — glibc does), so honouring an
+// outsized request literally buys nothing and hands a script an unrecoverable
+// allocation.
+const maxVBufSize = 1 << 20
+
+// newSizedWriter returns a buffered writer for a setvbuf size request,
+// defaulting on non-positive sizes and clamping oversized ones.
+func newSizedWriter(w io.Writer, size int) *bufio.Writer {
+	if size <= 0 {
+		return bufio.NewWriter(w)
+	}
+	if size > maxVBufSize {
+		size = maxVBufSize
+	}
+	return bufio.NewWriterSize(w, size)
 }
 
 func (f *fullFile) Close(ctx context.Context) error {
@@ -667,6 +1272,9 @@ func (f *stdFile) ReadBytes(ctx context.Context, n int) (string, error) {
 		return "", fmt.Errorf("%s is not readable", f.name)
 	}
 	r := f.ensureReader()
+	if n < 0 {
+		return "", fmt.Errorf("not enough memory")
+	}
 	if n == 0 {
 		// EOF test: peek 1 byte to check if data remains
 		_, err := r.Peek(1)
@@ -675,12 +1283,20 @@ func (f *stdFile) ReadBytes(ctx context.Context, n int) (string, error) {
 		}
 		return "", nil
 	}
-	buf := make([]byte, n)
-	nRead, err := io.ReadFull(r, buf)
-	if nRead == 0 && err != nil {
-		return "", err
-	}
-	return string(buf[:nRead]), nil
+	// A standard stream is usually a terminal or a pipe, whose length is not
+	// knowable; when it is a redirected regular file the size still bounds the
+	// buffer. Either way the count alone never sizes an allocation.
+	return readAtMost(r, n, availableFor(n, func() int {
+		info, err := f.file.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			return 0
+		}
+		pos, err := f.file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return 0
+		}
+		return clampToInt(info.Size() - pos + int64(r.Buffered()))
+	}))
 }
 
 func (f *stdFile) Write(ctx context.Context, data string) error {
