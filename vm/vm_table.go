@@ -634,7 +634,9 @@ func (vm *VM) ObjLen(val Value) (int, error) {
 	}
 	mm := vm.getMetafield(val, MetaLen)
 	if !mm.IsNil() {
-		res, err := vm.callMetamethod("len", mm, val, Nil)
+		// Reference lvm.c passes the object twice (luaT_callTMres(L, tm, rb, rb, ra)),
+		// so __len must see the same second argument here as it does from OP_LEN.
+		res, err := vm.callMetamethod("len", mm, val, val)
 		if err != nil {
 			return 0, err
 		}

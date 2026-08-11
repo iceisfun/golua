@@ -299,6 +299,13 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value, hasError bool) {
 		// callclosemethod which only pushes the error when err != NULL).
 		var err error
 		if hasError {
+			// Reference substitutes a nil error object with the string
+			// "<no error object>" in luaG_errormsg, i.e. before the throw
+			// unwinds, so a __close handler running during that unwind already
+			// sees the string and can tell an error(nil) exit from a normal one.
+			if errVal.IsNil() {
+				errVal = NewString("<no error object>")
+			}
 			_, err = vm.callMetamethodArgs("close", closeFunc, val, errVal)
 		} else {
 			_, err = vm.callMetamethodArgs("close", closeFunc, val)

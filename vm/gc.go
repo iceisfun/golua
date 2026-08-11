@@ -9,8 +9,7 @@ import (
 // gcEntry is a pending __gc finalization queued by Go's garbage collector.
 // obj is the value passed to the __gc metamethod (a table or userdata).
 type gcEntry struct {
-	obj    Value
-	gcFunc Value
+	obj Value
 }
 
 // gcQueue holds pending __gc finalizations for a VM and its coroutines.
@@ -37,16 +36,14 @@ func (vm *VM) RegisterGcFinalizer(t *Table) {
 	}
 	q := vm.gcQueue
 	runtime.SetFinalizer(t, func(t *Table) {
-		mt := t.Metatable()
-		if mt == nil {
-			return
-		}
-		gcFunc := mt.Get(metaGc)
-		if gcFunc.IsNil() {
-			return
-		}
+		// This runs on Go's finalizer goroutine, concurrently with the VM
+		// goroutine. Metatables are ordinary VM-owned tables that a running
+		// script may be mutating right now, so touching one here would be a
+		// genuine data race (a concurrent Go map read/write aborts the host
+		// process, uncatchably). Queue the object only; __gc is looked up
+		// later by the owning VM while draining the queue.
 		q.mu.Lock()
-		q.pending = append(q.pending, gcEntry{obj: NewTable(t), gcFunc: gcFunc})
+		q.pending = append(q.pending, gcEntry{obj: NewTable(t)})
 		q.mu.Unlock()
 	})
 }
@@ -67,18 +64,30 @@ func (vm *VM) RegisterGcFinalizerUserdata(u *Userdata) {
 	}
 	q := vm.gcQueue
 	runtime.SetFinalizer(u, func(u *Userdata) {
-		mt := u.Metatable()
-		if mt == nil {
-			return
-		}
-		gcFunc := mt.Get(metaGc)
-		if gcFunc.IsNil() {
-			return
-		}
+		// Queue only; see RegisterGcFinalizer for why the metatable must not
+		// be read from the finalizer goroutine.
 		q.mu.Lock()
-		q.pending = append(q.pending, gcEntry{obj: userdataValue(u), gcFunc: gcFunc})
+		q.pending = append(q.pending, gcEntry{obj: userdataValue(u)})
 		q.mu.Unlock()
 	})
+}
+
+// gcMetamethod resolves the __gc metamethod of a queued finalizable object.
+// It must only be called on the owning VM's goroutine, since it reads the
+// object's metatable. Reference Lua likewise looks __gc up at finalization
+// time (luaT_gettmbyobj in GCTM), so removing __gc after the object became
+// unreachable cancels the finalization.
+func (vm *VM) gcMetamethod(obj Value) Value {
+	var mt LuaTable
+	if obj.IsTable() {
+		mt = obj.AsTable().Metatable()
+	} else if ud := obj.AsUserdata(); ud != nil {
+		mt = ud.Metatable()
+	}
+	if mt == nil {
+		return Nil
+	}
+	return mt.Get(metaGc)
 }
 
 // ProcessGcFinalizers triggers Go's GC, waits for finalizers to run,
@@ -145,11 +154,15 @@ func (vm *VM) ProcessGcFinalizers() {
 	q.mu.Unlock()
 
 	for _, entry := range entries {
+		gcFunc := vm.gcMetamethod(entry.obj)
+		if gcFunc.IsNil() {
+			continue
+		}
 		// Lua 5.4: __gc finalizers run inside a C-call boundary that
 		// prevents yielding. Mark the context as non-yieldable.
 		exit := vm.EnterNonYieldable()
 		// Lua 5.4: errors in __gc are not propagated
-		vm.ProtectedCall(entry.gcFunc, []Value{entry.obj})
+		vm.ProtectedCall(gcFunc, []Value{entry.obj})
 		exit()
 	}
 }
@@ -170,8 +183,12 @@ func (vm *VM) processGcFinalizersOnly() {
 	q.mu.Unlock()
 
 	for _, entry := range entries {
+		gcFunc := vm.gcMetamethod(entry.obj)
+		if gcFunc.IsNil() {
+			continue
+		}
 		exit := vm.EnterNonYieldable()
-		vm.ProtectedCall(entry.gcFunc, []Value{entry.obj})
+		vm.ProtectedCall(gcFunc, []Value{entry.obj})
 		exit()
 	}
 }
