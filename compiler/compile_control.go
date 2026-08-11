@@ -138,6 +138,48 @@ func (c *compiler) compileIfStmt(s *ast.IfStmt) {
 // line-hook trace produced by reference Lua).
 func (c *compiler) compileCondJump(cond ast.Expr, jumpOnFalse bool, fallbackLine int) int {
 	fs := c.fs
+
+	// Fused condition forms. Each emits a single instruction that already
+	// uses OP_TEST's "skip the next instruction if the result ~= k"
+	// convention, so the caller's JMP stays exactly where it was and no
+	// boolean is materialized (reference Lua's luaK_goiftrue/goiffalse).
+	switch e := cond.(type) {
+	case *ast.ParenExpr:
+		// Parentheses are transparent for a condition: only the truthiness
+		// of a single value matters, and every path below (compare, TEST)
+		// consumes exactly one value.
+		return c.compileCondJump(e.Inner, jumpOnFalse, fallbackLine)
+	case *ast.UnopExpr:
+		// `not x` flips the jump sense instead of materializing NOT + TEST,
+		// matching reference Lua's luaK_goiftrue/goiffalse negation.
+		if e.Op == "not" {
+			return c.compileCondJump(e.Operand, !jumpOnFalse, fallbackLine)
+		}
+	case *ast.BinopExpr:
+		// Top-level comparison: fuse into a single compare instruction that
+		// shares OP_TEST's skip convention, matching reference Lua's
+		// LT/LE/EQ (+ immediate forms) + JMP shape instead of materializing
+		// a boolean and testing it.
+		if isComparisonOp(e.Op) {
+			line := exprEndLine(e)
+			c.compileComparisonTest(e, jumpOnFalse, line)
+			return line
+		}
+	case *ast.NameExpr:
+		// A plain in-register local is tested in place — TEST only reads the
+		// register, so a live local is safe and the MOVE to a temp is
+		// unnecessary (matches reference Lua's exp2anyreg on VLOCAL).
+		if reg, ok := plainLocalReg(fs, cond); ok {
+			line := e.P.Line
+			k := 1
+			if !jumpOnFalse {
+				k = 0
+			}
+			fs.emit(ABC(OP_TEST, reg, 0, 0, k), line)
+			return line
+		}
+	}
+
 	reg := fs.freeReg
 	c.compileExprToReg(cond, reg)
 	// Use the line of the last instruction emitted while materializing the
@@ -305,22 +347,34 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		return
 	}
 
-	// Evaluate condition (may reference body locals)
-	condLine := s.Cond.Pos().Line
-	reg := fs.freeReg
-	c.compileExprToReg(s.Cond, reg)
+	// Evaluate condition (may reference body locals; the fused forms read
+	// operand registers in place, which is safe — nothing below clears them).
+	// The JMP emitted after the test fires when the condition is falsy
+	// (keep looping) and falls through when it is truthy (exit).
+	condLine := c.compileCondJump(s.Cond, false, s.Cond.Pos().Line)
+	backJump := fs.emitJump(condLine)
 
-	// Close upvalues for body locals. OP_CLOSE captures values but does
-	// not clear stack slots, so the condition result in reg remains valid.
+	// Close upvalues for body locals before repeating, so each iteration gets
+	// its own closed upvalue copy. The test and its JMP must stay adjacent, so
+	// — like reference Lua (lparser.c repeatstat) — the OP_CLOSE lives in a
+	// stub on the repeat path: the truthy fall-through jumps over it, and the
+	// exit path closes just past it. needsClose is queried only now because
+	// compiling the condition itself can capture a body local
+	// (`until (function() return x end)()`).
 	scope := fs.scopes[len(fs.scopes)-1]
 	if fs.needsClose(scope.nLocals) {
+		exitJump := fs.emitJump(condLine) // truthy fall-through: skip the stub
+		c.patchJump(backJump)             // falsy path lands on the stub
+		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), condLine)
+		backJump = fs.emitJump(condLine) // ... then jump back
+		c.patchJump(exitJump)
+		// Exit path: fire __close here, attributed to the until-condition
+		// line as before. leaveScope's cleanup close below is a runtime
+		// no-op on the already-closed slot.
 		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), condLine)
 	}
 
-	// If condition is falsy, jump back (keep looping)
-	fs.emit(ABC(OP_TEST, reg, 0, 0, 0), condLine) // skip next if truthy → exit
-	backJump := fs.emitJump(condLine)             // jump back (cond is false)
-	offset := loopStart - fs.pc()
+	offset := loopStart - (backJump + 1)
 	if offset > MaxSJ || offset < MinSJ {
 		c.error(nil, errControlStructureTooLong)
 	} else {

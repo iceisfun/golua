@@ -957,51 +957,18 @@ func (c *compiler) flattenConcat(e ast.Expr) []ast.Expr {
 // followed by conditional jumps that produce a boolean result in reg.
 func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 	fs := c.fs
-	line := e.P.Line
 	// The comparison instruction itself (and the boolean it materializes) is
 	// emitted after the right operand is parsed, so reference Lua attributes it
 	// to the right operand's end line — which is what a runtime comparison error
 	// reports. The left-operand discharge keeps its own line.
 	opLine := exprEndLine(e)
 
-	// Read both operands via operandToReg so a bare in-register local is used
-	// in place: OP_LT/OP_LE/OP_EQ then read the register live at execution time,
-	// after the other operand may have mutated it through a shared upvalue,
-	// matching reference Lua's exp2anyreg. base restores freeReg.
+	// Emit the comparison itself (immediate form when an operand is a small
+	// constant, register form otherwise). It leaves freeReg where it found it.
 	base := fs.freeReg
-	leftReg, leftTmp := c.operandToReg(e.Left)
-	if leftTmp {
-		c.fixDischargedLine(line)
-	}
-	rightReg, _ := c.operandToReg(e.Right)
-
-	var op OpCode
-	k := 1 // test sense
-	switch e.Op {
-	case "==":
-		op = OP_EQ
-		k = 0
-	case "~=":
-		op = OP_EQ
-		k = 1
-	case "<":
-		op = OP_LT
-		k = 0
-	case "<=":
-		op = OP_LE
-		k = 0
-	case ">":
-		op = OP_LT
-		k = 0
-		leftReg, rightReg = rightReg, leftReg // swap
-	case ">=":
-		op = OP_LE
-		k = 0
-		leftReg, rightReg = rightReg, leftReg // swap
-	}
+	c.compileComparisonTest(e, false, opLine)
 
 	// comparison + conditional jump → boolean
-	fs.emit(ABC(op, leftReg, rightReg, 0, k), opLine)
 	jmpFalse := fs.emitJump(opLine) // skip next if comparison fails
 	fs.emit(ABC(OP_LOADTRUE, reg, 0, 0, 0), opLine)
 	jmpEnd := fs.emitJump(opLine)
@@ -1025,21 +992,34 @@ func isComparisonOp(op string) bool {
 	return false
 }
 
-// compileComparisonCond compiles a comparison expression as a condition,
-// emitting the comparison + JMP. Returns the JMP PC to patch to the false
-// path. The comparison is compiled with the given k sense: k=0 means
-// "skip next (JMP) if comparison is TRUE" (used by and),
-// k=1 means "skip next (JMP) if comparison is FALSE" (used by or).
-func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int {
+// compileComparisonTest emits the operands and the comparison instruction for
+// a comparison expression, WITHOUT the trailing JMP — the caller emits that.
+// OP_LT/OP_LE/OP_EQ (and their immediate forms) share OP_TEST's skip
+// convention ("pc++ if result ~= k"), so a fused compare is a drop-in
+// replacement for a materialized boolean + OP_TEST.
+//
+// With invertSense=false the caller's JMP fires when the comparison is FALSE
+// (the if/while/and sense); invertSense=true flips k so the JMP fires when the
+// comparison is TRUE (the or sense). The comparison instruction is attributed
+// to opLine; a left operand that had to be discharged into a temp keeps the
+// operator's own line, as reference Lua's one-pass compiler does.
+// freeReg is restored to its entry value.
+func (c *compiler) compileComparisonTest(e *ast.BinopExpr, invertSense bool, opLine int) {
 	fs := c.fs
-	line := e.P.Line
+
+	// Comparisons against a small-integer or string constant use the
+	// immediate/constant compare opcodes (EQI/EQK/LTI/LEI/GTI/GEI), like
+	// reference luac, saving the constant's LOADI/LOADK.
+	if c.tryComparisonImmediate(e, invertSense, opLine) {
+		return
+	}
 
 	// See compileComparison: read operands in place so an in-register local is
 	// compared live. base restores freeReg after the operands.
 	base := fs.freeReg
 	leftReg, leftTmp := c.operandToReg(e.Left)
 	if leftTmp {
-		c.fixDischargedLine(line)
+		c.fixDischargedLine(e.P.Line)
 	}
 	rightReg, _ := c.operandToReg(e.Right)
 
@@ -1072,10 +1052,138 @@ func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int
 		k = 1 - k
 	}
 
-	fs.emit(ABC(op, leftReg, rightReg, 0, k), line)
-	jmp := fs.emitJump(line) // JMP to false/true path
+	fs.emit(ABC(op, leftReg, rightReg, 0, k), opLine)
 	fs.freeReg = base
-	return jmp
+}
+
+// tryComparisonImmediate emits an immediate/constant-operand compare for a
+// comparison whose other operand is a small integer constant (EQI/LTI/LEI/
+// GTI/GEI) or a string constant (EQK), with compileComparisonTest's k sense.
+// It returns false when no immediate form applies, having emitted nothing.
+//
+// The emitted instruction is semantically identical to LOADI/LOADK + the
+// register-form compare: the VM routes the immediate through the same
+// equal/lessThan/lessEqual helpers, so comparison metamethods fire with the
+// same operands in the same order (reference Lua's luaT_callorderiTM passes
+// the immediate in the same position, and flips the operands for GTI/GEI just
+// as the register form swaps them for `>`/`>=`).
+func (c *compiler) tryComparisonImmediate(e *ast.BinopExpr, invertSense bool, opLine int) bool {
+	fs := c.fs
+
+	if e.Op == "==" || e.Op == "~=" {
+		k := 0
+		if e.Op == "~=" {
+			k = 1
+		}
+		if invertSense {
+			k = 1 - k
+		}
+		// The constant may sit on either side; == and ~= are symmetric, and
+		// so are EQI/EQK (they compare R[A] against the immediate/constant).
+		regExpr, constExpr := e.Left, e.Right
+		if !isImmediateEqConst(constExpr) {
+			regExpr, constExpr = constExpr, regExpr
+		}
+		if imm, ok := smallIntConst(constExpr); ok {
+			base := fs.freeReg
+			reg, tmp := c.operandToReg(regExpr)
+			if tmp && regExpr == e.Left {
+				c.fixDischargedLine(e.P.Line)
+			}
+			fs.emit(ABC(OP_EQI, reg, imm+OffsetSC, 0, k), opLine)
+			fs.freeReg = base
+			return true
+		}
+		if s, ok := constExpr.(*ast.StringExpr); ok {
+			// The constant index must fit the B field; intern it first so an
+			// out-of-range index falls back before any operand is emitted.
+			kidx := fs.stringConstant(s.Value)
+			if kidx > MaxArgB {
+				return false
+			}
+			base := fs.freeReg
+			reg, tmp := c.operandToReg(regExpr)
+			if tmp && regExpr == e.Left {
+				c.fixDischargedLine(e.P.Line)
+			}
+			fs.emit(ABC(OP_EQK, reg, kidx, 0, k), opLine)
+			fs.freeReg = base
+			return true
+		}
+		return false
+	}
+
+	// Order comparison against a small-int operand. A constant on the left
+	// flips the mnemonic: K < x  ⇔  x > K, exactly as reference Lua's
+	// codeorder rewrites (A < B) to (B > A).
+	var op OpCode
+	var regExpr ast.Expr
+	var imm int
+	if v, ok := smallIntConst(e.Right); ok {
+		imm, regExpr = v, e.Left
+		switch e.Op {
+		case "<":
+			op = OP_LTI
+		case "<=":
+			op = OP_LEI
+		case ">":
+			op = OP_GTI
+		case ">=":
+			op = OP_GEI
+		default:
+			return false
+		}
+	} else if v, ok := smallIntConst(e.Left); ok {
+		imm, regExpr = v, e.Right
+		switch e.Op {
+		case "<":
+			op = OP_GTI
+		case "<=":
+			op = OP_GEI
+		case ">":
+			op = OP_LTI
+		case ">=":
+			op = OP_LEI
+		default:
+			return false
+		}
+	} else {
+		return false
+	}
+
+	k := 0
+	if invertSense {
+		k = 1
+	}
+	base := fs.freeReg
+	reg, tmp := c.operandToReg(regExpr)
+	if tmp && regExpr == e.Left {
+		c.fixDischargedLine(e.P.Line)
+	}
+	fs.emit(ABC(op, reg, imm+OffsetSC, 0, k), opLine)
+	fs.freeReg = base
+	return true
+}
+
+// isImmediateEqConst reports whether expr can be the constant operand of an
+// EQI/EQK equality compare.
+func isImmediateEqConst(expr ast.Expr) bool {
+	if _, ok := smallIntConst(expr); ok {
+		return true
+	}
+	_, ok := expr.(*ast.StringExpr)
+	return ok
+}
+
+// compileComparisonCond compiles a comparison expression as a condition,
+// emitting the comparison + JMP. Returns the JMP PC to patch to the false
+// path. The comparison is compiled with the given k sense: k=0 means
+// "skip next (JMP) if comparison is TRUE" (used by and),
+// k=1 means "skip next (JMP) if comparison is FALSE" (used by or).
+func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int {
+	line := e.P.Line
+	c.compileComparisonTest(e, invertSense, line)
+	return c.fs.emitJump(line) // JMP to false/true path
 }
 
 // compileAnd compiles "a and b" — short-circuits to a if a is falsy.
