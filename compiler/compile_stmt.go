@@ -670,6 +670,11 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 
 	// Phase 2: Evaluate all RHS values into temp registers.
 	valBase := fs.freeReg
+	// Every target needs a value slot at valBase+i, and the paths below set
+	// fs.freeReg directly, so nothing else would catch an overflow: check the
+	// whole block up front, as reference Lua's adjust_assign does through
+	// luaK_reserveregs/luaK_checkstack.
+	fs.checkRegsAt(valBase+nTargets, line)
 	lastIsMultiRet := false
 
 	for i := 0; i < nValues; i++ {
@@ -859,7 +864,7 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 // possible).
 func (c *compiler) indexAssignOperand(e ast.Expr, conflictsLater func(reg int) bool) int {
 	fs := c.fs
-	if ne, ok := e.(*ast.NameExpr); ok {
+	if ne, ok := unparen(e).(*ast.NameExpr); ok {
 		// Inlined consts are scalar literals, not live locals — fall through
 		// to load them into a temp.
 		if _, inlined := lookupInlinedAny(fs, ne.Name); !inlined {
@@ -1117,35 +1122,37 @@ func (c *compiler) compileGotoStmt(s *ast.GotoStmt) {
 	// Check if label already exists (backward goto)
 	for _, lbl := range fs.labels {
 		if lbl.name == s.Label {
-			// Emit OP_CLOSE if exiting scope with TBC/captured locals
-			if fs.needsClose(lbl.nLocals) {
-				fs.emit(ABC(OP_CLOSE, fs.regBaseForLocals(lbl.nLocals), 0, 0, 0), line)
+			// Emit the OP_CLOSE now if a captured or to-be-closed local is
+			// already known to be in the range being left; otherwise leave a
+			// placeholder, because a capture appearing later in the block can
+			// still run before this jump (the block is re-entered by another
+			// backward jump) and only leaveScope knows.
+			level := fs.regBaseForLocals(lbl.nLocals)
+			closed := fs.needsClose(lbl.nLocals)
+			if closed {
+				fs.emit(ABC(OP_CLOSE, level, 0, 0, 0), line)
 			}
 			jpc := fs.emitJump(line)
-			offset := lbl.pc - (jpc + 1)
-			if offset > MaxSJ || offset < MinSJ {
-				c.error(nil, errControlStructureTooLong)
-			} else {
-				fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
-			}
+			c.patchJumpTo(jpc, lbl.pc)
+			c.recordJumpClose(jpc, lbl.pc, lbl.nLocals, level, line, closed)
 			return
 		}
 	}
 
-	// Forward goto — emit placeholder OP_CLOSE and record it.
-	// The OP_CLOSE operand will be patched when the label is resolved.
-	closePC := -1
-	if fs.needsClose(0) {
-		// There are TBC/captured locals somewhere; emit placeholder
-		closePC = fs.emit(ABC(OP_CLOSE, fs.regTop(), 0, 0, 0), line)
-	}
+	// Forward goto — record it, with a dead OP_CLOSE placeholder after the
+	// jump (reference Lua's newgotoentry). Both whether the goto closes and
+	// the level it closes to are only known once the label is found.
 	jpc := fs.emitJump(line)
+	hasClose := fs.nActVar > 0
+	if hasClose {
+		fs.emitClosePlaceholder(line)
+	}
 	fs.pendGotos = append(fs.pendGotos, pendingGoto{
-		name:    s.Label,
-		pc:      jpc,
-		nLocals: fs.nActVar,
-		line:    line,
-		closePC: closePC,
+		name:     s.Label,
+		pc:       jpc,
+		nLocals:  fs.nActVar,
+		line:     line,
+		hasClose: hasClose,
 	})
 }
 
@@ -1228,9 +1235,15 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 				remaining = append(remaining, pg)
 				continue
 			}
-			// Patch placeholder OP_CLOSE if one was emitted
-			if pg.closePC >= 0 && labelNLocals < pg.nLocals {
-				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(fs.regBaseForLocals(labelNLocals))
+			// Activate the placeholder OP_CLOSE when the goto leaves the scope
+			// of a captured or to-be-closed variable — either because a block
+			// it escaped had one (needClose, set at that block's exit), or
+			// because it drops below the label's level inside this block.
+			// The latter only happens for a block-end label, which by
+			// definition has no statements after it, so this block's captures
+			// are all known (reference Lua decides at leaveblock).
+			if pg.hasClose && (pg.needClose || (labelNLocals < pg.nLocals && fs.needsClose(scope.nLocals))) {
+				pg.pc = fs.swapInClose(pg.pc, fs.regBaseForLocals(labelNLocals))
 			}
 			offset := fs.pc() - (pg.pc + 1)
 			if offset > MaxSJ || offset < MinSJ {
@@ -1458,9 +1471,17 @@ func (c *compiler) compileGlobalInit(names []*ast.NameExpr, values []ast.Expr, l
 	fs.checkRegLimit()
 
 	// Store each value into _ENV[name] with the "already defined" check.
-	for i, name := range names {
+	// Reference initglobal (lparser.c) recurses over the name list and emits
+	// each name's check-and-store on the way out, so the last name is checked
+	// and stored first: with `global a, b = 1, 2` where both already exist the
+	// error names 'b', and no earlier name has been committed when it fires.
+	for i := nNames - 1; i >= 0; i-- {
+		name := names[i]
 		nameK := fs.stringConstant(name.Name)
 		valReg := base + i
+		// Reference pops each value as it is stored (storevartop), so the
+		// check register sits just above the values still pending.
+		fs.freeReg = valReg + 1
 		chkReg := fs.reserveReg()
 		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 			fs.emitGetField(chkReg, envReg, nameK, line)
@@ -1473,7 +1494,7 @@ func (c *compiler) compileGlobalInit(names []*ast.NameExpr, values []ast.Expr, l
 			bx = 0
 		}
 		fs.emit(ABx(OP_ERRNNIL, chkReg, bx), line)
-		fs.freeReg = base + nNames // free the check register
+		fs.freeReg = valReg + 1 // free the check register
 		if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
 			fs.emitSetField(envReg, nameK, valReg, 0, line)
 		} else {

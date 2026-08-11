@@ -320,7 +320,7 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 // "(temporary)" slot visible to debug.getlocal.
 func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 	fs := c.fs
-	if name, ok := expr.(*ast.NameExpr); ok {
+	if name, ok := unparen(expr).(*ast.NameExpr); ok {
 		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
 			if localReg, ok := fs.lookupLocal(name.Name); ok {
 				return localReg, false
@@ -338,7 +338,7 @@ func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 // otherwise. Used to read a binary/comparison left operand live at execution
 // time instead of snapshotting it into a temp with a MOVE.
 func plainLocalReg(fs *funcState, expr ast.Expr) (int, bool) {
-	if name, ok := expr.(*ast.NameExpr); ok {
+	if name, ok := unparen(expr).(*ast.NameExpr); ok {
 		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
 			if localReg, ok := fs.lookupLocal(name.Name); ok {
 				return localReg, true
@@ -346,6 +346,25 @@ func plainLocalReg(fs *funcState, expr ast.Expr) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// unparen strips redundant parentheses from an expression. In reference Lua
+// '(' expr ')' compiles to nothing but luaK_dischargevars: parentheses are
+// inert apart from truncating a multi-value expression to a single value, and
+// in particular a parenthesised local stays in its own register and is read
+// live by the instruction that uses it. Register-level decisions must
+// therefore see through them, or `(a) + f()` snapshots `a` into a temp before
+// f() runs and `(t).k = f()` stores into the wrong table. Truncation is
+// unaffected: callers use the unwrapped node only to recognise a bare name,
+// which is always single-valued.
+func unparen(expr ast.Expr) ast.Expr {
+	for {
+		p, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = p.Inner
+	}
 }
 
 // smallIntConst checks whether an expression is a small integer constant
@@ -1178,11 +1197,24 @@ func (c *compiler) compileUnop(e *ast.UnopExpr, reg int) {
 	line := e.P.Line
 
 	// Read a plain in-register local operand in place (reference Lua's
-	// exp2anyreg) instead of snapshotting it into reg with a MOVE;
-	// otherwise compile the operand into reg.
+	// exp2anyreg) instead of snapshotting it into reg with a MOVE.
 	opReg, inPlace := plainLocalReg(fs, e.Operand)
+	freeTo := -1
 	if !inPlace {
-		opReg = reg
+		if reg < fs.regTop() {
+			// reg belongs to a live variable (or a still-live condition temp
+			// below the locals top): evaluating the operand there would make
+			// the target visibly hold the operand while a metamethod runs, and
+			// would blame the target in the error message when there is none.
+			// Reference codeunexpval evaluates into a temp and leaves the
+			// result relocatable, so the store happens last.
+			opReg = fs.reserveReg()
+			freeTo = opReg
+		} else {
+			// reg is a temp: evaluate in place, as reference's exp2anyreg does
+			// when the operand already owns the top register.
+			opReg = reg
+		}
 		c.compileExprToReg(e.Operand, opReg)
 	}
 
@@ -1197,6 +1229,9 @@ func (c *compiler) compileUnop(e *ast.UnopExpr, reg int) {
 		fs.emit(ABC(OP_BNOT, reg, opReg, 0, 0), line)
 	default:
 		c.error(e, "unknown unary operator %q", e.Op)
+	}
+	if freeTo >= 0 {
+		fs.freeReg = freeTo
 	}
 }
 
@@ -1496,7 +1531,7 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 	fs := c.fs
 	// When the table is a local variable, use its register directly.
 	tableReg := -1
-	if name, ok := e.Table.(*ast.NameExpr); ok {
+	if name, ok := unparen(e.Table).(*ast.NameExpr); ok {
 		if localReg, found := fs.lookupLocal(name.Name); found {
 			tableReg = localReg
 		}
@@ -1531,7 +1566,7 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 	// avoid emitting an unnecessary MOVE. This matches Lua 5.4's behavior
 	// where VINDEXED expressions reference the table register directly.
 	tableReg := -1
-	if name, ok := e.Table.(*ast.NameExpr); ok {
+	if name, ok := unparen(e.Table).(*ast.NameExpr); ok {
 		if localReg, found := fs.lookupLocal(name.Name); found {
 			tableReg = localReg
 		}

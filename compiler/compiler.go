@@ -202,12 +202,12 @@ type localVar struct {
 
 // scopeInfo records the state at scope entry for restoration on scope exit.
 type scopeInfo struct {
-	nLocals        int   // number of locals when scope opened
-	baseReg        int   // register base (freeReg) when scope opened — used for OP_CLOSE
-	breakJumps     []int // pending break jump PCs to be patched on scope exit
-	isLoop         bool  // is this a loop scope?
-	firstLabel     int   // index into labels slice
-	firstGoto      int   // index into pendGotos slice
+	nLocals        int             // number of locals when scope opened
+	baseReg        int             // register base (freeReg) when scope opened — used for OP_CLOSE
+	breakJumps     []*pendingClose // break jumps to patch on scope exit
+	isLoop         bool            // is this a loop scope?
+	firstLabel     int             // index into labels slice
+	firstGoto      int             // index into pendGotos slice
 	savedGlobalEnv globalEnv
 
 	// headerLocals counts the loop control locals (hidden for-state slots and
@@ -227,13 +227,36 @@ type labelInfo struct {
 	nLocals int // number of active locals when label was defined
 }
 
+// pendingClose records a jump whose target is already known (a break, or a
+// backward goto) but whose need for an OP_CLOSE is not. A jump must close
+// upvalues when it leaves a block that captures — or marks to-be-closed — one
+// of its variables, and that is only settled when the block ends: the capture
+// may appear textually after the jump and still execute before it, when a
+// backward jump re-runs part of the block. Reference Lua therefore keeps every
+// goto pending until leaveblock and decides there from bl->upval.
+type pendingClose struct {
+	jumpPC    int  // pc of the jump; the dead placeholder sits at jumpPC+1
+	targetPC  int  // resolved jump target, or -1 when patched later (breaks)
+	nLocals   int  // active locals at the jump, lowered as blocks are left
+	dstLocals int  // active locals at the destination label
+	level     int  // register level this jump's OP_CLOSE must close down to
+	active    bool // OP_CLOSE already swapped in
+}
+
 // pendingGoto records a forward goto that hasn't found its label yet.
 type pendingGoto struct {
 	name    string
 	pc      int // jump instruction pc
 	nLocals int // number of locals at goto
 	line    int
-	closePC int // pc of placeholder OP_CLOSE (-1 if none)
+	// hasClose reports whether a dead OP_CLOSE placeholder was emitted right
+	// after the jump, ready to be swapped in front of it if the goto turns out
+	// to leave the scope of a captured or to-be-closed variable.
+	hasClose bool
+	// needClose is set when a block this goto escaped had captured or
+	// to-be-closed variables (reference Lua's gt->close). The close level is
+	// only fixed at the label, from the label's own variable level.
+	needClose bool
 
 	// globalBarrier records a Lua 5.5 global declaration (`global x` or
 	// `global *`) that appeared after this goto in the same active block.
@@ -293,6 +316,7 @@ type funcState struct {
 	scopes      []scopeInfo
 	labels      []labelInfo
 	pendGotos   []pendingGoto
+	pendCloses  []*pendingClose
 	upvalues    []UpvalDesc
 	upvalLookup map[string]int // name → index in upvalues
 	constLookup map[Value]int  // deduplication map for constants
@@ -717,8 +741,16 @@ func (fs *funcState) emitSelf(base, objReg, kIdx int, line int) {
 		return
 	}
 	saved := fs.freeReg
-	fs.emit(ABC(OP_MOVE, base+1, objReg, 0, 0), line)
+	// Both SELF result slots (method at base, self at base+1) must be
+	// reserved before the method name gets a register — reference luaK_self
+	// calls luaK_reserveregs(fs, 2) first. On entry freeReg is only base+1,
+	// so allocating the key temp straight away would hand out base+1 and the
+	// LOADK below would overwrite the receiver copied there by the MOVE.
+	if fs.freeReg < base+2 {
+		fs.freeReg = base + 2
+	}
 	tmpKey := fs.reserveReg()
+	fs.emit(ABC(OP_MOVE, base+1, objReg, 0, 0), line)
 	fs.loadConstant(tmpKey, kIdx, line)
 	fs.emit(ABC(OP_GETTABLE, base, objReg, tmpKey, 0), line)
 	fs.freeReg = saved
@@ -788,6 +820,20 @@ func (fs *funcState) checkVarLimitAt(count int, line int, near string) {
 func (fs *funcState) checkRegLimit() {
 	if fs.freeReg > fs.c.limits.MaxRegs {
 		fs.c.error(nil, "too many registers (limit is %d)", fs.c.limits.MaxRegs)
+	}
+}
+
+// checkRegsAt verifies that a register top reached by assigning fs.freeReg
+// directly (rather than through reserveReg) is within the limit, and keeps the
+// high-water mark up to date. ABC() does not mask its operands, so an A or C
+// field above MaxArgC silently spills into the neighbouring field instead of
+// failing — reference Lua raises here, from luaK_checkstack.
+func (fs *funcState) checkRegsAt(top int, line int) {
+	if top > fs.maxReg {
+		fs.maxReg = top
+	}
+	if top > fs.c.limits.MaxRegs {
+		fs.limitError("registers", fs.c.limits.MaxRegs, line, "")
 	}
 }
 
@@ -1007,33 +1053,29 @@ func (c *compiler) leaveScope(line int) {
 	scope := fs.scopes[len(fs.scopes)-1]
 	fs.scopes = fs.scopes[:len(fs.scopes)-1]
 
+	// blockUpval is reference Lua's bl->upval: does this block own a captured
+	// or to-be-closed variable? It decides both the block's own exit OP_CLOSE
+	// and, in resolveBlockCloses below, whether the jumps that left this block
+	// have to close too.
+	blockUpval := fs.nActVar > scope.nLocals && fs.needsClose(scope.nLocals)
+
 	// Emit OP_CLOSE if this scope has any to-be-closed or captured variables.
 	// This closes upvalues and calls __close metamethods.
-	if fs.nActVar > scope.nLocals {
-		needClose := false
-		start := len(fs.locals) - (fs.nActVar - scope.nLocals)
-		for i := start; i < len(fs.locals); i++ {
-			if fs.locals[i].attrib == attribClose || fs.locals[i].captured {
-				needClose = true
-				break
-			}
+	if blockUpval {
+		// For a plain block scope (do/if/else), the block-exit OP_CLOSE
+		// that fires __close must be attributed to the block's last
+		// statement, not the construct's closing token — reference Lua emits
+		// this in leaveblock with ls->lastline. blockLastLine tracks the AST
+		// end line of that statement. Loop scopes are excluded: their close
+		// sites (per-iteration body close, and the generic-for iterator
+		// to-be-closed slot) are emitted explicitly elsewhere and reference
+		// attributes the loop-scope close to the loop header line, so they
+		// keep the supplied line to preserve line-hook parity.
+		closeLine := line
+		if !scope.isLoop && fs.blockLastLine != 0 {
+			closeLine = fs.blockLastLine
 		}
-		if needClose {
-			// For a plain block scope (do/if/else), the block-exit OP_CLOSE
-			// that fires __close must be attributed to the block's last
-			// statement, not the construct's closing token — reference Lua emits
-			// this in leaveblock with ls->lastline. blockLastLine tracks the AST
-			// end line of that statement. Loop scopes are excluded: their close
-			// sites (per-iteration body close, and the generic-for iterator
-			// to-be-closed slot) are emitted explicitly elsewhere and reference
-			// attributes the loop-scope close to the loop header line, so they
-			// keep the supplied line to preserve line-hook parity.
-			closeLine := line
-			if !scope.isLoop && fs.blockLastLine != 0 {
-				closeLine = fs.blockLastLine
-			}
-			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), closeLine)
-		}
+		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), closeLine)
 	}
 
 	// Remove locals from this scope.
@@ -1068,16 +1110,22 @@ func (c *compiler) leaveScope(line int) {
 	// Remove labels from this scope
 	fs.labels = fs.labels[:scope.firstLabel]
 
+	// Settle the close for jumps whose target is already known (breaks and
+	// backward gotos) before the break jumps below are patched: activating a
+	// close moves the jump one slot down.
+	c.resolveBlockCloses(&scope, blockUpval)
+
 	// Adjust pending gotos that originated inside this scope: lower their
 	// nLocals to the scope's initial level so that the "jumps into scope"
 	// check works correctly when the label is at a higher scope.
-	// Also patch any OP_CLOSE placeholder to close down to the scope's
-	// initial level. This matches Lua 5.4's movegotosout.
+	// A goto escaping a block with captured or to-be-closed variables is also
+	// flagged as needing a close (reference Lua's gt->close in solvegotos);
+	// the level it closes to is fixed later, at the label.
 	for i := range fs.pendGotos {
 		pg := &fs.pendGotos[i]
 		if pg.nLocals > scope.nLocals {
-			if pg.closePC >= 0 {
-				fs.proto.Code[pg.closePC] = fs.proto.Code[pg.closePC].SetA(scope.baseReg)
+			if blockUpval {
+				pg.needClose = true
 			}
 			pg.nLocals = scope.nLocals
 		}
@@ -1091,8 +1139,8 @@ func (c *compiler) leaveScope(line int) {
 	}
 
 	// Patch break jumps
-	for _, jpc := range scope.breakJumps {
-		c.patchJump(jpc)
+	for _, e := range scope.breakJumps {
+		c.patchJump(e.jumpPC)
 	}
 }
 
@@ -1117,13 +1165,106 @@ func (fs *funcState) emitJump(line int) int {
 
 // patchJump patches the jump at pc to jump to the current pc.
 func (c *compiler) patchJump(jpc int) {
+	c.patchJumpTo(jpc, c.fs.pc())
+}
+
+// patchJumpTo patches the jump at jpc to jump to target.
+func (c *compiler) patchJumpTo(jpc, target int) {
 	fs := c.fs
-	offset := fs.pc() - (jpc + 1) // target - (jpc + 1)
+	offset := target - (jpc + 1)
 	if offset > MaxSJ || offset < MinSJ {
 		c.error(nil, errControlStructureTooLong)
 		return
 	}
 	fs.proto.Code[jpc] = fs.proto.Code[jpc].SetSJ(offset)
+}
+
+// emitClosePlaceholder emits a dead OP_CLOSE, as reference Lua's newgotoentry
+// does. Emitted straight after an unconditional jump it never executes; it
+// reserves the slot swapInClose needs if the jump later turns out to leave the
+// scope of a captured or to-be-closed variable. Its operand closes nothing, so
+// even an unreachable path through it would be inert.
+func (fs *funcState) emitClosePlaceholder(line int) {
+	fs.emit(ABC(OP_CLOSE, fs.regTop(), 0, 0, 0), line)
+}
+
+// swapInClose activates the placeholder that follows the jump at jumpPC: the
+// jump moves one slot down and an OP_CLOSE down to 'level' takes its place, so
+// the close runs first. This is reference Lua's closegoto(). It returns the
+// jump's new pc.
+func (fs *funcState) swapInClose(jumpPC, level int) int {
+	fs.proto.Code[jumpPC+1] = fs.proto.Code[jumpPC]
+	fs.proto.Code[jumpPC] = ABC(OP_CLOSE, level, 0, 0, 0)
+	return jumpPC + 1
+}
+
+// activateClose installs the OP_CLOSE for a jump whose target is already known,
+// re-patching the jump because it moved one slot down.
+func (c *compiler) activateClose(e *pendingClose) {
+	if e.active {
+		return
+	}
+	e.active = true
+	e.jumpPC = c.fs.swapInClose(e.jumpPC, e.level)
+	if e.targetPC >= 0 {
+		c.patchJumpTo(e.jumpPC, e.targetPC)
+	}
+}
+
+// recordJumpClose registers a jump whose destination level is already known (a
+// break or a backward goto) so that the blocks it leaves can still give it an
+// OP_CLOSE. dstLocals/level describe the destination; targetPC is the resolved
+// jump target, or -1 when the jump is patched later. closed says the close was
+// already emitted in front of the jump. A dead placeholder is emitted only when
+// the question is still open. The returned entry stays valid after pruning, so
+// callers may hold on to it (compileBreakStmt does, to patch the jump later).
+func (c *compiler) recordJumpClose(jumpPC, targetPC, dstLocals, level, line int, closed bool) *pendingClose {
+	fs := c.fs
+	e := &pendingClose{
+		jumpPC:    jumpPC,
+		targetPC:  targetPC,
+		nLocals:   fs.nActVar,
+		dstLocals: dstLocals,
+		level:     level,
+		active:    closed,
+	}
+	// A jump that leaves no variable's scope can never need a close, and one
+	// that already has it needs nothing more; neither goes on the pending list.
+	if !closed && fs.nActVar > dstLocals {
+		fs.emitClosePlaceholder(line)
+		fs.pendCloses = append(fs.pendCloses, e)
+	}
+	return e
+}
+
+// resolveBlockCloses settles, at block exit, which of the jumps that left this
+// block need an OP_CLOSE. This is reference Lua's solvegotos()/closegoto():
+// the decision uses the block's final "has captured variables" flag, not what
+// happened to be captured when the jump was compiled. Settled jumps are dropped
+// from the pending list, as reference does, so deeply nested code does not
+// rescan them at every block exit.
+func (c *compiler) resolveBlockCloses(scope *scopeInfo, blockUpval bool) {
+	fs := c.fs
+	kept := fs.pendCloses[:0]
+	for _, e := range fs.pendCloses {
+		if e.nLocals <= scope.nLocals { // jump did not originate inside this block
+			kept = append(kept, e)
+			continue
+		}
+		// The destination lies in this block when its level is at or above the
+		// block's own; otherwise the jump escapes outwards and outer blocks
+		// still get a say.
+		reached := e.dstLocals >= scope.nLocals
+		if blockUpval && (!reached || e.dstLocals < e.nLocals) {
+			c.activateClose(e)
+		}
+		if reached {
+			continue // settled: drop from the pending list
+		}
+		e.nLocals = scope.nLocals
+		kept = append(kept, e)
+	}
+	fs.pendCloses = kept
 }
 
 // markGlobalBarrier records a Lua 5.5 global declaration as a scope barrier

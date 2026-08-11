@@ -692,10 +692,18 @@ func (c *compiler) compileBreakStmt(s *ast.BreakStmt) {
 		c.error(s, "break outside loop near 'break'")
 		return
 	}
-	// Emit OP_CLOSE if there are close/captured locals being exited
-	if fs.needsClose(scope.nLocals) {
+	// Reference Lua compiles break as a goto to the loop block's break label,
+	// which is created past that block's own OP_CLOSE — so a break that leaves
+	// the scope of a captured or to-be-closed variable must close by itself.
+	// Whether it does is only known when the loop block ends: a capture can sit
+	// textually after the break and still run before it. Emit the close now
+	// only when the answer is already yes; otherwise leave a placeholder for
+	// leaveScope to activate.
+	closed := fs.needsClose(scope.nLocals)
+	if closed {
 		fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), s.P.Line)
 	}
 	jpc := fs.emitJump(s.P.Line)
-	scope.breakJumps = append(scope.breakJumps, jpc)
+	e := c.recordJumpClose(jpc, -1, scope.nLocals, scope.baseReg, s.P.Line, closed)
+	scope.breakJumps = append(scope.breakJumps, e)
 }
