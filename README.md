@@ -247,6 +247,27 @@ See the `examples/` directory for complete examples:
 
 ## Go Interop
 
+### Comparing Values
+
+`vm.Value` is **not comparable with Go's `==`**, by design: strings are stored unboxed as a data pointer plus a length, so `==` would compare pointers and answer string equality wrongly for equal strings built different ways. Value carries a zero-width non-comparable field, so `==` and `map[vm.Value]T` fail to compile.
+
+```go
+a == b                 // compile error: struct containing [0]func() cannot be compared
+a.Equal(b)             // content equality, including int/float cross-type comparison
+a.IsNil()              // instead of a == vm.Nil
+
+map[vm.Value]int{}     // compile error: invalid map key type
+map[string]int{}       // key on the extracted Go value: v.AsString(), v.AsInt(), ...
+```
+
+`RawEqual` is an alias for `Equal`. Neither invokes an `__eq` metamethod — that
+dispatch happens in the VM, not on the value.
+
+One case the compiler cannot catch: once a Value is stored in an `interface{}`,
+`==` compiles and panics at run time with *comparing uncomparable type vm.Value*.
+That is loud rather than silent, but if you hold Values in `any`, compare them
+by extracting the Value first.
+
 ### Exposing Go Functions to Lua
 
 ```go

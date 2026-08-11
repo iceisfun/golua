@@ -102,16 +102,30 @@ func (vm *VM) stringPointerID(s string) any {
 // (nil, bool, int, float, string) and by identity for reference types
 // (table, function).
 //
-// Strings are stored unboxed as a data pointer in ptr plus a length in n,
-// so constructing a string Value does not allocate. As a consequence, Go's
-// built-in == on two string Values compares data pointers, not contents:
-// two Values holding equal string contents may compare unequal with ==.
-// Embedders must use Equal (or RawEqual) to compare Values, and must not
-// use Value as a Go map key.
+// Strings are stored unboxed as a data pointer in ptr plus a length in n, so
+// constructing a string Value does not allocate. Go's built-in == on a struct
+// is field-wise, so it would compare string data pointers rather than string
+// contents: two Values holding equal contents could compare unequal. Because
+// Lua never answers a string comparison wrongly, and Go's == cannot be taught
+// to compare contents, Value is deliberately made non-comparable (see the
+// zero-width func field below) so that == is a compile error rather than a
+// silently data-dependent answer.
+//
+// Compare Values with [Value.Equal] (Lua ==, with int/float coercion) or
+// [Value.RawEqual]. Instead of map[Value]T, key the map on a concrete Go
+// value extracted from the Value (v.AsString(), v.AsInt(), v.AsTable(), ...),
+// which also restores the content semantics a map key needs.
 //
 // Integer and float are distinct subtypes of "number" following Lua 5.4
 // semantics. Arithmetic operations preserve integer type when possible.
 type Value struct {
+	// Zero-width non-comparable field: makes == on Value a compile error.
+	// It must come FIRST: a zero-sized field in final position forces Go to
+	// append a word of tail padding (Value would grow 32 -> 40 bytes), while
+	// in leading position it costs nothing and leaves every field offset
+	// unchanged. Enforced by TestValueSizeAndLayoutUnchanged.
+	_ [0]func()
+
 	typ valueType
 	n   uint64 // numeric word: float64 bits (float, and 1.0/0.0 for bool), or int64 bits (integer); string length
 	ptr any    // string data (*byte), *Table, *Closure, or NativeFunc

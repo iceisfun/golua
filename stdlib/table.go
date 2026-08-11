@@ -317,7 +317,7 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 	if *err != nil {
 		return false
 	}
-	if comp == vm.Nil || comp.IsNil() {
+	if comp.IsNil() {
 		lt, e := v.CompareLT(a, b)
 		if e != nil {
 			// Wrap as LuaError to avoid AddCallerLocation adding a file:line

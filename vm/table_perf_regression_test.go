@@ -458,7 +458,7 @@ func TestCoAllocatedBackingIsZeroedOnAbandon(t *testing.T) {
 		t.Fatal("expected the inline store to have migrated to the map")
 	}
 	for i := range b.sstr {
-		if b.sstr[i] != (strEntry{}) {
+		if b.sstr[i].name != "" || !b.sstr[i].val.IsNil() {
 			t.Fatalf("abandoned inline sstr slot %d still holds %q", i, b.sstr[i].name)
 		}
 	}
@@ -489,7 +489,7 @@ func TestWeakModeClearsCoAllocatedBacking(t *testing.T) {
 		}
 	}
 	for i := range b.sstr {
-		if b.sstr[i] != (strEntry{}) {
+		if b.sstr[i].name != "" || !b.sstr[i].val.IsNil() {
 			t.Fatalf("weak table still references %q from inline sstr slot %d", b.sstr[i].name, i)
 		}
 	}

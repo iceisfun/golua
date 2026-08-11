@@ -20,8 +20,11 @@ func TestIndexIntMatchesIndexValue(t *testing.T) {
 		if (wErr == nil) != (gErr == nil) {
 			t.Fatalf("%s[%d]: error mismatch: IndexValue err=%v IndexInt err=%v", name, key, wErr, gErr)
 		}
-		if want != got {
-			t.Fatalf("%s[%d]: IndexInt=%v but IndexValue=%v", name, key, got, want)
+		// Value is not comparable with ==; compare by Lua content, and also
+		// require the same type so an int/float coercion cannot hide a
+		// divergence between the two lookup paths.
+		if want.Type() != got.Type() || !want.RawEqual(got) {
+			t.Fatalf("%s[%d]: IndexInt=%v (%s) but IndexValue=%v (%s)", name, key, got, got.Type(), want, want.Type())
 		}
 	}
 

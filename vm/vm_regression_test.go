@@ -434,7 +434,7 @@ func TestProtectedCallArgSurvivesMetamethod(t *testing.T) {
 
 		// After the callback, arg3 should still be readable
 		arg3After := v.Get(3)
-		if arg3After != arg3 {
+		if !arg3After.RawEqual(arg3) {
 			v.Set(0, False)
 			return 1
 		}
@@ -584,10 +584,10 @@ func TestCallUnprotectedArgSurvivesMetamethod(t *testing.T) {
 	if len(results) < 2 {
 		t.Fatalf("expected at least 2 results, got %d", len(results))
 	}
-	if results[0] != True {
+	if !results[0].RawEqual(True) {
 		t.Errorf("pcall should succeed, got %v", results[0])
 	}
-	if results[1] != True {
+	if !results[1].RawEqual(True) {
 		t.Errorf("arg3 should have survived, got %v", results[1])
 	}
 }
@@ -610,7 +610,7 @@ func TestNestedProtectedCallMetamethods(t *testing.T) {
 
 		// Verify sentinel survived
 		sentinelAfter := v.Get(4)
-		if sentinelAfter != sentinel {
+		if !sentinelAfter.RawEqual(sentinel) {
 			v.Set(0, False)
 			v.Set(1, NewString("sentinel clobbered"))
 			return 2
@@ -664,7 +664,7 @@ func TestNestedProtectedCallMetamethods(t *testing.T) {
 	if len(results) < 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
-	if results[0] != True {
+	if !results[0].RawEqual(True) {
 		t.Errorf("sentinel should survive nested ProtectedCall + metamethods, got: %v %v", results[0], results[1])
 	}
 }
@@ -718,7 +718,7 @@ func TestProtectedCallTableConcatWithMetamethods(t *testing.T) {
 			parts = append(parts, val.AsString())
 
 			// Verify args survive __index metamethod calls
-			if v.Get(2) != sep || v.Get(3) != n {
+			if !v.Get(2).RawEqual(sep) || !v.Get(3).RawEqual(n) {
 				panic(&LuaError{Value: NewString("args clobbered during iteration")})
 			}
 		}
@@ -828,7 +828,7 @@ func TestProtectedCallNativeReadsArgAfterMultipleMetamethods(t *testing.T) {
 		}
 
 		// Verify args after __len
-		if v.Get(3).IsNil() || v.Get(3) != sentinel {
+		if !v.Get(3).RawEqual(sentinel) {
 			panic(&LuaError{Value: NewString("sentinel clobbered after __len")})
 		}
 
@@ -841,10 +841,10 @@ func TestProtectedCallNativeReadsArgAfterMultipleMetamethods(t *testing.T) {
 			_ = val
 
 			// Verify after each __index
-			if v.Get(2).IsNil() || v.Get(2) != cmp {
+			if !v.Get(2).RawEqual(cmp) {
 				panic(&LuaError{Value: NewString("cmp clobbered after __index")})
 			}
-			if v.Get(3).IsNil() || v.Get(3) != sentinel {
+			if !v.Get(3).RawEqual(sentinel) {
 				panic(&LuaError{Value: NewString("sentinel clobbered after __index")})
 			}
 		}
@@ -855,7 +855,7 @@ func TestProtectedCallNativeReadsArgAfterMultipleMetamethods(t *testing.T) {
 		lt, _ := v.CompareLT(a, b)
 
 		// Verify after __lt
-		if v.Get(3).IsNil() || v.Get(3) != sentinel {
+		if !v.Get(3).RawEqual(sentinel) {
 			panic(&LuaError{Value: NewString("sentinel clobbered after __lt")})
 		}
 
@@ -910,13 +910,13 @@ func TestProtectedCallNativeReadsArgAfterMultipleMetamethods(t *testing.T) {
 	if len(results) < 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
 	}
-	if results[0] != True {
+	if !results[0].RawEqual(True) {
 		t.Errorf("expected all checks to pass, got %v", results[0])
 	}
 	if results[1].AsInt() != 3 {
 		t.Errorf("expected len=3, got %v", results[1])
 	}
-	if results[2] != True {
+	if !results[2].RawEqual(True) {
 		t.Errorf("expected 10 < 20 = true, got %v", results[2])
 	}
 }
