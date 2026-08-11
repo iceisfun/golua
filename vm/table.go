@@ -24,6 +24,19 @@ import (
 // a dead key. This allows ongoing pairs() iteration to skip over deleted
 // entries without losing position. Dead keys are revived on re-insertion.
 //
+// Ordered-keys invariants, which every mutation path must preserve:
+//
+//	(1) t.keys holds no key twice — a duplicate live key makes nextHashAfter
+//	    return that key as its own successor, so pairs() never terminates.
+//	(2) t.deadKeys is exactly the number of entries in t.keys with no live
+//	    storage entry. It guards the tombstone-revival scans, so an undercount
+//	    lets a re-inserted key be appended a second time, breaking (1).
+//
+// Concretely: bump deadKeys on every live->dead transition, drop it on every
+// dead->live revival and whenever a dead key leaves t.keys, and never probe
+// liveness (getKeyValue) after the storage entry it probes has been removed.
+// checkInvariants audits both properties in tests.
+//
 // String keys are stored in a separate strHash map, and integer keys in a
 // separate intHash map, to avoid the overhead of boxing Go strings/int64s
 // into the any interface required by the general hash map.
@@ -34,7 +47,7 @@ type Table struct {
 	sstr      smallStrStore    // inline string-key store; nil = unused or migrated to strHash
 	intHash   map[int64]Value  // associative part for integer keys outside array range (avoids any boxing)
 	keys      []Value          // insertion-ordered hash keys (may contain dead keys)
-	deadKeys  int              // count of keys in t.keys not in t.hash/strHash/intHash
+	deadKeys  int              // count of keys in t.keys not in t.hash/strHash/intHash/sstr
 	iterBound int              // upper bound on keys slice for next() iteration (0 = no limit)
 	iterHash  bool             // true after current next() traversal enters hash part
 	metatable LuaTable         // per-table metatable for operator/event overrides
@@ -214,6 +227,31 @@ func (t *Table) EnsureArraySize(n int) {
 			t.array = newArray
 		} else {
 			t.array = t.array[:n]
+		}
+		t.absorbHashIndices(n)
+	}
+}
+
+// absorbHashIndices moves hash-resident integer keys in 1..n into the array
+// part after the array has grown to cover them. Lookups read the array first,
+// so an entry left in the hash for a now-covered index would read as nil while
+// pairs() still visited it — the same key reachable through two storages. The
+// in-tree callers pass fresh tables (table.pack, the vararg table), so this
+// costs one nil-map check there; only an embedder growing a populated table
+// pays for the walk.
+func (t *Table) absorbHashIndices(n int) {
+	for k, v := range t.intHash {
+		if k >= 1 && k <= int64(n) && !v.IsNil() {
+			t.array[k-1] = v
+			delete(t.intHash, k)
+			t.removeLiveKey(Value{typ: typeInt, n: uint64(k)})
+		}
+	}
+	for k, v := range t.hash {
+		if ik, ok := k.(int64); ok && ik >= 1 && ik <= int64(n) && !v.IsNil() {
+			t.array[ik-1] = v
+			delete(t.hash, k)
+			t.removeLiveKey(Value{typ: typeInt, n: uint64(ik)})
 		}
 	}
 }
@@ -473,15 +511,19 @@ func (t *Table) reuseOrAppendKey(k Value) {
 	t.keys = append(t.keys, k)
 }
 
-// removeKey removes a key from the ordered keys slice.
-// Used by rehashToArray when moving keys from hash to array part.
-func (t *Table) removeKey(k Value) {
+// removeLiveKey drops a live key from the ordered keys slice. Used by
+// rehashToArray when a hash entry is promoted into the array part: the entry
+// exists in the hash storage at that moment, so its keys slot is not a
+// tombstone and deadKeys must stay put. Deliberately storage-independent —
+// an earlier version probed liveness with getKeyValue, which the caller had
+// already invalidated by deleting the map entry first, so every promotion
+// decremented deadKeys for a live key. That drove deadKeys negative, disabled
+// the tombstone-revival scans, and let a re-inserted key be appended to
+// t.keys a second time — a duplicate key makes nextHashAfter return a key as
+// its own successor and pairs() spins forever.
+func (t *Table) removeLiveKey(k Value) {
 	for i, existing := range t.keys {
 		if existing.RawEqual(k) {
-			// If this was a dead key, update the counter.
-			if _, alive := t.getKeyValue(k); !alive {
-				t.deadKeys--
-			}
 			t.keys = append(t.keys[:i], t.keys[i+1:]...)
 			return
 		}
@@ -517,6 +559,36 @@ func (t *Table) getKeyValue(k Value) (Value, bool) {
 		v, exists := t.hash[hashKey(k)]
 		return v, exists
 	}
+}
+
+// tableDebugChecks enables checkInvariants. Off outside tests: the audit is
+// quadratic in len(t.keys) and must never run on a mutation path.
+var tableDebugChecks bool
+
+// checkInvariants verifies the two ordered-keys invariants documented on
+// Table: no duplicate key, and deadKeys equal to the true tombstone count.
+// Both fail silently in production (an infinite pairs() loop, or missed key
+// revivals), so tests flip tableDebugChecks on and call this after mutations.
+// It is a no-op when the flag is off.
+func (t *Table) checkInvariants() error {
+	if !tableDebugChecks {
+		return nil
+	}
+	dead := 0
+	for i, k := range t.keys {
+		for j := i + 1; j < len(t.keys); j++ {
+			if t.keys[j].RawEqual(k) {
+				return fmt.Errorf("duplicate key %v in keys slice at %d and %d", hashKey(k), i, j)
+			}
+		}
+		if _, alive := t.getKeyValue(k); !alive {
+			dead++
+		}
+	}
+	if dead != t.deadKeys {
+		return fmt.Errorf("deadKeys = %d, but keys slice holds %d tombstones", t.deadKeys, dead)
+	}
+	return nil
 }
 
 // Get retrieves a value from the table (raw access, no metamethods).
@@ -798,7 +870,7 @@ func (t *Table) rehashToArray() {
 			if v, ok := t.intHash[nextIdx]; ok && !v.IsNil() {
 				t.array = append(t.array, v)
 				delete(t.intHash, nextIdx)
-				t.removeKey(nextIdxKey)
+				t.removeLiveKey(nextIdxKey)
 				continue
 			}
 		}
@@ -807,7 +879,7 @@ func (t *Table) rehashToArray() {
 			if v, ok := t.hash[nextIdx]; ok && !v.IsNil() {
 				t.array = append(t.array, v)
 				delete(t.hash, nextIdx)
-				t.removeKey(nextIdxKey)
+				t.removeLiveKey(nextIdxKey)
 				continue
 			}
 		}
