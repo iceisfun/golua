@@ -83,6 +83,15 @@ type UpvalDesc struct {
 	Name    string
 	InStack bool // true = captures from enclosing stack, false = from enclosing upvalue list
 	Index   int  // register index (InStack) or upvalue index (!InStack)
+	// Kind is the captured variable's kind, as reference Lua records it in the
+	// binary chunk (lparser.h): VDKREG 0, RDKCONST 1 (a "<const>" local that is
+	// not a compile-time constant), RDKVAVAR 2 (a named vararg parameter),
+	// RDKTOCLOSE 3 (a "<close>" local). It is compile-time information only —
+	// no part of the running VM consults it, and reference's own lvm.c does not
+	// either — but the dump format carries it, so it must survive a load/dump
+	// round-trip for a chunk to come back byte for byte. GoLua's own code
+	// generator does not classify its upvalues yet and leaves this VDKREG.
+	Kind byte
 }
 
 // ---------------------------------------------------------------------------
