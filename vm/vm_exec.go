@@ -110,7 +110,7 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		varargs:               varargSlice,
 		argc:                  UseVMTop, // Lua frames use vm.top for ArgCount
 		ftransfer:             1,
-		ntransfer:             min(numArgs, numParams),
+		ntransfer:             numParams, // luaD_hookcall counts every parameter slot, nil-filled ones included
 		callName:              vm.pendingCallName,
 		callNameWhat:          vm.pendingCallNameWhat,
 		suppressTracebackName: vm.pendingSuppressTracebackName,
@@ -223,6 +223,24 @@ func (vm *VM) execute() ([]Value, error) {
 		frame = &vm.callStack[len(vm.callStack)-1]
 
 		if frame.pc >= len(code) {
+			// The frame ran off the end of its code instead of executing a
+			// return (a body whose last statement is an `if` ending in
+			// `return` carries no trailing OP_RETURN0). Reference protos
+			// always end in a return instruction, so the return event must
+			// still fire here — otherwise hook-based counters lose one event
+			// per call to such a function.
+			if vm.hookMask&HookMaskReturn != 0 && !vm.inHook {
+				lastPC := len(code) - 1
+				if lastPC < 0 {
+					lastPC = 0
+				}
+				// rethook reports the register the results would start at;
+				// with no results that is the missing RETURN0's operand,
+				// which the compiler would have set to nactvar.
+				frame.ftransfer = activeLocalCount(proto, lastPC) + 1
+				frame.ntransfer = 0
+				vm.fireReturnHook()
+			}
 			return nil, nil
 		}
 
@@ -429,6 +447,25 @@ func (vm *VM) execute() ([]Value, error) {
 				if err := vm.tableSet(t, key, value); err != nil {
 					return nil, err
 				}
+			} else if mm := vm.getMetafield(table, MetaNewIndex); !mm.IsNil() {
+				// A non-table _ENV (proxy userdata, string, ...) must still go
+				// through __newindex, the way luaV_finishset does and the way
+				// OP_GETTABUP already dispatches __index for reads.
+				if mm.IsFunction() || mm.IsNativeFunc() {
+					if _, err := vm.callMetamethod3("newindex", mm, table, key, value); err != nil {
+						return nil, err
+					}
+				} else if t := mm.AsTable(); t != nil && !valueIsThread(mm) {
+					if err := vm.tableSet(t, key, value); err != nil {
+						return nil, err
+					}
+				} else if err := vm.newIndexValue(mm, key, value, vm.MaxMetaDepth()); err != nil {
+					return nil, err
+				}
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
 			} else {
 				uvName := ""
 				if a < len(proto.Upvalues) {
@@ -638,22 +675,28 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 			} else if table.IsString() && vm.stringMeta != nil {
-				// String method call - resolve through __index metamethod only
+				// String method call: resolve __index with the same chaining
+				// and error reporting as the plain field path (luaV_finishget),
+				// so ("s"):foo() and ("s").foo agree on non-table __index.
 				idx := vm.stringMeta.Get(metaIndex)
-				var val Value
-				if idx.IsTable() {
-					val, _ = vm.tableGetString(idx.AsTable(), key)
-				} else if idx.IsFunction() || idx.IsNativeFunc() {
-					var err error
-					val, err = vm.callMetamethod("index", idx, table, NewString(key))
-					if err != nil {
-						return nil, err
-					}
-					frame = &vm.callStack[len(vm.callStack)-1]
-					proto = frame.closure.Proto
-					code = proto.Code
-					consts = frame.closure.ConstValues()
+				if idx.IsNil() {
+					return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 				}
+				var val Value
+				var err error
+				if idx.IsTable() {
+					val, err = vm.tableGetString(idx.AsTable(), key)
+				} else {
+					val, err = vm.resolveIndex(idx, table, NewString(key))
+				}
+				if err != nil {
+					return nil, err
+				}
+				// Resolving the chain can call back into Lua and grow the call stack.
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
 				vm.stack[frame.base+a] = val
 			} else if ud := table.AsUserdata(); ud != nil {
 				// Userdata method call - use __index from userdata metatable
@@ -1491,6 +1534,10 @@ func (vm *VM) execute() ([]Value, error) {
 			// Close upvalues and run __close metamethods BEFORE the return hook.
 			// Lua 5.4 runs __close before the return hook for the function itself.
 			vm.closeUpvalues(frame.base)
+			// __close re-enters the VM and may have grown (reallocated) the
+			// call stack, leaving the cached frame pointer aimed at the old
+			// backing array.
+			frame = &vm.callStack[len(vm.callStack)-1]
 
 			// Fire return hook after __close metamethods
 			frame.ftransfer = a + 1
@@ -1505,8 +1552,12 @@ func (vm *VM) execute() ([]Value, error) {
 			return saved, nil
 
 		case compiler.OP_RETURN0:
+			a := inst.A()
 			vm.closeUpvalues(frame.base)
-			frame.ftransfer = 0
+			frame = &vm.callStack[len(vm.callStack)-1]
+			// rethook computes ftransfer as (first result - func), and with no
+			// results the first result is R[A]; ntransfer is 0.
+			frame.ftransfer = a + 1
 			frame.ntransfer = 0
 			vm.fireReturnHook()
 			return nil, nil
@@ -1515,6 +1566,7 @@ func (vm *VM) execute() ([]Value, error) {
 			a := inst.A()
 			result := vm.stack[frame.base+a]
 			vm.closeUpvalues(frame.base)
+			frame = &vm.callStack[len(vm.callStack)-1]
 			frame.ftransfer = a + 1
 			frame.ntransfer = 1
 			vm.fireReturnHook()
@@ -1804,6 +1856,29 @@ func (vm *VM) execute() ([]Value, error) {
 			if fn.IsFunction() {
 				results, err = vm.call(fn.AsClosure(), []Value{state, ctrl}, c)
 			} else if fn.IsNativeFunc() {
+				if vm.hookMask&(HookMaskCall|HookMaskReturn) != 0 {
+					// The inline invocation below skips the hook machinery, so
+					// a native iterator would report no call/return events at
+					// all — reference lvm.c runs every iterator through
+					// luaD_call. Stage the call above the loop variables
+					// (reference stages it at R[A+3], reusing the dead control
+					// variable) and dispatch it like a normal call.
+					callBase := a + 4
+					vm.ensureStack(frame.base + callBase + 3 + c + stackSafetyMargin)
+					vm.stack[frame.base+callBase] = fn
+					vm.stack[frame.base+callBase+1] = state
+					vm.stack[frame.base+callBase+2] = ctrl
+					if err := vm.doCall(frame, callBase, 3, c+1); err != nil {
+						return nil, err
+					}
+					// The call (and its hooks) may have grown the call stack.
+					frame = &vm.callStack[len(vm.callStack)-1]
+					// Move the results down onto the loop variables at R[A+3].
+					for i := 0; i < c; i++ {
+						vm.stack[frame.base+a+3+i] = vm.stack[frame.base+callBase+i]
+					}
+					break
+				}
 				// Set up stack for native call at R[A+4] so results land there
 				nativeBase := frame.base + a + 4
 				vm.stack[nativeBase] = fn
@@ -1851,6 +1926,8 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			// The iterator ran Lua code, which may have reallocated the call stack.
+			frame = &vm.callStack[len(vm.callStack)-1]
 
 			// Store results at R[A+3], ..., R[A+2+C] (the loop variables).
 			for i := 0; i < c && i < len(results); i++ {
@@ -2315,6 +2392,19 @@ dispatch:
 	}
 
 	return nil
+}
+
+// activeLocalCount returns how many local variables are live at pc, i.e. the
+// compiler's nactvar at that point — the register an implicit final return
+// would use.
+func activeLocalCount(proto *compiler.Proto, pc int) int {
+	n := 0
+	for i := 0; i < len(proto.Locals) && proto.Locals[i].StartPC <= pc; i++ {
+		if pc < proto.Locals[i].EndPC { // active at this PC
+			n++
+		}
+	}
+	return n
 }
 
 // localName returns the name of the local variable occupying register reg
