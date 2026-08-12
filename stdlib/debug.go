@@ -920,7 +920,7 @@ func luaDebugGetHook(v *vm.VM) int {
 	v.Set(0, hookFunc)
 
 	// Lua 5.4: when no hook is set, gethook returns only nil (1 value).
-	if hookFunc == vm.Nil {
+	if hookFunc.IsNil() {
 		return 1
 	}
 

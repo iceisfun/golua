@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,30 @@ var full = flag.Bool("full", false, "run resource-intensive heavy tests")
 
 // luaTestTimeout is the maximum time a single Lua test file may run before
 // being terminated. Prevents deadlocks from stalling the entire test suite.
-const luaTestTimeout = 30 * time.Second
+//
+// It is a deadlock catcher, not a performance assertion, so it scales with the
+// conditions the suite is running under. The heaviest files take ~17s alone but
+// exceed a flat 30s when the machine is loaded or the race detector is on,
+// which made `go test -race ./...` permanently red and `go test ./...` flaky on
+// a busy host. Both multipliers are deliberately generous: a real hang still
+// fails, just later.
+var luaTestTimeout = baseLuaTestTimeout * time.Duration(timeoutScale())
+
+const baseLuaTestTimeout = 30 * time.Second
+
+// timeoutScale returns the multiplier for luaTestTimeout: 4x under the race
+// detector, and 2x when the test binary is sharing the machine with more
+// parallel work than it has cores to spare.
+func timeoutScale() int {
+	scale := 1
+	if raceEnabled {
+		scale *= 4
+	}
+	if runtime.GOMAXPROCS(0) < runtime.NumCPU() {
+		scale *= 2
+	}
+	return scale
+}
 
 // TestLuaFiles runs all .lua test files in the tests directory (root level).
 // Files are categorized by prefix:

@@ -231,6 +231,27 @@ See the `examples/` directory for complete examples:
 
 ## Go Interop
 
+### Comparing Values
+
+`vm.Value` is **not comparable with Go's `==`**, by design: strings are stored unboxed as a data pointer plus a length, so `==` would compare pointers and answer string equality wrongly for equal strings built different ways. Value carries a zero-width non-comparable field, so `==` and `map[vm.Value]T` fail to compile.
+
+```go
+a == b                 // compile error: struct containing [0]func() cannot be compared
+a.Equal(b)             // content equality, including int/float cross-type comparison
+a.IsNil()              // instead of a == vm.Nil
+
+map[vm.Value]int{}     // compile error: invalid map key type
+map[string]int{}       // key on the extracted Go value: v.AsString(), v.AsInt(), ...
+```
+
+`RawEqual` is an alias for `Equal`. Neither invokes an `__eq` metamethod — that
+dispatch happens in the VM, not on the value.
+
+One case the compiler cannot catch: once a Value is stored in an `interface{}`,
+`==` compiles and panics at run time with *comparing uncomparable type vm.Value*.
+That is loud rather than silent, but if you hold Values in `any`, compare them
+by extracting the Value first.
+
 ### Exposing Go Functions to Lua
 
 ```go
@@ -743,7 +764,8 @@ Current compatibility notes and intentional boundaries:
 - No C module loading — standard C Lua modules (.so/.dll) are compiled against the PUC-Rio C API and are not compatible with GoLua's VM. `package.loadlib` is nil by default; setting a [`LuaLoadLibProvider`](docs/loadlib_provider.md) lets the host provide Go-native bindings or cgo-bridged libraries under the same API surface. `require` loads Lua modules via `LuaCodeProvider`.
 - No `io.stdin`/`io.stdout`/`io.stderr` in the library by default (the CLI at `cmd/lua` provides full stdio via its environment, but `vm.New()` does not to maintain the sandbox)
 - No `io.write` in `JailedIoProvider` (read-only by design; use `FullIoProvider` for read-write access)
-- Binary chunk format is compatible with Lua 5.4.8 — `load(string.dump(f))` round-tripping works, and chunks dumped by GoLua can be loaded by reference Lua 5.4.8 and vice versa. However, bytecode details may differ between compilers.
+- Binary chunk format is Lua 5.4.8's. A chunk produced by `luac5.4.8` loads, runs, and dumps back out **byte for byte**, and `load(string.dump(f))` round-trips. The reverse direction is *not* safe: GoLua's code generator and reference Lua's disagree about the instruction stream itself (GoLua omits the `OP_EXTRAARG` reference always places after `OP_NEWTABLE`, and orders constants differently), so reference Lua would mis-execute a GoLua dump even though it parses cleanly — and reference Lua has no bytecode verifier. Do not feed a GoLua-produced chunk to `lua`/`luac`.
+- `string.dump` has one encoding limit: an array constructor whose first index passes 256 in a single `OP_SETLIST` (roughly 300+ consecutive array items in one table literal) has no single-word Lua 5.4.8 encoding, and `string.dump` raises an ordinary, `pcall`-catchable error rather than writing a chunk whose element indices mean something else.
 - `os.setlocale` only supports the `"C"` locale — Go has no native locale support. Queries return `"C"` and setting any other locale returns `nil`.
 - GC behavior differs from C Lua — GoLua delegates garbage collection entirely to Go's runtime GC. `collectgarbage("collect")` triggers `runtime.GC()` but Go's GC timing is non-deterministic, so tests that depend on exact finalization order or count may not pass.
 - VM instances are isolated but not safe for concurrent mutation from multiple goroutines without external synchronization.
