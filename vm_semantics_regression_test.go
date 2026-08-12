@@ -143,13 +143,12 @@ print(pcall(table.move, {1,2,3}, 1, 3, 1, co))`)
 	}
 }
 
-// The compiler never emits the immediate-comparison opcodes (LTI/LEI/GTI/GEI),
-// but a binary chunk loaded from the wire can contain them. Their slow paths
-// dispatch __lt/__le, and a metamethod that deepens the call stack far enough
-// to reallocate it left the cached frame pointer stale, so the conditional
-// skip (pc++) was written to dead memory and the comparison took the wrong
-// branch. Build the scenario by compiling a normal chunk and patching its
-// OP_LT into each immediate form, the way a crafted chunk would arrive.
+// The immediate-comparison opcodes (LTI/LEI/GTI/GEI) dispatch __lt/__le on
+// their slow paths, and a metamethod that deepens the call stack far enough to
+// reallocate it left the cached frame pointer stale, so the conditional skip
+// (pc++) was written to dead memory and the comparison took the wrong branch.
+// `t < 5` compiles straight to OP_LTI, so the scenario is built by compiling a
+// normal chunk and rewriting that LTI into each of the four forms.
 func TestImmediateCompareMetamethodStaleFrame(t *testing.T) {
 	// deep() must recurse through plain CALLs (a tail call reuses its frame
 	// and never grows the call stack, which this bug needs).
@@ -185,11 +184,11 @@ return probe(setmetatable({}, mt))
 		return proto
 	}
 
-	// findLT locates the single OP_LT in the proto tree (probe's `t < 5`).
+	// findLT locates the single OP_LTI in the proto tree (probe's `t < 5`).
 	var findLT func(p *compiler.Proto) (*compiler.Proto, int)
 	findLT = func(p *compiler.Proto) (*compiler.Proto, int) {
 		for i, inst := range p.Code {
-			if inst.OpCode() == compiler.OP_LT {
+			if inst.OpCode() == compiler.OP_LTI {
 				return p, i
 			}
 		}
@@ -207,7 +206,7 @@ return probe(setmetatable({}, mt))
 		// from k, so pick the metamethod's return value accordingly.
 		probeProto, ltIdx := findLT(compile(false))
 		if probeProto == nil {
-			t.Fatal("no OP_LT found in compiled template")
+			t.Fatal("no OP_LTI found in compiled template")
 		}
 		lt := probeProto.Code[ltIdx]
 		mmResult := lt.K() == 0

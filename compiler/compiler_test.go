@@ -654,11 +654,12 @@ func TestFibonacci(t *testing.T) {
 	if fib.NumParams != 1 {
 		t.Errorf("fib should have 1 param, got %d", fib.NumParams)
 	}
-	// Lua 5.5 rewrites x - <int_literal> as ADDI with negated immediate, so
-	// fib(n-1) / fib(n-2) emit OP_ADDI (not OP_SUB). The outer fib(...)+fib(...)
-	// remains a register-register OP_ADD.
-	if !hasOp(fib, OP_LT) || !hasOp(fib, OP_ADDI) || !hasOp(fib, OP_ADD) {
-		t.Error("fib should have LT, ADDI, ADD")
+	// Lua 5.4 rewrites x - <int_literal> as ADDI with negated immediate, so
+	// fib(n-1) / fib(n-2) emit OP_ADDI (not OP_SUB). The condition `n < 2`
+	// compiles to the immediate compare OP_LTI, like reference luac. The
+	// outer fib(...)+fib(...) remains a register-register OP_ADD.
+	if !hasOp(fib, OP_LTI) || !hasOp(fib, OP_ADDI) || !hasOp(fib, OP_ADD) {
+		t.Error("fib should have LTI, ADDI, ADD")
 	}
 }
 

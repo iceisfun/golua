@@ -320,7 +320,7 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 // "(temporary)" slot visible to debug.getlocal.
 func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 	fs := c.fs
-	if name, ok := expr.(*ast.NameExpr); ok {
+	if name, ok := unparen(expr).(*ast.NameExpr); ok {
 		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
 			if localReg, ok := fs.lookupLocal(name.Name); ok {
 				return localReg, false
@@ -338,7 +338,7 @@ func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 // otherwise. Used to read a binary/comparison left operand live at execution
 // time instead of snapshotting it into a temp with a MOVE.
 func plainLocalReg(fs *funcState, expr ast.Expr) (int, bool) {
-	if name, ok := expr.(*ast.NameExpr); ok {
+	if name, ok := unparen(expr).(*ast.NameExpr); ok {
 		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
 			if localReg, ok := fs.lookupLocal(name.Name); ok {
 				return localReg, true
@@ -346,6 +346,25 @@ func plainLocalReg(fs *funcState, expr ast.Expr) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// unparen strips redundant parentheses from an expression. In reference Lua
+// '(' expr ')' compiles to nothing but luaK_dischargevars: parentheses are
+// inert apart from truncating a multi-value expression to a single value, and
+// in particular a parenthesised local stays in its own register and is read
+// live by the instruction that uses it. Register-level decisions must
+// therefore see through them, or `(a) + f()` snapshots `a` into a temp before
+// f() runs and `(t).k = f()` stores into the wrong table. Truncation is
+// unaffected: callers use the unwrapped node only to recognise a bare name,
+// which is always single-valued.
+func unparen(expr ast.Expr) ast.Expr {
+	for {
+		p, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = p.Inner
+	}
 }
 
 // smallIntConst checks whether an expression is a small integer constant
@@ -938,51 +957,18 @@ func (c *compiler) flattenConcat(e ast.Expr) []ast.Expr {
 // followed by conditional jumps that produce a boolean result in reg.
 func (c *compiler) compileComparison(e *ast.BinopExpr, reg int) {
 	fs := c.fs
-	line := e.P.Line
 	// The comparison instruction itself (and the boolean it materializes) is
 	// emitted after the right operand is parsed, so reference Lua attributes it
 	// to the right operand's end line — which is what a runtime comparison error
 	// reports. The left-operand discharge keeps its own line.
 	opLine := exprEndLine(e)
 
-	// Read both operands via operandToReg so a bare in-register local is used
-	// in place: OP_LT/OP_LE/OP_EQ then read the register live at execution time,
-	// after the other operand may have mutated it through a shared upvalue,
-	// matching reference Lua's exp2anyreg. base restores freeReg.
+	// Emit the comparison itself (immediate form when an operand is a small
+	// constant, register form otherwise). It leaves freeReg where it found it.
 	base := fs.freeReg
-	leftReg, leftTmp := c.operandToReg(e.Left)
-	if leftTmp {
-		c.fixDischargedLine(line)
-	}
-	rightReg, _ := c.operandToReg(e.Right)
-
-	var op OpCode
-	k := 1 // test sense
-	switch e.Op {
-	case "==":
-		op = OP_EQ
-		k = 0
-	case "~=":
-		op = OP_EQ
-		k = 1
-	case "<":
-		op = OP_LT
-		k = 0
-	case "<=":
-		op = OP_LE
-		k = 0
-	case ">":
-		op = OP_LT
-		k = 0
-		leftReg, rightReg = rightReg, leftReg // swap
-	case ">=":
-		op = OP_LE
-		k = 0
-		leftReg, rightReg = rightReg, leftReg // swap
-	}
+	c.compileComparisonTest(e, false, opLine)
 
 	// comparison + conditional jump → boolean
-	fs.emit(ABC(op, leftReg, rightReg, 0, k), opLine)
 	jmpFalse := fs.emitJump(opLine) // skip next if comparison fails
 	fs.emit(ABC(OP_LOADTRUE, reg, 0, 0, 0), opLine)
 	jmpEnd := fs.emitJump(opLine)
@@ -1006,21 +992,34 @@ func isComparisonOp(op string) bool {
 	return false
 }
 
-// compileComparisonCond compiles a comparison expression as a condition,
-// emitting the comparison + JMP. Returns the JMP PC to patch to the false
-// path. The comparison is compiled with the given k sense: k=0 means
-// "skip next (JMP) if comparison is TRUE" (used by and),
-// k=1 means "skip next (JMP) if comparison is FALSE" (used by or).
-func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int {
+// compileComparisonTest emits the operands and the comparison instruction for
+// a comparison expression, WITHOUT the trailing JMP -- the caller emits that.
+// OP_LT/OP_LE/OP_EQ (and their immediate forms) share OP_TEST's skip
+// convention ("pc++ if result ~= k"), so a fused compare is a drop-in
+// replacement for a materialized boolean + OP_TEST.
+//
+// With invertSense=false the caller's JMP fires when the comparison is FALSE
+// (the if/while/and sense); invertSense=true flips k so the JMP fires when the
+// comparison is TRUE (the or sense). The comparison instruction is attributed
+// to opLine; a left operand that had to be discharged into a temp keeps the
+// operator's own line, as reference Lua's one-pass compiler does.
+// freeReg is restored to its entry value.
+func (c *compiler) compileComparisonTest(e *ast.BinopExpr, invertSense bool, opLine int) {
 	fs := c.fs
-	line := e.P.Line
+
+	// Comparisons against a small-integer or string constant use the
+	// immediate/constant compare opcodes (EQI/EQK/LTI/LEI/GTI/GEI), like
+	// reference luac, saving the constant's LOADI/LOADK.
+	if c.tryComparisonImmediate(e, invertSense, opLine) {
+		return
+	}
 
 	// See compileComparison: read operands in place so an in-register local is
 	// compared live. base restores freeReg after the operands.
 	base := fs.freeReg
 	leftReg, leftTmp := c.operandToReg(e.Left)
 	if leftTmp {
-		c.fixDischargedLine(line)
+		c.fixDischargedLine(e.P.Line)
 	}
 	rightReg, _ := c.operandToReg(e.Right)
 
@@ -1053,10 +1052,138 @@ func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int
 		k = 1 - k
 	}
 
-	fs.emit(ABC(op, leftReg, rightReg, 0, k), line)
-	jmp := fs.emitJump(line) // JMP to false/true path
+	fs.emit(ABC(op, leftReg, rightReg, 0, k), opLine)
 	fs.freeReg = base
-	return jmp
+}
+
+// tryComparisonImmediate emits an immediate/constant-operand compare for a
+// comparison whose other operand is a small integer constant (EQI/LTI/LEI/
+// GTI/GEI) or a string constant (EQK), with compileComparisonTest's k sense.
+// It returns false when no immediate form applies, having emitted nothing.
+//
+// The emitted instruction is semantically identical to LOADI/LOADK + the
+// register-form compare: the VM routes the immediate through the same
+// equal/lessThan/lessEqual helpers, so comparison metamethods fire with the
+// same operands in the same order (reference Lua's luaT_callorderiTM passes
+// the immediate in the same position, and flips the operands for GTI/GEI just
+// as the register form swaps them for `>`/`>=`).
+func (c *compiler) tryComparisonImmediate(e *ast.BinopExpr, invertSense bool, opLine int) bool {
+	fs := c.fs
+
+	if e.Op == "==" || e.Op == "~=" {
+		k := 0
+		if e.Op == "~=" {
+			k = 1
+		}
+		if invertSense {
+			k = 1 - k
+		}
+		// The constant may sit on either side; == and ~= are symmetric, and
+		// so are EQI/EQK (they compare R[A] against the immediate/constant).
+		regExpr, constExpr := e.Left, e.Right
+		if !isImmediateEqConst(constExpr) {
+			regExpr, constExpr = constExpr, regExpr
+		}
+		if imm, ok := smallIntConst(constExpr); ok {
+			base := fs.freeReg
+			reg, tmp := c.operandToReg(regExpr)
+			if tmp && regExpr == e.Left {
+				c.fixDischargedLine(e.P.Line)
+			}
+			fs.emit(ABC(OP_EQI, reg, imm+OffsetSC, 0, k), opLine)
+			fs.freeReg = base
+			return true
+		}
+		if str, ok := constExpr.(*ast.StringExpr); ok {
+			// The constant index must fit the B field; intern it first so an
+			// out-of-range index falls back before any operand is emitted.
+			kidx := fs.stringConstant(str.Value)
+			if kidx > MaxArgB {
+				return false
+			}
+			base := fs.freeReg
+			reg, tmp := c.operandToReg(regExpr)
+			if tmp && regExpr == e.Left {
+				c.fixDischargedLine(e.P.Line)
+			}
+			fs.emit(ABC(OP_EQK, reg, kidx, 0, k), opLine)
+			fs.freeReg = base
+			return true
+		}
+		return false
+	}
+
+	// Order comparison against a small-int operand. A constant on the left
+	// flips the mnemonic: K < x  <=>  x > K, exactly as reference Lua's
+	// codeorder rewrites (A < B) to (B > A).
+	var op OpCode
+	var regExpr ast.Expr
+	var imm int
+	if v, ok := smallIntConst(e.Right); ok {
+		imm, regExpr = v, e.Left
+		switch e.Op {
+		case "<":
+			op = OP_LTI
+		case "<=":
+			op = OP_LEI
+		case ">":
+			op = OP_GTI
+		case ">=":
+			op = OP_GEI
+		default:
+			return false
+		}
+	} else if v, ok := smallIntConst(e.Left); ok {
+		imm, regExpr = v, e.Right
+		switch e.Op {
+		case "<":
+			op = OP_GTI
+		case "<=":
+			op = OP_GEI
+		case ">":
+			op = OP_LTI
+		case ">=":
+			op = OP_LEI
+		default:
+			return false
+		}
+	} else {
+		return false
+	}
+
+	k := 0
+	if invertSense {
+		k = 1
+	}
+	base := fs.freeReg
+	reg, tmp := c.operandToReg(regExpr)
+	if tmp && regExpr == e.Left {
+		c.fixDischargedLine(e.P.Line)
+	}
+	fs.emit(ABC(op, reg, imm+OffsetSC, 0, k), opLine)
+	fs.freeReg = base
+	return true
+}
+
+// isImmediateEqConst reports whether expr can be the constant operand of an
+// EQI/EQK equality compare.
+func isImmediateEqConst(expr ast.Expr) bool {
+	if _, ok := smallIntConst(expr); ok {
+		return true
+	}
+	_, ok := expr.(*ast.StringExpr)
+	return ok
+}
+
+// compileComparisonCond compiles a comparison expression as a condition,
+// emitting the comparison + JMP. Returns the JMP PC to patch to the false
+// path. The comparison is compiled with the given k sense: k=0 means
+// "skip next (JMP) if comparison is TRUE" (used by and),
+// k=1 means "skip next (JMP) if comparison is FALSE" (used by or).
+func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int {
+	line := e.P.Line
+	c.compileComparisonTest(e, invertSense, line)
+	return c.fs.emitJump(line) // JMP to false/true path
 }
 
 // compileAnd compiles "a and b" — short-circuits to a if a is falsy.
@@ -1172,11 +1299,24 @@ func (c *compiler) compileUnop(e *ast.UnopExpr, reg int) {
 	line := e.P.Line
 
 	// Read a plain in-register local operand in place (reference Lua's
-	// exp2anyreg) instead of snapshotting it into reg with a MOVE;
-	// otherwise compile the operand into reg.
+	// exp2anyreg) instead of snapshotting it into reg with a MOVE.
 	opReg, inPlace := plainLocalReg(fs, e.Operand)
+	freeTo := -1
 	if !inPlace {
-		opReg = reg
+		if reg < fs.regTop() {
+			// reg belongs to a live variable (or a still-live condition temp
+			// below the locals top): evaluating the operand there would make
+			// the target visibly hold the operand while a metamethod runs, and
+			// would blame the target in the error message when there is none.
+			// Reference codeunexpval evaluates into a temp and leaves the
+			// result relocatable, so the store happens last.
+			opReg = fs.reserveReg()
+			freeTo = opReg
+		} else {
+			// reg is a temp: evaluate in place, as reference's exp2anyreg does
+			// when the operand already owns the top register.
+			opReg = reg
+		}
 		c.compileExprToReg(e.Operand, opReg)
 	}
 
@@ -1191,6 +1331,9 @@ func (c *compiler) compileUnop(e *ast.UnopExpr, reg int) {
 		fs.emit(ABC(OP_BNOT, reg, opReg, 0, 0), line)
 	default:
 		c.error(e, "unknown unary operator %q", e.Op)
+	}
+	if freeTo >= 0 {
+		fs.freeReg = freeTo
 	}
 }
 
@@ -1483,7 +1626,7 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 	fs := c.fs
 	// When the table is a local variable, use its register directly.
 	tableReg := -1
-	if name, ok := e.Table.(*ast.NameExpr); ok {
+	if name, ok := unparen(e.Table).(*ast.NameExpr); ok {
 		if localReg, found := fs.lookupLocal(name.Name); found {
 			tableReg = localReg
 		}
@@ -1518,7 +1661,7 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 	// avoid emitting an unnecessary MOVE. This matches Lua 5.4's behavior
 	// where VINDEXED expressions reference the table register directly.
 	tableReg := -1
-	if name, ok := e.Table.(*ast.NameExpr); ok {
+	if name, ok := unparen(e.Table).(*ast.NameExpr); ok {
 		if localReg, found := fs.lookupLocal(name.Name); found {
 			tableReg = localReg
 		}
