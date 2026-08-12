@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -87,7 +88,11 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			// this, very large counts (e.g. 1<<60) reach make([]byte, count)
 			// and trigger a Go runtime makeslice panic ("len out of range")
 			// that leaks through pcall. Reference Lua raises the structured
-			// "not enough memory" error.
+			// "not enough memory" error. A count under the bound is still never
+			// handed to a provider unchanged (see readCountBytes): it is
+			// trimmed to the data that exists, so even a provider that sizes
+			// its buffer from the count cannot be pushed into an allocation
+			// that kills the process.
 			const maxReadBytes = 1 << 30 // 1 GiB
 			if count > maxReadBytes {
 				// Bare LuaError: reference's memory error (LUA_ERRMEM) carries no
@@ -107,7 +112,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 					v.Set(results, vm.NewString(data))
 				}
 			} else {
-				data, err := f.ReadBytes(ctx, int(count))
+				data, err := readCountBytes(ctx, f, int(count))
 				if err != nil {
 					if isFileError(err) {
 						fileErr = err
@@ -161,6 +166,55 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 		return 3
 	}
 	return results
+}
+
+// readChunkBytes is the largest count handed to a provider that has not shown
+// it holds that much data. A buffer this size is not an allocation any host
+// notices, so a count at or below it goes straight through.
+const readChunkBytes = 1 << 22 // 4 MiB
+
+// readCountBytes reads count bytes from f without letting the count alone
+// decide how much memory is allocated.
+//
+// A LuaFile is free to size its buffer from the count it is given — the obvious
+// implementation is make([]byte, n) — so handing a provider a script-chosen
+// 1 GiB is an allocation the Go runtime aborts the process over, where no pcall
+// can intervene. A large count is therefore asked for a bounded chunk at a
+// time, so what a provider can be made to allocate stays proportional to the
+// data that has actually arrived rather than to a number a script wrote for
+// free. Nothing beyond ReadBytes is required of the file: probing its length
+// first would only save a copy, and it would make every f:read(N) depend on
+// Seek being cheap and free of side effects on an interface where a provider
+// is free to implement it neither way.
+func readCountBytes(ctx context.Context, f vm.LuaFile, count int) (string, error) {
+	if count <= readChunkBytes {
+		return f.ReadBytes(ctx, count)
+	}
+	// A short chunk ends the read — that is end of input for every in-tree
+	// provider, and for any other it is the only reading that cannot loop
+	// forever on a reader that keeps returning less than it was asked for.
+	var out strings.Builder
+	for remaining := count; remaining > 0; {
+		want := remaining
+		if want > readChunkBytes {
+			want = readChunkBytes
+		}
+		chunk, err := f.ReadBytes(ctx, want)
+		if err != nil {
+			if out.Len() == 0 {
+				return "", err
+			}
+			// Data already read is a successful short read, exactly as it
+			// would be if the provider had returned it in one call.
+			break
+		}
+		out.WriteString(chunk)
+		remaining -= len(chunk)
+		if len(chunk) < want {
+			break
+		}
+	}
+	return out.String(), nil
 }
 
 // parseReadNumber converts a string read by read("n") to a Lua number value.

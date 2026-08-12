@@ -23,12 +23,16 @@ func stringFormat(v *vm.VM) int {
 }
 
 func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
-	var result strings.Builder
+	// Capped like gsub/rep/concat: a handful of %s conversions over large
+	// strings (or a %q that expands its argument fourfold) would otherwise grow
+	// the result past what Go can allocate and abort the host with an
+	// UNCATCHABLE runtime OOM. Every write is checked before it happens.
+	result := capBuilder{limit: maxStrResultSize}
 	argIdx := 0
 
 	for i := 0; i < len(format); i++ {
 		if format[i] != '%' {
-			result.WriteByte(format[i])
+			result.addChar(format[i])
 			continue
 		}
 
@@ -45,7 +49,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 
 		i++
 		if format[i] == '%' {
-			result.WriteByte('%')
+			result.addChar('%')
 			continue
 		}
 
@@ -133,11 +137,11 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 								out = pad + out
 							}
 						}
-						result.WriteString(out)
+						result.addString(out)
 						break
 					}
 				}
-				result.WriteString(fmt.Sprintf(goSpec, i))
+				result.addString(fmt.Sprintf(goSpec, i))
 			} else if _, ok := val.ToNumber(); ok {
 				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
 			} else {
@@ -147,7 +151,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			goSpec := spec + "d"
 			if i, ok := val.ToInt(); ok {
 				validateConversion(spec, specChar)
-				result.WriteString(fmt.Sprintf(goSpec, uint64(i)))
+				result.addString(fmt.Sprintf(goSpec, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
 				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
 			} else {
@@ -156,7 +160,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 		case 'o', 'x', 'X':
 			if i, ok := val.ToInt(); ok {
 				validateConversion(spec, specChar)
-				result.WriteString(formatIntHex(spec, specChar, uint64(i)))
+				result.addString(formatIntHex(spec, specChar, uint64(i)))
 			} else if _, ok := val.ToNumber(); ok {
 				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
 			} else {
@@ -175,11 +179,11 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			if nv, ok := coerceToNumber(val); ok {
 				n, _ := nv.ToNumber()
 				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
-					result.WriteString(special)
+					result.addString(special)
 				} else if (specChar == 'g' || specChar == 'G') && strings.Contains(spec, "#") {
-					result.WriteString(formatAltGeneralFloat(spec, specChar, n))
+					result.addString(formatAltGeneralFloat(spec, specChar, n))
 				} else {
-					result.WriteString(fmt.Sprintf(goSpec, n))
+					result.addString(fmt.Sprintf(goSpec, n))
 				}
 			} else {
 				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", v.ObjTypeName(val)))
@@ -190,7 +194,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			if nv, ok := coerceToNumber(val); ok {
 				n, _ := nv.ToNumber()
 				if special, ok := formatSpecialFloat(spec, specChar, n); ok {
-					result.WriteString(special)
+					result.addString(special)
 				} else {
 					prec := -1 // default: shortest
 					if dotIdx := strings.IndexByte(spec, '.'); dotIdx >= 0 {
@@ -230,7 +234,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 							s = strings.Repeat(" ", pad) + s
 						}
 					}
-					result.WriteString(s)
+					result.addString(s)
 				}
 			} else {
 				callerArgError(v, argIdx+1, "string.format", fmt.Sprintf("number expected, got %s", v.ObjTypeName(val)))
@@ -255,13 +259,16 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 			}
 			if spec == "%" {
 				// No modifiers: embed string directly (preserving null bytes)
-				result.WriteString(str)
+				result.addString(str)
 			} else {
 				// Lua 5.4 counts bytes (not runes) for width/precision
-				result.WriteString(formatStringByBytes(spec, str))
+				result.addString(formatStringByBytes(spec, str))
 			}
 		case 'q':
-			result.WriteString(luaQuote(v, val, argIdx+1))
+			// Quotes into the result rather than handing back a finished
+			// string: escaping can quadruple a string argument, and that
+			// expansion has to be size-checked before it is built.
+			appendQuoted(v, &result, val, argIdx+1)
 		case 'c':
 			if i, ok := val.ToInt(); ok {
 				// Lua %c writes one byte (C unsigned char semantics).
@@ -271,7 +278,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 					goSpec := spec + "s"
 					ch = fmt.Sprintf(goSpec, ch)
 				}
-				result.WriteString(ch)
+				result.addString(ch)
 			} else if _, ok := val.ToNumber(); ok {
 				callerArgError(v, argIdx+1, "string.format", "number has no integer representation")
 			} else {
@@ -283,7 +290,7 @@ func luaFormatValues(v *vm.VM, format string, vals []vm.Value) string {
 				goSpec := spec + "s"
 				ps = fmt.Sprintf(goSpec, ps)
 			}
-			result.WriteString(ps)
+			result.addString(ps)
 		default:
 			panic(fmt.Sprintf("invalid conversion '%s%c' to 'format'", spec, specChar))
 		}
@@ -1115,66 +1122,108 @@ func formatStringByBytes(spec, str string) string {
 	return str
 }
 
-// luaQuote implements Lua's %q format for proper Lua-parseable quoting.
-func luaQuote(v *vm.VM, val vm.Value, argIdx int) string {
+// appendQuoted implements Lua's %q format for proper Lua-parseable quoting,
+// appending to b so the expansion is bounded by the room the result has left.
+func appendQuoted(v *vm.VM, b *capBuilder, val vm.Value, argIdx int) {
 	if val.IsNil() {
-		return "nil"
+		b.addString("nil")
+		return
 	}
 	if val.IsBool() {
 		if val.AsBool() {
-			return "true"
+			b.addString("true")
+		} else {
+			b.addString("false")
 		}
-		return "false"
+		return
 	}
 	if val.IsFloat() {
 		f := val.AsFloat()
-		if math.IsInf(f, 1) {
-			return "1e9999"
+		switch {
+		case math.IsInf(f, 1):
+			b.addString("1e9999")
+		case math.IsInf(f, -1):
+			b.addString("-1e9999")
+		case math.IsNaN(f):
+			b.addString("(0/0)")
+		default:
+			// Use hex float format for exact roundtrip (matches Lua 5.4)
+			b.addString(formatHexFloat(f, -1))
 		}
-		if math.IsInf(f, -1) {
-			return "-1e9999"
-		}
-		if math.IsNaN(f) {
-			return "(0/0)"
-		}
-		// Use hex float format for exact roundtrip (matches Lua 5.4)
-		return formatHexFloat(f, -1)
+		return
 	}
 	if val.IsInt() {
 		i := val.AsInt()
 		if i == math.MinInt64 {
-			return "0x8000000000000000"
+			b.addString("0x8000000000000000")
+		} else {
+			b.addString(fmt.Sprintf("%d", i))
 		}
-		return fmt.Sprintf("%d", i)
+		return
 	}
 	if !val.IsString() {
 		callerArgError(v, argIdx, "string.format", "value has no literal form")
 	}
-	// String quoting — matches Lua 5.4 addquoted (lstrlib.c)
+	// String quoting — matches Lua 5.4 addquoted (lstrlib.c). Escaping can
+	// double or quadruple the argument, so the size is measured first: an
+	// over-limit expansion is then refused having allocated nothing, and a
+	// legal one is built in a single exact-sized allocation instead of growing
+	// a buffer through repeated copies.
 	s := valueToString(val)
-	var b strings.Builder
-	b.WriteByte('"')
+	size := 2 // surrounding quotes
+	for i := 0; i < len(s); i++ {
+		size += quotedByteLen(s, i)
+	}
+	b.reserve(size)
+
+	var q strings.Builder
+	q.Grow(size)
+	q.WriteByte('"')
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		switch {
 		case ch == '"' || ch == '\\':
-			b.WriteByte('\\')
-			b.WriteByte(ch)
+			q.WriteByte('\\')
+			q.WriteByte(ch)
 		case ch == '\n':
 			// Lua 5.4: backslash + literal newline
-			b.WriteString("\\\n")
+			q.WriteString("\\\n")
 		case ch < 0x20 || ch == 0x7f:
 			// Control character (C locale iscntrl): use decimal escape.
 			// Use 3-digit form if next byte is a digit.
 			if i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9' {
-				b.WriteString(fmt.Sprintf("\\%03d", ch))
+				q.WriteString(fmt.Sprintf("\\%03d", ch))
 			} else {
-				b.WriteString(fmt.Sprintf("\\%d", ch))
+				q.WriteString(fmt.Sprintf("\\%d", ch))
 			}
 		default:
-			b.WriteByte(ch)
+			q.WriteByte(ch)
 		}
 	}
-	b.WriteByte('"')
-	return b.String()
+	q.WriteByte('"')
+	b.addString(q.String())
+}
+
+// quotedByteLen is the number of bytes the %q escape of s[i] occupies. It must
+// stay in step with the quoting switch in appendQuoted above.
+func quotedByteLen(s string, i int) int {
+	ch := s[i]
+	switch {
+	case ch == '"' || ch == '\\' || ch == '\n':
+		return 2
+	case ch < 0x20 || ch == 0x7f:
+		if i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9' {
+			return 4 // backslash + three digits
+		}
+		switch {
+		case ch >= 100:
+			return 4
+		case ch >= 10:
+			return 3
+		default:
+			return 2
+		}
+	default:
+		return 1
+	}
 }

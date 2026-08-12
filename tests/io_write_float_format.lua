@@ -2,15 +2,19 @@
 -- Unlike tostring() which appends ".0" to integer-valued floats,
 -- io.write uses C's fprintf with %.14g directly.
 
--- Capture io.write output via temp file
+-- Capture io.write output via temp file. Use os.tmpname() so the path lives
+-- under the OS temp dir, which the test harness's jailed IO provider allows
+-- regardless of the environment's TMPDIR (hardcoded /tmp breaks under a
+-- sandboxed TMPDIR like /tmp/claude-1000).
+local tmpfile = os.tmpname()
 local function capture_write(...)
-    local f = io.open("/tmp/golua_test_iowrite.txt", "w")
+    local f = io.open(tmpfile, "w")
     f:write(...)
     f:close()
-    local r = io.open("/tmp/golua_test_iowrite.txt", "r")
+    local r = io.open(tmpfile, "r")
     local s = r:read("*a")
     r:close()
-    os.remove("/tmp/golua_test_iowrite.txt")
+    os.remove(tmpfile)
     return s
 end
 

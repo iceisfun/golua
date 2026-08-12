@@ -356,6 +356,9 @@ func mathLog10(v *vm.VM) int {
 }
 
 func mathMax(v *vm.VM) int {
+	// C-level function: the '<' comparison may run an __lt metamethod, which
+	// must not yield across this boundary (matches reference Lua).
+	defer v.EnterNonYieldable()()
 	n := v.ArgCount()
 	if n == 0 {
 		callerArgError(v, 1, "math.max", "value expected")
@@ -380,6 +383,8 @@ func mathMax(v *vm.VM) int {
 }
 
 func mathMin(v *vm.VM) int {
+	// See mathMax: __lt must not yield across the C-call boundary.
+	defer v.EnterNonYieldable()()
 	n := v.ArgCount()
 	if n == 0 {
 		callerArgError(v, 1, "math.min", "value expected")

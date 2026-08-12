@@ -210,6 +210,10 @@ func timeFieldOutOfBound(i, delta int64) bool {
 // makeOsTime creates the os.time([table]) function.
 func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
+		// C-level function: reading the date table runs __index, and writing
+		// the normalized fields back runs __newindex; neither may yield across
+		// this boundary (matches reference Lua).
+		defer v.EnterNonYieldable()()
 		arg := v.Get(1)
 		if arg.IsNil() {
 			ctx := v.Context()

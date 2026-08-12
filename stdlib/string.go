@@ -298,11 +298,82 @@ func stringFind(v *vm.VM) int {
 }
 
 // maxStrResultSize bounds strings built incrementally by string library
-// functions (gsub), matching the cap string.rep/concat use. It must reject
-// before the result reaches a size Go's allocator fatally OOMs on (which
+// functions (gsub, format), matching the cap string.rep/concat use. It must
+// reject before the result reaches a size Go's allocator fatally OOMs on (which
 // recover()/pcall cannot catch), keeping an adversarial input a catchable Lua
 // error instead of a host-process abort.
 const maxStrResultSize = 1<<30 - 1
+
+// capBuilder accumulates a string result under a byte limit that is enforced
+// BEFORE every write. Testing the size after building is useless: the oversized
+// allocation is itself the failure, because a Go runtime OOM is a fatal error no
+// pcall/recover can catch. The limit is normally maxStrResultSize; a nested
+// builder (gsub's replacement expansion) gets only the budget the enclosing
+// result has left, so no intermediate can outgrow the final cap either.
+//
+// Like table.concat it keeps the pieces and joins them once at the end instead
+// of copying everything into one growing buffer. That matters for the rejection
+// path: "%s%s%s..." over a 100MB argument is refused having allocated nothing
+// beyond the argument itself, where a growing buffer would first have to reach
+// the limit — a gigabyte of copying — to discover the result is too big.
+type capBuilder struct {
+	pending strings.Builder // small pieces, copied
+	parts   []string        // pieces in order, large ones held by reference
+	n       int             // total bytes of parts + pending
+	limit   int
+}
+
+// largePiece is the size from which a piece is held by reference rather than
+// copied into pending; below it the copy is cheaper than a slice entry.
+const largePiece = 4096
+
+// reserve raises the same catchable error the other string builders use when n
+// more bytes would push the result past the limit.
+func (cb *capBuilder) reserve(n int) {
+	if n > cb.limit-cb.n {
+		panic("resulting string too large")
+	}
+}
+
+// addString / addChar mirror luaL_addstring / luaL_addchar. The by-reference
+// path is split out to keep the common small-piece path short.
+func (cb *capBuilder) addString(s string) {
+	cb.reserve(len(s))
+	cb.n += len(s)
+	if len(s) >= largePiece {
+		cb.addRef(s)
+		return
+	}
+	cb.pending.WriteString(s)
+}
+
+func (cb *capBuilder) addRef(s string) {
+	cb.flush()
+	cb.parts = append(cb.parts, s)
+}
+
+func (cb *capBuilder) addChar(c byte) {
+	cb.reserve(1)
+	cb.n++
+	cb.pending.WriteByte(c)
+}
+
+func (cb *capBuilder) flush() {
+	if cb.pending.Len() > 0 {
+		cb.parts = append(cb.parts, cb.pending.String())
+		cb.pending.Reset()
+	}
+}
+
+func (cb *capBuilder) Len() int { return cb.n }
+
+func (cb *capBuilder) String() string {
+	if len(cb.parts) == 0 {
+		return cb.pending.String()
+	}
+	cb.flush()
+	return strings.Join(cb.parts, "")
+}
 
 // string.gsub(s, pattern, repl [, n])
 func stringGsub(v *vm.VM) int {
@@ -340,7 +411,11 @@ func stringGsub(v *vm.VM) int {
 		searchPat = searchPat[1:]
 	}
 
-	var result strings.Builder
+	// Capped like string.rep/concat (1<<30): an unbounded gsub (many matches ×
+	// a large replacement) would otherwise grow the result past what Go can
+	// allocate and trigger an UNCATCHABLE runtime fatal OOM that aborts the host
+	// — a sandbox escape.
+	result := capBuilder{limit: maxStrResultSize}
 	count := 0
 	changed := false // track whether any substitution modified text
 	pos := 0         // 0-based current position
@@ -363,8 +438,11 @@ func stringGsub(v *vm.VM) int {
 			substituted := false // true if repl function/table produced a value
 			if repl.IsString() {
 				// For string replacements, unfinished captures are only
-				// an error if %N actually references them.
-				replacement = expandReplacement(repl.AsString(), s, pos, end, matchCaps)
+				// an error if %N actually references them. The expansion gets
+				// only the room the result has left: a single replacement (say
+				// "%1" repeated over a huge capture) can outgrow the whole
+				// budget on its own, and appending it is far too late to notice.
+				replacement = expandReplacement(repl.AsString(), s, pos, end, matchCaps, maxStrResultSize-result.Len())
 				substituted = replacement != s[pos:end]
 			} else if repl.IsFunction() || repl.IsNativeFunc() {
 				checkCaptures(matchCaps)
@@ -382,22 +460,14 @@ func stringGsub(v *vm.VM) int {
 			if substituted {
 				changed = true
 			}
-			// Cap the accumulated result like string.rep/concat (1<<30). An
-			// unbounded gsub (many matches × a large replacement) would otherwise
-			// grow the builder past what Go can allocate and trigger an
-			// UNCATCHABLE runtime fatal OOM that aborts the host — a sandbox
-			// escape. Reject before that with a catchable Lua error.
-			if result.Len() > maxStrResultSize-len(replacement) {
-				panic("resulting string too large")
-			}
-			result.WriteString(replacement)
+			result.addString(replacement)
 			count++
 			lastMatch = end
 
 			if end == pos {
 				// Empty match: copy current char and advance
 				if pos < len(s) {
-					result.WriteByte(s[pos])
+					result.addChar(s[pos])
 				}
 				pos++
 			} else {
@@ -406,7 +476,7 @@ func stringGsub(v *vm.VM) int {
 		} else {
 			// No match or duplicate empty match: copy char and advance
 			if pos < len(s) {
-				result.WriteByte(s[pos])
+				result.addChar(s[pos])
 			}
 			pos++
 		}
@@ -418,10 +488,7 @@ func stringGsub(v *vm.VM) int {
 
 	// Append remaining text
 	if pos <= len(s) {
-		if result.Len() > maxStrResultSize-len(s[pos:]) {
-			panic("resulting string too large")
-		}
-		result.WriteString(s[pos:])
+		result.addString(s[pos:])
 	}
 
 	// Optimization: when no substitution changed any text, return the
@@ -440,9 +507,10 @@ func stringGsub(v *vm.VM) int {
 	return 2
 }
 
-// expandReplacement expands a replacement string with captures.
-func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureValue) string {
-	var result strings.Builder
+// expandReplacement expands a replacement string with captures. budget is the
+// number of bytes the expansion may produce before it is rejected.
+func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureValue, budget int) string {
+	result := capBuilder{limit: budget}
 	for i := 0; i < len(repl); i++ {
 		if repl[i] == '%' {
 			if i+1 >= len(repl) {
@@ -452,16 +520,16 @@ func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureVa
 			if next >= '0' && next <= '9' {
 				idx := int(next - '0')
 				if idx == 0 {
-					result.WriteString(s[mStart:mEnd])
+					result.addString(s[mStart:mEnd])
 				} else if idx <= len(caps) {
 					c := caps[idx-1]
 					if c.unfinished {
 						panic("unfinished capture")
 					}
 					if c.isPos {
-						result.WriteString(fmt.Sprintf("%d", c.pos))
+						result.addString(fmt.Sprintf("%d", c.pos))
 					} else {
-						result.WriteString(c.str)
+						result.addString(c.str)
 					}
 				} else {
 					panic(fmt.Sprintf("invalid capture index %%%c", next))
@@ -469,13 +537,13 @@ func expandReplacement(repl string, s string, mStart, mEnd int, caps []captureVa
 				i++
 				continue
 			} else if next == '%' {
-				result.WriteByte('%')
+				result.addChar('%')
 				i++
 				continue
 			}
 			panic("invalid use of '%' in replacement string")
 		}
-		result.WriteByte(repl[i])
+		result.addChar(repl[i])
 	}
 	return result.String()
 }

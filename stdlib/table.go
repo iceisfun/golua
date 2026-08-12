@@ -252,7 +252,9 @@ func tableSort(v *vm.VM) int {
 	// Guard against absurd lengths from __len metamethod
 	const maxSortLen = 1 << 30
 	if length > maxSortLen {
-		panic("bad argument #1 to 'table.sort' (array too big)")
+		// Route through callerArgError like the sibling checks so the caller's
+		// resolved name ('sort') is used instead of a hardcoded 'table.sort'.
+		callerArgError(v, 1, "table.sort", "array too big")
 	}
 
 	comp := v.Get(2)
@@ -314,7 +316,7 @@ func sortComp(v *vm.VM, a, b vm.Value, comp vm.Value, err *any) bool {
 	if *err != nil {
 		return false
 	}
-	if comp == vm.Nil || comp.IsNil() {
+	if comp.IsNil() {
 		lt, e := v.CompareLT(a, b)
 		if e != nil {
 			// Wrap as LuaError to avoid AddCallerLocation adding a file:line
@@ -567,11 +569,13 @@ func tableMove(v *vm.VM) int {
 		if a1.RawEqual(a2) && tt > f && tt <= e {
 			// Copy backwards to avoid overwriting (overlapping same-table move)
 			for i := count - 1; i >= 0; i-- {
+				moveCheckInterrupt(v, i)
 				val := tableGetIdx(v, a1, int(f+i))
 				tableSetIdx(v, a2, int(tt+i), val)
 			}
 		} else {
 			for i := int64(0); i < count; i++ {
+				moveCheckInterrupt(v, i)
 				val := tableGetIdx(v, a1, int(f+i))
 				tableSetIdx(v, a2, int(tt+i), val)
 			}
@@ -580,4 +584,18 @@ func tableMove(v *vm.VM) int {
 
 	v.Set(0, a2)
 	return 1
+}
+
+// moveCheckInterrupt polls for context cancellation and limit violations
+// inside table.move's copy loop. Reference Lua accepts ranges spanning the
+// whole integer domain (the official suite relies on it), so the range itself
+// cannot be capped up front; without this poll such a move never re-enters the
+// VM's instruction dispatch and ignores cancellation entirely.
+func moveCheckInterrupt(v *vm.VM, i int64) {
+	if i&0xff != 0 {
+		return
+	}
+	if err := v.CheckInterrupt(); err != nil {
+		panic(err)
+	}
 }

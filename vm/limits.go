@@ -31,10 +31,17 @@ const DefaultMaxMetaDepth = 2000
 
 // Limits configures execution limits for the VM.
 // Zero values mean no limit (except MaxMetaDepth, where 0 means use DefaultMaxMetaDepth).
+//
+// MaxInstructions is a budget for a VM AND every coroutine descended from it,
+// not a per-VM allowance: the checkpoint visits of the VM and of all its
+// coroutines are charged to one shared counter, so a script cannot buy more
+// work by spawning coroutines. Because that counter is family-wide,
+// VM.InstructionCount on any member reports the family's consumption and
+// VM.ResetInstructionCount on any member clears the family's budget.
 type Limits struct {
 	MaxCallDepth    int                     // Maximum call stack depth (0 = DefaultMaxCallDepth, negative = unlimited)
 	MaxStackSlots   int                     // Maximum stack slots (0 = DefaultMaxStackSlots, negative = unlimited)
-	MaxInstructions int64                   // Maximum checkpoint visits (0 = unlimited)
+	MaxInstructions int64                   // Maximum checkpoint visits, shared by the whole coroutine family (0 = unlimited)
 	MaxMetaDepth    int                     // Maximum __index/__newindex chain depth (0 = DefaultMaxMetaDepth)
 	MinGCInterval   time.Duration           // Minimum interval between Lua-triggered GC (0 = no limit, negative = disable)
 	GCStepInterval  int                     // Run runtime.GC() every N instructions (0 = off)

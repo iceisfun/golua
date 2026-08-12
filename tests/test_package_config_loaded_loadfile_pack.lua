@@ -8,8 +8,11 @@ assert(string.byte(package.config, #package.config) == 10,
 assert(package.loaded["_G"] == _G,
   "package.loaded should contain _G")
 
--- Fix 3: loadfile/dofile error messages use title-case OS error descriptions
-local _, e = loadfile("/tmp/nonexistent_XYZ_golua_test.lua")
+-- Fix 3: loadfile/dofile error messages use title-case OS error descriptions.
+-- Use a relative nonexistent name so the path resolves inside the jail root
+-- (hardcoded /tmp breaks under a sandboxed TMPDIR); the file does not exist so
+-- loadfile surfaces a real ENOENT with the title-case description.
+local _, e = loadfile("nonexistent_XYZ_golua_test.lua")
 assert(e:find("No such file"), "loadfile error should have title-case 'No such file', got: " .. tostring(e))
 
 -- Fix 4: string.pack/unpack/packsize use qualified names in errors (matching Lua 5.4)

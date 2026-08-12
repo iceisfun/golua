@@ -223,11 +223,24 @@ assert(not string.find(msg, "^rename "), "error message should not start with 'r
 // --- Bug 13: io.open error message format ---
 func TestIoOpenErrorMessageFormat(t *testing.T) {
 	dir := t.TempDir()
-	runLuaWithDir(t, dir, `local ok, msg = io.open("/tmp/nonexistent_xyz_12345", "r")
+	// Open a nonexistent file under the jail root (dir) so the path is allowed
+	// regardless of TMPDIR; a hardcoded /tmp path is rejected by the jail with
+	// "access denied" (and then the path gets doubled), masking the real check.
+	path := filepath.Join(dir, "nonexistent_xyz_12345")
+	// Pass the path as a Lua variable and count occurrences with plain (non-pattern)
+	// string.find so magic characters in the temp dir (e.g. "-") aren't interpreted.
+	runLuaWithDir(t, dir, `local path = "`+path+`"
+local ok, msg = io.open(path, "r")
 assert(ok == nil, "expected nil")
 -- Should NOT double the path (Go's os.OpenFile returns "open /path: ...")
--- Count occurrences of the path
-local _, count = string.gsub(msg, "/tmp/nonexistent_xyz_12345", "X")
+-- Count occurrences of the path (plain search, no Lua patterns)
+local count, pos = 0, 1
+while true do
+  local s, e = string.find(msg, path, pos, true)
+  if not s then break end
+  count = count + 1
+  pos = e + 1
+end
 assert(count == 1, "path should appear exactly once in error: " .. msg)`)
 }
 

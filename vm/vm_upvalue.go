@@ -284,6 +284,12 @@ func (vm *VM) callCloseMetamethod(stackIdx int, errVal Value) {
 	}
 	if !closeFunc.IsNil() {
 		vm.pendingSuppressTracebackName = !errVal.IsNil() || len(vm.callStack) == 0
+		// Lua 5.4 always passes (object, errobj) -- lfunc.c callclosemethod
+		// pushes the error unconditionally, and prepcallclosemth supplies a nil
+		// error object on the normal path. The "<no error object>" substitution
+		// that Lua 5.5 performs in luaG_errormsg does not exist in 5.4: there,
+		// error(nil) reaches __close (and pcall) as a raw nil. Verified against
+		// /usr/bin/lua5.4.8.
 		_, err := vm.callMetamethod("close", closeFunc, val, errVal)
 		if err != nil {
 			panic(err.Error())

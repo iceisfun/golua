@@ -137,12 +137,30 @@ func (vm *VM) fireHook(event string, line int) {
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
+				if isControlSentinel(r) {
+					panic(r)
+				}
 				// Wrap the original panic in a hook error sentinel
 				panic(&luaHookError{original: r})
 			}
 		}()
 		vm.callUnprotected(vm.hookFunc, args)
 	}()
+}
+
+// isControlSentinel reports whether a recovered panic value is a control-flow
+// sentinel rather than a Lua error. Sentinels are matched by type at the
+// unwinding boundaries (ProtectedCall, the coroutine runner), so wrapping one
+// in a luaHookError would defeat those checks: os.exit would degrade into an
+// ordinary uncatchable error. Lua 5.5's CoroutineSelfClose sentinel has no
+// counterpart here: 5.4 raises "cannot close a running coroutine" instead of
+// self-closing, so *LuaExitError is the only sentinel on this branch.
+func isControlSentinel(r interface{}) bool {
+	switch r.(type) {
+	case *LuaExitError:
+		return true
+	}
+	return false
 }
 
 // fireCallHook fires a "call" hook event.

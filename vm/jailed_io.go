@@ -8,21 +8,32 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"syscall"
 )
 
 // JailedIoProvider is a read-only, filesystem-jailed IO provider.
-// It restricts file access to a specific directory using os.DirFS.
+// It restricts file access to a specific directory.
 type JailedIoProvider struct {
-	fs fs.FS
+	jail *pathJail
 }
 
 // NewJailedIoProvider creates a new JailedIoProvider rooted at the given directory.
-// All file operations are restricted to paths within this directory.
+// All file operations are restricted to paths within this directory: a name is
+// resolved, symlinks included, and refused unless it lands inside the root.
+// os.DirFS is not enough on its own — it rejects "../x" but happily follows a
+// symlink inside the root to anywhere the link points.
+//
+// An empty root admits nothing; a provider that reads from everywhere is asked
+// for explicitly, with AllowRoot.
 func NewJailedIoProvider(root string) *JailedIoProvider {
 	return &JailedIoProvider{
-		fs: os.DirFS(root),
+		jail: newPathJail(root),
 	}
 }
+
+// AllowRoot widens the jail with another readable directory. See
+// FullIoProvider.AllowRoot; call it before the provider is handed to a VM.
+func (p *JailedIoProvider) AllowRoot(dir string) { p.jail.allowRoot(dir) }
 
 // Open opens a file within the jailed directory. Only read modes ("r", "rb")
 // are permitted; write attempts return an error.
@@ -31,8 +42,17 @@ func (p *JailedIoProvider) Open(ctx context.Context, name string, mode string) (
 	if mode != "r" && mode != "rb" {
 		return nil, fmt.Errorf("JailedIoProvider: write mode '%s' not permitted", mode)
 	}
+	// Go's os.Open("") opens the cwd as a directory; C's fopen("") is ENOENT,
+	// which is what Lua reports.
+	if name == "" {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
+	}
 
-	f, err := p.fs.Open(name)
+	path, err := p.jail.resolve(name)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -142,12 +162,22 @@ func (f *jailedFile) ReadBytes(ctx context.Context, n int) (string, error) {
 		return "", fmt.Errorf("not enough memory")
 	}
 
-	buf := make([]byte, n)
-	nRead, err := io.ReadFull(f.reader, buf)
-	if nRead == 0 && err != nil {
-		return "", err
+	// Grow with the data that arrives rather than allocating n up front: a
+	// script names the count for free, and make([]byte, 1<<30) on a two-byte
+	// file is a Go runtime OOM no pcall can catch.
+	return readAtMost(f.reader, n, availableFor(n, f.available))
+}
+
+// available estimates the bytes still readable, so ReadBytes can size its
+// buffer from the file rather than from the count. Zero means "unknown".
+func (f *jailedFile) available() int {
+	info, err := f.file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return 0
 	}
-	return string(buf[:nRead]), nil
+	// fs.File carries no position, so the whole size is the only bound
+	// available; it is still the size of something that exists.
+	return clampToInt(info.Size())
 }
 
 func (f *jailedFile) Close(ctx context.Context) error {

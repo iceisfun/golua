@@ -39,6 +39,11 @@ const (
 	vbufLine = "line"
 )
 
+// maxVBufRequest bounds the buffer size a setvbuf request may ask a provider
+// for. A stream buffer this large already exceeds anything buffering can buy;
+// past it the number is only a way for a script to name an allocation.
+const maxVBufRequest = 1 << 20 // 1 MiB
+
 // ioState holds per-VM file handle tables created when the IO provider is first used.
 type ioState struct {
 	meta    *vm.Table // metatable for file handle userdata
@@ -921,7 +926,7 @@ func fileSetVBuf(v *vm.VM) int {
 		fileArgError(v, 2, "setvbuf", fmt.Sprintf("string expected, got %s", v.ObjTypeName(mode)))
 	}
 
-	var size int
+	var sizeReq int64 // the request as written, before it is narrowed to int
 	if !v.Get(3).IsNil() {
 		arg := v.Get(3)
 		sz, ok := arg.ToInt()
@@ -937,7 +942,7 @@ func fileSetVBuf(v *vm.VM) int {
 			}
 			fileArgError(v, 3, "setvbuf", fmt.Sprintf("number expected, got %s", v.ObjTypeName(arg)))
 		}
-		size = int(sz)
+		sizeReq = sz
 	}
 
 	// Validate mode before calling provider (invalid mode is a hard error)
@@ -948,8 +953,19 @@ func fileSetVBuf(v *vm.VM) int {
 		fileArgError(v, 2, "setvbuf", fmt.Sprintf("invalid option '%s'", modeStr))
 	}
 
+	// The size is only a hint: C stdio may size its buffer differently or
+	// ignore the request outright (glibc does for an outsized one, which is why
+	// reference Lua answers true for every size up to math.maxinteger). Clamp
+	// rather than refuse, so the answer matches the reference AND no provider
+	// is ever handed a size that reaches make([]byte, size) — an allocation the
+	// Go runtime kills the process over, where no pcall can intervene.
+	size := sizeReq
+	if size > maxVBufRequest {
+		size = maxVBufRequest
+	}
+
 	ctx := v.Context()
-	err := fh.file.SetVBuf(ctx, modeStr, size)
+	err := fh.file.SetVBuf(ctx, modeStr, int(size))
 	if err != nil {
 		v.Set(0, vm.Nil)
 		v.Set(1, vm.NewString(err.Error()))

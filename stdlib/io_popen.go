@@ -112,12 +112,50 @@ func (f *popenFile) ReadBytes(ctx context.Context, n int) (string, error) {
 		}
 		return "", nil
 	}
-	buf := make([]byte, n)
-	read, err := io.ReadFull(f.reader, buf)
-	if read == 0 && err != nil {
-		return "", err
+	// A pipe has no length to ask about, so the buffer grows with the data that
+	// arrives. Sizing it from n instead would let f:read(1<<30) on a pipe that
+	// yields two bytes allocate a gigabyte — a Go runtime OOM no pcall catches.
+	return readPipeAtMost(f.reader, n)
+}
+
+// readPipeAtMost reads up to n bytes from an unbounded-length stream, doubling
+// its buffer as data arrives instead of trusting the requested count.
+func readPipeAtMost(r *bufio.Reader, n int) (string, error) {
+	const initialRead = 64 << 10
+	size := n
+	if size > initialRead {
+		size = initialRead
 	}
-	return string(buf[:read]), nil
+	buf := make([]byte, 0, size)
+	for len(buf) < n {
+		if len(buf) == cap(buf) {
+			grow := cap(buf) * 2
+			if grow > n {
+				grow = n
+			}
+			bigger := make([]byte, len(buf), grow)
+			copy(bigger, buf)
+			buf = bigger
+		}
+		read, err := r.Read(buf[len(buf):cap(buf)])
+		buf = buf[:len(buf)+read]
+		if err != nil {
+			// Short reads are success: only a request that yielded nothing at
+			// all reports the error (C's fread/feof behavior).
+			if len(buf) == 0 {
+				return "", err
+			}
+			break
+		}
+		if read == 0 {
+			// A reader that yields neither bytes nor an error would spin here.
+			break
+		}
+	}
+	if len(buf) == 0 {
+		return "", io.EOF
+	}
+	return string(buf), nil
 }
 
 func (f *popenFile) Write(ctx context.Context, data string) error {

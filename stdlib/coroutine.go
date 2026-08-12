@@ -84,6 +84,7 @@ type Coroutine struct {
 	status         coroutineStatus // lifecycle state
 	started        bool            // Whether the goroutine has been started
 	resumeChClosed bool            // Whether resumeCh has been closed by coClose
+	reapAbandoned  bool            // VM.Close marked it dead without its goroutine finishing
 	vm             *vm.VM          // Reference to the VM
 	coVM           *vm.VM          // The coroutine's own VM (set after first resume)
 	thread         vm.Value        // Thread object (table) for coroutine.running
@@ -191,13 +192,20 @@ func reapCoroutine(co *Coroutine, ctx context.Context) {
 	if ctx != nil {
 		done = ctx.Done()
 	}
+	finished := false
 	select {
 	case <-co.doneCh:
-	case <-done:
+		finished = true
+	case <-done: // ctx cancelled/expired: stop waiting (goroutine still unwinds)
 	}
 
 	co.mu.Lock()
 	co.status = statusDead
+	// This is the one place statusDead is published while the goroutine may
+	// still be running (and still owns its coroutine VM). Record that, so a
+	// later coroutine.close neither waits forever on a doneCh that may never
+	// close nor touches a VM another goroutine is still using.
+	co.reapAbandoned = !finished
 	co.mu.Unlock()
 }
 
@@ -343,8 +351,16 @@ func coResume(v *vm.VM) int {
 	} else {
 		co.status = statusRunning
 	}
+	// Publish our instruction consumption before the coroutine picks up the
+	// shared budget, so the limit bounds the family and not each VM apart.
+	v.SyncInstructionBudget()
 	co.resumeCh <- args
 	co.mu.Unlock()
+
+	// Adopt whatever the coroutine charged to the budget before the resumer's
+	// bytecode runs again. Deferred so it also covers the abandoned-coroutine
+	// (context cancelled) branch and the re-panicked os.exit sentinel.
+	defer v.SyncInstructionBudget()
 
 	// Wait for yield or completion
 	select {
@@ -410,6 +426,15 @@ func coResume(v *vm.VM) int {
 // runCoroutine runs the coroutine function in a goroutine
 func runCoroutine(co *Coroutine) {
 	defer func() {
+		// Publish this coroutine's instruction consumption into the budget
+		// shared with the resumer before doneCh is closed, so the resumer
+		// adopts it when it wakes up.
+		co.mu.Lock()
+		coVM := co.coVM
+		co.mu.Unlock()
+		if coVM != nil {
+			coVM.SyncInstructionBudget()
+		}
 		if r := recover(); r != nil {
 			co.mu.Lock()
 			// Preserve *LuaError so resume can return the original Lua value
@@ -448,6 +473,12 @@ func runCoroutine(co *Coroutine) {
 	co.mu.Lock()
 	coVM := co.coVM
 	co.mu.Unlock()
+
+	// Take over the family's instruction budget: whatever the resumer (and any
+	// coroutine before us) consumed counts against our own limit check.
+	if coVM != nil {
+		coVM.SyncInstructionBudget()
+	}
 
 	if co.fn.IsFunction() {
 		results, err = coVM.CallCoroutine(co.fn.AsClosure(), args)
@@ -520,6 +551,10 @@ func coYield(v *vm.VM) int {
 		reg.mu.Unlock()
 	}
 
+	// Hand the shared instruction budget back to the resumer along with the
+	// yielded values; pick it up again below when we are resumed.
+	v.SyncInstructionBudget()
+
 	yieldCh <- values
 
 	// Wait for resume - mark as running when we get it
@@ -532,6 +567,9 @@ func coYield(v *vm.VM) int {
 		v.CloseAllTBC()
 		runtime.Goexit()
 	}
+
+	// Resumed: take the shared budget back.
+	v.SyncInstructionBudget()
 
 	// Check for context cancellation after waking
 	if ctx := v.Context(); ctx != nil {
@@ -705,8 +743,15 @@ func coWrap(v *vm.VM) int {
 		} else {
 			co.status = statusRunning
 		}
+		// Publish our instruction consumption before the coroutine picks up
+		// the shared budget (see coResume).
+		v.SyncInstructionBudget()
 		co.resumeCh <- args
 		co.mu.Unlock()
+
+		// Adopt whatever the coroutine charged to the budget, including on the
+		// abandoned-coroutine (context cancelled) and re-raise branches.
+		defer v.SyncInstructionBudget()
 
 		// Wait for yield or completion
 		select {
@@ -749,6 +794,12 @@ func coWrap(v *vm.VM) int {
 					if closeErr := coVM.ClosePendingTBC(errVal); closeErr != nil {
 						err = closeErr
 					}
+					// Those handlers ran on this goroutine but against the dead
+					// coroutine's VM, so their work is charged there: publish it
+					// (the deferred sync above then adopts it) or a script could
+					// buy unbounded __close time by erroring coroutine after
+					// coroutine.
+					coVM.SyncInstructionBudget()
 				}
 				// coroutine.wrap adds the caller location to string errors
 				// via luaL_where(L,1) before re-raising (Lua's luaB_auxwrap).
@@ -837,12 +888,42 @@ func coClose(v *vm.VM) int {
 		delete(reg.coroutines, int(id))
 		reg.mu.Unlock()
 
+		// Observing status=dead is NOT enough to take over the coroutine's VM:
+		// runCoroutine publishes statusDead under co.mu and only afterwards
+		// finishes with the VM (its stack release and its final budget sync,
+		// see the deferred SyncInstructionBudget above). doneCh is closed last,
+		// so waiting on it is what actually orders those writes before the
+		// reads below — otherwise a resume that gave up on a cancelled context
+		// leaves this goroutine racing the dying coroutine for coVM.
+		//
+		// The wait is bounded. Every path that publishes statusDead from the
+		// coroutine goroutine reaches runCoroutine's outermost defer (which
+		// closes doneCh) without blocking again, and a closer that already
+		// drained the goroutine below closed doneCh before setting statusDead.
+		// !started means no goroutine was ever launched, so nothing will close
+		// doneCh — and equally nothing else can be touching coVM. reapAbandoned
+		// is the single case where statusDead was published without the
+		// goroutine finishing (VM.Close hit its deadline waiting for a <close>
+		// handler): that goroutine still owns coVM and may never close doneCh,
+		// so neither wait for it nor touch its VM — it runs its own pending
+		// handlers as it unwinds.
+		co.mu.Lock()
+		started := co.started
+		reapAbandoned := co.reapAbandoned
+		co.mu.Unlock()
+		if started && !reapAbandoned {
+			<-co.doneCh
+		}
+
 		// Close any pending TBC vars on the coroutine VM.
 		co.mu.Lock()
 		coVM := co.coVM
 		coErr := co.err
 		co.err = nil
 		co.mu.Unlock()
+		if reapAbandoned {
+			coVM = nil
+		}
 		if coVM != nil {
 			var errVal vm.Value
 			if coErr != nil {
@@ -858,6 +939,12 @@ func coClose(v *vm.VM) int {
 			// Clear the call stack so debug.getinfo(co, level) returns nil,
 			// while keeping VMRef alive so gethook/isyieldable still work.
 			coVM.ClearCallStack()
+			// The handlers ran on this goroutine against the dead coroutine's
+			// VM, so their work is charged there: publish it into the shared
+			// budget and adopt it, or a script could buy unbounded __close time
+			// by closing dead coroutine after dead coroutine.
+			coVM.SyncInstructionBudget()
+			v.SyncInstructionBudget()
 		}
 		if coErr != nil {
 			v.Set(0, vm.False)
@@ -899,6 +986,9 @@ func coClose(v *vm.VM) int {
 	if co.started {
 		close(co.resumeCh)
 		<-co.doneCh
+		// The __close handlers ran on the coroutine's goroutine; charge that
+		// work to the family budget before we continue.
+		v.SyncInstructionBudget()
 	}
 
 	// Now mark as dead and remove from registry

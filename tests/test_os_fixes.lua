@@ -1,11 +1,21 @@
 -- Tests for OS library fixes
 
--- Fix 1: os.rename error message should NOT include filename
+-- Fix 1: os.rename error message should NOT include filename.
+-- Use os.tmpname() (then remove it) for paths under the OS temp dir so the
+-- jailed test harness allows them regardless of TMPDIR; the names are
+-- nonexistent so rename surfaces a real ENOENT.
 do
-    local ok, msg = os.rename("/tmp/nonexist_a_golua_test", "/tmp/nonexist_b_golua_test")
+    local src = os.tmpname()
+    local dst = os.tmpname()
+    os.remove(src)
+    os.remove(dst)
+    local ok, msg = os.rename(src, dst)
     assert(ok == nil, "os.rename should fail")
-    assert(not msg:match("nonexist"), "os.rename error should not include filename, got: " .. msg)
+    -- error must not leak either path (basenames are "lua_..."); also assert
+    -- it does not contain the full src path.
+    assert(not msg:find(src, 1, true), "os.rename error should not include filename, got: " .. msg)
     -- Lua 5.4 returns just "No such file or directory" (no path prefix)
+    assert(msg:find("No such file or directory"), "os.rename error wording, got: " .. msg)
 end
 
 -- Fix 2: os.difftime should reject non-integer floats

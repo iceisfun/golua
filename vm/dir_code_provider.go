@@ -6,58 +6,69 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
-	"strings"
+	"syscall"
 	"unicode"
 )
 
 // DirCodeProvider is a filesystem-based code provider that loads Lua files
-// relative to a root directory. It uses os.DirFS for path containment.
-// Absolute paths in the OS temp directory are also allowed.
+// relative to a root directory. Every name — relative or absolute — must
+// resolve, symlinks included, to a location inside that root.
 type DirCodeProvider struct {
-	fs   fs.FS
-	root string
+	jail *pathJail
 	caps LuaLoaderCaps
 }
 
-// NewDirCodeProvider creates a code provider rooted at the given directory.
+// NewDirCodeProvider creates a code provider rooted at the given directory. An
+// empty root admits nothing: a code provider that loads from everywhere is
+// asked for explicitly, with AllowRoot.
 func NewDirCodeProvider(root string, caps LuaLoaderCaps) *DirCodeProvider {
-	absRoot, _ := filepath.Abs(root)
 	return &DirCodeProvider{
-		fs:   os.DirFS(root),
-		root: absRoot,
+		jail: newPathJail(root),
 		caps: caps,
 	}
 }
 
+// AllowRoot widens the code jail with another directory, for a host that is not
+// sandboxing (a standalone interpreter passing "/" behaves like reference Lua,
+// which loads a chunk from anywhere). Relative names keep resolving against the
+// original root. Call it before the provider is handed to a running VM.
+//
+// Note what this gives up: whatever directory is opened becomes a place where
+// any process that can write there decides what this VM executes.
+func (p *DirCodeProvider) AllowRoot(dir string) { p.jail.allowRoot(dir) }
+
 // LoadChunk reads a Lua source file from the jailed directory.
-// Absolute paths in the OS temp directory or within the root are also allowed.
+//
+// Containment is the same final-path test the IO jail uses (see pathJail), and
+// it is the only thing standing between a sandboxed VM and arbitrary code
+// execution: this provider decides what dofile/loadfile/require may run. In
+// particular the OS temp directory is not loadable — it is world-writable on a
+// typical container, so any other process there could otherwise plant a chunk
+// for the VM to execute.
+//
+// The one thing outside the root that does load is a name this runtime minted
+// itself, which lives in the runtime's private temp directory (see
+// runtimeTempDir). Writing a chunk to os.tmpname() and loading it back is an
+// idiom reference Lua supports and the official suite exercises, and it works
+// without the host having to wire the two providers together.
 func (p *DirCodeProvider) LoadChunk(ctx context.Context, name string, caller *LuaCallerContext) ([]byte, string, error) {
-	if filepath.IsAbs(name) {
-		// Allow absolute paths within root or temp directory
-		absName, err := filepath.Abs(name)
-		if err != nil {
-			return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
-		}
-		if strings.HasPrefix(absName, p.root) || strings.HasPrefix(absName, os.TempDir()) {
-			data, err := os.ReadFile(absName)
-			if err != nil {
-				return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
-			}
-			return data, "@" + name, nil
-		}
-		return nil, "", fmt.Errorf("cannot open %s: access denied", name)
+	// An empty name would resolve to the root directory itself; C's fopen("")
+	// fails with ENOENT, which is what Lua reports.
+	if name == "" {
+		err := &fs.PathError{Op: "open", Path: name, Err: syscall.ENOENT}
+		return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
 	}
 
-	// Clean the path for fs.ReadFile since os.DirFS rejects paths with
-	// "." or ".." components (e.g. "libs/./C.lua" -> "libs/C.lua").
-	// Preserve the original name for error messages and source annotations.
-	// Only clean non-empty names to avoid turning "" into ".".
-	cleanName := name
-	if name != "" {
-		cleanName = filepath.Clean(name)
+	path, err := p.jail.resolve(name)
+	if err != nil {
+		if isAccessDenied(err) {
+			return nil, "", fmt.Errorf("cannot open %s: access denied", name)
+		}
+		// A real OS failure (permission, name too long) reads as itself.
+		return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
 	}
-	data, err := fs.ReadFile(p.fs, cleanName)
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("cannot %s %s: %v", fileErrorVerb(err), name, unwrapFileError(err))
 	}
