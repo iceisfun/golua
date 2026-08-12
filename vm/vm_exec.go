@@ -100,7 +100,7 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		varargs:               varargSlice,
 		argc:                  UseVMTop, // Lua frames use vm.top for ArgCount
 		ftransfer:             1,
-		ntransfer:             min(numArgs, numParams),
+		ntransfer:             numParams, // luaD_hookcall counts every parameter slot, nil-filled ones included
 		callName:              vm.pendingCallName,
 		callNameWhat:          vm.pendingCallNameWhat,
 		suppressTracebackName: vm.pendingSuppressTracebackName,
@@ -202,15 +202,48 @@ func (vm *VM) CheckInterrupt() error {
 
 // execute runs the current call frame until it returns.
 func (vm *VM) execute() ([]Value, error) {
+	// entryDepth is the call-stack depth at entry. Frames pushed above it by
+	// the OP_CALL fast path are "in-loop" frames: their returns are handled
+	// inside this dispatch loop (popInLoopFrame) instead of unwinding into Go
+	// through vm.call. Frames at or below entryDepth still return to Go.
+	entryDepth := len(vm.callStack)
 	frame := &vm.callStack[len(vm.callStack)-1]
 	proto := frame.closure.Proto
 	code := proto.Code
 	consts := frame.closure.ConstValues()
 
+mainLoop:
 	for {
 		frame = &vm.callStack[len(vm.callStack)-1]
 
 		if frame.pc >= len(code) {
+			// The frame ran off the end of its code instead of executing a
+			// return (a body whose last statement is an `if` ending in
+			// `return` carries no trailing OP_RETURN0). Reference protos
+			// always end in a return instruction, so the return event must
+			// still fire here — otherwise hook-based counters lose one event
+			// per call to such a function.
+			if vm.hookMask&HookMaskReturn != 0 && !vm.inHook {
+				// No results, so rethook passes ntransfer == 0 and
+				// luaD_hook never sets CIST_TRAN: debug.getinfo(..., "r")
+				// reports 0/0 for such a frame. Master stores the register
+				// the results would have started at instead; on this branch
+				// that value would be observable (golua has no CIST_TRAN
+				// flag, it reports the stored fields verbatim) and would
+				// diverge from lua5.4.8, so store the reported 0/0.
+				frame.ftransfer = 0
+				frame.ntransfer = 0
+				vm.fireReturnHook()
+			}
+			if len(vm.callStack) > entryDepth {
+				// In-loop frame: resume the caller without unwinding to Go.
+				vm.popInLoopFrame(nil)
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
+				continue
+			}
 			return nil, nil
 		}
 
@@ -417,6 +450,25 @@ func (vm *VM) execute() ([]Value, error) {
 				if err := vm.tableSet(t, key, value); err != nil {
 					return nil, err
 				}
+			} else if mm := vm.getMetafield(table, MetaNewIndex); !mm.IsNil() {
+				// A non-table _ENV (proxy userdata, string, ...) must still go
+				// through __newindex, the way luaV_finishset does and the way
+				// OP_GETTABUP already dispatches __index for reads.
+				if mm.IsFunction() || mm.IsNativeFunc() {
+					if _, err := vm.callMetamethod3("newindex", mm, table, key, value); err != nil {
+						return nil, err
+					}
+				} else if t := mm.AsTable(); t != nil && !valueIsThread(mm) {
+					if err := vm.tableSet(t, key, value); err != nil {
+						return nil, err
+					}
+				} else if err := vm.newIndexValue(mm, key, value, vm.MaxMetaDepth()); err != nil {
+					return nil, err
+				}
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
 			} else {
 				uvName := ""
 				if a < len(proto.Upvalues) {
@@ -626,22 +678,28 @@ func (vm *VM) execute() ([]Value, error) {
 				}
 				vm.stack[frame.base+a] = val
 			} else if table.IsString() && vm.stringMeta != nil {
-				// String method call - resolve through __index metamethod only
+				// String method call: resolve __index with the same chaining
+				// and error reporting as the plain field path (luaV_finishget),
+				// so ("s"):foo() and ("s").foo agree on non-table __index.
 				idx := vm.stringMeta.Get(metaIndex)
-				var val Value
-				if idx.IsTable() {
-					val, _ = vm.tableGetString(idx.AsTable(), key)
-				} else if idx.IsFunction() || idx.IsNativeFunc() {
-					var err error
-					val, err = vm.callMetamethod("index", idx, table, NewString(key))
-					if err != nil {
-						return nil, err
-					}
-					frame = &vm.callStack[len(vm.callStack)-1]
-					proto = frame.closure.Proto
-					code = proto.Code
-					consts = frame.closure.ConstValues()
+				if idx.IsNil() {
+					return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 				}
+				var val Value
+				var err error
+				if idx.IsTable() {
+					val, err = vm.tableGetString(idx.AsTable(), key)
+				} else {
+					val, err = vm.resolveIndex(idx, table, NewString(key))
+				}
+				if err != nil {
+					return nil, err
+				}
+				// Resolving the chain can call back into Lua and grow the call stack.
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
 				vm.stack[frame.base+a] = val
 			} else if ud := table.AsUserdata(); ud != nil {
 				// Userdata method call - use __index from userdata metatable
@@ -1263,6 +1321,75 @@ func (vm *VM) execute() ([]Value, error) {
 				return nil, err
 			}
 			a, b, c := inst.A(), inst.B(), inst.C()
+			// Fast path: a Lua-to-Lua call of a non-vararg closure with no
+			// debug hooks active is flattened into this dispatch loop — push
+			// the callee frame and continue, instead of recursing into
+			// execute() through doCall/vm.call (which copies the arguments
+			// through an intermediate buffer on the way in and the results
+			// through another on the way out). The matching return is handled
+			// by the OP_RETURN* cases, which pop frames above entryDepth
+			// without leaving Go. Varargs, active hooks, natives, __call
+			// chains and metamethod continuations all take doCall below, so
+			// their semantics are untouched.
+			fn := vm.stack[frame.base+a]
+			if cl := fn.AsClosure(); cl != nil && !cl.Proto.IsVarArg && vm.hookMask == 0 {
+				// Depth accounting is identical to vm.call: check before the
+				// frame is pushed so the limit, the "stack overflow" vs
+				// "C stack overflow" wording and its catchability by pcall
+				// are unchanged.
+				vm.checkCallDepth()
+				calleeProto := cl.Proto
+				var nArgs int
+				if b == 0 {
+					nArgs = vm.top - (frame.base + a + 1)
+				} else {
+					nArgs = b - 1
+				}
+				// The callee's registers start where the caller's end, exactly
+				// as on the doCall path (which restores vm.top to the caller's
+				// frame top before vm.call places the new frame at vm.top).
+				newBase := frame.base + proto.MaxStack
+				vm.ensureStack(newBase + calleeProto.MaxStack + stackSafetyMargin)
+				numParams := calleeProto.NumParams
+				nCopy := nArgs
+				if nCopy > numParams {
+					nCopy = numParams
+				}
+				if nCopy < 0 {
+					nCopy = 0
+				}
+				// Copy arguments caller-registers -> callee-registers directly.
+				// An open call (b == 0) can leave arguments above the caller's
+				// frame top, so the source and destination ranges may overlap;
+				// copy() has memmove semantics, so that is safe.
+				copy(vm.stack[newBase:newBase+nCopy], vm.stack[frame.base+a+1:frame.base+a+1+nCopy])
+				for i := nCopy; i < numParams; i++ {
+					vm.stack[newBase+i] = Nil
+				}
+				vm.callStack = append(vm.callStack, callFrame{
+					closure:               cl,
+					funcValue:             fn,
+					base:                  newBase,
+					nResults:              c - 1,
+					argc:                  UseVMTop, // Lua frames use vm.top for ArgCount
+					ftransfer:             1,
+					ntransfer:             numParams, // luaD_hookcall counts every parameter slot, nil-filled ones included
+					callName:              vm.pendingCallName,
+					callNameWhat:          vm.pendingCallNameWhat,
+					suppressTracebackName: vm.pendingSuppressTracebackName,
+				})
+				vm.pendingCallName = ""
+				vm.pendingCallNameWhat = ""
+				vm.pendingSuppressTracebackName = false
+				vm.top = newBase + calleeProto.MaxStack
+				// The append may have reallocated the call stack, so the
+				// cached frame pointer must always be re-derived.
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = calleeProto
+				code = proto.Code
+				consts = cl.ConstValues()
+				continue
+			}
 			if err := vm.doCall(frame, a, b, c); err != nil {
 				return nil, err
 			}
@@ -1348,6 +1475,34 @@ func (vm *VM) execute() ([]Value, error) {
 						}
 					}
 
+					// A tail call reuses the frame in place, so the frame's
+					// register window just changed size. When it shrinks, the
+					// registers between the new top and the old one are dead,
+					// nothing will overwrite them, and for an in-loop frame
+					// (one pushed by the OP_CALL fast path) the return-time
+					// clear in popInLoopFrame is bounded by whichever proto is
+					// running *then* — this one — so it would never reach
+					// them. The recursive path needs no such clear here
+					// because vm.call captured the entry proto and always
+					// clears that full original window on return. Clearing the
+					// abandoned tail as it is abandoned keeps popInLoopFrame's
+					// bound a true union of the recursive path's two clears,
+					// and composes over a chain of tail calls. (Growth needs
+					// nothing: popInLoopFrame's bound is the current proto, so
+					// it already covers a widened window.) Here proto is the
+					// tail-call target's, tailProto the one the frame was
+					// running when it reached this instruction.
+					if len(vm.callStack) > entryDepth && proto.MaxStack < tailProto.MaxStack {
+						deadFrom := frame.base + proto.MaxStack
+						deadTo := frame.base + tailProto.MaxStack
+						if deadTo > len(vm.stack) {
+							deadTo = len(vm.stack)
+						}
+						for i := deadFrom; i < deadTo; i++ {
+							vm.stack[i] = Nil
+						}
+					}
+
 					// Set transfer info for the tail call target so call hooks
 					// see the correct arguments via ftransfer/ntransfer.
 					frame.ftransfer = 1
@@ -1408,6 +1563,19 @@ func (vm *VM) execute() ([]Value, error) {
 						results = make([]Value, nResults)
 						copy(results, vm.stack[nativeBase:nativeBase+nResults])
 					}
+					// If the tail-calling frame is an in-loop frame (pushed by
+					// the OP_CALL fast path), the native call's results are
+					// this frame's results: pop it and resume the caller here
+					// instead of returning them to a vm.call that no longer
+					// exists on the Go stack.
+					if len(vm.callStack) > entryDepth {
+						vm.popInLoopFrame(results)
+						frame = &vm.callStack[len(vm.callStack)-1]
+						proto = frame.closure.Proto
+						code = proto.Code
+						consts = frame.closure.ConstValues()
+						continue mainLoop
+					}
 					return results, nil
 				} else {
 					// Check for __call metamethod
@@ -1463,11 +1631,27 @@ func (vm *VM) execute() ([]Value, error) {
 			// Close upvalues and run __close metamethods BEFORE the return hook.
 			// Lua 5.4 runs __close before the return hook for the function itself.
 			vm.closeUpvalues(frame.base)
+			// __close re-enters the VM and may have grown (reallocated) the
+			// call stack, leaving the cached frame pointer aimed at the old
+			// backing array.
+			frame = &vm.callStack[len(vm.callStack)-1]
 
 			// Fire return hook after __close metamethods
 			frame.ftransfer = a + 1
 			frame.ntransfer = nret
 			vm.fireReturnHook()
+
+			// In-loop frame (pushed by the OP_CALL fast path): pop it and
+			// store the results into the caller's registers without
+			// unwinding to Go. saved is only read by popInLoopFrame.
+			if len(vm.callStack) > entryDepth {
+				vm.popInLoopFrame(saved)
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
+				continue
+			}
 
 			// Copy to vm.retBuf AFTER close handlers have finished
 			if nret <= len(vm.retBuf) {
@@ -1478,19 +1662,42 @@ func (vm *VM) execute() ([]Value, error) {
 
 		case compiler.OP_RETURN0:
 			vm.closeUpvalues(frame.base)
+			// __close re-enters the VM and may have grown (reallocated) the
+			// call stack, leaving the cached frame pointer aimed at the old
+			// backing array.
+			frame = &vm.callStack[len(vm.callStack)-1]
+			// ntransfer == 0 means the reference never records transfer info
+			// for this return, so debug.getinfo(..., "r") reports 0/0.
 			frame.ftransfer = 0
 			frame.ntransfer = 0
 			vm.fireReturnHook()
+			if len(vm.callStack) > entryDepth {
+				vm.popInLoopFrame(nil)
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
+				continue
+			}
 			return nil, nil
 
 		case compiler.OP_RETURN1:
 			a := inst.A()
 			result := vm.stack[frame.base+a]
 			vm.closeUpvalues(frame.base)
+			frame = &vm.callStack[len(vm.callStack)-1]
 			frame.ftransfer = a + 1
 			frame.ntransfer = 1
 			vm.fireReturnHook()
 			vm.retBuf[0] = result
+			if len(vm.callStack) > entryDepth {
+				vm.popInLoopFrame(vm.retBuf[:1])
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
+				continue
+			}
 			return vm.retBuf[:1], nil
 
 		case compiler.OP_FORLOOP:
@@ -1745,6 +1952,27 @@ func (vm *VM) execute() ([]Value, error) {
 			if fn.IsFunction() {
 				results, err = vm.call(fn.AsClosure(), []Value{state, ctrl}, c)
 			} else if fn.IsNativeFunc() {
+				if vm.hookMask&(HookMaskCall|HookMaskReturn) != 0 {
+					// The inline invocation below skips the hook machinery, so
+					// a native iterator would report no call/return events at
+					// all — reference lvm.c runs every iterator through
+					// luaD_call. Stage the call at R[A+4] (exactly where
+					// reference 5.4 stages it, and where the results have to
+					// land) and dispatch it like a normal call.
+					callBase := a + 4
+					vm.ensureStack(frame.base + callBase + 3 + c + stackSafetyMargin)
+					vm.stack[frame.base+callBase] = fn
+					vm.stack[frame.base+callBase+1] = state
+					vm.stack[frame.base+callBase+2] = ctrl
+					if err := vm.doCall(frame, callBase, 3, c+1); err != nil {
+						return nil, err
+					}
+					// The call (and its hooks) may have grown the call stack.
+					frame = &vm.callStack[len(vm.callStack)-1]
+					// doCall stored (and nil-padded) exactly c results at
+					// R[A+4]..., which is already where the loop variables live.
+					break
+				}
 				// Set up stack for native call at R[A+4] so results land there
 				nativeBase := frame.base + a + 4
 				vm.stack[nativeBase] = fn
@@ -1792,6 +2020,8 @@ func (vm *VM) execute() ([]Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			// The iterator ran Lua code, which may have reallocated the call stack.
+			frame = &vm.callStack[len(vm.callStack)-1]
 
 			// Store results at R[A+4], ..., R[A+3+C]
 			for i := 0; i < c && i < len(results); i++ {
@@ -1952,6 +2182,64 @@ func (vm *VM) CheckStack(n int) bool {
 		limit = DefaultMaxStackSlots
 	}
 	return limit < 0 || n < limit
+}
+
+// popInLoopFrame pops the top call frame — one pushed by the OP_CALL fast
+// path in execute() — and stores its results into the caller's registers,
+// performing exactly the work the recursive path splits between the tail of
+// vm.call (pop frame, restore vm.top, clear the callee's register window) and
+// the tail of doCall (store/nil-pad results, clear the caller's dead
+// registers). The pending OP_CALL's A and C operands are re-decoded from the
+// caller's code — the caller's pc still points just past its CALL — so the
+// frame needs no extra fields. results is only read; it may alias a Go-stack
+// buffer or vm.retBuf, never the caller's registers.
+func (vm *VM) popInLoopFrame(results []Value) {
+	calleeIdx := len(vm.callStack) - 1
+	callee := &vm.callStack[calleeIdx]
+	calleeEnd := callee.base + callee.closure.Proto.MaxStack
+	vm.callStack = vm.callStack[:calleeIdx]
+	caller := &vm.callStack[calleeIdx-1]
+	inst := caller.closure.Proto.Code[caller.pc-1]
+	a, c := inst.A(), inst.C()
+
+	// vm.top returns to the caller's frame top, matching vm.call's
+	// `vm.top = savedTop` (doCall parks vm.top there before dispatching).
+	vm.top = caller.base + caller.closure.Proto.MaxStack
+	nWanted := c - 1
+	if c == 0 {
+		// Variable results: vm.top marks the result count for the caller.
+		nWanted = len(results)
+		vm.top = caller.base + a + nWanted
+	}
+	if needed := caller.base + a + nWanted; needed > len(vm.stack) {
+		vm.ensureStack(needed)
+	}
+	for i := 0; i < nWanted; i++ {
+		if i < len(results) {
+			vm.stack[caller.base+a+i] = results[i]
+		} else {
+			vm.stack[caller.base+a+i] = Nil
+		}
+	}
+	// Clear dead registers above the result area through the end of the
+	// callee's register window — the union of the two clears the recursive
+	// path performs. This is a GC-liveness contract (weak tables / __gc),
+	// not removable overhead: Go's GC traces the whole stack slice, so stale
+	// registers would pin otherwise-dead objects.
+	if calleeEnd > len(vm.stack) {
+		calleeEnd = len(vm.stack)
+	}
+	for i := caller.base + a + nWanted; i < calleeEnd; i++ {
+		vm.stack[i] = Nil
+	}
+	// If a debug hook was enabled while the callee ran (it cannot have been
+	// active when the fast path was taken), reproduce rethook's "set 'oldpc'"
+	// correction: the reference sets L->oldpc to the caller's saved pc when
+	// returning into a Lua frame, so the instruction after the call is seen
+	// as a new line event.
+	if vm.hookMask != 0 {
+		vm.lastHookPC = caller.pc
+	}
 }
 
 // doCall dispatches an OP_CALL instruction. It collects arguments from the
