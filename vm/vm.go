@@ -2,6 +2,7 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -52,15 +53,8 @@ type VM struct {
 	protectedCallDepth    int
 	closingCoroutineDepth int
 
-	// Type metatables (for string, number, bool, nil, function, thread,
-	// and lightuserdata values from debug.upvalueid).
-	stringMeta        LuaTable
-	numberMeta        LuaTable
-	boolMeta          LuaTable
-	nilMeta           LuaTable
-	functionMeta      LuaTable
-	threadMeta        LuaTable
-	lightUserdataMeta LuaTable
+	// State shared with every coroutine VM of this family (see vmState).
+	state *vmState
 
 	// Coroutine support
 	yieldCh     chan []Value // Channel to send yield values (nil if not in coroutine)
@@ -106,7 +100,6 @@ type VM struct {
 
 	// Print/warn provider support
 	printProvider LuaPrintProvider // Provider for print/warn output routing (optional)
-	warnEnabled   bool             // Per-VM warn flag (controlled by warn("@on")/"@off")
 
 	// All registered providers for lifecycle management (Close)
 	registeredProviders []any
@@ -144,6 +137,7 @@ type VM struct {
 
 	// Execution control
 	ctx           context.Context // nil = no cancellation checking
+	terminated    atomic.Bool     // Terminate() was called: unwind at the next interrupt poll
 	limits        Limits          // zero values = no limit
 	instrCount    int64           // only tracked when MaxInstructions > 0
 	instrSynced   int64           // value of instrCount at the last budget sync
@@ -153,12 +147,9 @@ type VM struct {
 	metaCallDepth int             // >0 when inside a metamethod call chain (for "C stack overflow" message)
 
 	// GC rate limiting and mode tracking
-	lastLuaGC     time.Time       // Last time ProcessGcFinalizers invoked runtime.GC()
-	gcCallCount   int             // Number of times runtime.GC() was actually invoked (for testing)
-	gcStepCounter int             // Instruction counter for GC stepping (counts up to GCStepInterval)
-	gcMode        string          // Current GC mode: "generational" (default) or "incremental"
-	gcRunning     bool            // Whether GC is "running" (tracked for collectgarbage("isrunning"))
-	gcParams      map[string]byte // Encoded GC tunables for collectgarbage("param", ...) round-trip
+	lastLuaGC     time.Time // Last time ProcessGcFinalizers invoked runtime.GC()
+	gcCallCount   int       // Number of times runtime.GC() was actually invoked (for testing)
+	gcStepCounter int       // Instruction counter for GC stepping (counts up to GCStepInterval)
 
 	// Output capture
 	captureOutput bool      // When true, Print appends to outputLines instead of writing stdout
@@ -179,6 +170,39 @@ type VM struct {
 	// Since the VM processes one instruction at a time (no concurrency),
 	// this buffer can be reused across returns without allocation.
 	retBuf [8]Value
+}
+
+// vmState holds the pieces of interpreter state that reference Lua keeps in
+// global_State rather than per-thread, so that every coroutine of a VM family
+// observes one copy of them, live and in both directions.
+//
+// golua models a coroutine as a distinct *VM, which makes the distinction
+// explicit: a field on VM is per-thread (the stack, the call stack, open
+// upvalues) and a field here is per-state. The type metatables are
+// global_State.mt (what lua_setmetatable on a non-table value writes and
+// luaT_gettmbyobj reads), the warn flag is global_State.warnf (lua_setwarnf),
+// and the collectgarbage mode/running/param triple is the collector's own state
+// (LUA_GCISRUNNING and friends) — so setting any of them inside a coroutine has
+// to be visible to its parent, and the other way round.
+//
+// Like globals, this is shared without synchronisation: the VMs of one family
+// take turns, they never run at once.
+type vmState struct {
+	// Type metatables (for string, number, bool, nil, function, thread,
+	// and lightuserdata values from debug.upvalueid).
+	stringMeta        LuaTable
+	numberMeta        LuaTable
+	boolMeta          LuaTable
+	nilMeta           LuaTable
+	functionMeta      LuaTable
+	threadMeta        LuaTable
+	lightUserdataMeta LuaTable
+
+	warnEnabled bool // warn("@on") / warn("@off")
+
+	gcMode    string          // "generational" (default) or "incremental"
+	gcRunning bool            // whether GC is "running" (collectgarbage("isrunning"))
+	gcParams  map[string]byte // encoded tunables for collectgarbage("param", ...) round-trip
 }
 
 // instrBudget is the Limits.MaxInstructions budget shared by a VM and every
@@ -242,6 +266,32 @@ func (vm *VM) SyncInstructionBudget() {
 	vm.instrSynced = total
 }
 
+// errTerminated is what a terminated VM's interrupt poll reports. It reads like
+// a context cancellation because that is what it is from the running chunk's
+// point of view: the owner of this VM withdrew it.
+var errTerminated = errors.New("execution interrupted: VM closed")
+
+// Terminate asks this VM to stop executing Lua: the next interrupt poll
+// (CheckInterrupt, reached at loop back-edges and at calls) unwinds the running
+// chunk with an "execution interrupted" error, exactly as a cancelled context
+// does. Unlike SetContext it is safe to call from another goroutine while the VM
+// is running, and it is one-way — a terminated VM stays terminated.
+//
+// It exists for the coroutine implementation in package stdlib, where a
+// coroutine runs on its own goroutine against state its VM family shares. The
+// owner of such a goroutine has to be able to stop it before walking away, and
+// the coroutine's context (inherited from the parent VM) is not necessarily
+// cancellable: VM.Close uses Terminate to bound the <close> handlers of the
+// abandoned coroutines it reaps, whatever context it was given.
+func (vm *VM) Terminate() {
+	vm.terminated.Store(true)
+}
+
+// Terminated reports whether Terminate has been called on this VM.
+func (vm *VM) Terminated() bool {
+	return vm.terminated.Load()
+}
+
 // Sentinel values for callFrame fields.
 const (
 	MultiReturn        = -1  // callFrame.nResults: return all results
@@ -284,11 +334,9 @@ func New(opts ...VMOption) *VM {
 		stack:         make([]Value, initialStackSize),
 		callStack:     make([]callFrame, 0, 32),
 		globals:       NewEmptyTable(),
-		warnEnabled:   false,
+		state:         &vmState{gcMode: "generational", gcRunning: true},
 		instrBudget:   &instrBudget{},
 		closeDepth:    new(int32),
-		gcMode:        "generational",
-		gcRunning:     true,
 		ctx:           context.Background(),
 		gcQueue:       &gcQueue{},
 		internalState: make(map[string]any),
@@ -939,121 +987,121 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 // but has its own stack, call stack, and upvalue tracking. Communication between
 // parent and child happens through the yieldCh and resumeCh channels.
 func NewCoroutineVM(parent *VM, yieldCh, resumeCh chan []Value, coID int) *VM {
-	return &VM{
-		stack:             make([]Value, initialStackSize),
-		callStack:         make([]callFrame, 0, 16),
-		globals:           parent.globals,
-		stringMeta:        parent.stringMeta,
-		numberMeta:        parent.numberMeta,
-		boolMeta:          parent.boolMeta,
-		nilMeta:           parent.nilMeta,
-		functionMeta:      parent.functionMeta,
-		threadMeta:        parent.threadMeta,
-		lightUserdataMeta: parent.lightUserdataMeta,
-		yieldCh:           yieldCh,
-		resumeCh:          resumeCh,
-		coroutineID:       coID,
-		codeProvider:      parent.codeProvider,
-		vmID:              parent.vmID,
-		chunkName:         parent.chunkName,
-		ioProvider:        parent.ioProvider,
-		osProvider:        parent.osProvider,
-		execProvider:      parent.execProvider,
-		exitHandler:       parent.exitHandler,
-		debugProvider:     parent.debugProvider,
-		chanProvider:      parent.chanProvider,
-		timeProvider:      parent.timeProvider,
-		processProvider:   parent.processProvider,
-		loadLibProvider:   parent.loadLibProvider,
-		printProvider:     parent.printProvider,
-		warnEnabled:       parent.warnEnabled,
-		ctx:               parent.ctx,
-		limits:            parent.limits,
-		instrBudget:       parent.instrBudget,
-		callDepthBase:     parent.callDepthBase + len(parent.callStack),
-		closeDepth:        parent.closeDepth,
-		captureOutput:     parent.captureOutput,
-		outputLines:       parent.outputLines,
-		gcQueue:           parent.gcQueue,
-		internalState:     parent.internalState,
-		internalMu:        parent.internalMu,
+	co := &VM{
+		stack:           make([]Value, initialStackSize),
+		callStack:       make([]callFrame, 0, 16),
+		globals:         parent.globals,
+		state:           parent.state,
+		yieldCh:         yieldCh,
+		resumeCh:        resumeCh,
+		coroutineID:     coID,
+		codeProvider:    parent.codeProvider,
+		vmID:            parent.vmID,
+		chunkName:       parent.chunkName,
+		ioProvider:      parent.ioProvider,
+		osProvider:      parent.osProvider,
+		execProvider:    parent.execProvider,
+		exitHandler:     parent.exitHandler,
+		debugProvider:   parent.debugProvider,
+		chanProvider:    parent.chanProvider,
+		timeProvider:    parent.timeProvider,
+		processProvider: parent.processProvider,
+		loadLibProvider: parent.loadLibProvider,
+		printProvider:   parent.printProvider,
+		ctx:             parent.ctx,
+		limits:          parent.limits,
+		instrBudget:     parent.instrBudget,
+		callDepthBase:   parent.callDepthBase + len(parent.callStack),
+		closeDepth:      parent.closeDepth,
+		captureOutput:   parent.captureOutput,
+		outputLines:     parent.outputLines,
+		gcQueue:         parent.gcQueue,
+		internalState:   parent.internalState,
+		internalMu:      parent.internalMu,
 	}
+	// Termination is one-way and covers everything the terminated VM goes on to
+	// start: a coroutine created by a VM that has already been withdrawn (in a
+	// <close> handler, say) must not outlive it either.
+	if parent.terminated.Load() {
+		co.terminated.Store(true)
+	}
+	return co
 }
 
 // SetStringMeta sets the metatable for all strings.
 func (vm *VM) SetStringMeta(mt LuaTable) {
-	vm.stringMeta = mt
+	vm.state.stringMeta = mt
 }
 
 // StringMeta returns the string metatable.
 func (vm *VM) StringMeta() LuaTable {
-	return vm.stringMeta
+	return vm.state.stringMeta
 }
 
 // SetNumberMeta sets the metatable for all numbers.
 func (vm *VM) SetNumberMeta(mt LuaTable) {
-	vm.numberMeta = mt
+	vm.state.numberMeta = mt
 }
 
 // NumberMeta returns the number metatable.
 func (vm *VM) NumberMeta() LuaTable {
-	return vm.numberMeta
+	return vm.state.numberMeta
 }
 
 // SetBoolMeta sets the metatable for all booleans.
 func (vm *VM) SetBoolMeta(mt LuaTable) {
-	vm.boolMeta = mt
+	vm.state.boolMeta = mt
 }
 
 // BoolMeta returns the boolean metatable.
 func (vm *VM) BoolMeta() LuaTable {
-	return vm.boolMeta
+	return vm.state.boolMeta
 }
 
 // SetNilMeta sets the metatable for nil values.
 func (vm *VM) SetNilMeta(mt LuaTable) {
-	vm.nilMeta = mt
+	vm.state.nilMeta = mt
 }
 
 // NilMeta returns the nil metatable.
 func (vm *VM) NilMeta() LuaTable {
-	return vm.nilMeta
+	return vm.state.nilMeta
 }
 
 // SetFunctionMeta sets the metatable for all functions.
 func (vm *VM) SetFunctionMeta(mt LuaTable) {
-	vm.functionMeta = mt
+	vm.state.functionMeta = mt
 }
 
 // FunctionMeta returns the function metatable.
 func (vm *VM) FunctionMeta() LuaTable {
-	return vm.functionMeta
+	return vm.state.functionMeta
 }
 
 // GetTypeMeta returns the type metatable for a value.
 // Returns nil for tables (use table's own metatable) and types without metatables set.
 func (vm *VM) GetTypeMeta(v Value) LuaTable {
 	if v.IsString() {
-		return vm.stringMeta
+		return vm.state.stringMeta
 	}
 	if v.IsNumber() {
-		return vm.numberMeta
+		return vm.state.numberMeta
 	}
 	if v.IsBool() {
-		return vm.boolMeta
+		return vm.state.boolMeta
 	}
 	if v.IsNil() {
-		return vm.nilMeta
+		return vm.state.nilMeta
 	}
 	if v.IsFunction() || v.IsNativeFunc() {
-		return vm.functionMeta
+		return vm.state.functionMeta
 	}
 	if v.IsLightUserdata() {
-		return vm.lightUserdataMeta
+		return vm.state.lightUserdataMeta
 	}
 	if v.IsTable() {
 		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
-			return vm.threadMeta
+			return vm.state.threadMeta
 		}
 	}
 	return nil
@@ -1063,24 +1111,24 @@ func (vm *VM) GetTypeMeta(v Value) LuaTable {
 func (vm *VM) SetTypeMeta(v Value, mt LuaTable) {
 	if v.IsTable() {
 		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
-			vm.threadMeta = mt
+			vm.state.threadMeta = mt
 			return
 		}
 		v.AsTable().SetMetatable(mt)
 		return
 	}
 	if v.IsString() {
-		vm.stringMeta = mt
+		vm.state.stringMeta = mt
 	} else if v.IsNumber() {
-		vm.numberMeta = mt
+		vm.state.numberMeta = mt
 	} else if v.IsBool() {
-		vm.boolMeta = mt
+		vm.state.boolMeta = mt
 	} else if v.IsNil() {
-		vm.nilMeta = mt
+		vm.state.nilMeta = mt
 	} else if v.IsFunction() || v.IsNativeFunc() {
-		vm.functionMeta = mt
+		vm.state.functionMeta = mt
 	} else if v.IsLightUserdata() {
-		vm.lightUserdataMeta = mt
+		vm.state.lightUserdataMeta = mt
 	}
 }
 
@@ -1501,7 +1549,7 @@ func (vm *VM) getMetafield(v Value, key string) Value {
 	var mt LuaTable
 	if v.IsTable() {
 		if tbl, ok := v.ptr.(*Table); ok && tbl.IsThread() {
-			mt = vm.threadMeta
+			mt = vm.state.threadMeta
 		} else {
 			mt = v.AsTable().Metatable()
 		}

@@ -18,20 +18,47 @@ func (vm *VM) Top() int {
 }
 
 // Get returns the value at the given stack index (relative to base).
+//
+// Anything at or above the current frame's top reads nil, the way reference
+// Lua's index2value hands out the shared nilvalue for a positive index at or
+// past L->top. The dispatch sites nil a few slots past the arguments, but a
+// native with more optional trailing parameters than that would otherwise read
+// whatever the previous call at the same base left behind — which is a wrong
+// value, not an absent one, and the caller has no way to tell.
 func (vm *VM) Get(idx int) Value {
-	base := vm.Base()
-	if idx >= 0 {
-		return vm.stack[base+idx]
+	base, top := 0, len(vm.stack)
+	if n := len(vm.callStack); n > 0 {
+		base = vm.callStack[n-1].base
+		top = vm.top
 	}
-	// Negative index counts from top
-	return vm.stack[vm.top+idx]
+	if idx < 0 {
+		// Negative index counts from top.
+		idx = vm.top + idx
+		if idx < base {
+			return Nil
+		}
+	} else {
+		idx += base
+	}
+	if idx >= top || idx >= len(vm.stack) {
+		return Nil
+	}
+	return vm.stack[idx]
 }
 
 // Set sets the value at the given stack index (relative to base).
+//
+// Writing at or above the frame's top raises top to cover the slot, so that a
+// value written here reads back through Get. Get treats everything at or above
+// top as absent, which is what keeps a native from seeing the slots a previous
+// call left behind; a slot this call has written itself is present, not stale.
 func (vm *VM) Set(idx int, v Value) {
 	base := vm.Base()
 	if idx >= 0 {
 		vm.stack[base+idx] = v
+		if len(vm.callStack) > 0 && base+idx >= vm.top {
+			vm.top = base + idx + 1
+		}
 	} else {
 		vm.stack[vm.top+idx] = v
 	}
@@ -337,23 +364,23 @@ func (vm *VM) PrintProvider() LuaPrintProvider {
 // SetWarnEnabled sets whether warn() produces output.
 // This is the per-VM equivalent of warn("@on")/"@off".
 func (vm *VM) SetWarnEnabled(enabled bool) {
-	vm.warnEnabled = enabled
+	vm.state.warnEnabled = enabled
 }
 
 // WarnEnabled returns whether warn() output is enabled for this VM.
 func (vm *VM) WarnEnabled() bool {
-	return vm.warnEnabled
+	return vm.state.warnEnabled
 }
 
 // GCMode returns the current GC mode name ("incremental" or "generational").
 func (vm *VM) GCMode() string {
-	return vm.gcMode
+	return vm.state.gcMode
 }
 
 // SetGCMode sets the GC mode name and returns the previous mode.
 func (vm *VM) SetGCMode(mode string) string {
-	prev := vm.gcMode
-	vm.gcMode = mode
+	prev := vm.state.gcMode
+	vm.state.gcMode = mode
 	return prev
 }
 
@@ -418,8 +445,8 @@ func gcCeilLog2(x uint64) uint {
 // 100 (matching Lua 5.5 collectgarbage("param", name) read semantics). 'def' is
 // the default value reported when the param has not been set this VM.
 func (vm *VM) GCParam(name string, def int64) int64 {
-	if vm.gcParams != nil {
-		if b, ok := vm.gcParams[name]; ok {
+	if vm.state.gcParams != nil {
+		if b, ok := vm.state.gcParams[name]; ok {
 			return gcApplyParam(b, 100)
 		}
 	}
@@ -430,23 +457,23 @@ func (vm *VM) GCParam(name string, def int64) int64 {
 // subsequent GCParam read round-trips (with Lua 5.5's floating-byte
 // quantization). Storage is bookkeeping only; Go's GC is unaffected.
 func (vm *VM) SetGCParam(name string, value int64) {
-	if vm.gcParams == nil {
-		vm.gcParams = make(map[string]byte, 6)
+	if vm.state.gcParams == nil {
+		vm.state.gcParams = make(map[string]byte, 6)
 	}
 	if value < 0 {
 		value = 0
 	}
-	vm.gcParams[name] = gcCodeParam(uint64(value))
+	vm.state.gcParams[name] = gcCodeParam(uint64(value))
 }
 
 // GCRunning returns whether the GC is in "running" state.
 func (vm *VM) GCRunning() bool {
-	return vm.gcRunning
+	return vm.state.gcRunning
 }
 
 // SetGCRunning sets the GC running state.
 func (vm *VM) SetGCRunning(running bool) {
-	vm.gcRunning = running
+	vm.state.gcRunning = running
 }
 
 // Context and limits
