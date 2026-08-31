@@ -16,7 +16,7 @@ func valueIsThread(v Value) bool {
 }
 
 // tableGet gets a value from a table, handling __index metamethod.
-// The loop structure matches Lua 5.4's luaV_finishget: the initial table check
+// The loop structure matches Lua's luaV_finishget: the initial table check
 // is "free" (not counted), and each loop iteration performs one redirect + check.
 // This means MAXTAGLOOP redirects are allowed when the value is found, but
 // MAXTAGLOOP redirects with no value triggers the chain-too-long error.
@@ -25,12 +25,25 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.Get(key), nil
 	}
-	// Initial table check (free, like Lua 5.4's inline bytecode fast path)
+	return vm.tableGetDepth(t, key, vm.MaxMetaDepth())
+}
+
+// tableGetDepth is tableGet with an explicit budget of remaining chain hops.
+// luaV_finishget walks the whole chain under a single flat counter, so a chain
+// that alternates between tables and non-table values has to drain one shared
+// budget rather than restart one per hop; every function in this family
+// therefore passes the remaining count on instead of re-seeding MaxMetaDepth.
+func (vm *VM) tableGetDepth(t LuaTable, key Value, depth int) (Value, error) {
+	// Fast path: concrete table with no metatable (most common case)
+	if ct, ok := t.(*Table); ok && ct.metatable == nil && depth > 0 {
+		return ct.Get(key), nil
+	}
+	// Initial table check (free, like the inline bytecode fast path)
 	val := t.Get(key)
 	if !val.IsNil() {
 		return val, nil
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for ; depth > 0; depth-- {
 		// Key not found, check for __index metamethod
 		mt := t.Metatable()
 		if mt == nil {
@@ -59,7 +72,7 @@ func (vm *VM) tableGet(t LuaTable, key Value) (Value, error) {
 		}
 
 		// __index is another value — chain through its metatable
-		return vm.indexValue(index, key)
+		return vm.indexValueDepth(index, key, depth-1)
 	}
 	return Nil, vm.runtimeError("'__index' chain too long; possible loop")
 }
@@ -70,7 +83,16 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.GetString(key), nil
 	}
-	// Initial table check (free, like Lua 5.4's inline bytecode fast path)
+	return vm.tableGetStringDepth(t, key, vm.MaxMetaDepth())
+}
+
+// tableGetStringDepth is tableGetString carrying the shared chain budget.
+func (vm *VM) tableGetStringDepth(t LuaTable, key string, depth int) (Value, error) {
+	// Fast path: concrete table with no metatable
+	if ct, ok := t.(*Table); ok && ct.metatable == nil && depth > 0 {
+		return ct.GetString(key), nil
+	}
+	// Initial table check (free, like the inline bytecode fast path)
 	if ct, ok := t.(*Table); ok {
 		if val := ct.GetString(key); !val.IsNil() {
 			return val, nil
@@ -80,7 +102,7 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 			return val, nil
 		}
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for ; depth > 0; depth-- {
 		// Key not found, check for __index metamethod
 		mt := t.Metatable()
 		if mt == nil {
@@ -114,7 +136,7 @@ func (vm *VM) tableGetString(t LuaTable, key string) (Value, error) {
 		}
 
 		// __index is another value — chain through its metatable
-		return vm.indexValue(index, NewString(key))
+		return vm.indexValueDepth(index, NewString(key), depth-1)
 	}
 	return Nil, vm.runtimeError("'__index' chain too long; possible loop")
 }
@@ -125,7 +147,16 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 	if ct, ok := t.(*Table); ok && ct.metatable == nil {
 		return ct.GetInt(key), nil
 	}
-	// Initial table check (free, like Lua 5.4's inline bytecode fast path)
+	return vm.tableGetIntDepth(t, key, vm.MaxMetaDepth())
+}
+
+// tableGetIntDepth is tableGetInt carrying the shared chain budget.
+func (vm *VM) tableGetIntDepth(t LuaTable, key int, depth int) (Value, error) {
+	// Fast path: concrete table with no metatable
+	if ct, ok := t.(*Table); ok && ct.metatable == nil && depth > 0 {
+		return ct.GetInt(key), nil
+	}
+	// Initial table check (free, like the inline bytecode fast path)
 	if ct, ok := t.(*Table); ok {
 		if val := ct.GetInt(key); !val.IsNil() {
 			return val, nil
@@ -135,7 +166,7 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 			return val, nil
 		}
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for ; depth > 0; depth-- {
 		// Key not found, check for __index metamethod
 		mt := t.Metatable()
 		if mt == nil {
@@ -169,7 +200,7 @@ func (vm *VM) tableGetInt(t LuaTable, key int) (Value, error) {
 		}
 
 		// __index is another value — chain through its metatable
-		return vm.indexValue(index, NewInt(int64(key)))
+		return vm.indexValueDepth(index, NewInt(int64(key)), depth-1)
 	}
 	return Nil, vm.runtimeError("'__index' chain too long; possible loop")
 }
@@ -201,7 +232,7 @@ func (vm *VM) indexValueDepth(val Value, key Value, depth int) (Value, error) {
 		return Nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 	}
 	if index.IsTable() {
-		return vm.tableGet(index.AsTable(), key)
+		return vm.tableGetDepth(index.AsTable(), key, depth-1)
 	}
 	if index.IsFunction() || index.IsNativeFunc() {
 		return vm.callMetamethod("index", index, val, key)
@@ -213,18 +244,21 @@ func (vm *VM) indexValueDepth(val Value, key Value, depth int) (Value, error) {
 // resolveIndex resolves an __index metamethod for a non-table value.
 // mm is the __index metamethod value, obj is the original value, key is the lookup key.
 func (vm *VM) resolveIndex(mm Value, obj Value, key Value) (Value, error) {
+	// Reaching mm already consumed one hop of the chain budget (the caller
+	// looked up obj's type metatable), so the walk continues one short.
+	depth := vm.MaxMetaDepth() - 1
 	if mm.IsTable() {
-		return vm.tableGet(mm.AsTable(), key)
+		return vm.tableGetDepth(mm.AsTable(), key, depth)
 	}
 	if mm.IsFunction() || mm.IsNativeFunc() {
 		return vm.callMetamethod("index", mm, obj, key)
 	}
 	// __index is another value (e.g. a string) — chain through its metatable
-	return vm.indexValue(mm, key)
+	return vm.indexValueDepth(mm, key, depth)
 }
 
 // tableSet sets a value in a table, handling __newindex metamethod.
-// The loop structure matches Lua 5.4's luaV_finishset: the initial table check
+// The loop structure matches Lua's luaV_finishset: the initial table check
 // is "free" (not counted), and each loop iteration performs one redirect + check.
 func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 	// Fast path: concrete table with no metatable (skip existence check)
@@ -234,7 +268,21 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		}
 		return nil
 	}
-	// Initial check (free, like Lua 5.4's inline bytecode fast path)
+	return vm.tableSetDepth(t, key, value, vm.MaxMetaDepth())
+}
+
+// tableSetDepth is tableSet with an explicit budget of remaining chain hops,
+// shared with newIndexValue so a chain that alternates between tables and
+// non-table values drains one counter, as luaV_finishset's flat loop does.
+func (vm *VM) tableSetDepth(t LuaTable, key, value Value, depth int) error {
+	// Fast path: concrete table with no metatable (skip existence check)
+	if ct, ok := t.(*Table); ok && ct.metatable == nil && depth > 0 {
+		if err := ct.Set(key, value); err != nil {
+			return vm.runtimeError("%s", err)
+		}
+		return nil
+	}
+	// Initial check (free, like the inline bytecode fast path)
 	existing := t.Get(key)
 	if !existing.IsNil() {
 		if err := t.Set(key, value); err != nil {
@@ -242,7 +290,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		}
 		return nil
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for ; depth > 0; depth-- {
 		// Key doesn't exist, check for __newindex metamethod
 		mt := t.Metatable()
 		if mt == nil {
@@ -262,7 +310,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 
 		if newindex.IsTable() {
 			if tbl, ok := newindex.AsTable().(*Table); ok && tbl.IsThread() {
-				return vm.newIndexValue(newindex, key, value, vm.MaxMetaDepth()-depth)
+				return vm.newIndexValue(newindex, key, value, depth-1)
 			}
 			// __newindex is a table, follow the chain
 			t = newindex.AsTable()
@@ -284,7 +332,7 @@ func (vm *VM) tableSet(t LuaTable, key, value Value) error {
 		}
 
 		// __newindex is a non-table, non-function value — chain through its metatable
-		return vm.newIndexValue(newindex, key, value, vm.MaxMetaDepth()-depth)
+		return vm.newIndexValue(newindex, key, value, depth-1)
 	}
 	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
@@ -296,7 +344,17 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 		ct.SetString(key, value)
 		return nil
 	}
-	// Initial check (free, like Lua 5.4's inline bytecode fast path)
+	return vm.tableSetStringDepth(t, key, value, vm.MaxMetaDepth())
+}
+
+// tableSetStringDepth is tableSetString carrying the shared chain budget.
+func (vm *VM) tableSetStringDepth(t LuaTable, key string, value Value, depth int) error {
+	// Fast path: concrete table with no metatable
+	if ct, ok := t.(*Table); ok && ct.metatable == nil && depth > 0 {
+		ct.SetString(key, value)
+		return nil
+	}
+	// Initial check (free, like the inline bytecode fast path)
 	if ct, ok := t.(*Table); ok {
 		if existing := ct.GetString(key); !existing.IsNil() {
 			ct.SetString(key, value)
@@ -311,7 +369,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 			return nil
 		}
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for ; depth > 0; depth-- {
 		// Fast path: use *Table methods to avoid NewString allocation
 		if ct, ok := t.(*Table); ok {
 			mt := ct.Metatable()
@@ -329,7 +387,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 			if newindex.IsTable() {
 				if tbl, ok := newindex.AsTable().(*Table); ok && tbl.IsThread() {
 					// Thread: chain through type metatable, not the thread table itself
-					return vm.newIndexValue(newindex, NewString(key), value, vm.MaxMetaDepth()-depth)
+					return vm.newIndexValue(newindex, NewString(key), value, depth-1)
 				}
 				t = newindex.AsTable()
 				// Check the redirected-to table
@@ -355,7 +413,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 				return err
 			}
 
-			return vm.newIndexValue(newindex, NewString(key), value, vm.MaxMetaDepth()-depth)
+			return vm.newIndexValue(newindex, NewString(key), value, depth-1)
 		}
 
 		// Slow path: generic LuaTable interface
@@ -378,7 +436,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 
 		if newindex.IsTable() {
 			if tbl, ok := newindex.AsTable().(*Table); ok && tbl.IsThread() {
-				return vm.newIndexValue(newindex, keyVal, value, vm.MaxMetaDepth()-depth)
+				return vm.newIndexValue(newindex, keyVal, value, depth-1)
 			}
 			t = newindex.AsTable()
 			// Check the redirected-to table
@@ -396,7 +454,7 @@ func (vm *VM) tableSetString(t LuaTable, key string, value Value) error {
 			return err
 		}
 
-		return vm.newIndexValue(newindex, keyVal, value, vm.MaxMetaDepth()-depth)
+		return vm.newIndexValue(newindex, keyVal, value, depth-1)
 	}
 	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
@@ -419,7 +477,7 @@ func (vm *VM) newIndexValue(val Value, key, value Value, depth int) error {
 		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 	}
 	if newindex.IsTable() {
-		return vm.tableSet(newindex.AsTable(), key, value)
+		return vm.tableSetDepth(newindex.AsTable(), key, value, depth-1)
 	}
 	if newindex.IsFunction() || newindex.IsNativeFunc() {
 		_, err := vm.callMetamethod3("newindex", newindex, val, key, value)
@@ -435,7 +493,17 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 		ct.SetInt(key, value)
 		return nil
 	}
-	// Initial check (free, like Lua 5.4's inline bytecode fast path)
+	return vm.tableSetIntDepth(t, key, value, vm.MaxMetaDepth())
+}
+
+// tableSetIntDepth is tableSetInt carrying the shared chain budget.
+func (vm *VM) tableSetIntDepth(t LuaTable, key int, value Value, depth int) error {
+	// Fast path: concrete table with no metatable
+	if ct, ok := t.(*Table); ok && ct.metatable == nil && depth > 0 {
+		ct.SetInt(key, value)
+		return nil
+	}
+	// Initial check (free, like the inline bytecode fast path)
 	if ct, ok := t.(*Table); ok {
 		if existing := ct.GetInt(key); !existing.IsNil() {
 			ct.SetInt(key, value)
@@ -450,7 +518,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 			return nil
 		}
 	}
-	for depth := 0; depth < vm.MaxMetaDepth(); depth++ {
+	for ; depth > 0; depth-- {
 		// Fast path: use *Table methods to avoid NewInt/hashKey overhead
 		if ct, ok := t.(*Table); ok {
 			mt := ct.Metatable()
@@ -467,7 +535,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 
 			if newindex.IsTable() {
 				if tbl, ok := newindex.AsTable().(*Table); ok && tbl.IsThread() {
-					return vm.newIndexValue(newindex, NewInt(int64(key)), value, vm.MaxMetaDepth()-depth)
+					return vm.newIndexValue(newindex, NewInt(int64(key)), value, depth-1)
 				}
 				t = newindex.AsTable()
 				// Check the redirected-to table
@@ -493,7 +561,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 				return err
 			}
 
-			return vm.newIndexValue(newindex, NewInt(int64(key)), value, vm.MaxMetaDepth()-depth)
+			return vm.newIndexValue(newindex, NewInt(int64(key)), value, depth-1)
 		}
 
 		// Slow path: generic LuaTable interface
@@ -516,7 +584,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 
 		if newindex.IsTable() {
 			if tbl, ok := newindex.AsTable().(*Table); ok && tbl.IsThread() {
-				return vm.newIndexValue(newindex, keyVal, value, vm.MaxMetaDepth()-depth)
+				return vm.newIndexValue(newindex, keyVal, value, depth-1)
 			}
 			t = newindex.AsTable()
 			// Check the redirected-to table
@@ -534,7 +602,7 @@ func (vm *VM) tableSetInt(t LuaTable, key int, value Value) error {
 			return err
 		}
 
-		return vm.newIndexValue(newindex, keyVal, value, vm.MaxMetaDepth()-depth)
+		return vm.newIndexValue(newindex, keyVal, value, depth-1)
 	}
 	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
@@ -566,7 +634,8 @@ func (vm *VM) SetIndexValue(val Value, key Value, value Value) error {
 			return err
 		}
 		if mm.IsTable() {
-			return vm.tableSet(mm.AsTable(), key, value)
+			// The metafield lookup above already consumed one hop.
+			return vm.tableSetDepth(mm.AsTable(), key, value, vm.MaxMetaDepth()-1)
 		}
 		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
 	}
@@ -588,7 +657,8 @@ func (vm *VM) SetIndexInt(val Value, key int, value Value) error {
 			return err
 		}
 		if mm.IsTable() {
-			return vm.tableSet(mm.AsTable(), NewInt(int64(key)), value)
+			// The metafield lookup above already consumed one hop.
+			return vm.tableSetDepth(mm.AsTable(), NewInt(int64(key)), value, vm.MaxMetaDepth()-1)
 		}
 		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
 	}
