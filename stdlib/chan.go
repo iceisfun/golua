@@ -8,32 +8,43 @@ import (
 	"github.com/iceisfun/golua/v2/vm"
 )
 
-// channelHandleMeta is a shared metatable for identifying channel handles.
-var channelHandleMeta *vm.Table
-
-func init() {
-	channelHandleMeta = vm.NewEmptyTable()
-	channelHandleMeta.SetString(vm.MetaName, vm.NewString("channel"))
+// chanState holds the per-VM chan-module state: the metatable shared by every
+// channel handle the VM creates. It lives in the VM's internal state bag, which
+// a root VM shares with its coroutine VMs but with no other VM, mirroring
+// ioState and matching reference Lua, where a library's handle metatable lives
+// in that lua_State's registry.
+//
+// The metatable must not be a package-level value: a Go process routinely hosts
+// many independent VMs, and one process-wide table would let a script running in
+// one VM change how handles behave in every other, and let two VMs mutate the
+// same *vm.Table concurrently.
+type chanState struct {
+	meta *vm.Table
 }
 
-// chanRegistry is the per-VM channel registry, stored in VM internal state.
-type chanRegistry struct {
-	mu       sync.Mutex
-	channels map[int64]*vm.LuaChannel
-}
+const chanStateKey = "chan"
 
-const chanRegistryKey = "chan"
+// chanStateMu serializes first-use creation of a VM's chanState so that two
+// coroutine VMs sharing one internal state bag cannot each install a state (and
+// therefore a different handle metatable). It guards creation only; it holds no
+// state of its own.
+var chanStateMu sync.Mutex
 
-// getChanRegistry returns the per-VM channel registry, creating it lazily.
-func getChanRegistry(v *vm.VM) *chanRegistry {
-	if r := v.InternalState(chanRegistryKey); r != nil {
-		return r.(*chanRegistry)
+// getChanState returns the per-VM chan state, creating it on first call.
+func getChanState(v *vm.VM) *chanState {
+	if s := v.InternalState(chanStateKey); s != nil {
+		return s.(*chanState)
 	}
-	reg := &chanRegistry{
-		channels: make(map[int64]*vm.LuaChannel),
+	chanStateMu.Lock()
+	defer chanStateMu.Unlock()
+	if s := v.InternalState(chanStateKey); s != nil {
+		return s.(*chanState)
 	}
-	v.SetInternalState(chanRegistryKey, reg)
-	return reg
+	meta := vm.NewEmptyTable()
+	meta.SetString(vm.MetaName, vm.NewString("channel"))
+	s := &chanState{meta: meta}
+	v.SetInternalState(chanStateKey, s)
+	return s
 }
 
 // openChan registers the chan library if a ChanProvider is set.
@@ -66,16 +77,24 @@ func ProvideChan(v *vm.VM) {
 	openChan(v)
 }
 
+// Fields a channel handle table carries. chanFieldID is the channel's numeric
+// identity, reported for diagnostics. chanFieldChannel holds the channel itself
+// as a userdata: it is what chan.select resolves a handle through, so the
+// channel a handle names travels with the handle instead of living in a
+// side table keyed by the numeric id. That keeps a channel reachable exactly as
+// long as its handle is, and means a handle can only name a channel that was
+// actually given to the script.
+const (
+	chanFieldID      = "__chan_id"
+	chanFieldChannel = "__chan"
+)
+
 // makeChannelHandle creates a Lua table handle wrapping a LuaChannel.
 func makeChannelHandle(v *vm.VM, ch *vm.LuaChannel) vm.Value {
-	reg := getChanRegistry(v)
-	reg.mu.Lock()
-	reg.channels[ch.ID()] = ch
-	reg.mu.Unlock()
-
 	handle := vm.NewEmptyTable()
-	handle.SetMetatable(channelHandleMeta)
-	handle.SetString("__chan_id", vm.NewInt(ch.ID()))
+	handle.SetMetatable(getChanState(v).meta)
+	handle.SetString(chanFieldID, vm.NewInt(ch.ID()))
+	handle.SetString(chanFieldChannel, vm.NewUserdataValueUV(ch, nil, 0))
 
 	provider := v.ChanProvider()
 	caps := provider.Capabilities(v.Context())
@@ -99,27 +118,24 @@ func makeChannelHandle(v *vm.VM, ch *vm.LuaChannel) vm.Value {
 	return vm.NewTable(handle)
 }
 
-// extractChannel extracts a *LuaChannel from a Lua channel handle table,
-// using the per-VM channel registry.
-// chanIDKey is the cached "__chan_id" key Value. extractChannel runs on every
-// channel op, so building the key with vm.NewString per call would box the
-// string into Value.ptr (an interface) and heap-allocate each time.
-var chanIDKey = vm.NewString("__chan_id")
+// chanKey is the cached chanFieldChannel key Value. extractChannel runs on
+// every chan.select argument, so building the key with vm.NewString per call
+// would box the string into Value.ptr (an interface) and heap-allocate each
+// time.
+var chanKey = vm.NewString(chanFieldChannel)
 
-func extractChannel(v *vm.VM, handle vm.Value) *vm.LuaChannel {
+// extractChannel returns the *LuaChannel a channel handle table carries, or nil
+// if the value is not a handle this VM produced.
+func extractChannel(handle vm.Value) *vm.LuaChannel {
 	t := handle.AsTable()
 	if t == nil {
 		return nil
 	}
-	idVal := t.Get(chanIDKey)
-	if idVal.IsNil() {
+	ud := t.Get(chanKey).AsUserdata()
+	if ud == nil {
 		return nil
 	}
-	id := idVal.AsInt()
-	reg := getChanRegistry(v)
-	reg.mu.Lock()
-	ch := reg.channels[id]
-	reg.mu.Unlock()
+	ch, _ := ud.Data.(*vm.LuaChannel)
 	return ch
 }
 
@@ -251,7 +267,7 @@ func makeChanSelect(luaVM *vm.VM, provider vm.LuaChanProvider) vm.NativeFunc {
 
 		// Channel recv cases
 		for i := 1; i <= channelCount; i++ {
-			ch := extractChannel(v, v.Get(i))
+			ch := extractChannel(v.Get(i))
 			if ch == nil {
 				panic("bad argument to 'chan.select' (channel expected)")
 			}

@@ -16,6 +16,11 @@ import (
 
 // FullIoProvider is a full-capability IO provider that allows both reading
 // and writing files. It jails file access to a root directory for security.
+//
+// One provider may be given to several VMs, including VMs running on different
+// goroutines; a provider is safe for that. Note that the VMs then share the
+// three standard streams the provider exposes, so two VMs reading stdin draw
+// from one stream and each line goes to whichever asked for it first.
 type FullIoProvider struct {
 	jail   *pathJail
 	noJail bool // when true, path-jailing is disabled (test-only, unsandboxed)
@@ -1226,7 +1231,17 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 
 // stdFile wraps an os.File for standard input/output/error.
 // It cannot be closed by the user.
+//
+// One provider instance is routinely shared by several VMs, each of which may
+// be running on its own goroutine, so every stdFile stream is shared too. mu
+// serializes the operations that touch the lazily built *bufio.Reader — without
+// it two readers race on the reader field and then on the buffer behind it,
+// which shows up as corrupt input or an out-of-range slice. It also makes a
+// single write one unit, so two VMs writing a line each cannot interleave
+// halfway through. This is the same stream-level locking reference Lua does
+// with flockfile/funlockfile around its buffered read and write loops.
 type stdFile struct {
+	mu       sync.Mutex
 	file     *os.File
 	name     string
 	readable bool
@@ -1234,6 +1249,8 @@ type stdFile struct {
 	reader   *bufio.Reader
 }
 
+// ensureReader returns the stream's buffered reader, building it on first use.
+// The caller must hold f.mu.
 func (f *stdFile) ensureReader() *bufio.Reader {
 	if f.reader == nil {
 		f.reader = bufio.NewReader(f.file)
@@ -1245,6 +1262,8 @@ func (f *stdFile) Read(ctx context.Context, format string) (string, error) {
 	if !f.readable {
 		return "", fmt.Errorf("%s is not readable", f.name)
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	r := f.ensureReader()
 	// Normalize format: strip leading * and check first character
 	cleanFmt := strings.TrimPrefix(format, "*")
@@ -1271,6 +1290,8 @@ func (f *stdFile) ReadBytes(ctx context.Context, n int) (string, error) {
 	if !f.readable {
 		return "", fmt.Errorf("%s is not readable", f.name)
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	r := f.ensureReader()
 	if n < 0 {
 		return "", fmt.Errorf("not enough memory")
@@ -1303,6 +1324,8 @@ func (f *stdFile) Write(ctx context.Context, data string) error {
 	if !f.writable {
 		return fmt.Errorf("%s is not writable", f.name)
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	_, err := f.file.Write([]byte(data))
 	return err
 }
