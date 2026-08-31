@@ -550,13 +550,11 @@ f(1, 2)
 // GoLua's VM does, so nothing GoLua-specific enters the layout and the
 // register is implied by numparams.
 //
-// This covers only the PF_VATAB half of the construct. Reference keeps a named
+// This covers the PF_VATAB half of the construct. Reference keeps a named
 // vararg's arguments hidden below the frame (PF_VAHID) by default and reads
 // them with OP_GETVARG; lcode.c needvatab promotes it to PF_VATAB only when the
 // parameter is used as a plain value, which is what "local t = args" below does.
-// GoLua's VM implements only the table form, so a PF_VAHID chunk loads and then
-// fails on OP_GETVARG — see TestNamedVarargHiddenFormNeedsGetVarg. That is a VM
-// gap, not a format one.
+// The other half is TestNamedVarargBothForms.
 func TestNamedVarargRoundTrip(t *testing.T) {
 	for _, strip := range []string{"false", "true"} {
 		t.Run("strip="+strip, func(t *testing.T) {
@@ -1050,11 +1048,16 @@ func refSetList(a, n, stored, k int) compiler.Instruction {
 }
 
 // goluaSetListOffset decodes the first index a GoLua-encoded OP_SETLIST writes.
+// The index is 1-based, so a vC of 0 in the single-word form is free and stands
+// for the one index past the field's range.
 func goluaSetListOffset(code []compiler.Instruction, i int) int {
 	if code[i].K() != 0 {
 		return code[i+1].Ax()
 	}
-	return code[i].VC()
+	if vc := code[i].VC(); vc != 0 {
+		return vc
+	}
+	return compiler.MaxArgVC + 1
 }
 
 func instrEqual(a, b []compiler.Instruction) bool {
@@ -1074,14 +1077,13 @@ func instrEqual(a, b []compiler.Instruction) bool {
 // Reference's lcode.c luaK_setlist uses the single-word form for every
 // 'nelems <= MAXARG_vC', so its vC runs the full 0..1023 and the batch it
 // describes starts at index 1..1024. GoLua's single-word form keeps the first
-// index in that same 10-bit field, so it stops at 1023. The translation used to
-// leave the one unrepresentable value untouched, and the VM then read
-// reference's count as GoLua's index and stored the batch one slot low.
+// index in that same 10-bit field, and covers the top value because the index
+// is 1-based: a vC of 0 means 1024.
 //
-// The property checked here does not depend on how the gap is eventually
-// closed: for every reference encoding, CodeFromRef either produces an
-// instruction that writes the batch at exactly the index reference meant, or
-// refuses the chunk. It never produces a different index.
+// The property checked here does not depend on how the field is encoded: for
+// every reference encoding, CodeFromRef either produces an instruction that
+// writes the batch at exactly the index reference meant, or refuses the chunk.
+// It never produces a different index.
 func TestSetListFromRefNeverMistranslates(t *testing.T) {
 	tail := compiler.ABC(compiler.OP_RETURN0, 0, 0, 0, 0)
 	rejected := 0
@@ -1098,17 +1100,11 @@ func TestSetListFromRefNeverMistranslates(t *testing.T) {
 			t.Fatalf("stored=%d: batch size changed to %d", stored, got)
 		}
 	}
-	// Exactly one value in the single-word range is out of reach today, and it
-	// is the top one. If that count ever changes, the encoding changed and the
-	// notes in undump.go need revisiting.
-	if rejected != 1 {
-		t.Errorf("single-word range: %d values refused, want exactly 1 (stored == %d)",
-			rejected, compiler.MaxArgVC)
-	}
-	if err := compiler.CodeFromRef([]compiler.Instruction{
-		refSetList(0, 5, compiler.MaxArgVC, 0), tail,
-	}); err == nil {
-		t.Errorf("stored == %d was translated silently instead of refused", compiler.MaxArgVC)
+	// The whole single-word range translates. luac emits the top of it —
+	// "SETLIST A 1 1023" — for the 1024th element of a constructor written in a
+	// register-starved function, so a refusal here would fail a stock chunk.
+	if rejected != 0 {
+		t.Errorf("single-word range: %d values refused, want none", rejected)
 	}
 
 	// The k form spreads the count across vC and the EXTRAARG in units of
@@ -1142,7 +1138,7 @@ func TestSetListFromRefNeverMistranslates(t *testing.T) {
 func TestSetListRefRoundTripIsExact(t *testing.T) {
 	tail := compiler.ABC(compiler.OP_RETURN0, 0, 0, 0, 0)
 	var refs [][]compiler.Instruction
-	for stored := 0; stored < compiler.MaxArgVC; stored++ {
+	for stored := 0; stored <= compiler.MaxArgVC; stored++ {
 		refs = append(refs, []compiler.Instruction{refSetList(1, stored%64, stored, 0), tail})
 	}
 	for _, extra := range []int{0, 1, 5, 4095, 32000} {
@@ -1241,14 +1237,11 @@ func hasRefSetListStored(chunk []byte, stored int) bool {
 // reaches reference's top single-word value. With enough locals in scope,
 // lparser.c maxtostore() drops the batch to one element per SETLIST, so
 // 'nelems' steps through every value up to and including MAXARG_vC and luac
-// emits "SETLIST A 1 1023" with no k flag — the encoding GoLua cannot express
-// in a single word.
+// emits "SETLIST A 1 1023" with no k flag — the top of the single-word range,
+// which GoLua encodes as a vC of 0.
 //
-// Whatever GoLua does with such a chunk, it must not run it with the batch at
-// the wrong index. Today it refuses to load it, which is an ordinary catchable
-// error; if the VM later accepts a first index of MaxArgVC+1, it must load and
-// give the right answers instead. Both outcomes pass here. Silent corruption
-// does not.
+// Such a chunk must load and run with every element at the index reference put
+// it, and dump back to the bytes it came from.
 func TestSetListRefSingleWordBoundaryIsNotCorrupted(t *testing.T) {
 	requireLuac(t)
 	// 180 locals leaves fewer than 80 free registers, which is maxtostore()'s
@@ -1265,24 +1258,14 @@ func TestSetListRefSingleWordBoundaryIsNotCorrupted(t *testing.T) {
 	}
 
 	if _, _, err := compiler.Undump(chunk, "boundary"); err != nil {
-		if !strings.Contains(err.Error(), "bad binary format") {
-			t.Fatalf("unexpected error shape: %v", err)
-		}
-		// Refused, and refused catchably: the Lua surface must agree.
-		out := luaOutput(t, `
-local data = ...
-local f, err = load(data)
-print(f == nil, type(err) == "string")
-`, vm.NewString(string(chunk)))
-		if out != "true\ttrue" {
-			t.Errorf("load() of the boundary chunk: got %q, want %q", out, "true\ttrue")
-		}
-		return
+		t.Fatalf("boundary chunk did not load: %v", err)
 	}
-	// It loaded: then every element must be where reference put it.
 	out := luaOutput(t, "local data = ...\nassert(load(data))()\n", vm.NewString(string(chunk)))
 	if want := listConstructorWant(n); out != want {
 		t.Errorf("boundary chunk ran with wrong contents: got %q, want %q", out, want)
+	}
+	if got := reDump(t, chunk, false); !bytes.Equal(got, chunk) {
+		t.Errorf("re-dump differs\n%s", firstDiff(got, chunk))
 	}
 }
 
@@ -1433,21 +1416,17 @@ func hasOpcode(p *compiler.Proto, op compiler.OpCode) bool {
 	return false
 }
 
-// TestNamedVarargHiddenFormNeedsGetVarg records what GoLua does *not* cover, so
-// the named-vararg support is not read as more than it is.
+// TestNamedVarargBothForms covers the two shapes reference gives a named
+// vararg parameter, which are not interchangeable in the chunk.
 //
-// Reference's lparser.c setvararg marks every vararg function PF_VAHID; only
-// lcode.c needvatab promotes it to PF_VATAB, and that happens when the vararg
-// parameter is used as a plain value (bound to a local, captured as an upvalue,
-// assigned through). A function that merely indexes its named vararg —
+// lparser.c setvararg marks every vararg function PF_VAHID; only lcode.c
+// needvatab promotes it to PF_VATAB, and that happens when the vararg parameter
+// is used as a plain value (bound to a local, captured as an upvalue, assigned
+// through). A function that merely indexes its named vararg —
 // "local function f(a, ... args) return args[1] end", the ordinary way to write
-// it — stays PF_VAHID and reads the arguments with OP_GETVARG, which GoLua's VM
-// does not implement. Such a chunk loads, because the format is fully
-// understood, and then fails when it runs.
-//
-// So GoLua loads and runs the PF_VATAB subset of named-vararg functions, not
-// all of them. This test asserts that split rather than the stronger claim.
-func TestNamedVarargHiddenFormNeedsGetVarg(t *testing.T) {
+// it — stays PF_VAHID: the extra arguments are never collected into a table and
+// the reads go straight to them, through OP_GETVARG.
+func TestNamedVarargBothForms(t *testing.T) {
 	requireLuac(t)
 
 	// The table form: needvatab fires, and GoLua runs it.
@@ -1489,17 +1468,23 @@ print(f(1, 2, 3))
 	if !hasOpcode(proto, compiler.OP_GETVARG) {
 		t.Fatalf("expected OP_GETVARG in the hidden form")
 	}
-	// It loads but cannot run: OP_GETVARG is a VM gap, not a format gap.
-	// Whatever the VM does with an opcode it does not implement, it must be a
-	// catchable Lua error and never a host crash.
-	out := luaOutput(t, `
-local data = ...
-local f = assert(load(data))
-local ok, err = pcall(f)
-print(ok, type(err))
-`, vm.NewString(string(chunk)))
-	if !strings.HasPrefix(out, "false\t") {
-		t.Errorf("PF_VAHID named vararg: got %q, want a caught error (if GoLua now "+
-			"implements OP_GETVARG, this expectation should become a real result)", out)
+	if out := luaOutput(t, "local data = ...\nassert(load(data))()\n",
+		vm.NewString(string(chunk))); out != "1\t2\t2" {
+		t.Errorf("PF_VAHID named vararg: got %q, want %q", out, "1\t2\t2")
+	}
+
+	// The hidden form's reads answer only an integral index in range and the
+	// key "n"; a string that merely looks like a number is not coerced, and
+	// nothing else names an argument (ltm.c luaT_getvararg).
+	chunk, _ = luacDump(t, `
+local function f(... args)
+  return args[1], args["1"], args[1.0], args[1.5], args[0], args[4], args.n, args.x
+end
+print(f("a", "b", "c"))
+`, false)
+	if out := luaOutput(t, "local data = ...\nassert(load(data))()\n",
+		vm.NewString(string(chunk))); out != "a\tnil\ta\tnil\tnil\tnil\t3\tnil" {
+		t.Errorf("PF_VAHID vararg indexing: got %q, want %q", out,
+			"a\tnil\ta\tnil\tnil\tnil\t3\tnil")
 	}
 }

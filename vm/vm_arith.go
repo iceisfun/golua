@@ -31,6 +31,24 @@ func luaNumMod(a, b float64) float64 {
 	return result
 }
 
+// shiftLeft is Lua's shift operator (lvm.c luaV_shiftl): x shifted left by y,
+// where a negative y shifts right instead and a count of 64 or more in either
+// direction clears the value. Go's shift operators already yield 0 for an
+// out-of-range count, but they have no notion of a negative one — uint(y)
+// turns a small negative count into a huge positive one.
+func shiftLeft(x, y int64) int64 {
+	if y < 0 {
+		if y <= -64 {
+			return 0
+		}
+		return int64(uint64(x) >> uint(-y))
+	}
+	if y >= 64 {
+		return 0
+	}
+	return x << uint(y)
+}
+
 // arith performs a register-register arithmetic operation.
 // Lua 5.4.6+: strings are NOT coerced at the VM level; coercion is handled
 // by the string metatable's arithmetic metamethods.
@@ -137,7 +155,15 @@ func (vm *VM) arith(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, er
 
 // arithK performs a register-constant arithmetic operation.
 // Lua 5.4.6+: strings are NOT coerced at the VM level.
-func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
+//
+// flip says the source wrote the constant on the left: a commutative operator
+// with a constant left operand is compiled with the operands commuted so the
+// *K form can be used, and the swap has to be undone before a metamethod sees
+// them (ltm.c luaT_trybinassocTM). The arithmetic itself is unaffected —
+// nothing but a commutative operator is ever commuted — and so are the error
+// messages, which name the operand that is not a number, and the constant
+// always is one.
+func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int, flip bool) (Value, error) {
 	// Float fast path: both operands are already floats
 	if v.typ == typeFloat && kv.typ == typeFloat {
 		n1, n2 := v.fval(), kv.fval()
@@ -222,8 +248,12 @@ func (vm *VM) arithK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
 
 	// Try metamethods
 	mmName := vm.arithMetamethod(op)
-	if mm := vm.getArithMetamethod(v, kv, mmName); !mm.IsNil() {
-		result, err := vm.callMetamethod(MetaEvent(mmName), mm, v, kv)
+	p1, p2 := v, kv
+	if flip {
+		p1, p2 = kv, v
+	}
+	if mm := vm.getArithMetamethod(p1, p2, mmName); !mm.IsNil() {
+		result, err := vm.callMetamethod(MetaEvent(mmName), mm, p1, p2)
 		if err != nil {
 			return Nil, err
 		}
@@ -279,17 +309,9 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, 
 		case compiler.OP_BXOR:
 			result = i1 ^ i2
 		case compiler.OP_SHL:
-			if i2 >= 0 {
-				result = i1 << uint(i2)
-			} else {
-				result = int64(uint64(i1) >> uint(-i2))
-			}
+			result = shiftLeft(i1, i2)
 		case compiler.OP_SHR:
-			if i2 >= 0 {
-				result = int64(uint64(i1) >> uint(i2))
-			} else {
-				result = i1 << uint(-i2)
-			}
+			result = shiftLeft(i1, -i2)
 		}
 		return NewInt(result), nil
 	}
@@ -315,8 +337,9 @@ func (vm *VM) bitwise(op compiler.OpCode, v1, v2 Value, regB, regC int) (Value, 
 	return Nil, vm.runtimeError("attempt to perform bitwise operation on a %s value%s", vm.ObjTypeName(v2), vm.varInfo(regC))
 }
 
-// bitwiseK performs a register-constant bitwise operation.
-func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value, regB int) (Value, error) {
+// bitwiseK performs a register-constant bitwise operation. flip means the same
+// thing it does in arithK: the source wrote the constant on the left.
+func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value, regB int, flip bool) (Value, error) {
 	// Lua 5.4: bitwise ops do NOT coerce strings
 	var i1, i2 int64
 	var ok1, ok2 bool
@@ -341,8 +364,12 @@ func (vm *VM) bitwiseK(op compiler.OpCode, v, kv Value, regB int) (Value, error)
 
 	// Try metamethods
 	mmName := vm.bitwiseMetamethod(op)
-	if mm := vm.getArithMetamethod(v, kv, mmName); !mm.IsNil() {
-		return vm.callMetamethod(MetaEvent(mmName), mm, v, kv)
+	p1, p2 := v, kv
+	if flip {
+		p1, p2 = kv, v
+	}
+	if mm := vm.getArithMetamethod(p1, p2, mmName); !mm.IsNil() {
+		return vm.callMetamethod(MetaEvent(mmName), mm, p1, p2)
 	}
 
 	// Match Lua 5.4 luaT_trybinTM ordering: if both operands are numbers,

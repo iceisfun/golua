@@ -277,10 +277,11 @@ func (u *undumper) checkHeader() error {
 //     1-based index of the first element. With the k flag set, reference
 //     splits that count between vC and the following EXTRAARG in units of
 //     MaxArgVC+1, while GoLua keeps the whole index in the EXTRAARG.
-//     The two conventions do not cover the same range in the single-word form:
-//     reference's lcode.c luaK_setlist uses it for every 'nelems <= MAXARG_vC',
-//     so its vC runs 0..MaxArgVC and the first index it can name is MaxArgVC+1,
-//     one past what GoLua's vC field can hold. See setListOffsetFromRef.
+//     Reference's lcode.c luaK_setlist uses the single-word form for every
+//     'nelems <= MAXARG_vC', so its vC runs 0..MaxArgVC and the first index it
+//     names runs 1..MaxArgVC+1 — one past what a 10-bit field holds as a
+//     number. GoLua's index is 1-based, so a vC of 0 is a free encoding, and
+//     it means exactly that top index. See maxSetListOffsetInWord.
 //   - OP_SHLI and OP_SHRI mean the opposite things: GoLua's VM implements
 //     opcode SHLI as reference's SHRI ("R[A] := R[B] >> sC") and opcode SHRI as
 //     reference's SHLI ("R[A] := sC << R[B]"). Its own code generator emits
@@ -302,44 +303,32 @@ func vABC(op OpCode, a, vb, vc, k int) Instruction {
 }
 
 // ErrSetListOffset reports an OP_SETLIST whose reference encoding names a first
-// index that GoLua's encoding of the same instruction cannot hold.
-//
-// Reference's single-word (non-k) form covers 'nelems' 0..MaxArgVC, so the
-// first index it writes runs 1..MaxArgVC+1. GoLua's single-word form stores
-// that first index in the same 10-bit vC field, so it stops at MaxArgVC — one
-// short. The missing value, MaxArgVC+1, can only be expressed by GoLua's k
-// form, which needs a following OP_EXTRAARG word that the reference encoding
-// did not reserve; inserting one would shift every jump target, line-info entry
-// and local-variable range in the function, and would stop the chunk from
-// dumping back to the bytes it came from.
-//
-// So the conversion is refused instead. Loading the chunk fails with an
+// index that GoLua's encoding of the same instruction cannot hold. Nothing in
+// reference's single-word form reaches that far today (see
+// maxSetListOffsetInWord), so this is a guard against an encoding change rather
+// than a case a stock toolchain produces. Loading such a chunk fails with an
 // ordinary "bad binary format" error, which is catchable, rather than leaving
 // the instruction in reference's encoding for GoLua's VM to misread — that
 // silently stored the batch one slot low.
-//
-// Reaching this needs a constructor whose flush size divides MaxArgVC, so that
-// the running count lands on it exactly. Reference's lparser.c maxtostore()
-// drops to one element per SETLIST once the enclosing function is
-// register-starved, and 'nelems' then steps through every value including
-// MaxArgVC — luac emits "SETLIST A 1 1023" with no k flag for the 1024th
-// element of a constructor written under ~180 locals. It is rare but entirely
-// legal, so this is a real GoLua limitation rather than a malformed-chunk case;
-// see maxSetListOffsetInWord for the VM-side change that removes it.
 var ErrSetListOffset = fmt.Errorf(
-	"OP_SETLIST first index %d exceeds this encoding's limit of %d", MaxArgVC+1, MaxArgVC)
+	"OP_SETLIST first index exceeds this encoding's limit of %d", MaxArgVC+1)
 
 // maxSetListOffsetInWord is the largest OP_SETLIST first index that fits in the
-// instruction word itself, i.e. in GoLua's 10-bit vC. Reference's single-word
-// form reaches one further, because its vC holds the count of elements already
-// stored rather than the index of the next one.
+// instruction word itself. GoLua's vC holds that index directly and is 10 bits
+// wide, but the index is 1-based, so a vC of 0 is free and carries the one
+// value past the field's range; the VM (vm/vm_exec.go, case OP_SETLIST) decodes
+// it that way. That is exactly the reach of reference's single-word form, whose
+// vC counts the elements already stored rather than naming the next one:
+// lcode.c luaK_setlist uses it for every 'nelems <= MAXARG_vC', so the first
+// index it can name is MaxArgVC+1.
 //
-// GoLua's VM (vm/vm_exec.go, case OP_SETLIST) reads the first index straight
-// out of vC when k is clear. Teaching it that a vC of 0 there means
-// MaxArgVC+1 would close the gap in a single line — 0 is a free encoding,
-// because the index is 1-based and GoLua's own code generator never emits it —
-// and this constant would then become MaxArgVC+1.
-const maxSetListOffsetInWord = MaxArgVC
+// A constructor gets there when its flush size divides MaxArgVC so the running
+// count lands on it exactly. Reference's lparser.c maxtostore() drops to one
+// element per SETLIST once the enclosing function is register-starved, and
+// 'nelems' then steps through every value including MaxArgVC — luac emits
+// "SETLIST A 1 1023" with no k flag for the 1024th element of a constructor
+// written under ~180 locals.
+const maxSetListOffsetInWord = MaxArgVC + 1
 
 // CodeFromRef rewrites an instruction vector from the reference Lua 5.5
 // encoding into GoLua's, in place. It returns an error for an instruction whose
@@ -385,13 +374,16 @@ func CodeFromRef(code []Instruction) error {
 				code[i] = vABC(op, inst.A(), inst.VB(), 0, 1)
 				code[i+1] = Ax(OP_EXTRAARG, int(stored)+1)
 			} else {
-				// Single word: GoLua's vC must hold the first index itself, so
-				// reference's last single-word value (stored == MaxArgVC) has
-				// nowhere to go. See ErrSetListOffset.
-				if stored+1 > maxSetListOffsetInWord {
+				// Single word: GoLua's vC holds the first index itself, with 0
+				// standing for maxSetListOffsetInWord.
+				first := int(stored) + 1
+				if first > maxSetListOffsetInWord {
 					return ErrSetListOffset
 				}
-				code[i] = vABC(op, inst.A(), inst.VB(), int(stored)+1, 0)
+				if first == maxSetListOffsetInWord {
+					first = 0
+				}
+				code[i] = vABC(op, inst.A(), inst.VB(), first, 0)
 			}
 		case OP_SHLI:
 			code[i] = ABC(OP_SHRI, inst.A(), inst.B(), inst.C(), inst.K())
@@ -427,9 +419,11 @@ func CodeToRef(code []Instruction) []Instruction {
 					continue
 				}
 				first = out[i+1].Ax()
-			}
-			if first < 1 {
-				continue // not an index any compiler emits
+				if first < 1 {
+					continue // not an index any compiler emits
+				}
+			} else if first == 0 {
+				first = maxSetListOffsetInWord
 			}
 			stored := first - 1
 			if inst.K() != 0 {
@@ -467,8 +461,8 @@ func (u *undumper) loadFunction(parentSource string) (*Proto, error) {
 	// PF_VATAB is the form GoLua implements: a vararg table in the register
 	// right after the fixed parameters, which is how its VM represents a named
 	// vararg ("... name"), so that construct needs no private encoding.
-	// PF_VAHID loads too, but a PF_VAHID function that reads its named vararg
-	// by index runs into OP_GETVARG, which GoLua's VM does not implement.
+	// A PF_VAHID function keeps no table and reads its named vararg with
+	// OP_GETVARG, which the VM answers from the frame's own vararg values.
 	// PF_FIXED is a property of a loaded prototype, never of the dump, so it is
 	// masked off just as reference lundump.c does; any other bit is ignored.
 	flag := u.readByte() &^ pfFixed

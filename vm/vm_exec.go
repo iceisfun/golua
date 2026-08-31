@@ -811,7 +811,11 @@ mainLoop:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v := vm.stack[frame.base+b]
 			kv := consts[c]
-			result, err := vm.arithK(op, v, kv, b)
+			// Only a value with no arithmetic of its own can reach a
+			// metamethod, and only then does it matter which side of the
+			// operator the source wrote the constant on.
+			flip := !v.IsNumber() && mmbinkFlipped(code, frame.pc)
+			result, err := vm.arithK(op, v, kv, b, flip)
 			if err != nil {
 				return nil, err
 			}
@@ -821,35 +825,40 @@ mainLoop:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			v := vm.stack[frame.base+b]
 			kv := consts[c]
-			result, err := vm.bitwiseK(op, v, kv, b)
+			flip := !v.IsInt() && mmbinkFlipped(code, frame.pc)
+			result, err := vm.bitwiseK(op, v, kv, b, flip)
 			if err != nil {
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
 
+		// R[A] := R[B] >> sC. (The shift-immediate opcodes carry the opposite
+		// names here and in the binary format: this is what reference calls
+		// OP_SHRI. Both operands mean the same thing in both encodings, so
+		// undumping only swaps the opcode.)
 		case compiler.OP_SHLI:
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
 			v := vm.stack[frame.base+b]
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
-					if sc < 0 {
-						vm.stack[frame.base+a] = NewInt(i << uint(-sc))
-					} else {
-						vm.stack[frame.base+a] = NewInt(int64(uint64(i) >> uint(sc)))
-					}
+					vm.stack[frame.base+a] = NewInt(shiftLeft(i, int64(-sc)))
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				}
 			}
 
+		// R[A] := sC << R[B] (reference's OP_SHLI). The shift count is the
+		// register operand here, so unlike the case above it is not a small
+		// constant the code generator has already vetted: a negative count
+		// shifts the other way and a large one clears the value.
 		case compiler.OP_SHRI:
 			a, b := inst.A(), inst.B()
 			sc := inst.SC()
 			v := vm.stack[frame.base+b]
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
-					vm.stack[frame.base+a] = NewInt(int64(sc) << uint(i))
+					vm.stack[frame.base+a] = NewInt(shiftLeft(int64(sc), i))
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				}
@@ -939,10 +948,26 @@ mainLoop:
 			}
 			vm.stack[frame.base+a] = result
 
+		// The metamethod follow-ups that reference emits after an arithmetic
+		// or bitwise instruction. GoLua's own code generator emits none of
+		// them: its OP_ADD/OP_ADDK/OP_BANDK/... handlers resolve the
+		// metamethod themselves and OP_ADDI skips the OP_MMBINI behind it, so
+		// by the time one of these runs the work is already done — except
+		// after OP_SHLI/OP_SHRI, which leave it to the OP_MMBINI here.
+		//
+		// An MMBIN*'s own A operand names the *left operand*, not the
+		// destination. Reference takes the destination from the arithmetic
+		// instruction the follow-up belongs to, which sits one word back
+		// (lvm.c: "Instruction pi = *(pc - 2); StkId result = RA(pi)"); pc is
+		// already past this instruction, so that is code[frame.pc-2].
 		case compiler.OP_MMBIN, compiler.OP_MMBINI, compiler.OP_MMBINK:
 			if op == compiler.OP_MMBINI {
 				a := inst.A()
 				sb := inst.SB()
+				dest := a
+				if frame.pc >= 2 {
+					dest = code[frame.pc-2].A()
+				}
 				tag := decodeBytecodeMetamethodTag(inst.C())
 				left := vm.stack[frame.base+a]
 				right := NewInt(int64(sb))
@@ -979,7 +1004,11 @@ mainLoop:
 				if err != nil {
 					return nil, err
 				}
-				vm.stack[frame.base+a] = result
+				// dest is another instruction's A field, so unlike an operand
+				// of this one it is not covered by the frame window the
+				// prototype's MaxStack reserved.
+				vm.ensureStack(frame.base + dest)
+				vm.stack[frame.base+dest] = result
 			}
 
 		case compiler.OP_UNM:
@@ -1262,9 +1291,8 @@ mainLoop:
 
 		case compiler.OP_LTI:
 			a, k := inst.A(), inst.K()
-			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			lt, err := vm.lessThan(v, NewInt(int64(sb)))
+			lt, err := vm.lessThan(v, orderImmediate(inst))
 			if err != nil {
 				return nil, err
 			}
@@ -1275,9 +1303,8 @@ mainLoop:
 
 		case compiler.OP_LEI:
 			a, k := inst.A(), inst.K()
-			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			le, err := vm.lessEqual(v, NewInt(int64(sb)))
+			le, err := vm.lessEqual(v, orderImmediate(inst))
 			if err != nil {
 				return nil, err
 			}
@@ -1288,9 +1315,8 @@ mainLoop:
 
 		case compiler.OP_GTI:
 			a, k := inst.A(), inst.K()
-			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			gt, err := vm.lessThan(NewInt(int64(sb)), v)
+			gt, err := vm.lessThan(orderImmediate(inst), v)
 			if err != nil {
 				return nil, err
 			}
@@ -1301,9 +1327,8 @@ mainLoop:
 
 		case compiler.OP_GEI:
 			a, k := inst.A(), inst.K()
-			sb := inst.SB()
 			v := vm.stack[frame.base+a]
-			ge, err := vm.lessEqual(NewInt(int64(sb)), v)
+			ge, err := vm.lessEqual(orderImmediate(inst), v)
 			if err != nil {
 				return nil, err
 			}
@@ -1463,6 +1488,19 @@ mainLoop:
 					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
 
+					// The reused frame's register window now belongs to the
+					// callee, which may be wider than the caller's. Grow the
+					// stack for it and re-mark vm.top before anything writes a
+					// register, exactly as vm.call and the OP_CALL fast path do
+					// for a fresh frame (reference luaD_pretailcall does both:
+					// checkstackp, then ci->top.p = func + 1 + fsize). Left at
+					// the caller's smaller window, vm.top sits in the middle of
+					// the callee's live registers, and everything that builds a
+					// frame there — a metamethod, a coercion, a nested call —
+					// overwrites them.
+					vm.ensureStack(frame.base + proto.MaxStack + stackSafetyMargin)
+					vm.top = frame.base + proto.MaxStack
+
 					// Set up parameters
 					numParams := proto.NumParams
 					numArgs := len(args)
@@ -1497,6 +1535,16 @@ mainLoop:
 						for i := numArgs; i < numParams; i++ {
 							vm.stack[frame.base+i] = Nil
 						}
+						// A non-vararg callee has no varargs of its own, and
+						// the frame it took over may have had some. Reference
+						// keeps this in the prototype, which the reused
+						// CallInfo picks up along with the closure; here it is
+						// frame state, so it has to be cleared, or
+						// debug.getlocal(level, -n) reports the dead caller's
+						// extra arguments — and setlocal writes into them.
+						frame.isVararg = false
+						frame.numVararg = 0
+						frame.varargs = nil
 					}
 
 					// A tail call reuses the frame in place, so the frame's
@@ -1574,19 +1622,87 @@ mainLoop:
 						base:      nativeBase,
 						argc:      len(args),
 						funcValue: fn,
+						ftransfer: 1,
+						ntransfer: len(args),
 						extraArgs: tailExtraArgs,
 					}
 					vm.callStack = append(vm.callStack, nativeFrame)
+					// The native gets an ordinary pair of call/return hook
+					// events: reference reaches it through precallC, the same
+					// way a non-tail call does. Only the *Lua* frame it
+					// replaces is skipped, and that frame retires below.
+					vm.fireCallHook()
+					// The native overwrites its own argument slots with its
+					// results, so the return hook's view of them has to be
+					// captured first. Only a return hook ever reads it.
+					var savedArgs []Value
+					if vm.hookMask&HookMaskReturn != 0 {
+						savedArgs = make([]Value, len(args))
+						copy(savedArgs, vm.stack[nativeBase+1:nativeBase+1+len(args)])
+					}
 					nResults := nf(vm)
-					vm.callStack = vm.callStack[:len(vm.callStack)-1]
-					vm.top = savedTop
+					// Re-check the mask: the native itself may have installed
+					// a hook — debug.sethook is reached exactly this way.
+					hooked := vm.hookMask&HookMaskReturn != 0
 					var results []Value
-					if nResults <= len(vm.retBuf) {
-						copy(vm.retBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
-						results = vm.retBuf[:nResults]
-					} else {
+					if hooked || nResults > len(vm.retBuf) {
+						// Slow path — the return hooks below run arbitrary
+						// Lua, and any function returning a value from inside
+						// one leaves through OP_RETURN, which writes
+						// vm.retBuf. Give the results a buffer of their own,
+						// as doCall's hook-active path does, so a hook cannot
+						// overwrite them; the allocation is acceptable here
+						// for the same reason it is there.
 						results = make([]Value, nResults)
 						copy(results, vm.stack[nativeBase:nativeBase+nResults])
+					} else {
+						copy(vm.retBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
+						results = vm.retBuf[:nResults]
+					}
+					if hooked {
+						nfr := &vm.callStack[len(vm.callStack)-1]
+						if savedArgs == nil {
+							savedArgs = args
+						}
+						// Lay the frame out as [args..., results...] so the
+						// return hook's debug.getlocal sees both, as it does
+						// for a non-tail native call.
+						copy(vm.stack[nativeBase+1:nativeBase+1+nfr.argc], savedArgs)
+						retStart := nativeBase + 1 + nfr.argc
+						retEnd := retStart + nResults
+						// The frame was only grown for the arguments, so a
+						// native returning more values than that needs room
+						// for them before the hook can see the whole list.
+						vm.ensureStack(retEnd)
+						copy(vm.stack[retStart:retEnd], results)
+						vm.top = retEnd
+						if nResults > 0 {
+							nfr.ftransfer = 1 + nfr.argc
+							nfr.ntransfer = nResults
+						} else {
+							nfr.ftransfer = 0
+							nfr.ntransfer = 0
+						}
+						vm.fireReturnHook()
+					}
+					vm.callStack = vm.callStack[:len(vm.callStack)-1]
+					vm.top = savedTop
+					// The tail-calling Lua frame retires here, so its own
+					// return hook fires now: reference finishes it with
+					// luaD_poscall once the C function has returned. Without
+					// this the "call" event for the tail-calling function has
+					// no matching "return", and a hook that counts depth
+					// drifts by one per native tail call.
+					if hooked {
+						lf := &vm.callStack[len(vm.callStack)-1]
+						lf.ftransfer = 0
+						lf.ntransfer = nResults
+						vm.fireReturnHook()
+					}
+					if vm.hookMask != 0 {
+						// A hook re-enters the VM and can reallocate the call
+						// stack, so the cached frame pointer is stale.
+						frame = &vm.callStack[len(vm.callStack)-1]
 					}
 					// If the tail-calling frame is an in-loop frame (pushed by
 					// the OP_CALL fast path), the native call's results are
@@ -2133,6 +2249,13 @@ mainLoop:
 				extra := code[frame.pc]
 				frame.pc++
 				offset = extra.Ax()
+			} else if offset == 0 {
+				// The first index is 1-based, so a plain 0 is free: it names
+				// the one index past what the field can hold. Reference's
+				// single-word form reaches exactly that far (its vC counts the
+				// elements already stored, not the next index), so this is
+				// what such an instruction undumps to.
+				offset = compiler.MaxArgVC + 1
 			}
 
 			// offset is the starting index (1-based for first batch)
@@ -2224,6 +2347,25 @@ mainLoop:
 				}
 			}
 
+		case compiler.OP_GETVARG:
+			// R[A] := R[B][R[C]], where R[B] is a named vararg parameter that
+			// was never given a table: the extra arguments stayed hidden, so
+			// the read goes to them directly (ltm.c luaT_getvararg). Only an
+			// integral key in range and the key "n" name anything; everything
+			// else — including a string that merely looks like a number, since
+			// the reference conversion does not coerce strings — is nil.
+			a, c := inst.A(), inst.C()
+			key := vm.stack[frame.base+c]
+			result := Nil
+			if !key.IsString() {
+				if n, ok := key.ToInt(); ok && n >= 1 && n <= int64(frame.numVararg) {
+					result = frame.varargs[n-1]
+				}
+			} else if key.AsString() == "n" {
+				result = NewInt(int64(frame.numVararg))
+			}
+			vm.stack[frame.base+a] = result
+
 		case compiler.OP_ERRNNIL:
 			// OP_ERRNNIL A Bx — raise error if R[A] ~= nil.
 			// Bx encodes the constant index + 1 for the global name
@@ -2251,6 +2393,33 @@ mainLoop:
 }
 
 // Helper methods
+
+// orderImmediate builds the operand an order-comparison-immediate instruction
+// (OP_LTI/OP_LEI/OP_GTI/OP_GEI) compares against. The C field says whether the
+// source wrote that constant as a float — lcode.c codeorder passes isSCnumber's
+// 'isfloat' there. It is the same number either way, so the numeric comparison
+// does not care, but an __lt or __le metamethod must see the subtype the source
+// used. GoLua's own code generator only uses the immediate form for an integer
+// constant and leaves C zero.
+func orderImmediate(inst compiler.Instruction) Value {
+	if inst.C() != 0 {
+		return NewFloat(float64(inst.SB()))
+	}
+	return NewInt(int64(inst.SB()))
+}
+
+// mmbinkFlipped reports whether the instruction at pc is an OP_MMBINK whose k
+// bit records commuted operands. pc is the index just past a *K arithmetic or
+// bitwise instruction, which is where reference puts that follow-up; GoLua's
+// own code generator emits no OP_MMBINK, so this is false for every locally
+// compiled chunk.
+func mmbinkFlipped(code []compiler.Instruction, pc int) bool {
+	if pc >= len(code) {
+		return false
+	}
+	next := code[pc]
+	return next.OpCode() == compiler.OP_MMBINK && next.K() == 1
+}
 
 // createVarArgTable creates a table from a vararg slice with an `n` field,
 // implementing Lua 5.5 named vararg parameters (§3.4.12).
