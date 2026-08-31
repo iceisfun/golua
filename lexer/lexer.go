@@ -57,13 +57,19 @@ func New(source, input string, stripShebang bool) *Lexer {
 	}
 	l.readChar()
 	// Match Lua: skip the entire first line if input starts with '#'.
-	// This handles Unix shebangs (#!/usr/bin/lua).
+	// This handles Unix shebangs (#!/usr/bin/lua). The line ends at a line
+	// feed only, as in the reference loader, so a lone carriage return is
+	// ordinary text inside the discarded line rather than its terminator.
 	if stripShebang && l.current == '#' {
-		for l.current != eof && !isNewline(l.current) {
+		for l.current != eof && l.current != '\n' {
 			l.readChar()
 		}
-		if isNewline(l.current) {
-			_ = l.incLine() // first line; cannot exceed maxLines
+		if l.current == '\n' {
+			// incLine consumes the line feed and pairs a carriage return
+			// that follows it, so "\n\r" counts as one line here just as it
+			// does everywhere else. The line count cannot overflow on the
+			// first line, so the error is impossible.
+			_ = l.incLine()
 		}
 	}
 	return l
@@ -233,7 +239,15 @@ func (l *Lexer) Next() (token.Token, error) {
 			continue
 
 		case l.current == '-':
-			return l.scanMinus(pos)
+			tok, ok, err := l.scanMinus(pos)
+			if err != nil {
+				return token.Token{}, err
+			}
+			if !ok {
+				// A comment was consumed; keep looking for a token.
+				continue
+			}
+			return tok, nil
 
 		case l.current == '[':
 			return l.scanBracketOrLongString(pos)
@@ -300,11 +314,15 @@ func (l *Lexer) Next() (token.Token, error) {
 	}
 }
 
-// scanMinus handles '-' and '--' (comments).
-func (l *Lexer) scanMinus(pos token.Pos) (token.Token, error) {
+// scanMinus handles '-' and '--' (comments). The boolean result reports
+// whether a token was produced: a comment consumes input without yielding a
+// token, and the caller simply continues scanning. Comments must not be
+// skipped by recursing back into Next, or a source file with many consecutive
+// comments would consume one stack frame per comment.
+func (l *Lexer) scanMinus(pos token.Pos) (token.Token, bool, error) {
 	l.readChar() // skip first '-'
 	if l.current != '-' {
-		return token.Token{Type: token.Type('-'), Literal: "-", Pos: pos}, nil
+		return token.Token{Type: token.Type('-'), Literal: "-", Pos: pos}, true, nil
 	}
 	// Comment
 	l.readChar() // skip second '-'
@@ -313,16 +331,16 @@ func (l *Lexer) scanMinus(pos token.Pos) (token.Token, error) {
 		if sep >= 2 {
 			// Long comment
 			if err := l.scanLongString(nil, sep); err != nil {
-				return token.Token{}, err
+				return token.Token{}, false, err
 			}
-			return l.Next() // skip comment, get next token
+			return token.Token{}, false, nil // skip comment, keep scanning
 		}
 	}
 	// Short comment: skip to end of line
 	for l.current != eof && !isNewline(l.current) {
 		l.readChar()
 	}
-	return l.Next()
+	return token.Token{}, false, nil
 }
 
 // scanSep reads a separator sequence [=*[ or ]=*] and returns the count+2

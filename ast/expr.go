@@ -18,6 +18,20 @@ func posAfter(p token.Pos, n int) token.Pos {
 // endOr returns end if it carries a real position, else the fallback. Nodes
 // constructed directly (e.g. in tests) without an explicit end position fall
 // back to a sensible computed value instead of a zero Pos.
+// endOrLazy is endOr for nodes whose fallback is the end of a child. The child
+// is only consulted when this node has no end position of its own: these nodes
+// nest down their left spine, so evaluating the fallback eagerly walks the
+// whole chain on every call and a long chain exhausts the goroutine stack.
+func endOrLazy(end token.Pos, fallback Expr) token.Pos {
+	if end.Line != 0 {
+		return end
+	}
+	if fallback == nil {
+		return end
+	}
+	return fallback.End()
+}
+
 func endOr(end, fallback token.Pos) token.Pos {
 	if end.Line != 0 {
 		return end
@@ -161,7 +175,7 @@ type IndexExpr struct {
 }
 
 func (e *IndexExpr) Pos() token.Pos { return e.P }
-func (e *IndexExpr) End() token.Pos { return endOr(e.EndP, e.Key.End()) }
+func (e *IndexExpr) End() token.Pos { return endOrLazy(e.EndP, e.Key) }
 func (*IndexExpr) exprTag()         {}
 
 func NewIndexExpr(p token.Pos, table, key Expr) *IndexExpr {
@@ -177,7 +191,7 @@ type FieldExpr struct {
 }
 
 func (e *FieldExpr) Pos() token.Pos { return e.P }
-func (e *FieldExpr) End() token.Pos { return endOr(e.EndP, e.Table.End()) }
+func (e *FieldExpr) End() token.Pos { return endOrLazy(e.EndP, e.Table) }
 func (*FieldExpr) exprTag()         {}
 
 func NewFieldExpr(p token.Pos, table Expr, field string) *FieldExpr {
@@ -195,7 +209,7 @@ type MethodCallExpr struct {
 }
 
 func (e *MethodCallExpr) Pos() token.Pos { return e.P }
-func (e *MethodCallExpr) End() token.Pos { return endOr(e.EndP, e.Object.End()) }
+func (e *MethodCallExpr) End() token.Pos { return endOrLazy(e.EndP, e.Object) }
 func (*MethodCallExpr) exprTag()         {}
 
 func NewMethodCallExpr(p token.Pos, obj Expr, method string, args []Expr) *MethodCallExpr {
@@ -212,7 +226,7 @@ type FuncCallExpr struct {
 }
 
 func (e *FuncCallExpr) Pos() token.Pos { return e.P }
-func (e *FuncCallExpr) End() token.Pos { return endOr(e.EndP, e.Func.End()) }
+func (e *FuncCallExpr) End() token.Pos { return endOrLazy(e.EndP, e.Func) }
 func (*FuncCallExpr) exprTag()         {}
 
 func NewFuncCallExpr(p token.Pos, fn Expr, args []Expr) *FuncCallExpr {
@@ -288,7 +302,7 @@ type ParenExpr struct {
 }
 
 func (e *ParenExpr) Pos() token.Pos { return e.P }
-func (e *ParenExpr) End() token.Pos { return endOr(e.EndP, e.Inner.End()) }
+func (e *ParenExpr) End() token.Pos { return endOrLazy(e.EndP, e.Inner) }
 func (*ParenExpr) exprTag()         {}
 
 func NewParenExpr(p token.Pos, inner Expr) *ParenExpr {
