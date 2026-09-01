@@ -305,6 +305,9 @@ type compiler struct {
 	// chain re-walked the entire left spine at every node (O(n^2) compile time,
 	// a source-level DoS).
 	foldMemo map[ast.Expr]foldResult
+	// exprDepth counts nested expression compilations, bounding Go recursion
+	// on deeply nested expressions (see maxExprDepth).
+	exprDepth int
 }
 
 // foldResult is a memoized numericValue outcome for one AST node.

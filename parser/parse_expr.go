@@ -306,9 +306,13 @@ func (p *parser) continueSuffixedExpr(expr ast.Expr) ast.Expr {
 			ie.EndP = tokenEnd(closeTok)
 			expr = ie
 		case p.check(token.Type(':')):
-			pos := p.pos()
 			p.advance()
 			method := p.parseName()
+			// The method name, not the ':', positions the call: SELF and CALL
+			// are emitted after the name has been read, and reference Lua
+			// stamps an instruction with the line of the last token consumed
+			// before it.
+			pos := method.Pos()
 			args, argsEnd := p.parseFuncArgs()
 			mc := ast.NewMethodCallExpr(pos, expr, method.Name, args)
 			mc.EndP = argsEnd

@@ -252,6 +252,39 @@ func TestDofile(t *testing.T) {
 	runLuaSourceWithProvider(t, source, "test_dofile", provider)
 }
 
+// A shebang line is discarded up to its line feed, and that line feed is
+// counted like any other newline: a carriage return paired with it ends the
+// same single line, so code below a shebang keeps the line numbers the file has
+// on disk. A lone carriage return is not a terminator at all — it stays inside
+// the discarded first line, taking the rest of that source line with it.
+func TestLoadfileShebangLineNumbers(t *testing.T) {
+	for _, tc := range []struct {
+		name, shebang, want string
+	}{
+		{"lf", "#!/usr/bin/lua\n", ":3: attempt to index a nil value %(local 'x'%)"},
+		{"crlf", "#!/usr/bin/lua\r\n", ":3: attempt to index a nil value %(local 'x'%)"},
+		{"lfcr", "#!/usr/bin/lua\n\r", ":3: attempt to index a nil value %(local 'x'%)"},
+		// The lone '\r' leaves "local x = nil" inside the shebang line, so the
+		// index below it reads a global and lands one line higher.
+		{"lone-cr", "#!/usr/bin/lua\r", ":2: attempt to index a nil value %(global 'x'%)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			script := tc.shebang + "local x = nil\nreturn x.y\n"
+			if err := os.WriteFile(filepath.Join(tmpDir, "script.lua"), []byte(script), 0644); err != nil {
+				t.Fatalf("failed to write test file: %v", err)
+			}
+			source := fmt.Sprintf(`
+				local f = assert(loadfile("script.lua"))
+				local ok, err = pcall(f)
+				assert(not ok, "expected the script to fail")
+				assert(err:find(%q), "got: " .. tostring(err))
+			`, tc.want)
+			runLuaSourceWithProvider(t, source, "test_shebang_lines", NewTestFileProvider(tmpDir))
+		})
+	}
+}
+
 // Test loadfile() without provider returns error
 func TestLoadfile_NoProvider(t *testing.T) {
 	// Note: loadfile won't even be registered without a provider,

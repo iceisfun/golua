@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/iceisfun/golua/ast"
+	"github.com/iceisfun/golua/token"
 )
 
 // exprEndLine returns the line of the last token in an expression.
@@ -38,6 +39,26 @@ func exprEndLine(e ast.Expr) int {
 		return exprEndLine(expr.Inner)
 	}
 	return e.Pos().Line
+}
+
+// suffixLine returns the line an indexing instruction is attributed to: the
+// line of the last token of the suffix (the field name, or the ']' of an index),
+// not of the '.'/'[' operator that introduced it. Falls back to the operator's
+// own position for nodes built without an end position.
+//
+// Reference Lua stamps an instruction with the line of the last token consumed
+// before it is emitted, and it holds an index pending until something forces it
+// into a register. Using the suffix's own last token is an approximation of
+// that: it agrees wherever the index is discharged as soon as the suffix ends,
+// which is the common case and the one a multi-line chain hits, but a pending
+// index discharged only after a following operator has been read is stamped a
+// line earlier here than in reference. This affects debug line information
+// only — which line an error or a line hook reports — never the code emitted.
+func suffixLine(end, op token.Pos) int {
+	if end.Line > 0 {
+		return end.Line
+	}
+	return op.Line
 }
 
 // exprNear returns a short "near" token string from an AST expression,
@@ -81,8 +102,99 @@ func exprNear(expr ast.Expr) string {
 // Expression compilation — main dispatch
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Left-spine compilation
+// ---------------------------------------------------------------------------
+//
+// The parser builds left-leaning chains iteratively: `a+a+a+...`, `t.a.b.c...`,
+// `f()()()...` and `x and y and z...` are all flat spines whose length is
+// limited only by the size of the source, not by the nesting limit that bounds
+// every other construct. Compiling such a spine with one Go frame per link
+// exhausts the goroutine stack on machine-generated source, which Go reports as
+// an unrecoverable fatal error rather than a Lua error.
+//
+// Each spine link is therefore split in two: the part that runs before its
+// leading operand is compiled, and a continuation holding the rest. The
+// continuation is queued on a slice owned by the driver loop below instead of
+// living in a Go frame, so a chain of any length compiles in constant stack and
+// in exactly the original order (a link's continuation is queued before its
+// operand's, and the queue is drained last-in-first-out). Reference Lua's
+// one-pass compiler has the same property: subexpr() recurses only for the
+// right operand of an operator.
+
+// maxExprDepth bounds nested expression compilation. Spines are compiled
+// iteratively, so reaching this limit takes genuinely nested expressions. The
+// parser caps its own recursion far below this, so parsed source never reaches
+// it; a syntax tree built directly and handed to Compile can, and the limit
+// turns the deep Go recursion that would follow into an ordinary compile error
+// instead of a fatal stack overflow.
+const maxExprDepth = 10000
+
+// spineLink reports whether compiling expr can descend into a further spine
+// link. Only those operands are worth queueing a continuation for; anything
+// else is compiled with a plain call.
+func spineLink(expr ast.Expr) bool {
+	switch expr.(type) {
+	case *ast.BinopExpr, *ast.FieldExpr, *ast.IndexExpr, *ast.FuncCallExpr, *ast.MethodCallExpr, *ast.ParenExpr:
+		return true
+	}
+	return false
+}
+
+// pendItem is one queued step: either the remainder of a spine link (rest), or
+// the compilation of that link's leading operand into reg.
+type pendItem struct {
+	rest    func()
+	operand ast.Expr
+	reg     int
+}
+
+// runPending drains queued steps last-in-first-out. A step may queue more work
+// of its own, so the length is re-read every iteration.
+func (c *compiler) runPending(pend *[]pendItem) {
+	for len(*pend) > 0 {
+		last := len(*pend) - 1
+		it := (*pend)[last]
+		*pend = (*pend)[:last]
+		if it.rest != nil {
+			it.rest()
+		} else {
+			c.compileExprStep(it.operand, it.reg, pend)
+		}
+	}
+}
+
+// deferLeft queues the compilation of a spine link's leading operand into reg,
+// followed by rest, the remainder of the link. The queue is drained
+// last-in-first-out, so the operand is compiled first and neither step holds a
+// Go frame. Call sites use it only when spineLink(operand) says the operand can
+// extend the chain; a leaf operand is compiled directly.
+func (c *compiler) deferLeft(operand ast.Expr, reg int, pend *[]pendItem, rest func()) {
+	*pend = append(*pend, pendItem{rest: rest}, pendItem{operand: operand, reg: reg})
+}
+
 // compileExprToReg compiles expr and ensures its value is in register reg.
 func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
+	if c.exprDepth >= maxExprDepth {
+		if c.err == nil {
+			// Reference Lua raises this one through luaD_throw rather than as
+			// a syntax error, so it carries no "source:line:" prefix — the
+			// same bare form the parser's own depth limit produces.
+			c.err = &token.PosError{Pos: expr.Pos(), Msg: "C stack overflow", Bare: true}
+		}
+		return
+	}
+	c.exprDepth++
+	var pend []pendItem
+	c.compileExprStep(expr, reg, &pend)
+	c.runPending(&pend)
+	c.exprDepth--
+}
+
+// compileExprStep compiles expr into reg, queueing the tail of any spine link
+// it starts on pend. Callers that are not themselves driven by a continuation
+// queue must go through compileExprToReg.
+func (c *compiler) compileExprStep(expr ast.Expr, reg int, pend *[]pendItem) {
 	fs := c.fs
 
 	// Ensure the register is allocated
@@ -137,7 +249,7 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		c.compileName(e, reg)
 
 	case *ast.BinopExpr: // e.g. a + b, x .. y, a == b, x and y
-		c.compileBinop(e, reg)
+		c.compileBinop(e, reg, pend)
 
 	case *ast.UnopExpr: // e.g. -x, not x, #t, ~n
 		c.compileUnop(e, reg)
@@ -150,20 +262,28 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		// so chains like t.a().a()... reuse one register per link.
 		if reg < fs.regTop() {
 			tmp := fs.freeReg
-			c.compileFuncCall(e, tmp, 2, e.P.Line) // C=2 → 1 result at tmp
-			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
+			line := e.P.Line
+			// Queued first so it runs after the call itself, whose own
+			// continuation lands above it in the queue.
+			*pend = append(*pend, pendItem{rest: func() {
+				fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), line)
+			}})
+			c.compileFuncCallStep(e, tmp, 2, line, pend) // C=2 → 1 result at tmp
 		} else {
-			c.compileFuncCall(e, reg, 2, e.P.Line) // C=2 → 1 result
+			c.compileFuncCallStep(e, reg, 2, e.P.Line, pend) // C=2 → 1 result
 		}
 
 	case *ast.MethodCallExpr: // e.g. obj:method(a) — single result in reg
 		// Same live-local guard as FuncCallExpr above.
 		if reg < fs.regTop() {
 			tmp := fs.freeReg
-			c.compileMethodCall(e, tmp, 2, e.P.Line)
-			fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), e.P.Line)
+			line := e.P.Line
+			*pend = append(*pend, pendItem{rest: func() {
+				fs.emit(ABC(OP_MOVE, reg, tmp, 0, 0), line)
+			}})
+			c.compileMethodCallStep(e, tmp, 2, line, pend)
 		} else {
-			c.compileMethodCall(e, reg, 2, e.P.Line)
+			c.compileMethodCallStep(e, reg, 2, e.P.Line, pend)
 		}
 
 	case *ast.FuncExpr: // e.g. function(x) return x end
@@ -193,10 +313,10 @@ func (c *compiler) compileExprToReg(expr ast.Expr, reg int) {
 		}
 
 	case *ast.FieldExpr: // e.g. t.name
-		c.compileFieldExpr(e, reg)
+		c.compileFieldExpr(e, reg, pend)
 
 	case *ast.IndexExpr: // e.g. t[key]
-		c.compileIndexExpr(e, reg)
+		c.compileIndexExpr(e, reg, pend)
 
 	case *ast.ParenExpr: // e.g. (expr) — forces single result
 		c.compileExprToReg(e.Inner, reg)
@@ -531,9 +651,9 @@ func (c *compiler) numericValue(e ast.Expr) (bool, int64, float64, bool) {
 		if r, ok := c.foldMemo[n]; ok {
 			return r.isInt, r.iv, r.fv, r.ok
 		}
-		isInt, iv, fv, ok := c.numericValueBinop(n)
-		c.foldMemo[n] = foldResult{isInt, iv, fv, ok}
-		return isInt, iv, fv, ok
+		c.foldLeftSpine(n)
+		r := c.foldMemo[n]
+		return r.isInt, r.iv, r.fv, r.ok
 	case *ast.UnopExpr:
 		if r, ok := c.foldMemo[n]; ok {
 			return r.isInt, r.iv, r.fv, r.ok
@@ -546,6 +666,32 @@ func (c *compiler) numericValue(e ast.Expr) (bool, int64, float64, bool) {
 		return isInt, iv, fv, ok
 	}
 	return false, 0, 0, false
+}
+
+// foldLeftSpine memoizes the folded value of top and of every binop on its left
+// spine, working bottom-up. The spine is walked with an explicit slice rather
+// than by recursion: the parser builds a left-associative chain iteratively, so
+// its length is bounded only by the size of the source and one Go frame per
+// link would overflow the stack on machine-generated input. Right operands nest
+// only as deeply as the parser allows, so they are still folded recursively.
+func (c *compiler) foldLeftSpine(top *ast.BinopExpr) {
+	spine := []*ast.BinopExpr{}
+	for n := top; ; {
+		if _, done := c.foldMemo[n]; done {
+			break
+		}
+		spine = append(spine, n)
+		left, ok := n.Left.(*ast.BinopExpr)
+		if !ok {
+			break
+		}
+		n = left
+	}
+	for i := len(spine) - 1; i >= 0; i-- {
+		n := spine[i]
+		isInt, iv, fv, ok := c.numericValueBinop(n)
+		c.foldMemo[n] = foldResult{isInt, iv, fv, ok}
+	}
 }
 
 // numericValueBinop computes the folded numeric value of a binop node (the
@@ -689,17 +835,17 @@ func (c *compiler) foldUnaryArith(e *ast.UnopExpr) ast.Expr {
 // compiler emits OP_ADDI + OP_MMBINI instead of OP_LOADI + OP_ADD +
 // OP_MMBIN, saving one instruction per addition. This matches reference
 // Lua 5.4's codegen.
-func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
+func (c *compiler) compileBinop(e *ast.BinopExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	line := e.P.Line
 
 	// Handle short-circuit operators
 	switch e.Op {
 	case "and":
-		c.compileAnd(e, reg)
+		c.compileAnd(e, reg, pend)
 		return
 	case "or":
-		c.compileOr(e, reg)
+		c.compileOr(e, reg, pend)
 		return
 	case "..":
 		c.compileConcat(e, reg)
@@ -727,19 +873,22 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	if e.Op == "+" {
 		if imm, ok := smallIntConst(e.Right); ok {
 			// a + imm  →  ADDI reg, leftReg, imm; MMBINI leftReg, imm, TM_ADD, 0
-			leftReg, tmp := c.operandToReg(e.Left)
-			if tmp {
-				// Only fix the discharged-operand line when operandToReg
-				// actually emitted an instruction. If e.Left was a local read
-				// in place, nothing was emitted and fixDischargedLine would
+			if leftReg, inPlace := plainLocalReg(fs, e.Left); inPlace {
+				// A local read in place emits nothing, so the
+				// discharged-operand line must not be fixed up: doing so would
 				// wrongly relabel the previous statement's instruction.
-				c.fixDischargedLine(line)
+				c.emitBinopImmediate(reg, leftReg, imm, TM_ADD, line)
+				return
 			}
-			fs.emit(ABC(OP_ADDI, reg, leftReg, imm+OffsetSC, 0), line)
-			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_ADD), 0), line)
-			if tmp {
-				fs.freeReg = leftReg
+			leftReg := fs.reserveReg()
+			if spineLink(e.Left) {
+				c.deferLeft(e.Left, leftReg, pend, func() {
+					c.finishBinopImmediate(reg, leftReg, imm, TM_ADD, line)
+				})
+				return
 			}
+			c.compileExprToReg(e.Left, leftReg)
+			c.finishBinopImmediate(reg, leftReg, imm, TM_ADD, line)
 			return
 		}
 		if imm, ok := smallIntConst(e.Left); ok {
@@ -767,17 +916,21 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 			// a - imm  →  ADDI reg, leftReg, -imm; MMBINI leftReg, imm, TM_SUB, 0
 			// (MMBINI carries the original imm so the __sub metamethod
 			//  receives the user-written argument value.)
-			leftReg, tmp := c.operandToReg(e.Left)
-			if tmp {
+			if leftReg, inPlace := plainLocalReg(fs, e.Left); inPlace {
 				// See the ADDI case above: skip the line fix when no
 				// instruction was emitted for the left operand.
-				c.fixDischargedLine(line)
+				c.emitBinopImmediate(reg, leftReg, imm, TM_SUB, line)
+				return
 			}
-			fs.emit(ABC(OP_ADDI, reg, leftReg, -imm+OffsetSC, 0), line)
-			fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(TM_SUB), 0), line)
-			if tmp {
-				fs.freeReg = leftReg
+			leftReg := fs.reserveReg()
+			if spineLink(e.Left) {
+				c.deferLeft(e.Left, leftReg, pend, func() {
+					c.finishBinopImmediate(reg, leftReg, imm, TM_SUB, line)
+				})
+				return
 			}
+			c.compileExprToReg(e.Left, leftReg)
+			c.finishBinopImmediate(reg, leftReg, imm, TM_SUB, line)
 			return
 		}
 	}
@@ -797,35 +950,89 @@ func (c *compiler) compileBinop(e *ast.BinopExpr, reg int) {
 	if base < fs.nActVar {
 		base = fs.nActVar
 	}
-	var leftReg int
 	if lr, ok := plainLocalReg(fs, e.Left); ok {
 		// In-place local read: no instruction emitted, so skip
 		// fixDischargedLine — it would relabel the previous statement's
 		// discharge instruction (see the ADDI case above).
-		leftReg = lr
-	} else if reg < fs.nActVar {
+		c.finishBinop(e, reg, base, lr, line)
+		return
+	}
+	if reg < fs.nActVar {
 		// reg is a named local: use a fresh temp for the left operand so the
 		// right side can still read the local. Example: b = f(a) + b —
 		// compiling left into b's register would overwrite it before the
 		// right side reads it.
-		leftReg = fs.reserveReg()
+		leftReg := fs.reserveReg()
+		if spineLink(e.Left) {
+			c.deferLeft(e.Left, leftReg, pend, func() {
+				c.finishBinopTemp(e, reg, base, leftReg, line)
+			})
+			return
+		}
 		c.compileExprToReg(e.Left, leftReg)
-		c.fixDischargedLine(line)
-		// A call/constructor operand leaves freeReg inflated past its own
-		// result slot; reclaim so the right operand lands just above it
-		// (same per-operand reset as compileConcat).
-		fs.freeReg = leftReg + 1
-	} else {
-		// reg is a temp or the target of a parent binop: reuse it for the
-		// left operand. This keeps left-associative chains like a+b+c+d in
-		// O(1) registers instead of O(n).
-		leftReg = reg
-		c.compileExprToReg(e.Left, leftReg)
-		c.fixDischargedLine(line)
-		// Reclaim call/constructor inflation (see above). base >= reg+1 here
-		// because compileExprToReg's preamble reserved reg before dispatch.
-		fs.freeReg = base
+		c.finishBinopTemp(e, reg, base, leftReg, line)
+		return
 	}
+	// reg is a temp or the target of a parent binop: reuse it for the
+	// left operand. This keeps left-associative chains like a+b+c+d in
+	// O(1) registers instead of O(n).
+	if spineLink(e.Left) {
+		c.deferLeft(e.Left, reg, pend, func() {
+			c.finishBinopInPlace(e, reg, base, line)
+		})
+		return
+	}
+	c.compileExprToReg(e.Left, reg)
+	c.finishBinopInPlace(e, reg, base, line)
+}
+
+// finishBinopTemp completes a binop whose left operand was discharged into a
+// temporary because the target register holds a live local.
+func (c *compiler) finishBinopTemp(e *ast.BinopExpr, reg, base, leftReg, line int) {
+	c.fixDischargedLine(line)
+	// A call/constructor operand leaves freeReg inflated past its own result
+	// slot; reclaim so the right operand lands just above it (same per-operand
+	// reset as compileConcat).
+	c.fs.freeReg = leftReg + 1
+	c.finishBinop(e, reg, base, leftReg, line)
+}
+
+// finishBinopInPlace completes a binop whose left operand was discharged into
+// the target register itself.
+func (c *compiler) finishBinopInPlace(e *ast.BinopExpr, reg, base, line int) {
+	c.fixDischargedLine(line)
+	// Reclaim call/constructor inflation (see above). base >= reg+1 here
+	// because compileExprStep's preamble reserved reg before dispatch.
+	c.fs.freeReg = base
+	c.finishBinop(e, reg, base, reg, line)
+}
+
+// emitBinopImmediate emits the ADDI/MMBINI pair for `a + imm` and `a - imm`.
+// The MMBINI operand keeps the user-written immediate so the metamethod sees
+// the argument as written, while ADDI carries the negated one for subtraction.
+func (c *compiler) emitBinopImmediate(reg, leftReg, imm int, mm MetamethodTag, line int) {
+	fs := c.fs
+	addend := imm
+	if mm == TM_SUB {
+		addend = -imm
+	}
+	fs.emit(ABC(OP_ADDI, reg, leftReg, addend+OffsetSC, 0), line)
+	fs.emit(ABC(OP_MMBINI, leftReg, imm+OffsetSC, int(mm), 0), line)
+}
+
+// finishBinopImmediate completes an immediate-form binop whose left operand was
+// discharged into a temporary at leftReg.
+func (c *compiler) finishBinopImmediate(reg, leftReg, imm int, mm MetamethodTag, line int) {
+	c.fixDischargedLine(line)
+	c.emitBinopImmediate(reg, leftReg, imm, mm, line)
+	c.fs.freeReg = leftReg
+}
+
+// finishBinop compiles the right operand of an arithmetic or bitwise binop
+// whose left operand already sits in leftReg, and emits the operation. base is
+// the register top to restore once both operands have been consumed.
+func (c *compiler) finishBinop(e *ast.BinopExpr, reg, base, leftReg, line int) {
+	fs := c.fs
 	// Right operand: read a plain local in place; otherwise discharge into
 	// the current free-register top (rather than reserveReg, which would
 	// pre-advance freeReg) so a right operand that is itself a call/table
@@ -1192,7 +1399,7 @@ func (c *compiler) compileComparisonCond(e *ast.BinopExpr, invertSense bool) int
 // is fused with the and short-circuit, avoiding boolean materialization.
 // This matches reference Lua 5.4's codegen and is critical for keeping
 // instruction counts compatible with debug count hooks.
-func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
+func (c *compiler) compileAnd(e *ast.BinopExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	line := e.P.Line
 
@@ -1219,25 +1426,57 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 	if reg < fs.nActVar {
 		// reg is a live local (assignment target): evaluate the left operand
 		// into a fresh temp so it can't clobber the local before the right
-		// operand reads it (e.g. n = (n==0) or stack(n-1)).
+		// operand reads it (e.g. n = (n==0) or stack(n-1)). TESTSET copies the
+		// kept value into reg on the short-circuit path.
 		tmp := fs.reserveReg()
+		if spineLink(e.Left) {
+			c.deferLeft(e.Left, tmp, pend, func() {
+				c.finishTestSet(e, reg, tmp, line, 0) // skip if falsy, keep value
+			})
+			return
+		}
 		c.compileExprToReg(e.Left, tmp)
-		fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 0), line) // skip if falsy, keep value
-		jmp := fs.emitJump(line)
-		c.compileExprToReg(e.Right, reg)
-		c.patchJump(jmp)
-		fs.freeReg = tmp
+		c.finishTestSet(e, reg, tmp, line, 0)
 		return
 	}
 	// reg is a temporary: test the left operand in place so a chain reuses one
 	// register instead of a fresh temp per level (which overflowed the 255-
 	// register limit at ~255 operands on programs reference Lua compiles).
+	// TEST reg,k=0 skips the short-circuit JMP when reg is truthy -> evaluate
+	// the right operand into reg; otherwise the JMP keeps reg = the (falsy)
+	// left value.
+	if spineLink(e.Left) {
+		c.deferLeft(e.Left, reg, pend, func() {
+			c.finishTest(e, reg, line, 0)
+		})
+		return
+	}
 	c.compileExprToReg(e.Left, reg)
+	c.finishTest(e, reg, line, 0)
+}
+
+// finishTestSet completes a short-circuit operator whose left operand was
+// discharged into a temporary because the target register holds a live local.
+// k selects the sense: 0 for `and`, 1 for `or`.
+func (c *compiler) finishTestSet(e *ast.BinopExpr, reg, tmp, line, k int) {
+	fs := c.fs
+	fs.emit(ABC(OP_TESTSET, reg, tmp, 0, k), line)
+	jmp := fs.emitJump(line)
+	c.compileExprToReg(e.Right, reg)
+	c.patchJump(jmp)
+	fs.freeReg = tmp
+}
+
+// finishTest completes a short-circuit operator whose left operand was
+// discharged into the target register and is tested in place. k selects the
+// sense: 0 for `and`, 1 for `or`.
+func (c *compiler) finishTest(e *ast.BinopExpr, reg, line, k int) {
+	fs := c.fs
 	// A call left operand leaves freeReg inflated past reg; reset it so the
 	// right operand compiles in place at reg instead of taking the temp+MOVE
 	// fallback (which compounds registers per level and overflows long chains).
 	fs.freeReg = reg + 1
-	fs.emit(ABC(OP_TEST, reg, 0, 0, 0), line) // skip JMP if truthy -> eval right
+	fs.emit(ABC(OP_TEST, reg, 0, 0, k), line)
 	jmp := fs.emitJump(line)
 	c.compileExprToReg(e.Right, reg)
 	c.patchJump(jmp)
@@ -1247,7 +1486,7 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int) {
 //
 // When the left operand is a comparison, the comparison's conditional jump
 // is fused with the or short-circuit (inverted sense).
-func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
+func (c *compiler) compileOr(e *ast.BinopExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	line := e.P.Line
 
@@ -1271,22 +1510,28 @@ func (c *compiler) compileOr(e *ast.BinopExpr, reg int) {
 		// reg is a live local: use a fresh temp for the left operand — see
 		// compileAnd.
 		tmp := fs.reserveReg()
+		if spineLink(e.Left) {
+			c.deferLeft(e.Left, tmp, pend, func() {
+				c.finishTestSet(e, reg, tmp, line, 1) // skip if truthy, keep value
+			})
+			return
+		}
 		c.compileExprToReg(e.Left, tmp)
-		fs.emit(ABC(OP_TESTSET, reg, tmp, 0, 1), line) // skip if truthy, keep value
-		jmp := fs.emitJump(line)
-		c.compileExprToReg(e.Right, reg)
-		c.patchJump(jmp)
-		fs.freeReg = tmp
+		c.finishTestSet(e, reg, tmp, line, 1)
 		return
 	}
 	// reg is a temporary: test in place so an or-chain reuses one register.
+	// TEST reg,k=1 skips the short-circuit JMP when reg is falsy -> evaluate
+	// the right operand into reg; otherwise the JMP keeps reg = the (truthy)
+	// left value.
+	if spineLink(e.Left) {
+		c.deferLeft(e.Left, reg, pend, func() {
+			c.finishTest(e, reg, line, 1)
+		})
+		return
+	}
 	c.compileExprToReg(e.Left, reg)
-	// See compileAnd: reset inflated freeReg from a call left operand.
-	fs.freeReg = reg + 1
-	fs.emit(ABC(OP_TEST, reg, 0, 0, 1), line) // skip JMP if falsy -> eval right
-	jmp := fs.emitJump(line)
-	c.compileExprToReg(e.Right, reg)
-	c.patchJump(jmp)
+	c.finishTest(e, reg, line, 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -1346,6 +1591,15 @@ func (c *compiler) compileUnop(e *ast.UnopExpr, reg int) {
 // nResults: number of results wanted (0 = all, 1 = none, 2 = one, etc.)
 // Lua convention: CALL A B C → C = nResults + 1 (0 means all)
 func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, line int) {
+	var pend []pendItem
+	c.compileFuncCallStep(e, base, nResults, line, &pend)
+	c.runPending(&pend)
+}
+
+// compileFuncCallStep is compileFuncCall for callers that are already driven by
+// a continuation queue, so that a chained call (f()()()...) does not consume a
+// Go frame per link.
+func (c *compiler) compileFuncCallStep(e *ast.FuncCallExpr, base int, nResults int, line int, pend *[]pendItem) {
 	fs := c.fs
 
 	// base is always a fresh call-frame register: callers that target a live
@@ -1360,7 +1614,20 @@ func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, 
 	}
 
 	// Function goes into base.
+	if spineLink(e.Func) {
+		c.deferLeft(e.Func, base, pend, func() {
+			c.finishFuncCall(e, base, nResults, line)
+		})
+		return
+	}
 	c.compileExprToReg(e.Func, base)
+	c.finishFuncCall(e, base, nResults, line)
+}
+
+// finishFuncCall emits the argument list and the CALL for a call whose function
+// expression has already been compiled into base.
+func (c *compiler) finishFuncCall(e *ast.FuncCallExpr, base int, nResults int, line int) {
+	fs := c.fs
 
 	// Reset freeReg after compiling the function expression. If e.Func is a
 	// chained call (e.g. f(x)(y)), compileExprToReg inflates freeReg for the
@@ -1399,6 +1666,14 @@ func (c *compiler) compileFuncCall(e *ast.FuncCallExpr, base int, nResults int, 
 // compileMethodCall compiles obj:method(args). Emits SELF to load the method
 // and self reference, then CALL. nResults follows the same convention as compileFuncCall.
 func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults int, line int) {
+	var pend []pendItem
+	c.compileMethodCallStep(e, base, nResults, line, &pend)
+	c.runPending(&pend)
+}
+
+// compileMethodCallStep is compileMethodCall for callers that are already
+// driven by a continuation queue — see compileFuncCallStep.
+func (c *compiler) compileMethodCallStep(e *ast.MethodCallExpr, base int, nResults int, line int, pend *[]pendItem) {
 	fs := c.fs
 
 	// base is always a fresh call-frame register (callers that target a live
@@ -1411,7 +1686,20 @@ func (c *compiler) compileMethodCall(e *ast.MethodCallExpr, base int, nResults i
 	if base < fs.freeReg {
 		fs.freeReg = base
 	}
+	if spineLink(e.Object) {
+		c.deferLeft(e.Object, base, pend, func() {
+			c.finishMethodCall(e, base, nResults, line)
+		})
+		return
+	}
 	c.compileExprToReg(e.Object, base)
+	c.finishMethodCall(e, base, nResults, line)
+}
+
+// finishMethodCall emits SELF, the argument list and the CALL for a method call
+// whose receiver has already been compiled into base.
+func (c *compiler) finishMethodCall(e *ast.MethodCallExpr, base int, nResults int, line int) {
+	fs := c.fs
 	methodK := fs.stringConstant(e.Method)
 	fs.emitSelf(base, base, methodK, line)
 
@@ -1555,32 +1843,35 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 				fs.freeReg = reg + 1
 			}
 		} else {
-			// Hash-style field
+			// Hash-style field. The store is emitted once the field's value has
+			// been read, so it carries that value's last line — not the line of
+			// the '{' — which is what a "table index is nil" error reports.
+			fieldLine := fieldStoreLine(f, line)
 			switch key := f.Key.(type) {
 			case *ast.StringExpr:
 				startReg := fs.freeReg
 				valC, valK := c.storeValueOperand(f.Value)
 				kIdx := fs.stringConstant(key.Value)
-				fs.emitSetField(reg, kIdx, valC, valK, line)
+				fs.emitSetField(reg, kIdx, valC, valK, fieldLine)
 				fs.freeReg = startReg
 			case *ast.NumberExpr:
 				if key.Value >= 0 && key.Value <= int64(MaxArgC) {
 					startReg := fs.freeReg
 					valC, valK := c.storeValueOperand(f.Value)
-					fs.emit(ABC(OP_SETI, reg, int(key.Value), valC, valK), line)
+					fs.emit(ABC(OP_SETI, reg, int(key.Value), valC, valK), fieldLine)
 					fs.freeReg = startReg
 				} else {
 					keyReg := fs.reserveReg()
 					c.compileExprToReg(f.Key, keyReg)
 					valC, valK := c.storeValueOperand(f.Value)
-					fs.emit(ABC(OP_SETTABLE, reg, keyReg, valC, valK), line)
+					fs.emit(ABC(OP_SETTABLE, reg, keyReg, valC, valK), fieldLine)
 					fs.freeReg = keyReg
 				}
 			default:
 				keyReg := fs.reserveReg()
 				c.compileExprToReg(f.Key, keyReg)
 				valC, valK := c.storeValueOperand(f.Value)
-				fs.emit(ABC(OP_SETTABLE, reg, keyReg, valC, valK), line)
+				fs.emit(ABC(OP_SETTABLE, reg, keyReg, valC, valK), fieldLine)
 				fs.freeReg = keyReg
 			}
 		}
@@ -1592,6 +1883,21 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 	}
 
 	fs.freeReg = reg + 1
+}
+
+// fieldStoreLine returns the line a table-constructor record store is
+// attributed to: the last line of the field's value expression, falling back to
+// the constructor's own line for a node built without an end position.
+func fieldStoreLine(f *ast.TableField, ctorLine int) int {
+	if f.Value != nil {
+		if end := f.Value.End(); end.Line > 0 {
+			return end.Line
+		}
+		if l := f.Value.Pos().Line; l > 0 {
+			return l
+		}
+	}
+	return ctorLine
 }
 
 // emitSetList emits OP_SETLIST to flush pending array entries into a table.
@@ -1622,7 +1928,7 @@ func (c *compiler) emitSetList(tableReg, count, offset int, line int) {
 // ---------------------------------------------------------------------------
 
 // compileFieldExpr compiles t.name into GETFIELD (or GETTABLE for large constant indices).
-func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
+func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	// When the table is a local variable, use its register directly.
 	tableReg := -1
@@ -1645,17 +1951,32 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int) {
 			// compiles fine). Inner chain levels then also see a temp and reuse.
 			tableReg = reg
 		}
+		if spineLink(e.Table) {
+			c.deferLeft(e.Table, tableReg, pend, func() {
+				c.finishFieldExpr(e, reg, tableReg, needFree)
+			})
+			return
+		}
 		c.compileExprToReg(e.Table, tableReg)
+		c.finishFieldExpr(e, reg, tableReg, needFree)
+		return
 	}
+	c.finishFieldExpr(e, reg, tableReg, needFree)
+}
+
+// finishFieldExpr emits the field read for a t.name expression whose table is
+// already in tableReg.
+func (c *compiler) finishFieldExpr(e *ast.FieldExpr, reg, tableReg int, needFree bool) {
+	fs := c.fs
 	fieldK := fs.stringConstant(e.Field)
-	fs.emitGetField(reg, tableReg, fieldK, e.P.Line)
+	fs.emitGetField(reg, tableReg, fieldK, suffixLine(e.EndP, e.P))
 	if needFree {
 		fs.freeReg = tableReg
 	}
 }
 
 // compileIndexExpr compiles t[key] into GETI (constant int 0-255) or GETTABLE.
-func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
+func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	// When the table is a local variable, use its register directly to
 	// avoid emitting an unnecessary MOVE. This matches Lua 5.4's behavior
@@ -1679,17 +2000,33 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int) {
 			// reuses one register — see compileFieldExpr.
 			tableReg = reg
 		}
+		if spineLink(e.Table) {
+			c.deferLeft(e.Table, tableReg, pend, func() {
+				c.finishIndexExpr(e, reg, tableReg, needFree)
+			})
+			return
+		}
 		c.compileExprToReg(e.Table, tableReg)
+		c.finishIndexExpr(e, reg, tableReg, needFree)
+		return
 	}
+	c.finishIndexExpr(e, reg, tableReg, needFree)
+}
+
+// finishIndexExpr emits the indexed read for a t[key] expression whose table is
+// already in tableReg.
+func (c *compiler) finishIndexExpr(e *ast.IndexExpr, reg, tableReg int, needFree bool) {
+	fs := c.fs
+	line := suffixLine(e.EndP, e.P)
 	if n, ok := e.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
-		fs.emit(ABC(OP_GETI, reg, tableReg, int(n.Value), 0), e.P.Line)
+		fs.emit(ABC(OP_GETI, reg, tableReg, int(n.Value), 0), line)
 		if needFree {
 			fs.freeReg = tableReg
 		}
 	} else {
 		keyReg := fs.reserveReg()
 		c.compileExprToReg(e.Key, keyReg)
-		fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), e.P.Line)
+		fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), line)
 		if needFree {
 			fs.freeReg = tableReg // frees tableReg and keyReg (keyReg > tableReg)
 		} else {
