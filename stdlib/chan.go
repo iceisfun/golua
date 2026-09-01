@@ -8,32 +8,50 @@ import (
 	"github.com/iceisfun/golua/vm"
 )
 
-// channelHandleMeta is a shared metatable for identifying channel handles.
-var channelHandleMeta *vm.Table
+// chanState holds the per-VM chan-module state: the metatable shared by every
+// channel handle the VM creates, and the registry that resolves a handle's
+// channel id back to its channel. It lives in the VM's internal state bag,
+// which a root VM shares with its coroutine VMs but with no other VM, mirroring
+// ioState and matching reference Lua, where a library's handle metatable lives
+// in that lua_State's registry.
+//
+// The metatable must not be a package-level value: a Go process routinely hosts
+// many independent VMs, and one process-wide table would let a script running
+// in one VM change how handles behave in every other, and let two VMs mutate
+// the same *vm.Table concurrently.
+type chanState struct {
+	meta *vm.Table
 
-func init() {
-	channelHandleMeta = vm.NewEmptyTable()
-	channelHandleMeta.SetString(vm.MetaName, vm.NewString("channel"))
-}
-
-// chanRegistry is the per-VM channel registry, stored in VM internal state.
-type chanRegistry struct {
 	mu       sync.Mutex
 	channels map[int64]*vm.LuaChannel
 }
 
-const chanRegistryKey = "chan"
+const chanStateKey = "chan"
 
-// getChanRegistry returns the per-VM channel registry, creating it lazily.
-func getChanRegistry(v *vm.VM) *chanRegistry {
-	if r := v.InternalState(chanRegistryKey); r != nil {
-		return r.(*chanRegistry)
+// chanStateMu serializes first-use creation of a VM's chanState so that two
+// coroutine VMs sharing one internal state bag cannot each install a state (and
+// therefore a different handle metatable). It guards creation only; it holds no
+// state of its own.
+var chanStateMu sync.Mutex
+
+// getChanState returns the per-VM chan state, creating it on first call.
+func getChanState(v *vm.VM) *chanState {
+	if s := v.InternalState(chanStateKey); s != nil {
+		return s.(*chanState)
 	}
-	reg := &chanRegistry{
+	chanStateMu.Lock()
+	defer chanStateMu.Unlock()
+	if s := v.InternalState(chanStateKey); s != nil {
+		return s.(*chanState)
+	}
+	meta := vm.NewEmptyTable()
+	meta.SetString(vm.MetaName, vm.NewString("channel"))
+	s := &chanState{
+		meta:     meta,
 		channels: make(map[int64]*vm.LuaChannel),
 	}
-	v.SetInternalState(chanRegistryKey, reg)
-	return reg
+	v.SetInternalState(chanStateKey, s)
+	return s
 }
 
 // openChan registers the chan library if a ChanProvider is set.
@@ -68,13 +86,13 @@ func ProvideChan(v *vm.VM) {
 
 // makeChannelHandle creates a Lua table handle wrapping a LuaChannel.
 func makeChannelHandle(v *vm.VM, ch *vm.LuaChannel) vm.Value {
-	reg := getChanRegistry(v)
-	reg.mu.Lock()
-	reg.channels[ch.ID()] = ch
-	reg.mu.Unlock()
+	state := getChanState(v)
+	state.mu.Lock()
+	state.channels[ch.ID()] = ch
+	state.mu.Unlock()
 
 	handle := vm.NewEmptyTable()
-	handle.SetMetatable(channelHandleMeta)
+	handle.SetMetatable(state.meta)
 	handle.SetString("__chan_id", vm.NewInt(ch.ID()))
 
 	provider := v.ChanProvider()
@@ -116,10 +134,10 @@ func extractChannel(v *vm.VM, handle vm.Value) *vm.LuaChannel {
 		return nil
 	}
 	id := idVal.AsInt()
-	reg := getChanRegistry(v)
-	reg.mu.Lock()
-	ch := reg.channels[id]
-	reg.mu.Unlock()
+	state := getChanState(v)
+	state.mu.Lock()
+	ch := state.channels[id]
+	state.mu.Unlock()
 	return ch
 }
 
