@@ -1446,6 +1446,19 @@ mainLoop:
 					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
 
+					// The reused frame's register window now belongs to the
+					// callee, which may be wider than the caller's. Grow the
+					// stack for it and re-mark vm.top before anything writes a
+					// register, exactly as vm.call and the OP_CALL fast path do
+					// for a fresh frame (reference luaD_pretailcall does both:
+					// checkstackp, then ci->top.p = func + 1 + fsize). Left at
+					// the caller's smaller window, vm.top sits in the middle of
+					// the callee's live registers, and everything that builds a
+					// frame there — a metamethod, a coercion, a nested call —
+					// overwrites them.
+					vm.ensureStack(frame.base + proto.MaxStack + stackSafetyMargin)
+					vm.top = frame.base + proto.MaxStack
+
 					// Set up parameters
 					numParams := proto.NumParams
 					numArgs := len(args)
@@ -1473,6 +1486,16 @@ mainLoop:
 						for i := numArgs; i < numParams; i++ {
 							vm.stack[frame.base+i] = Nil
 						}
+						// A non-vararg callee has no varargs of its own, and
+						// the frame it took over may have had some. Reference
+						// keeps this in the prototype, which the reused
+						// CallInfo picks up along with the closure; here it is
+						// frame state, so it has to be cleared, or
+						// debug.getlocal(level, -n) reports the dead caller's
+						// extra arguments — and setlocal writes into them.
+						frame.isVararg = false
+						frame.numVararg = 0
+						frame.varargs = nil
 					}
 
 					// A tail call reuses the frame in place, so the frame's
@@ -1550,18 +1573,86 @@ mainLoop:
 						base:      nativeBase,
 						argc:      len(args),
 						funcValue: fn,
+						ftransfer: 1,
+						ntransfer: len(args),
 					}
 					vm.callStack = append(vm.callStack, nativeFrame)
+					// The native gets an ordinary pair of call/return hook
+					// events: reference reaches it through precallC, the same
+					// way a non-tail call does. Only the *Lua* frame it
+					// replaces is skipped, and that frame retires below.
+					vm.fireCallHook()
+					// The native overwrites its own argument slots with its
+					// results, so the return hook's view of them has to be
+					// captured first. Only a return hook ever reads it.
+					var savedArgs []Value
+					if vm.hookMask&HookMaskReturn != 0 {
+						savedArgs = make([]Value, len(args))
+						copy(savedArgs, vm.stack[nativeBase+1:nativeBase+1+len(args)])
+					}
 					nResults := nf(vm)
-					vm.callStack = vm.callStack[:len(vm.callStack)-1]
-					vm.top = savedTop
+					// Re-check the mask: the native itself may have installed
+					// a hook — debug.sethook is reached exactly this way.
+					hooked := vm.hookMask&HookMaskReturn != 0
 					var results []Value
-					if nResults <= len(vm.retBuf) {
-						copy(vm.retBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
-						results = vm.retBuf[:nResults]
-					} else {
+					if hooked || nResults > len(vm.retBuf) {
+						// Slow path — the return hooks below run arbitrary
+						// Lua, and any function returning a value from inside
+						// one leaves through OP_RETURN, which writes
+						// vm.retBuf. Give the results a buffer of their own,
+						// as doCall's hook-active path does, so a hook cannot
+						// overwrite them; the allocation is acceptable here
+						// for the same reason it is there.
 						results = make([]Value, nResults)
 						copy(results, vm.stack[nativeBase:nativeBase+nResults])
+					} else {
+						copy(vm.retBuf[:nResults], vm.stack[nativeBase:nativeBase+nResults])
+						results = vm.retBuf[:nResults]
+					}
+					if hooked {
+						nfr := &vm.callStack[len(vm.callStack)-1]
+						if savedArgs == nil {
+							savedArgs = args
+						}
+						// Lay the frame out as [args..., results...] so the
+						// return hook's debug.getlocal sees both, as it does
+						// for a non-tail native call.
+						copy(vm.stack[nativeBase+1:nativeBase+1+nfr.argc], savedArgs)
+						retStart := nativeBase + 1 + nfr.argc
+						retEnd := retStart + nResults
+						// The frame was only grown for the arguments, so a
+						// native returning more values than that needs room
+						// for them before the hook can see the whole list.
+						vm.ensureStack(retEnd)
+						copy(vm.stack[retStart:retEnd], results)
+						vm.top = retEnd
+						if nResults > 0 {
+							nfr.ftransfer = 1 + nfr.argc
+							nfr.ntransfer = nResults
+						} else {
+							nfr.ftransfer = 0
+							nfr.ntransfer = 0
+						}
+						vm.fireReturnHook()
+					}
+					vm.callStack = vm.callStack[:len(vm.callStack)-1]
+					vm.top = savedTop
+					// The tail-calling Lua frame retires here, so its own
+					// return hook fires now: reference finishes it with
+					// luaD_poscall once the C function has returned. Without
+					// this the "call" event for the tail-calling function has
+					// no matching "return", and a hook that counts depth
+					// drifts by one per native tail call.
+					if hooked {
+						lf := &vm.callStack[len(vm.callStack)-1]
+						lf.ftransfer = 0
+						lf.ntransfer = nResults
+						vm.fireReturnHook()
+					}
+					if vm.hookMask != 0 {
+						// A hook re-enters the VM and can reallocate the call
+						// stack, so the cached frame pointer is stale.
+						frame = &vm.callStack[len(vm.callStack)-1]
 					}
 					// If the tail-calling frame is an in-loop frame (pushed by
 					// the OP_CALL fast path), the native call's results are
