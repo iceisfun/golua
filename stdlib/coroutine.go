@@ -5,9 +5,30 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/iceisfun/golua/vm"
 )
+
+// coroutineStopGrace bounds every wait in which one goroutine has to see
+// another goroutine of the same VM family stop running Lua.
+//
+// A coroutine runs on its own goroutine but against the family's shared state
+// (globals, tables, the string cache), so whoever abandons a *running*
+// coroutine — a resume that gave up on a cancelled context, or VM.Close reaping
+// a suspended one — must wait for it to stop first. Those waits terminate on
+// their own: the abandoning side has already made the coroutine's VM unwind at
+// its next interrupt poll (a cancelled context, or vm.VM.Terminate).
+//
+// The grace is the backstop for a coroutine that does not reach a poll. In
+// practice that is one parked inside a native call which observes neither
+// signal — a blocking read, say — and such a coroutine is touching none of the
+// shared state these waits protect. It is not the only way, though: the polls
+// sit at loop back-edges and at calls, so a long enough run of straight-line
+// Lua can outlast the grace as well. A second's worth of it is a great deal of
+// Lua, but the guarantee is a bound on the wait, not a proof that the coroutine
+// has stopped.
+const coroutineStopGrace = time.Second
 
 // coArgType returns the type name for error messages, using "no value" when argc is insufficient.
 func coArgType(v *vm.VM, idx int) string {
@@ -161,9 +182,46 @@ func reapCoroutines(v *vm.VM, ctx context.Context) {
 	}
 	reg.coroutines = make(map[int]*Coroutine)
 	reg.mu.Unlock()
+	if len(pending) == 0 {
+		return
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// Each coroutine gets its own grace rather than the sweep sharing one, so
+	// that a handler which uses up its whole allowance cannot deny the grace to
+	// the coroutines reaped after it. A shared deadline made the first slow
+	// handler silently skip every remaining coroutine's <close>.
+	//
+	// The caller's context bounds the sweep, but only if it was still live when
+	// the sweep began. Close is documented to be called as
+	// `defer v.Close(context.Background())`, and a caller who hands over a
+	// context that has already expired is asking to be unblocked, not asking to
+	// skip the handlers altogether: an expired context used as the grace closes
+	// its Done channel immediately, which would terminate every coroutine
+	// before its handler had run at all.
+	var sweepDone <-chan struct{}
+	if ctx.Err() == nil {
+		sweepDone = ctx.Done()
+	}
 
 	for _, co := range pending {
-		reapCoroutine(co, ctx)
+		if !reapCoroutine(co, sweepDone) {
+			// This coroutine's goroutine is still running Lua against the
+			// family's shared state and did not stop when asked. Waking the
+			// next coroutine now would set a second goroutine running alongside
+			// it, so end the sweep and leave the rest suspended where they are.
+			//
+			// That costs more than the parked goroutines themselves (see
+			// wontfix/coroutine-goroutine-leak on master): the <close> handlers
+			// of the coroutines this sweep had not reached yet do not run at
+			// all. Two goroutines writing one VM family's tables is the worse
+			// outcome of the two, and reaching this point at all means a
+			// handler has already ignored both a full grace and an explicit
+			// termination.
+			return
+		}
 	}
 }
 
@@ -171,9 +229,20 @@ func reapCoroutines(v *vm.VM, ctx context.Context) {
 // suspended-close path of coClose (close resumeCh -> the goroutine unwinds via
 // CloseAllTBC and returns), but: (1) only acts on started, suspended coroutines
 // with an un-closed resume channel; (2) recovers per-coroutine so one handler's
-// error doesn't abort the sweep; (3) bounds the wait by ctx so a blocking
-// <close> handler can't hang VM.Close.
-func reapCoroutine(co *Coroutine, ctx context.Context) {
+// error doesn't abort the sweep; (3) bounds the wait, in two stages, so a
+// blocking <close> handler can neither hang VM.Close nor outlive it.
+//
+// The grace is when this coroutine's handlers stop being given the benefit of
+// the doubt, and the hard bound is the end of the wait entirely; both are per
+// coroutine. Between them the coroutine's VM is told to unwind, which is what
+// makes the second wait terminate rather than merely expire. sweepDone, when
+// non-nil, is the caller's context: it can end the grace early but never
+// replaces it.
+//
+// Returns whether the coroutine's goroutine actually stopped. A false return
+// means it is still executing Lua against state this VM family shares, so the
+// caller must not start another one alongside it.
+func reapCoroutine(co *Coroutine, sweepDone <-chan struct{}) bool {
 	defer func() { _ = recover() }()
 
 	co.mu.Lock()
@@ -182,21 +251,46 @@ func reapCoroutine(co *Coroutine, ctx context.Context) {
 		co.status = statusRunning
 		co.resumeChClosed = true
 	}
+	coVM := co.coVM
 	co.mu.Unlock()
 	if !reap {
-		return
+		return true
 	}
 
 	close(co.resumeCh)
-	var done <-chan struct{}
-	if ctx != nil {
-		done = ctx.Done()
-	}
+
+	soft := time.NewTimer(coroutineStopGrace)
+	defer soft.Stop()
+	hard := time.NewTimer(2 * coroutineStopGrace)
+	defer hard.Stop()
+
 	finished := false
+	graceOver := false
 	select {
 	case <-co.doneCh:
 		finished = true
-	case <-done: // ctx cancelled/expired: stop waiting (goroutine still unwinds)
+	case <-soft.C:
+		graceOver = true
+	case <-sweepDone:
+		// nil unless the caller's context was live when the sweep began, in
+		// which case a select on it never fires.
+		graceOver = true
+	}
+
+	if graceOver {
+		// The grace ran out with the <close> handlers still running Lua on the
+		// coroutine's own goroutine. Returning here would leave that goroutine
+		// writing to the globals and tables the closing VM shares with it, so
+		// ask its VM to unwind at the next interrupt poll and wait for the
+		// goroutine to actually finish.
+		if coVM != nil {
+			coVM.Terminate()
+		}
+		select {
+		case <-co.doneCh:
+			finished = true
+		case <-hard.C:
+		}
 	}
 
 	co.mu.Lock()
@@ -207,6 +301,7 @@ func reapCoroutine(co *Coroutine, ctx context.Context) {
 	// close nor touches a VM another goroutine is still using.
 	co.reapAbandoned = !finished
 	co.mu.Unlock()
+	return finished
 }
 
 // coroutine.create(f) -> thread
@@ -417,9 +512,37 @@ func coResume(v *vm.VM) int {
 		return 1 + len(result)
 	case <-ctxDone(v):
 		restoreCallerStatus()
+		// The resume is over, but the coroutine's goroutine is not: let it come
+		// to a stop before the resumer touches the family's shared state again.
+		awaitCoroutineStop(co)
 		v.Set(0, vm.False)
 		v.Set(1, vm.NewString("execution interrupted: "+v.Context().Err().Error()))
 		return 2
+	}
+}
+
+// awaitCoroutineStop waits for a coroutine the resumer is about to abandon to
+// stop running: it either finishes (doneCh) or yields and parks on its resume
+// channel (yieldCh). Until one of those happens its goroutine is still
+// executing Lua against the globals, tables and string cache the resumer shares
+// with it, and returning to the resumer's own bytecode would put two goroutines
+// into one VM family's state at once.
+//
+// Every caller reaches here because the family's context has been cancelled,
+// which the coroutine's VM observes at its own next interrupt poll, so the wait
+// normally ends within a few instructions. coroutineStopGrace is the backstop.
+func awaitCoroutineStop(co *Coroutine) {
+	timer := time.NewTimer(coroutineStopGrace)
+	defer timer.Stop()
+	select {
+	case <-co.doneCh:
+	case <-co.yieldCh:
+		// It yielded on the way out: parked on resumeCh, not running, which is
+		// all this wait needs. Taking the value off the channel is what unblocks
+		// it, so this receive is not just an observation — the yielded values
+		// are consumed and dropped here, together with the abandoned resume that
+		// was the only thing that would ever have returned them.
+	case <-timer.C:
 	}
 }
 
@@ -830,6 +953,9 @@ func coWrap(v *vm.VM) int {
 			return len(result)
 		case <-ctxDone(v):
 			restoreCallerStatus()
+			// See coResume: the coroutine's goroutine has to stop before this
+			// one goes back to the family's shared state.
+			awaitCoroutineStop(co)
 			panic("execution interrupted: " + v.Context().Err().Error())
 		}
 	}, 1) // 1 upvalue: the wrapped coroutine thread

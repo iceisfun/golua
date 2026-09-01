@@ -171,6 +171,9 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 // When neither ctx nor MaxInstructions is set, this is essentially free
 // (two comparisons returning nil).
 func (vm *VM) CheckInterrupt() error {
+	if vm.terminated.Load() {
+		return errTerminated
+	}
 	if vm.ctx != nil {
 		if err := vm.ctx.Err(); err != nil {
 			return fmt.Errorf("execution interrupted: %w", err)
@@ -677,11 +680,11 @@ mainLoop:
 					return nil, err
 				}
 				vm.stack[frame.base+a] = val
-			} else if table.IsString() && vm.stringMeta != nil {
+			} else if table.IsString() && vm.state.stringMeta != nil {
 				// String method call: resolve __index with the same chaining
 				// and error reporting as the plain field path (luaV_finishget),
 				// so ("s"):foo() and ("s").foo agree on non-table __index.
-				idx := vm.stringMeta.Get(metaIndex)
+				idx := vm.state.stringMeta.Get(metaIndex)
 				if idx.IsNil() {
 					return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
 				}
