@@ -2,8 +2,10 @@ package vm
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"strings"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -42,14 +44,26 @@ import (
 // Two optimizations now rest on those invariants and would fail silently if
 // they were weakened, so weaken them nowhere:
 //
-//   - nextHashAfter caches the slot of the last key next() returned and reuses
-//     it whenever that slot still holds the key being asked about. That is only
-//     the right answer because (1) guarantees no *other* slot holds an equal
-//     key whose successor would differ.
+//   - keySlot resolves a key to the ordered-keys slot it occupies — that is
+//     how next() resumes a traversal from the key it was handed — and believes
+//     a recorded slot as soon as that slot is found to hold the key. That is
+//     only the right answer because (1) guarantees no *other* slot holds an
+//     equal key whose successor would differ.
 //   - the deadIndex (see below) identifies tombstones by their normalized key
 //     rather than by slot, so two slots holding the same key would make a
 //     revival free the wrong one. It is built and discarded on the strength of
 //     (2), which tells it how many tombstones to expect.
+//
+// A third invariant belongs to the array part:
+//
+//	(3) an ordered-keys entry for an integer k in 1..len(t.array) is never
+//	    live in the hash part. A key lives in the array part or in the hash
+//	    part, never in both, so an index the array covers can only appear in
+//	    t.keys as a tombstone. Set/SetInt keep it by leaving a hash-resident
+//	    index where it is instead of promoting it on a plain assignment, and
+//	    the promotion paths tombstone the slots the array absorbs. It is what
+//	    lets next() cross from the array part into the hash part without
+//	    carrying any per-traversal state on the table.
 //
 // String keys are stored in a separate strHash map, and integer keys in a
 // separate intHash map, to avoid the overhead of boxing Go strings/int64s
@@ -62,13 +76,14 @@ type Table struct {
 	intHash   map[int64]Value  // associative part for integer keys outside array range (avoids any boxing)
 	keys      []Value          // insertion-ordered hash keys (may contain dead keys)
 	deadKeys  int              // count of keys in t.keys not in t.hash/strHash/intHash/sstr
-	iterBound int              // upper bound on keys slice for next() iteration (0 = no limit)
-	iterIdx   int32            // t.keys index of the entry next() returned last (probe hint)
+	iterBound int32            // keys-slice window a traversal may see (0 = no limit); atomic
+	iterShape int32            // len(keys)+deadKeys when that window was opened; atomic
+	iterCur   int32            // slot a traversal reached last, biased by one (0 = none); atomic
 	noPromote int32            // intHash size at which array promotion was last declined
-	iterHash  bool             // true after current next() traversal enters hash part
 	isThread  bool             // true if this table represents a coroutine thread
 	metatable LuaTable         // per-table metatable for operator/event overrides
 	extra     *tableExtra      // lazily allocated; holds rarely-used thread/weak state
+	kidx      unsafe.Pointer   // *keyIndex, read and written atomically; nil until a traversal builds one
 }
 
 // tableExtra holds Table fields that only a tiny minority of tables ever use:
@@ -359,6 +374,217 @@ func (t *Table) dropDeadKey() {
 	}
 }
 
+// keyIndex maps an ordered-keys entry to the slot it occupies, so that next()
+// can resume a traversal from the key it was handed without scanning t.keys.
+// It is golua's stand-in for the way reference Lua recovers the same position
+// by re-hashing the key (luaH_next/findindex in ltable.c): t.keys is an
+// ordered slice with no lookup structure of its own, so one is kept beside it.
+//
+// It mirrors the storage split — string and integer keys stay unboxed — and is
+// built lazily by the *traversal*, never by a mutation: a table that is never
+// iterated has no index, allocates nothing for one, and pays nothing to keep
+// one in step. Once a traversal has built one, the mutation paths that own
+// t.keys keep it current in O(1) per key (appendKey, takeKeySlot); the two
+// bulk operations that renumber slots wholesale drop it instead, and the next
+// traversal rebuilds it.
+//
+// The index is a pure accelerator. Every slot it reports is confirmed against
+// t.keys before use, a miss falls back to the scan, and no answer changes if
+// the index is absent, so it can be dropped at any time. It is published
+// through an atomic pointer because building it happens on the traversal path,
+// and several goroutines may traverse a shared table at once.
+type keyIndex struct {
+	str   map[string]int32 // slot of each string key
+	ints  map[int64]int32  // slot of each integer key
+	other map[any]int32    // slot of each bool/float/pointer key, in hashKey form
+}
+
+// keyIndexThreshold is the t.keys length below which slot lookup stays
+// index-free. On a short keys slice the scan beats building and probing maps,
+// so the overwhelming majority of tables never build an index even when they
+// are iterated. A variable only so that tests can force either path and check
+// the two agree; never written outside tests.
+var keyIndexThreshold = 16
+
+func (x *keyIndex) set(k Value, slot int) {
+	switch k.typ {
+	case typeString:
+		if x.str == nil {
+			x.str = make(map[string]int32)
+		}
+		x.str[k.asString()] = int32(slot)
+	case typeInt:
+		if x.ints == nil {
+			x.ints = make(map[int64]int32)
+		}
+		x.ints[k.ival()] = int32(slot)
+	default:
+		if x.other == nil {
+			x.other = make(map[any]int32)
+		}
+		x.other[hashKey(k)] = int32(slot)
+	}
+}
+
+func (x *keyIndex) remove(k Value) {
+	switch k.typ {
+	case typeString:
+		delete(x.str, k.asString())
+	case typeInt:
+		delete(x.ints, k.ival())
+	default:
+		if x.other != nil {
+			delete(x.other, hashKey(k))
+		}
+	}
+}
+
+// lookup returns the slot recorded for k, if the index holds one. The caller
+// must still confirm that the slot holds k.
+func (x *keyIndex) lookup(k Value) (int, bool) {
+	switch k.typ {
+	case typeString:
+		s, ok := x.str[k.asString()]
+		return int(s), ok
+	case typeInt:
+		s, ok := x.ints[k.ival()]
+		return int(s), ok
+	default:
+		if x.other == nil {
+			return 0, false
+		}
+		s, ok := x.other[hashKey(k)]
+		return int(s), ok
+	}
+}
+
+// keyTracking returns the table's slot index if one has been built, or nil.
+// The three accessors here use the raw atomic pointer routines rather than
+// atomic.Pointer[keyIndex]: the generic wrapper's methods take the address of
+// the field without the //go:noescape annotation the raw ones carry, which
+// makes the whole Table escape at every call site that touches the index.
+func (t *Table) keyTracking() *keyIndex {
+	return (*keyIndex)(atomic.LoadPointer(&t.kidx))
+}
+
+// dropKeyIndex discards the slot index. The two bulk operations that renumber
+// slots wholesale (promoteIntKeysTo compacting t.keys, and weak-mode teardown
+// emptying it) call it: dropping once is O(1), and until a traversal wants it
+// again slot lookup simply falls back to the scan. Rebuilding here instead
+// would put the cost of the index on the mutation path, which is exactly what
+// the lazy build exists to avoid.
+func (t *Table) dropKeyIndex() {
+	atomic.StorePointer(&t.kidx, nil)
+}
+
+// buildKeyIndex records every ordered-keys slot in a fresh index and publishes
+// it. Called only from keySlot, i.e. only by a traversal, and only once per
+// index: the CAS lets two goroutines that start traversing the same fresh
+// table race to build one without either losing an entry, since both build the
+// same mapping from the same keys slice.
+func (t *Table) buildKeyIndex() *keyIndex {
+	x := &keyIndex{}
+	for i := range t.keys {
+		x.set(t.keys[i], i)
+	}
+	if !atomic.CompareAndSwapPointer(&t.kidx, nil, unsafe.Pointer(x)) {
+		if cur := t.keyTracking(); cur != nil {
+			return cur
+		}
+	}
+	return x
+}
+
+// keySlot returns the ordered-keys slot holding k — live entry or tombstone —
+// or ok=false when the table has no slot for k at all.
+//
+// Three ways to answer, each confirmed against t.keys before it is believed,
+// so none of them can change what next() returns — only how long it takes to
+// say it:
+//
+//   - the cursor hint, which a single sequential walk hits every step, and
+//     which costs nothing to be wrong about;
+//   - the slot index, if a traversal has had reason to build one. Being state
+//     on the table rather than on the walker, it serves any number of
+//     concurrent or interleaved traversals equally — including two goroutines
+//     walking the same table and so trading the single hint back and forth;
+//   - the scan, for a short keys slice, for a table with no index, and
+//     whenever both of the above miss.
+//
+// It never builds an index itself; slotForTraversal is the only thing that
+// does, so a mutation that lands here cannot saddle the table with one.
+//
+// The scan deliberately covers the whole slice rather than a traversal window:
+// a key the table holds must be found whatever window an earlier, abandoned
+// traversal left behind, or next() would reject a key that is plainly present.
+func (t *Table) keySlot(k Value) (int, bool) {
+	if c := int(atomic.LoadInt32(&t.iterCur)) - 1; c >= 0 && c < len(t.keys) && t.keys[c].RawEqual(k) {
+		return c, true
+	}
+	if slot, ok := t.indexedSlot(k, t.keyTracking()); ok {
+		return slot, true
+	}
+	return t.scanForSlot(k)
+}
+
+// indexedSlot answers from the slot index, confirming the slot it names really
+// holds k. A nil index, a key the index has never seen, and a slot whose key
+// has since changed all read the same way: no answer, fall through.
+func (t *Table) indexedSlot(k Value, x *keyIndex) (int, bool) {
+	if x == nil {
+		return -1, false
+	}
+	if slot, ok := x.lookup(k); ok && slot < len(t.keys) && t.keys[slot].RawEqual(k) {
+		return slot, true
+	}
+	return -1, false
+}
+
+// scanForSlot is the answer of last resort: a linear walk of the whole ordered
+// keys slice. It is what every other path is measured against, and what makes
+// them all safe to be wrong.
+func (t *Table) scanForSlot(k Value) (int, bool) {
+	for i, existing := range t.keys {
+		if existing.RawEqual(k) {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+// slotForTraversal is keySlot for a traversal step: the same answer, but it
+// builds the slot index the first time the cursor hint fails to produce one.
+//
+// That is the whole trigger, and it is what keeps the index off the tables that
+// do not need it. One walk over a table, however long, keeps hitting its own
+// hint and never builds an index at all — so an ordinary
+//
+//	for k, v in pairs(t)
+//
+// over a table of any size costs no memory and no work beyond what the cursor
+// alone cost. The hint stops answering exactly when more than one traversal is
+// live over the table (nested loops, two goroutines, a walk resumed from a key
+// that came from somewhere else), and that is precisely the case where a scan
+// of t.keys per step would make every walk quadratic. So the index is paid for
+// by, and only by, the traversals that need it.
+//
+// Only traversal steps call this. keySlot itself never builds, so the mutation
+// path that uses it (removeLiveKey) cannot saddle a table nobody has walked
+// with an index.
+func (t *Table) slotForTraversal(k Value) (int, bool) {
+	if c := int(atomic.LoadInt32(&t.iterCur)) - 1; c >= 0 && c < len(t.keys) && t.keys[c].RawEqual(k) {
+		return c, true
+	}
+	x := t.keyTracking()
+	if x == nil && len(t.keys) > keyIndexThreshold {
+		x = t.buildKeyIndex()
+	}
+	if slot, ok := t.indexedSlot(k, x); ok {
+		return slot, true
+	}
+	return t.scanForSlot(k)
+}
+
 // ensureExtra returns the table's extra block, allocating it on first use.
 func (t *Table) ensureExtra() *tableExtra {
 	if t.extra == nil {
@@ -595,11 +821,13 @@ func (t *Table) EnsureArraySize(n int) {
 // costs one nil-map check there; only an embedder growing a populated table
 // pays for the walk.
 func (t *Table) absorbHashIndices(n int) {
+	moved := false
 	for k, v := range t.intHash {
 		if k >= 1 && k <= int64(n) && !v.IsNil() {
 			t.array[k-1] = v
 			delete(t.intHash, k)
 			t.removeLiveKey(Value{typ: typeInt, n: uint64(k)})
+			moved = true
 		}
 	}
 	for k, v := range t.hash {
@@ -607,7 +835,11 @@ func (t *Table) absorbHashIndices(n int) {
 			t.array[ik-1] = v
 			delete(t.hash, k)
 			t.removeLiveKey(Value{typ: typeInt, n: uint64(ik)})
+			moved = true
 		}
+	}
+	if moved {
+		t.dropAllDeadKeys()
 	}
 }
 
@@ -647,6 +879,36 @@ func (t *Table) ensureIntHash() map[int64]Value {
 		}
 	}
 	return t.intHash
+}
+
+// updateHashResidentInt stores value under integer key i if — and only if — i
+// already has a live entry in the hash part, and reports whether it did.
+//
+// Both array-append paths consult it before growing the array over index i. A
+// key that already lives in the hash part keeps its ordered-keys slot rather
+// than being promoted into the array, which is what upholds invariant (3):
+// no live ordered-keys entry for an index the array covers. That is also what
+// reference Lua does, where a node key moves into the array part only during a
+// rehash. The entry keeps its iteration position, so a traversal in flight
+// over it is undisturbed.
+//
+// Cheap on the paths that matter: an array-only table has both maps nil, so
+// this is two nil checks — and it replaces the setIntHash(i, Nil) probe the
+// promote-then-clear code did immediately afterwards anyway.
+func (t *Table) updateHashResidentInt(i int64, value Value) bool {
+	if t.intHash != nil {
+		if _, ok := t.intHash[i]; ok {
+			t.intHash[i] = value
+			return true
+		}
+	}
+	if t.hash != nil {
+		if _, ok := t.hash[i]; ok {
+			t.hash[i] = value
+			return true
+		}
+	}
+	return false
 }
 
 // setIntHash inserts, updates, or deletes an integer hash entry while keeping
@@ -779,6 +1041,11 @@ func (t *Table) promoteIntKeysTo(size int) {
 		// Slot indices shifted, so the "no tombstone below here" bound is void.
 		d.scan = 0
 	}
+	// The same shift invalidates every recorded slot. Dropping the index is
+	// O(1); the next traversal rebuilds it, and one that never comes never
+	// pays. This runs only at integer-hash doubling points, so the rebuild is
+	// amortized over the inserts that provoked it.
+	t.dropKeyIndex()
 	t.noPromote = 0
 	// Absorb whatever now sits directly above the enlarged array. Without
 	// this, a backward fill (t[20]..t[1]) that promotes at 16 would strand
@@ -981,7 +1248,7 @@ func (t *Table) reuseOrAppendKey(k Value) {
 			if len(t.keys) <= deadIndexThreshold {
 				for i, hk := range t.keys {
 					if _, alive := t.getKeyValue(hk); !alive {
-						t.keys[i] = k
+						t.takeKeySlot(i, hk, k)
 						t.deadKeys--
 						return
 					}
@@ -995,8 +1262,9 @@ func (t *Table) reuseOrAppendKey(k Value) {
 		// walks t.keys once in total instead of once per inserted key.
 		for i := d.scan; i < len(t.keys); i++ {
 			if d.has(t.keys[i]) {
-				d.remove(t.keys[i])
-				t.keys[i] = k
+				old := t.keys[i]
+				d.remove(old)
+				t.takeKeySlot(i, old, k)
 				d.scan = i + 1
 				t.dropDeadKey()
 				return
@@ -1017,32 +1285,67 @@ func (t *Table) appendKey(k Value) {
 	if c := cap(old); c > 0 && c <= skInline && len(old) == c {
 		clear(old[:c])
 	}
+	// Keep an existing slot index current; never build one here. A table
+	// nobody iterates must not pay for an index it will never read, which is
+	// why the build lives on the traversal path alone.
+	if x := t.keyTracking(); x != nil {
+		x.set(k, len(t.keys)-1)
+	}
 }
 
-// removeLiveKey drops a live key from the ordered keys slice. Used by
-// rehashToArray when a hash entry is promoted into the array part: the entry
-// exists in the hash storage at that moment, so its keys slot is not a
-// tombstone and deadKeys must stay put. Deliberately storage-independent —
-// an earlier version probed liveness with getKeyValue, which the caller had
-// already invalidated by deleting the map entry first, so every promotion
-// decremented deadKeys for a live key. That drove deadKeys negative, disabled
+// takeKeySlot overwrites the tombstone slot i, held by key old, with the new
+// key k, keeping the slot index in step. The slot number does not change, so
+// an in-flight traversal keeps its position.
+func (t *Table) takeKeySlot(i int, old, k Value) {
+	t.keys[i] = k
+	if x := t.keyTracking(); x != nil {
+		x.remove(old)
+		x.set(k, i)
+	}
+}
+
+// removeLiveKey retires the ordered-keys slot of a key whose value has just
+// moved into the array part. Used by rehashToArray and absorbHashIndices: the
+// caller has already deleted the hash entry, so the slot must stop counting as
+// live — either by disappearing (when it is the last slot) or by becoming a
+// tombstone, which is what upholds invariant (3).
+//
+// Deliberately storage-independent: it must not probe liveness with
+// getKeyValue, because the caller invalidated that probe by deleting the map
+// entry first. An earlier version did, so every promotion decremented deadKeys
+// for a key that was never a tombstone. That drove deadKeys negative, disabled
 // the tombstone-revival scans, and let a re-inserted key be appended to
-// t.keys a second time — a duplicate key makes nextHashAfter return a key as
-// its own successor and pairs() spins forever.
+// t.keys a second time — a duplicate key makes next() return a key as its own
+// successor and pairs() spins forever.
 func (t *Table) removeLiveKey(k Value) {
-	for i, existing := range t.keys {
-		if existing.RawEqual(k) {
-			n := len(t.keys)
-			copy(t.keys[i:], t.keys[i+1:])
-			t.keys[n-1] = Nil // drop the duplicated tail reference
-			t.keys = t.keys[:n-1]
-			// The splice shifts every slot after i down by one, so the
-			// tombstone index's "no dead slot below here" bound no longer
-			// holds; restart it.
-			if d := t.deadTracking(); d != nil {
-				d.scan = 0
-			}
-			return
+	i, ok := t.keySlot(k)
+	if !ok {
+		return
+	}
+	if i == len(t.keys)-1 {
+		// The tail: drop the slot outright. Nothing is renumbered, so the
+		// slot index stays valid, and a drain that consumes keys in reverse
+		// insertion order — the descending fill t[n], t[n-1], ..., t[1], whose
+		// final store promotes the whole hash part into the array — leaves an
+		// empty keys slice behind exactly as the old splice did.
+		if x := t.keyTracking(); x != nil {
+			x.remove(k)
+		}
+		t.keys[i] = Nil // drop the reference the shortened slice still pins
+		t.keys = t.keys[:i]
+		return
+	}
+	// Otherwise leave the slot where it is and let it become a tombstone. The
+	// key's value now lives in the array part, so getKeyValue already reads
+	// the slot as dead and only the count has to follow. Splicing instead
+	// would renumber every later slot: a copy per promoted key (quadratic over
+	// an ascending drain) and a slot index invalidated wholesale each time.
+	// reuseOrAppendKey hands the slot to the next new key.
+	t.deadKeys++
+	if d := t.deadTracking(); d != nil {
+		d.add(k)
+		if i < d.scan {
+			d.scan = i
 		}
 	}
 }
@@ -1104,6 +1407,30 @@ func (t *Table) checkInvariants() error {
 	}
 	if dead != t.deadKeys {
 		return fmt.Errorf("deadKeys = %d, but keys slice holds %d tombstones", t.deadKeys, dead)
+	}
+	if x := t.keyTracking(); x != nil {
+		if n := len(x.str) + len(x.ints) + len(x.other); n != len(t.keys) {
+			return fmt.Errorf("key index holds %d slots, but keys slice holds %d", n, len(t.keys))
+		}
+		for i, k := range t.keys {
+			slot, ok := x.lookup(k)
+			if !ok {
+				return fmt.Errorf("key index has no slot for %v (at %d)", hashKey(k), i)
+			}
+			if slot != i {
+				return fmt.Errorf("key index puts %v at slot %d, keys slice has it at %d", hashKey(k), slot, i)
+			}
+		}
+	}
+	for i, k := range t.keys {
+		if k.typ != typeInt {
+			continue
+		}
+		if n := k.ival(); n >= 1 && int(n) <= len(t.array) {
+			if _, alive := t.getKeyValue(k); alive {
+				return fmt.Errorf("key %d is live in the hash part at slot %d, but the array part covers it", n, i)
+			}
+		}
 	}
 	return nil
 }
@@ -1227,6 +1554,11 @@ func (t *Table) Set(key, value Value) error {
 					}
 					return nil
 				} else if idx == len(t.array)+1 && !value.IsNil() {
+					// A key already resident in the hash part stays there and
+					// keeps its ordered-keys slot (invariant (3)).
+					if t.updateHashResidentInt(i, value) {
+						return nil
+					}
 					// Extend array. Cap growth to bound runaway tables that
 					// would otherwise reach Go's runtime.throw("out of memory")
 					// from runtime.growslice (uncatchable by recover/pcall).
@@ -1235,9 +1567,6 @@ func (t *Table) Set(key, value Value) error {
 					}
 					t.growArrayForAppend()
 					t.array = append(t.array, value)
-					// If this key previously existed in integer hash, clear it to
-					// avoid dual storage (array + hash) for the same numeric index.
-					t.setIntHash(i, Nil)
 					// Move any hash entries that now belong in array
 					t.rehashToArray()
 					return nil
@@ -1284,6 +1613,11 @@ func (t *Table) SetInt(i int, value Value) {
 		return
 	}
 	if i == len(t.array)+1 && !value.IsNil() {
+		// A key already resident in the hash part stays there and keeps its
+		// ordered-keys slot (invariant (3)).
+		if t.updateHashResidentInt(int64(i), value) {
+			return
+		}
 		// Cap growth to bound runaway tables that would otherwise reach
 		// Go's runtime.throw("out of memory") from runtime.growslice
 		// (uncatchable by recover/pcall). SetInt has no error return so
@@ -1294,9 +1628,6 @@ func (t *Table) SetInt(i int, value Value) {
 		}
 		t.growArrayForAppend()
 		t.array = append(t.array, value)
-		// Clear stale integer-hash entry for this key to prevent duplicate
-		// traversal via pairs/next after promotion into the array part.
-		t.setIntHash(int64(i), Nil)
 		t.rehashToArray()
 		return
 	}
@@ -1371,6 +1702,7 @@ func (t *Table) shrinkArray() {
 
 // rehashToArray moves sequential integer keys from hash to array.
 func (t *Table) rehashToArray() {
+	moved := false
 	for {
 		// Respect the array-size cap. Promotion from the hash part must not
 		// grow the array beyond maxTableEntries: leftover sequential keys stay
@@ -1388,6 +1720,7 @@ func (t *Table) rehashToArray() {
 				t.array = append(t.array, v)
 				delete(t.intHash, nextIdx)
 				t.removeLiveKey(nextIdxKey)
+				moved = true
 				continue
 			}
 		}
@@ -1397,11 +1730,47 @@ func (t *Table) rehashToArray() {
 				t.array = append(t.array, v)
 				delete(t.hash, nextIdx)
 				t.removeLiveKey(nextIdxKey)
+				moved = true
 				continue
 			}
 		}
 		break
 	}
+	if moved {
+		t.dropAllDeadKeys()
+	}
+}
+
+// dropAllDeadKeys empties the ordered-keys slice when a promotion has just
+// left every slot in it a tombstone. Promotion tombstones a slot rather than
+// splicing it out, which is what keeps the drain linear and the slot index
+// intact; a fill that interleaves hash-resident and array-resident indices
+// (t[2], t[4], ... then t[1], t[3], ...) ends with a tombstone per promoted
+// key and nothing else, and those would then be scanned by every later
+// traversal on its way from the array part to an empty hash part.
+//
+// Only a promotion may call this, and only when nothing live is left: a
+// traversal parked on a hash key keeps that key live, so it cannot lose its
+// position here, and one parked on an array index finds the hash part empty
+// either way. Deleting keys never reaches it, so an ordinary
+// delete-everything leaves its tombstones exactly where next() expects them.
+func (t *Table) dropAllDeadKeys() {
+	if t.deadKeys == 0 || t.deadKeys != len(t.keys) {
+		return
+	}
+	clear(t.keys) // release the boxed keys the empty slice would still pin
+	t.keys = t.keys[:0]
+	t.deadKeys = 0
+	t.clearDeadTracking()
+	t.dropKeyIndex()
+	// The window and the cursor hint both describe slots of the slice that
+	// has just gone away. Neither can mislead a step — an empty slice bounds
+	// every window at zero and answers no cursor probe — but leaving them
+	// standing would have the next traversal open its window against a shape
+	// recorded for a slice that no longer exists.
+	atomic.StoreInt32(&t.iterBound, 0)
+	atomic.StoreInt32(&t.iterShape, 0)
+	atomic.StoreInt32(&t.iterCur, 0)
 }
 
 // Len returns the length of the table (# operator).
@@ -1601,6 +1970,7 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 	t.keys = nil
 	t.deadKeys = 0
 	t.clearDeadTracking()
+	t.dropKeyIndex()
 
 	// Publish the weak backend and register for the global sweep atomically
 	// under the registry lock. sweepAllWeakTables() may run concurrently in a
@@ -1636,24 +2006,46 @@ func (t *Table) disableWeakMode() {
 // The hash part is traversed in insertion order so that next() is
 // deterministic as long as the table is not modified.
 // Array entries with nil values (holes) are skipped, matching Lua semantics.
+//
+// Where a traversal resumes is decided entirely by the key handed back to it,
+// the way reference Lua's luaH_next recovers the position by re-hashing the
+// key: an index the array part covers resumes in the array part, and every
+// other key resumes at its ordered-keys slot, found by keySlot. No traversal
+// owns any state on the table, so any number of them — nested, interleaved,
+// abandoned, or in different goroutines — can be in flight over one table at
+// once without taking a key from each other or failing to finish.
+//
+// Two things are written to the table, both atomically so that concurrent
+// traversals of a shared table do not race, and neither of which can make a
+// traversal skip a key:
+//
+//   - the cursor hint (publishCursor), once per step. It is never trusted
+//     without first finding the caller's key in the slot it names, so the
+//     worst a stale or stolen hint costs is a slower step.
+//   - the traversal window (setIterBound), at most twice per traversal and
+//     never per step. A fresh traversal opens its own window over the whole
+//     keys slice, and a window is honoured only for a key that sits inside it,
+//     so one left behind by an abandoned traversal can neither truncate nor
+//     reject a walk that starts after it.
 func (t *Table) Next(key Value) (Value, Value, error) {
 	if ws := t.weakBackend(); ws != nil {
 		return ws.next(key)
 	}
 	if key.IsNil() {
-		// Start iteration: snapshot the hash key count so that keys added
-		// during traversal don't extend iteration indefinitely.
-		t.iterBound = len(t.keys)
-		t.iterHash = false
+		// Start of a traversal: record the ordered-keys length so that keys
+		// appended while it is in flight do not extend it indefinitely.
+		n := len(t.keys)
 		// Start iteration: find first non-nil array entry
 		if kv, vv, ok := t.nextArrayEntry(0); ok {
+			t.setIterBound(n)
 			return kv, vv, nil
 		}
 		// First live hash entry
-		if kv, vv, ok := t.firstLiveHashEntry(); ok {
+		if kv, vv, ok := t.firstLiveHashEntry(n); ok {
+			t.setIterBound(n)
 			return kv, vv, nil
 		}
-		t.iterBound = 0
+		t.finishTraversal()
 		return Nil, Nil, nil
 	}
 
@@ -1662,29 +2054,22 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 	// float that happens to represent an integer).  Lua 5.4's next() does
 	// NOT coerce float keys — next(t, 1.0) errors even when t[1] exists.
 	if key.IsInt() {
-		if i := key.AsInt(); i >= 1 && int(i) <= len(t.array) {
+		i := key.AsInt()
+		if i >= 1 && int(i) <= len(t.array) {
 			// Currently in array part — find next non-nil entry
 			if kv, vv, ok := t.nextArrayEntry(int(i)); ok {
 				return kv, vv, nil
 			}
-			// If this numeric key was being traversed through the hash part
-			// (e.g. it was promoted into array during iteration), continue from
-			// its hash position instead of restarting hash traversal.
-			if t.iterHash {
-				if kv, vv, ok := t.nextHashAfter(key); ok {
-					if kv.IsNil() {
-						t.iterHash = false
-					}
-					return kv, vv, nil
-				}
-			}
-			if kv, vv, ok := t.firstLiveHashEntry(); ok {
-				t.iterHash = true
+			// The array part is exhausted, so the hash part begins, at its
+			// first slot. Invariant (3) is what makes that unconditional: an
+			// ordered-keys entry for an index the array covers is never live,
+			// so it is never a key a traversal was handed, and there is no
+			// hash position to carry over from.
+			if kv, vv, ok := t.firstLiveHashEntry(t.iterWindow()); ok {
 				return kv, vv, nil
 			}
 			// No more entries.
-			t.iterBound = 0
-			t.iterHash = false
+			t.finishTraversal()
 			return Nil, Nil, nil
 		}
 		// The key may have been a valid array index before the array
@@ -1697,21 +2082,14 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 		// reserved an array but the key landed in the hash), advance
 		// past it via nextHashAfter to avoid returning the same key
 		// and looping forever.
-		if i := key.AsInt(); i >= 1 && int(i) <= cap(t.array) {
+		if i >= 1 && int(i) <= cap(t.array) {
 			if kv, vv, ok := t.nextHashAfter(key); ok {
-				if kv.IsNil() {
-					t.iterHash = false
-				} else {
-					t.iterHash = true
-				}
 				return kv, vv, nil
 			}
-			if kv, vv, ok := t.firstLiveHashEntry(); ok {
-				t.iterHash = true
+			if kv, vv, ok := t.firstLiveHashEntry(t.iterWindow()); ok {
 				return kv, vv, nil
 			}
-			t.iterBound = 0
-			t.iterHash = false
+			t.finishTraversal()
 			return Nil, Nil, nil
 		}
 	}
@@ -1730,12 +2108,8 @@ func (t *Table) Next(key Value) (Value, Value, error) {
 
 	// In hash part — find current key in ordered keys, return the next live one.
 	if kv, vv, ok := t.nextHashAfter(key); ok {
-		if kv.IsNil() {
-			t.iterHash = false
-		}
 		return kv, vv, nil
 	}
-	t.iterHash = false
 	return Nil, Nil, fmt.Errorf("invalid key to 'next'")
 }
 
@@ -1760,18 +2134,132 @@ func (t *Table) nextArrayEntry(start int) (Value, Value, bool) {
 	return Nil, Nil, false
 }
 
-// firstLiveHashEntry returns the first live (non-dead) hash entry, skipping
-// tombstones left by deletions during iteration. Respects iterBound so that
-// keys added during iteration are not visited.
-func (t *Table) firstLiveHashEntry() (Value, Value, bool) {
-	bound := len(t.keys)
-	if t.iterBound > 0 && t.iterBound < bound {
-		bound = t.iterBound
+// publishCursor records the slot next() has just reached. It is a hint and
+// nothing else: keySlot believes it only after finding the key it was asked
+// about in it, so a hint overwritten by another traversal, or left over from
+// one abandoned long ago, costs at most an index probe or a scan. The store is
+// atomic so that several goroutines may walk one shared table without racing,
+// and it is the one thing a traversal writes per step — the slot index is what
+// keeps the step O(1) for every walker that does not own the hint.
+func (t *Table) publishCursor(slot int) {
+	if slot < math.MaxInt32 {
+		atomic.StoreInt32(&t.iterCur, int32(slot+1))
+	}
+}
+
+// setIterBound publishes the ordered-keys window a fresh traversal may see, or
+// 0 once a traversal has run out of entries. It is written at most twice per
+// traversal — never per step — and atomically, so concurrent read-only
+// traversals of one shared table neither race nor disturb each other: with the
+// table unmodified every writer stores the same length, and 0 ("no window")
+// describes exactly the same slots as that length.
+func (t *Table) setIterBound(n int) {
+	if n > math.MaxInt32 {
+		n = 0 // no window at all, rather than a truncated one
+	}
+	if int(atomic.LoadInt32(&t.iterBound)) != n {
+		atomic.StoreInt32(&t.iterBound, int32(n))
+	}
+	if shape := t.keysShape(); int(atomic.LoadInt32(&t.iterShape)) != shape {
+		atomic.StoreInt32(&t.iterShape, int32(shape))
+	}
+}
+
+// keysShape summarises the ordered-keys slice in one number: it changes on
+// every append, every delete that leaves a tombstone, and every insert that
+// takes a tombstone's slot over. Equality with the value recorded when a
+// window was opened is what finishTraversal reads as "nothing has moved under
+// anyone's feet since". Clamped so a slice longer than an int32 simply never
+// compares equal, which errs towards keeping the window.
+func (t *Table) keysShape() int {
+	n := len(t.keys) + t.deadKeys
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return n
+}
+
+// finishTraversal drops the window of a traversal that has just run out of
+// entries, so that a later probe of the same table is not truncated by a
+// window it never opened.
+//
+// It gives the window up only when the ordered-keys slice is exactly as it was
+// when the window opened — same length, same tombstone count — so nothing was
+// appended, deleted, or slotted into a tombstone while the traversal ran. Both
+// halves matter: an insert that takes over a tombstone's slot leaves the
+// length unchanged while still handing a walk a key it has not seen.
+//
+// Otherwise the window stays. Traversals share one window per table — that is
+// what makes it cost two stores per traversal rather than state per walk — so
+// the traversal that finishes first must not un-fence the ones still walking.
+// Dropping it there is exactly how two interleaved next() walks that each
+// insert as they go become walks with no upper bound at all, chasing their own
+// insertions forever.
+//
+// A window left standing costs a later bare next(t, k) — one with no fresh
+// next(t, nil) before it — the keys the slice grew by while the abandoned
+// traversal was in flight: the chain stops at the old window rather than at
+// the end of the slice, which on a table that doubled mid-traversal can be
+// most of it. Growing a table while a traversal over it is abandoned and then
+// resuming a bare chain into the growth is unspecified in the manual, and the
+// alternative — believing every bare chain over a table that has grown — is
+// what lets a walk chase its own insertions. The next full traversal reopens
+// the window over the whole slice, so a pairs() loop never sees this.
+func (t *Table) finishTraversal() {
+	if int(atomic.LoadInt32(&t.iterBound)) != len(t.keys) {
+		return
+	}
+	if int(atomic.LoadInt32(&t.iterShape)) != t.keysShape() {
+		return
+	}
+	t.setIterBound(0)
+}
+
+// iterWindow returns the highest ordered-keys slot the current step may look
+// at.
+//
+// A traversal is confined to the keys that existed when it started, which is
+// what keeps
+//
+//	for k in pairs(t) do t[k .. "x"] = 1 end
+//
+// terminating instead of chasing its own insertions; reference Lua bounds the
+// same loop with its fixed-size node array. A traversal that stops early — a
+// break, or the next(t) == nil emptiness probe — leaves its window behind, and
+// a bare next(t, k) with no fresh start still sees it, which is how a resumed
+// walk stays confined to what its own traversal began with. Any walk that
+// starts with next(t, nil) replaces it, so a leftover cannot truncate a walk
+// that started after it.
+//
+// A step whose key sits at or past the window is confined to the window all the
+// same. Such a step is walking outside what the window describes: the key was
+// created after the window opened, or the key the walk is parked on was deleted
+// and created again while something else took over the slot it left, which
+// moves it to the end of the slice. Widening the window for that step, or
+// leaving the step unfenced, both let a walk be refenced one slot higher every
+// time its own body appends, which is a walk with no upper bound at all.
+// Confining it to the window costs at most a step that stops earlier than the
+// slice would allow, which is unspecified territory — the walk has already
+// mutated the table it is traversing — and never lets a walk chase a slice it
+// is itself extending.
+func (t *Table) iterWindow() int {
+	n := len(t.keys)
+	if b := int(atomic.LoadInt32(&t.iterBound)); b > 0 && b < n {
+		return b
+	}
+	return n
+}
+
+// firstLiveHashEntry returns the first live (non-dead) hash entry below bound,
+// skipping tombstones left by deletions during iteration.
+func (t *Table) firstLiveHashEntry(bound int) (Value, Value, bool) {
+	if bound > len(t.keys) {
+		bound = len(t.keys)
 	}
 	for i := 0; i < bound; i++ {
 		k := t.keys[i]
 		if v, alive := t.getKeyValue(k); alive {
-			t.iterIdx = int32(i)
+			t.publishCursor(i)
 			return k, v, true
 		}
 	}
@@ -1780,48 +2268,42 @@ func (t *Table) firstLiveHashEntry() (Value, Value, bool) {
 
 // nextHashAfter returns the next live hash entry after key k.
 // If k exists and has no following live entries, returns (Nil, Nil, true).
-// If k is not found in the current hash traversal window, returns ok=false.
+// If k has no ordered-keys slot at all, returns ok=false.
+//
+// This is the only place that asks for a slot index to be built, and only
+// through slotForTraversal, which builds one just when the cursor hint stops
+// answering. An index exists because more than one traversal was walking the
+// table, never because it was filled, and a keys slice short enough to scan
+// never gets one at all.
+//
+// Soundness rests on ordered-keys invariant (1) (see the Table doc comment):
+// t.keys never holds a key twice, so the slot keySlot reports really is k's
+// slot — there cannot be another slot holding an equal key whose successor
+// would differ. Anything that reintroduces duplicate keys silently breaks this
+// as well as pairs() termination.
 func (t *Table) nextHashAfter(k Value) (Value, Value, bool) {
-	bound := len(t.keys)
-	if t.iterBound > 0 && t.iterBound < bound {
-		bound = t.iterBound
+	slot, ok := t.slotForTraversal(k)
+	if !ok {
+		return Nil, Nil, false
 	}
-	// Probe the cached slot of the entry the previous next() returned before
-	// falling back to the linear search: a sequential pairs()/next() walk
-	// always hits here, which makes a full traversal O(n) instead of O(n^2).
-	//
-	// Soundness rests on ordered-keys invariant (1) (see the Table doc
-	// comment): t.keys never holds a key twice, so the RawEqual check below
-	// proves this slot really is k's slot — there cannot be an earlier slot
-	// holding an equal key whose successor would differ. Anything that
-	// reintroduces duplicate keys silently breaks this cursor as well as
-	// pairs() termination. The hint is otherwise unvalidated state (it is not
-	// invalidated by mutation), so a miss must fall through to the full scan.
-	if ci := int(t.iterIdx); ci >= 0 && ci < bound && t.keys[ci].RawEqual(k) {
-		return t.hashEntryAfterIdx(ci, bound)
-	}
-	for i := 0; i < bound; i++ {
-		if !t.keys[i].RawEqual(k) {
-			continue
-		}
-		return t.hashEntryAfterIdx(i, bound)
-	}
-	return Nil, Nil, false
+	return t.hashEntryAfterIdx(slot, t.iterWindow())
 }
 
 // hashEntryAfterIdx returns the first live hash entry after position i in
-// t.keys, recording its slot in iterIdx so the next call can skip the search.
-// If no live entry follows, the hash traversal is complete: iterBound is reset
-// and (Nil, Nil, true) is returned.
+// t.keys. If no live entry follows, the hash traversal is complete: its window
+// is dropped and (Nil, Nil, true) is returned.
 func (t *Table) hashEntryAfterIdx(i, bound int) (Value, Value, bool) {
+	if bound > len(t.keys) {
+		bound = len(t.keys)
+	}
 	for j := i + 1; j < bound; j++ {
 		nextK := t.keys[j]
 		if v, alive := t.getKeyValue(nextK); alive {
-			t.iterIdx = int32(j)
+			t.publishCursor(j)
 			return nextK, v, true
 		}
 	}
-	t.iterBound = 0
+	t.finishTraversal()
 	return Nil, Nil, true
 }
 
