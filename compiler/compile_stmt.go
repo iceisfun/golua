@@ -568,12 +568,34 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		return false
 	}
 
+	// A bare global name is sugar for _ENV[name], so a global target also
+	// conflicts with a later target that rebinds _ENV itself: the stores run
+	// right-to-left, so _ENV would already hold the new environment by the
+	// time the global is stored. Reference Lua sees this through the table
+	// operand of the indexed target (an upvalue for a global, a register for
+	// a local _ENV) and takes a single safe copy of the environment at the
+	// point the rebinding target is parsed — after the code for every earlier
+	// target's operands, before the code for any later one. pendingGlobals
+	// holds the global targets seen since the last such copy.
+	//
+	// The name test is exact: nothing needs a copy unless some target is
+	// literally spelled _ENV, so ordinary statements never resolve a name here.
+	envTargeted := false
+	for _, target := range s.Targets {
+		if ne, ok := target.(*ast.NameExpr); ok && ne.Name == envUpvalueName {
+			envTargeted = true
+			break
+		}
+	}
+	var pendingGlobals []int
+
 	// Phase 1: Resolve LHS indexed targets' table/key operands.
 	type precomputedTarget struct {
 		tableReg int // reg holding table reference (live local or temp)
 		keyReg   int // reg holding key (-1 for field/intKey targets)
 		fieldK   int // constant index for field targets (-1 otherwise)
 		intKey   int // constant integer key for SETI (-1 if not applicable)
+		envSnap  int // reg holding the environment copy a global target stores through (-1: none)
 	}
 	precomputed := make([]precomputedTarget, nTargets)
 	tempBase := fs.freeReg
@@ -585,17 +607,31 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		case *ast.IndexExpr:
 			tReg := c.indexAssignOperand(t.Table, conflict)
 			if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
-				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: -1, intKey: int(n.Value)}
+				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: -1, intKey: int(n.Value), envSnap: -1}
 			} else {
 				kReg := c.indexAssignOperand(t.Key, conflict)
-				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1, intKey: -1}
+				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1, intKey: -1, envSnap: -1}
 			}
 		case *ast.FieldExpr:
 			tReg := c.indexAssignOperand(t.Table, conflict)
 			fK := fs.stringConstant(t.Field)
-			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK, intKey: -1}
+			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK, intKey: -1, envSnap: -1}
 		default:
-			precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: -1, intKey: -1}
+			precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: -1, intKey: -1, envSnap: -1}
+			if ne, ok := s.Targets[i].(*ast.NameExpr); ok && envTargeted {
+				switch {
+				case c.targetRebindsEnv(ne):
+					if len(pendingGlobals) > 0 {
+						snap := c.snapshotEnv(ne.P.Line)
+						for _, j := range pendingGlobals {
+							precomputed[j].envSnap = snap
+						}
+						pendingGlobals = pendingGlobals[:0]
+					}
+				case c.isGlobalName(ne.Name):
+					pendingGlobals = append(pendingGlobals, i)
+				}
+			}
 		}
 	}
 
@@ -684,7 +720,7 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 				fs.emitSetField(pc.tableReg, pc.fieldK, valBase+i, 0, storeLine)
 			}
 		} else {
-			c.assignToTarget(s.Targets[i], valBase+i, line)
+			c.assignToTarget(s.Targets[i], valBase+i, line, pc.envSnap)
 		}
 	}
 
@@ -843,9 +879,58 @@ func (c *compiler) storeValueOperand(value ast.Expr) (int, int) {
 	return c.indexAssignOperand(value, nil), 0
 }
 
+// targetRebindsEnv reports whether an assignment target rebinds the _ENV
+// variable itself, as a local or as an upvalue. Rebinding it changes the
+// table every bare global name in the same statement stores through.
+func (c *compiler) targetRebindsEnv(ne *ast.NameExpr) bool {
+	if ne.Name != envUpvalueName {
+		return false
+	}
+	fs := c.fs
+	if _, inlined := lookupInlinedAny(fs, ne.Name); inlined {
+		return false
+	}
+	if _, isLocal := fs.lookupLocal(ne.Name); isLocal {
+		return true
+	}
+	_, isUpval := c.resolveUpvalue(fs, ne.Name)
+	return isUpval
+}
+
+// isGlobalName reports whether a bare name resolves as a global (_ENV[name])
+// rather than as an inlined `<const>`, a local, or an upvalue.
+func (c *compiler) isGlobalName(name string) bool {
+	fs := c.fs
+	if _, inlined := lookupInlinedAny(fs, name); inlined {
+		return false
+	}
+	if _, isLocal := fs.lookupLocal(name); isLocal {
+		return false
+	}
+	_, isUpval := c.resolveUpvalue(fs, name)
+	return !isUpval
+}
+
+// snapshotEnv copies the current environment into a freshly reserved register
+// and returns it — the OP_MOVE/OP_GETUPVAL safe copy reference Lua emits when
+// an assignment target reads a variable a later target in the same statement
+// overwrites.
+func (c *compiler) snapshotEnv(line int) int {
+	fs := c.fs
+	reg := fs.reserveReg()
+	if envReg, ok := fs.lookupLocal(envUpvalueName); ok {
+		fs.emit(ABC(OP_MOVE, reg, envReg, 0, 0), line)
+	} else {
+		fs.emit(ABC(OP_GETUPVAL, reg, c.resolveEnv(), 0, 0), line)
+	}
+	return reg
+}
+
 // assignToTarget stores the value in srcReg into an assignment target
-// (local, upvalue, global, field, or index).
-func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
+// (local, upvalue, global, field, or index). envSnap, when >= 0, is the
+// register holding the environment a global target must store through
+// (see snapshotEnv); it is -1 for every other target.
+func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int, envSnap int) {
 	fs := c.fs
 
 	switch t := target.(type) {
@@ -871,6 +956,14 @@ func (c *compiler) assignToTarget(target ast.Expr, srcReg int, line int) {
 				return
 			}
 			fs.emit(ABC(OP_SETUPVAL, srcReg, idx, 0, 0), line)
+			return
+		}
+		// A later target in the same statement rebinds _ENV, so the
+		// environment was copied aside before the value list ran: store
+		// through the copy.
+		if envSnap >= 0 {
+			nameK := fs.stringConstant(t.Name)
+			fs.emitSetField(envSnap, nameK, srcReg, 0, line)
 			return
 		}
 		// Local _ENV: _ENV[name] via SETFIELD on local
