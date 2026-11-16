@@ -612,7 +612,7 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 				return 1
 			}
 
-			results := doFileReadFormats(v, f, formats, 1)
+			results := doFileReadFormats(v, f, formats, 2)
 			if results > 0 && v.Get(0).IsNil() {
 				if toClose {
 					f.Close(ctx)
