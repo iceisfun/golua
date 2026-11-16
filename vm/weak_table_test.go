@@ -308,3 +308,47 @@ func TestWeakTable_FloatKeysNormalized(t *testing.T) {
 		}
 	}
 }
+
+// TestWeakTable_ClearDuringTraversal checks that a field cleared during a
+// traversal stays a valid key to next(), as the manual allows, so the
+// `for k in pairs(t) do t[k] = nil end` idiom empties a weak table instead of
+// failing with "invalid key to 'next'".
+func TestWeakTable_ClearDuringTraversal(t *testing.T) {
+	for _, mode := range []string{"k", "v", "kv"} {
+		wt := makeWeakTable(mode)
+		objs := make([]*Table, 8)
+		for i := range objs {
+			objs[i] = NewEmptyTable()
+			wt.MustSet(NewTable(objs[i]), NewInt(int64(i)))
+			wt.MustSet(NewInt(int64(i+1)), NewTable(objs[i]))
+			wt.MustSet(NewString(string(rune('a'+i))), NewInt(int64(i)))
+		}
+
+		visited := 0
+		k, _, err := wt.Next(Nil)
+		for !k.IsNil() {
+			visited++
+			wt.MustSet(k, Nil)
+			if k, _, err = wt.Next(k); err != nil {
+				t.Fatalf("mode %q: next after clearing a field: %v", mode, err)
+			}
+		}
+		if visited != 3*len(objs) {
+			t.Errorf("mode %q: traversal visited %d keys, want %d", mode, visited, 3*len(objs))
+		}
+		if keys := collectNext(wt); len(keys) != 0 {
+			t.Errorf("mode %q: %d keys left after clearing, want 0", mode, len(keys))
+		}
+
+		// A cleared key can be stored again and is found and traversed.
+		wt.MustSet(NewTable(objs[3]), NewInt(30))
+		wt.MustSet(NewString("c"), NewInt(3))
+		if got := wt.Get(NewTable(objs[3])); !got.IsInt() || got.ival() != 30 {
+			t.Errorf("mode %q: revived key reads %v, want 30", mode, got)
+		}
+		if keys := collectNext(wt); len(keys) != 2 {
+			t.Errorf("mode %q: %d keys after re-storing two, want 2", mode, len(keys))
+		}
+		runtime.KeepAlive(objs)
+	}
+}

@@ -54,8 +54,10 @@ type weakEntry struct {
 	value    Value
 	valueRef weakRef // non-zero for collectable values in weak-value mode
 
-	// indexKey is the key used in ws.index for this entry, retained so that
-	// killEntry can remove it without recomputing (which might fail for dead keys).
+	// indexKey is the key used in ws.index for this entry. A dead entry keeps
+	// its index mapping, as reference Lua keeps a dead key in its node, so
+	// next() can still step past a field cleared during traversal. The
+	// mapping is removed when the slot is reused for another key.
 	indexKey any
 
 	alive bool
@@ -70,10 +72,11 @@ func newWeakStore(mode weakTableMode) *weakStore {
 }
 
 // weakKeyFor returns the lookup key for the index map.
-// For weak-key tables with collectable keys, uses uintptr to avoid
-// holding a strong reference that would prevent garbage collection.
+// Collectable keys use their address as a uintptr so the index never holds
+// a strong reference: in weak-key tables that would prevent collection, and
+// in any weak table it would pin the key of a cleared (dead) entry.
 func (ws *weakStore) weakKeyFor(key Value) any {
-	if ws.hasWeakKeys() && isCollectable(key) {
+	if isCollectable(key) {
 		return reflect.ValueOf(key.ptr).Pointer()
 	}
 	return hashKey(key)
@@ -152,9 +155,11 @@ func (ws *weakStore) set(key, value Value) error {
 	if idx, ok := ws.index[wk]; ok {
 		e := &ws.entries[idx]
 		if !e.alive {
-			// Revive dead entry.
+			// Revive dead entry. killEntry dropped its key along with
+			// its value, so store the key again.
 			e.alive = true
 			ws.dead--
+			ws.setEntryKey(e, key)
 		}
 		ws.setEntryValue(e, value)
 		return nil
@@ -169,6 +174,7 @@ func (ws *weakStore) set(key, value Value) error {
 	if ws.dead > 0 {
 		for i := range ws.entries {
 			if !ws.entries[i].alive {
+				delete(ws.index, ws.entries[i].indexKey)
 				ws.entries[i] = e
 				ws.index[wk] = i
 				ws.dead--
@@ -230,7 +236,8 @@ func (ws *weakStore) entryValue(e *weakEntry) Value {
 	return e.value
 }
 
-// killEntry marks entry at idx as dead and removes it from the index.
+// killEntry marks entry at idx as dead and drops its key and value. The entry
+// stays in the index under its indexKey (see weakEntry.indexKey).
 func (ws *weakStore) killEntry(idx int) {
 	e := &ws.entries[idx]
 	if !e.alive {
@@ -242,7 +249,6 @@ func (ws *weakStore) killEntry(idx int) {
 	e.keyRef = weakRef{}
 	e.valueRef = weakRef{}
 	ws.dead++
-	delete(ws.index, e.indexKey)
 }
 
 // next implements the pairs() iterator for weak tables.
