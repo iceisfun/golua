@@ -196,3 +196,41 @@ func TestDebugTracebackRegression_XPCallCloseErrorUsesFunctionFrameInLuaHandler(
 	`
 	runLuaWithDebug(t, source, "test_debug_traceback_xpcall_close_custom_handler", provider)
 }
+
+// The host [C] frame below the main chunk is a level of its own: a traceback
+// starting there prints it, and one starting past it prints nothing.
+func TestDebugTracebackRegression_LevelAtHostFrame(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `assert(debug.traceback("m", 2) == "m\nstack traceback:\n\t[C]: in ?")
+assert(debug.traceback("m", 3) == "m\nstack traceback:")
+local function f() return debug.traceback("f", 3) end
+assert(f() == "f\nstack traceback:\n\t[C]: in ?")
+`
+	runLuaWithDebug(t, source, "test_debug_traceback_level_at_host_frame", provider)
+}
+
+// Reference luaL_traceback prints a trace of up to 22 levels whole, and on
+// longer ones reports one fewer skipped level than it omits. golua truncated
+// a 22-level trace and reported the true count; print what reference prints.
+func TestDebugTracebackRegression_SkipCountMatchesReference(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `local function deep(n)
+  if n == 0 then return debug.traceback("d") end
+  return (deep(n - 1))
+end
+local function levels(tb)
+  local n = 0
+  for _ in tb:gmatch("\n\t[^.\n]") do n = n + 1 end
+  return n, tb:match("skipping (%d+) levels")
+end
+-- traceback level 1 is deep(0); with the main chunk and the host frame
+-- below, deep(n) yields n + 3 levels.
+local n, skip = levels(deep(19))
+assert(n == 22 and skip == nil, n .. " " .. tostring(skip))
+n, skip = levels(deep(20))
+assert(n == 21 and skip == "1", n .. " " .. tostring(skip))
+n, skip = levels(deep(30))
+assert(n == 21 and skip == "11", n .. " " .. tostring(skip))
+`
+	runLuaWithDebug(t, source, "test_debug_traceback_skip_count", provider)
+}
