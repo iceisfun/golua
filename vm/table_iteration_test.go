@@ -497,6 +497,114 @@ func TestArrayCoveredIntegerKeysAreNeverLiveInHash(t *testing.T) {
 	}
 }
 
+// Clearing the last array key mid-traversal shrinks the array part, and the
+// key the traversal is parked on then reads as a former array index. If t.keys
+// still held a tombstone for that index — the hash entry it had before the
+// array grew over it, or the slot a promotion left behind — next() resumed
+// after that tombstone and skipped every live hash key in front of it.
+// Reference Lua visits all of them.
+func TestClearingArrayTailDuringTraversalVisitsHashPart(t *testing.T) {
+	enableTableDebugChecks(t)
+	shapes := map[string]func() *Table{
+		// t.a, t.b, t.c = 1, 2, 3; t[3] = true; t[3] = nil; t[1], t[2], t[3] = 1, 2, 3
+		"dead hash key under the array": func() *Table {
+			tbl := NewEmptyTable()
+			for _, s := range []string{"a", "b", "c"} {
+				tbl.SetString(s, True)
+			}
+			tbl.SetInt(3, True)
+			tbl.SetInt(3, Nil)
+			for i := 1; i <= 3; i++ {
+				tbl.SetInt(i, NewInt(int64(i)))
+			}
+			return tbl
+		},
+		// t.x = 1; evens 2..10; t.y = 2; odds 1..9: the odd stores drain the
+		// evens into the array and leave their slots as tombstones between x
+		// and y.
+		"promoted key between live keys": func() *Table {
+			tbl := NewEmptyTable()
+			tbl.SetString("x", True)
+			for i := 2; i <= 10; i += 2 {
+				tbl.SetInt(i, NewInt(int64(i)))
+			}
+			tbl.SetString("y", True)
+			for i := 1; i <= 10; i += 2 {
+				tbl.SetInt(i, NewInt(int64(i)))
+			}
+			return tbl
+		},
+		// The same shape past the threshold, so the tombstones are found
+		// through the slot index rather than by a scan.
+		"long keys slice": func() *Table {
+			tbl := NewEmptyTable()
+			for i := 0; i < 40; i++ {
+				tbl.SetString(fmt.Sprintf("s%02d", i), True)
+			}
+			for i := 2; i <= 64; i += 2 {
+				tbl.SetInt(i, NewInt(int64(i)))
+			}
+			tbl.SetString("y", True)
+			for i := 1; i <= 64; i += 2 {
+				tbl.SetInt(i, NewInt(int64(i)))
+			}
+			return tbl
+		},
+	}
+	for name, build := range shapes {
+		for _, thr := range []int{1 << 30, 0} {
+			t.Run(fmt.Sprintf("%s/threshold=%d", name, thr), func(t *testing.T) {
+				withDeadIndexThreshold(t, thr)
+				withKeyIndexThreshold(t, thr)
+
+				// Walk with next, clearing each key as it is visited: the
+				// "for k in pairs(t) do t[k] = nil end" idiom.
+				tbl := build()
+				want := len(walkAll(t, tbl))
+				seen := map[string]bool{}
+				k, _, err := tbl.Next(Nil)
+				for !k.IsNil() {
+					if err != nil {
+						t.Fatalf("Next: %v", err)
+					}
+					if seen[k.String()] {
+						t.Fatalf("key %s visited twice", k.String())
+					}
+					seen[k.String()] = true
+					tbl.MustSet(k, Nil)
+					checkTable(t, tbl, "after clearing "+k.String())
+					k, _, err = tbl.Next(k)
+				}
+				if len(seen) != want {
+					t.Fatalf("clearing walk visited %d of %d keys", len(seen), want)
+				}
+				if k, _ := tbl.MustNext(Nil); !k.IsNil() {
+					t.Fatalf("key %s survived the clearing walk", k.String())
+				}
+
+				// Clearing only the tail key, leaving everything else live.
+				tbl = build()
+				last := NewInt(int64(len(tbl.array)))
+				count := 0
+				k, _, err = tbl.Next(Nil)
+				for !k.IsNil() {
+					if err != nil {
+						t.Fatalf("Next: %v", err)
+					}
+					count++
+					if k.RawEqual(last) {
+						tbl.MustSet(k, Nil)
+					}
+					k, _, err = tbl.Next(k)
+				}
+				if count != want {
+					t.Fatalf("walk that cleared t[%s] visited %d of %d keys", last.String(), count, want)
+				}
+			})
+		}
+	}
+}
+
 // Promotion into the array must not renumber the slots behind it. Splicing the
 // promoted key out shifted every later slot, which cost a copy per key and
 // threw away the whole slot index; the traversal order either side of the

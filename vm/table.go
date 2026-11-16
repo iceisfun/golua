@@ -65,7 +65,13 @@ import (
 //	    index where it is instead of promoting it on a plain assignment, and
 //	    the promotion paths tombstone the slots the array absorbs. It is what
 //	    lets next() cross from the array part into the hash part without
-//	    carrying any per-traversal state on the table.
+//	    carrying any per-traversal state on the table. The other half is
+//	    kept when the array shrinks: a tombstone for an index the array
+//	    stops covering loses its key (orphanIndexTombstones), so next()
+//	    reads that index as a former array position rather than resuming
+//	    after a hash slot the traversal never visited. A keyless tombstone
+//	    holds Nil, which is dead, matches no key, and is the one entry
+//	    (1) allows more than once.
 //
 // String keys are stored in a separate strHash map, and integer keys in a
 // separate intHash map, to avoid the overhead of boxing Go strings/int64s
@@ -83,6 +89,7 @@ type Table struct {
 	iterCur   int32            // slot a traversal reached last, biased by one (0 = none); atomic
 	noPromote int32            // intHash size at which array promotion was last declined
 	isThread  bool             // true if this table represents a coroutine thread
+	intTombs  bool             // t.keys may hold a tombstone for an integer key >= 1 (see orphanIndexTombstones)
 	metatable LuaTable         // per-table metatable for operator/event overrides
 	extra     *tableExtra      // lazily allocated; holds rarely-used thread/weak state
 	kidx      unsafe.Pointer   // *keyIndex, read and written atomically; nil until a lookup needs one
@@ -472,8 +479,10 @@ func (t *Table) dropKeyIndex() {
 // one has the table to itself.
 func (t *Table) buildKeyIndex() *keyIndex {
 	x := &keyIndex{}
-	for i := range t.keys {
-		x.set(t.keys[i], i)
+	for i, k := range t.keys {
+		if k.typ != typeNil { // a keyless tombstone (orphanSlot) has no key to index
+			x.set(k, i)
+		}
 	}
 	if !atomic.CompareAndSwapPointer(&t.kidx, nil, unsafe.Pointer(x)) {
 		if cur := t.keyTracking(); cur != nil {
@@ -908,6 +917,9 @@ func (t *Table) setIntHash(k int64, value Value) {
 				delete(t.intHash, k)
 				t.deadKeys++
 				t.markDeadInt(k)
+				if k >= 1 {
+					t.intTombs = true
+				}
 			}
 		}
 		return
@@ -1311,6 +1323,7 @@ func (t *Table) removeLiveKey(k Value) {
 	// an ascending drain) and a slot index invalidated wholesale each time.
 	// reuseOrAppendKey hands the slot to the next new key.
 	t.deadKeys++
+	t.intTombs = true
 	if x := t.keyTracking(); x != nil && x.freeValid {
 		t.noteDeadSlot(x, int32(i), true)
 	}
@@ -1360,8 +1373,14 @@ func (t *Table) checkInvariants() error {
 	if !tableDebugChecks {
 		return nil
 	}
-	dead := 0
+	dead, keyless := 0, 0
 	for i, k := range t.keys {
+		if k.typ == typeNil {
+			// A keyless tombstone (orphanSlot): dead, and never a duplicate.
+			dead++
+			keyless++
+			continue
+		}
 		for j := i + 1; j < len(t.keys); j++ {
 			if t.keys[j].RawEqual(k) {
 				return fmt.Errorf("duplicate key %v in keys slice at %d and %d", hashKey(k), i, j)
@@ -1375,10 +1394,13 @@ func (t *Table) checkInvariants() error {
 		return fmt.Errorf("deadKeys = %d, but keys slice holds %d tombstones", t.deadKeys, dead)
 	}
 	if x := t.keyTracking(); x != nil {
-		if n := len(x.str) + len(x.ints) + len(x.other); n != len(t.keys) {
-			return fmt.Errorf("key index holds %d slots, but keys slice holds %d", n, len(t.keys))
+		if n := len(x.str) + len(x.ints) + len(x.other); n != len(t.keys)-keyless {
+			return fmt.Errorf("key index holds %d slots, but keys slice holds %d keys", n, len(t.keys)-keyless)
 		}
 		for i, k := range t.keys {
+			if k.typ == typeNil {
+				continue
+			}
 			slot, ok := x.lookup(k)
 			if !ok {
 				return fmt.Errorf("key index has no slot for %v (at %d)", hashKey(k), i)
@@ -1525,7 +1547,9 @@ func (t *Table) Set(key, value Value) error {
 					if value.IsNil() {
 						t.array[idx-1] = Nil
 						// Shrink array if trailing nils
+						old := len(t.array)
 						t.shrinkArray()
+						t.releaseArrayIndices(old)
 					} else {
 						t.array[idx-1] = value
 					}
@@ -1583,7 +1607,9 @@ func (t *Table) SetInt(i int, value Value) {
 	if i >= 1 && i <= len(t.array) {
 		if value.IsNil() {
 			t.array[i-1] = Nil
+			old := len(t.array)
 			t.shrinkArray()
+			t.releaseArrayIndices(old)
 		} else {
 			t.array[i-1] = value
 		}
@@ -1667,13 +1693,85 @@ func (t *Table) growArrayForAppend() {
 
 // ShrinkArray removes trailing nils from the array part.
 func (t *Table) ShrinkArray() {
+	old := len(t.array)
 	t.shrinkArray()
+	t.releaseArrayIndices(old)
 }
 
-// shrinkArray removes trailing nils from the array part.
+// shrinkArray removes trailing nils from the array part. Every caller follows
+// it with releaseArrayIndices; the two are separate so that both stay small
+// enough to inline into the nil-store paths of Set and SetInt, which popping
+// a stack runs once per element.
 func (t *Table) shrinkArray() {
 	for len(t.array) > 0 && t.array[len(t.array)-1].IsNil() {
 		t.array = t.array[:len(t.array)-1]
+	}
+}
+
+// releaseArrayIndices finishes a shrinkArray that cut the array part down from
+// old elements, forgetting the hash history of the indices it released.
+func (t *Table) releaseArrayIndices(old int) {
+	if t.intTombs && len(t.array) < old {
+		t.orphanIndexTombstones(len(t.array), old)
+	}
+}
+
+// orphanIndexTombstones strips the key from every ordered-keys tombstone for
+// an index in (lo, hi], which the array part has just stopped covering.
+//
+// While the array covered such an index, its tombstone was stale: the entry
+// predates the array growing over the index (a hash key deleted earlier, or a
+// slot a promotion left behind), and invariant (3) kept it from ever being
+// live. A traversal that visited the index visited it in the array part. Once
+// the array shrinks below it, though, next() reads the index as a hash key
+// and would resume after the stale tombstone, skipping every live key in
+// front of it. Reference Lua never shrinks its array part on a store, so it
+// has no such ambiguity; this restores the one answer next() should give —
+// the index was an array position, and the hash part comes next in full.
+//
+// The slot itself stays a tombstone, so deadKeys and the free list are
+// unchanged and a traversal parked on any other key keeps its position; it
+// just no longer answers to the index, exactly as if the key had never had a
+// hash entry. reuseOrAppendKey hands it to the next new key.
+//
+// Only a table whose t.keys has held a tombstone for a positive integer key
+// gets here (intTombs, set where such a tombstone is made and never cleared
+// while t.keys is non-empty), so the pop of an ordinary stack, with or
+// without other deleted keys, pays one flag test.
+func (t *Table) orphanIndexTombstones(lo, hi int) {
+	if t.deadKeys == 0 {
+		return
+	}
+	x := t.keyTracking()
+	if x == nil && len(t.keys) > deadIndexThreshold && hi-lo < len(t.keys) {
+		// One lookup per released index beats a scan per shrink once the
+		// keys slice is long: popping a stack one element at a time would
+		// otherwise scan t.keys for every pop.
+		x = t.buildKeyIndex()
+	}
+	if x == nil || hi-lo >= len(t.keys) {
+		for i, k := range t.keys {
+			if k.typ == typeInt && k.ival() > int64(lo) && k.ival() <= int64(hi) {
+				t.orphanSlot(x, i, k)
+			}
+		}
+		return
+	}
+	for j := int64(lo) + 1; j <= int64(hi); j++ {
+		if slot, ok := x.ints[j]; ok && int(slot) < len(t.keys) {
+			if k := t.keys[slot]; k.typ == typeInt && k.ival() == j {
+				t.orphanSlot(x, int(slot), k)
+			}
+		}
+	}
+}
+
+// orphanSlot turns the tombstone at slot i, held by key k, into a keyless one:
+// Nil never equals a key next() is handed and never reads as live.
+func (t *Table) orphanSlot(x *keyIndex, i int, k Value) {
+	t.keys[i] = Nil
+	if x != nil {
+		x.remove(k)
 	}
 }
 
@@ -1747,6 +1845,7 @@ func (t *Table) dropAllDeadKeys() {
 	atomic.StoreInt32(&t.iterBound, 0)
 	atomic.StoreInt32(&t.iterShape, 0)
 	atomic.StoreInt32(&t.iterCur, 0)
+	t.intTombs = false
 }
 
 // Len returns the length of the table (# operator).
@@ -1946,6 +2045,7 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 	t.keys = nil
 	t.deadKeys = 0
 	t.dropKeyIndex()
+	t.intTombs = false
 
 	// Publish the weak backend and register for the global sweep atomically
 	// under the registry lock. sweepAllWeakTables() may run concurrently in a
