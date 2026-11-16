@@ -182,16 +182,8 @@ func readChunkFromStdin() ([]byte, string, error) {
 // env: environment table for the loaded chunk
 func luaLoad(v *vm.VM) int {
 	chunk := v.Get(1)
-	hasChunkName := !v.Get(2).IsNil()
-	rawChunkName := "" // set below; stored verbatim in proto.Source
-	if hasChunkName {
-		arg2 := v.Get(2)
-		if arg2.IsString() || arg2.IsNumber() {
-			rawChunkName = valueToString(arg2)
-		} else {
-			callerArgError(v, 2, "load", fmt.Sprintf("string expected, got %s", argTypeName(v, arg2)))
-		}
-	}
+	// luaB_load checks the mode (getMode) before the chunk name, so a bad
+	// mode is reported even when the chunk name is bad too.
 	mode := "bt"
 	if !v.Get(3).IsNil() {
 		m := v.Get(3)
@@ -205,6 +197,16 @@ func luaLoad(v *vm.VM) int {
 	// loads (not exposed to Lua code) and must be rejected.
 	if strings.Contains(mode, "B") {
 		callerArgError(v, 3, "load", "invalid mode")
+	}
+	hasChunkName := !v.Get(2).IsNil()
+	rawChunkName := "" // set below; stored verbatim in proto.Source
+	if hasChunkName {
+		arg2 := v.Get(2)
+		if arg2.IsString() || arg2.IsNumber() {
+			rawChunkName = valueToString(arg2)
+		} else {
+			callerArgError(v, 2, "load", fmt.Sprintf("string expected, got %s", argTypeName(v, arg2)))
+		}
 	}
 	env := v.Get(4)
 	hasEnv := v.ArgCount() >= 4
