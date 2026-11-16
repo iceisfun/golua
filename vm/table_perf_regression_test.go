@@ -230,12 +230,74 @@ func hashFill(keys []Value) time.Duration {
 	return time.Since(start)
 }
 
+func intHashKeys(n int) []Value {
+	keys := make([]Value, n)
+	for i := range keys {
+		keys[i] = NewInt(int64(-1 - i)) // never array-resident
+	}
+	return keys
+}
+
 func strKeys(n int) []Value {
 	keys := make([]Value, n)
 	for i := range keys {
 		keys[i] = NewString(fmt.Sprintf("k%d", i))
 	}
 	return keys
+}
+
+// TestQueueChurnScalesLinearly guards the FIFO-queue idiom
+//
+//	last = last + 1; t[last] = v          -- push
+//	t[first] = nil; first = first + 1     -- pop
+//
+// on a queue that keeps growing. The first pop empties the array part, so the
+// queue lives in the hash part, and every push after a pop has a tombstone to
+// look for and reuse. Without an index that lookup scanned t.keys from the
+// front, and the tombstone index the scan used to build was thrown away as
+// soon as the push consumed the tombstone, so each push paid O(n).
+func TestQueueChurnScalesLinearly(t *testing.T) {
+	queue := func(n int) time.Duration {
+		tbl := NewEmptyTable()
+		first, last := int64(1), int64(0)
+		start := time.Now()
+		for i := 1; i <= n; i++ {
+			last++
+			tbl.MustSet(NewInt(last), NewInt(int64(i)))
+			if i%3 != 0 {
+				tbl.MustSet(NewInt(first), Nil)
+				first++
+			}
+		}
+		d := time.Since(start)
+		if tbl.Get(NewInt(first)).IsNil() || !tbl.Get(NewInt(first-1)).IsNil() {
+			t.Fatalf("queue head is wrong after %d pushes", n)
+		}
+		return d
+	}
+	checkCostIsLinear(t, "queue churn", 1<<16, queue,
+		func(n int) time.Duration { return hashFill(intHashKeys(n)) })
+}
+
+// TestStringSetChurnScalesLinearly is the same cliff with string keys: a set
+// that grows while members are removed between insertions.
+func TestStringSetChurnScalesLinearly(t *testing.T) {
+	churn := func(n int) time.Duration {
+		keys := strKeys(n + 1)
+		tbl := NewEmptyTable()
+		start := time.Now()
+		for i := 1; i <= n; i++ {
+			tbl.MustSet(keys[i], True)
+			tbl.MustSet(keys[i/2], Nil)
+		}
+		d := time.Since(start)
+		if tbl.Get(keys[n]).IsNil() || !tbl.Get(keys[n/2]).IsNil() {
+			t.Fatalf("set contents are wrong after %d inserts", n)
+		}
+		return d
+	}
+	checkCostIsLinear(t, "string-set churn", 1<<16, churn,
+		func(n int) time.Duration { return hashFill(strKeys(n)) })
 }
 
 // --- OPT 2: tombstone index -----------------------------------------------
@@ -405,9 +467,100 @@ func TestTombstoneIndexMatchesLinearScan(t *testing.T) {
 	}
 }
 
-// TestTombstoneIndexFreedWhenRevived checks the index does not outlive the
-// tombstones it tracks (it would otherwise pin dead string keys forever).
-func TestTombstoneIndexFreedWhenRevived(t *testing.T) {
+// TestChurnPathsAgree is the same differential over the workloads the slot
+// index and its free list exist for: a FIFO queue in the hash part (where the
+// idiom's first pop leaves it), a string set growing under removals, integer
+// stores in and out of the array part, and traversals that
+// clear part of what they visit as they go — which the manual allows, and
+// which must leave every next() step valid. Replayed with every lookup forced
+// through a scan and again with every lookup forced through the index, the
+// two must agree on each traversal, on the final order, on the keys-slice
+// length and on #t, with the invariants audited after every operation.
+func TestChurnPathsAgree(t *testing.T) {
+	enableTableDebugChecks(t)
+
+	replay := func(thr int) []string {
+		old, oldKey := deadIndexThreshold, keyIndexThreshold
+		deadIndexThreshold, keyIndexThreshold = thr, thr
+		defer func() { deadIndexThreshold, keyIndexThreshold = old, oldKey }()
+
+		rng := rand.New(rand.NewSource(20261116))
+		tbl := NewEmptyTable()
+		var log []string
+		first, last := int64(1_000_000), int64(999_999)
+		for step := 0; step < 6000; step++ {
+			switch op := rng.Intn(20); {
+			case op < 4: // queue push, and usually a pop
+				last++
+				tbl.MustSet(NewInt(last), NewInt(int64(step)))
+				if rng.Intn(3) != 0 && first <= last {
+					tbl.MustSet(NewInt(first), Nil)
+					first++
+				}
+			case op < 8: // set add, and usually a removal
+				tbl.MustSet(NewString(fmt.Sprintf("s%d", step)), True)
+				if rng.Intn(3) != 0 {
+					tbl.MustSet(NewString(fmt.Sprintf("s%d", rng.Intn(step+1))), Nil)
+				}
+			case op < 9: // one key deleted and revived over and over
+				hot := NewString(fmt.Sprintf("hot%d", rng.Intn(3)))
+				tbl.MustSet(hot, Nil)
+				tbl.MustSet(hot, NewInt(int64(step)))
+			case op < 10: // non-integer number keys
+				tbl.MustSet(NewFloat(float64(rng.Intn(50))+0.5), NewInt(int64(step)))
+				tbl.MustSet(NewFloat(float64(rng.Intn(50))+0.5), Nil)
+			case op < 12: // even indices land in the hash part ...
+				tbl.MustSet(NewInt(int64(2+2*rng.Intn(150))), NewInt(int64(step)))
+			case op < 14: // ... until odd ones drain them into the array
+				tbl.MustSet(NewInt(int64(1+2*rng.Intn(150))), NewInt(int64(step)))
+			case op < 15:
+				tbl.MustSet(NewInt(int64(1+rng.Intn(300))), Nil)
+			case op < 18: // integer stores just past the queue's tail
+				tbl.MustSet(NewInt(last+1+int64(rng.Intn(6))), NewInt(int64(step)))
+			default: // a traversal that clears every third key it visits
+				var seen []string
+				k, _, err := tbl.Next(Nil)
+				for i := 0; !k.IsNil(); i++ {
+					if err != nil {
+						t.Fatalf("threshold %d, step %d: Next: %v", thr, step, err)
+					}
+					if i > 4*(len(tbl.keys)+len(tbl.array))+64 {
+						t.Fatalf("threshold %d, step %d: traversal did not terminate", thr, step)
+					}
+					seen = append(seen, k.String())
+					if i%3 == 0 {
+						tbl.MustSet(k, Nil)
+					}
+					k, _, err = tbl.Next(k)
+				}
+				log = append(log, fmt.Sprint(seen))
+			}
+			if err := tbl.checkInvariants(); err != nil {
+				t.Fatalf("threshold %d, step %d: %v", thr, step, err)
+			}
+		}
+		return append(log, fmt.Sprint(keyOrder(t, tbl)),
+			fmt.Sprintf("slots=%d dead=%d len=%d", len(tbl.keys), tbl.deadKeys, tbl.Len()))
+	}
+
+	scanned := replay(1 << 30)
+	indexed := replay(0)
+	if len(scanned) != len(indexed) {
+		t.Fatalf("replays logged %d and %d traversals", len(scanned), len(indexed))
+	}
+	for i := range scanned {
+		if scanned[i] != indexed[i] {
+			t.Fatalf("entry %d differs between the scanned and indexed paths:\nscanned %s\nindexed %s", i, scanned[i], indexed[i])
+		}
+	}
+}
+
+// TestTombstoneIndexReleasesReusedKeys checks the index tombstone handling
+// builds holds on to nothing the keys slice does not: a dead key whose slot is
+// taken by a new key must leave the index with it (it would otherwise pin dead
+// string keys forever), and a key deleted and revived over and over must not
+// grow the free list without bound.
+func TestTombstoneIndexReleasesReusedKeys(t *testing.T) {
 	enableTableDebugChecks(t)
 	withDeadIndexThreshold(t, 0)
 
@@ -418,16 +571,29 @@ func TestTombstoneIndexFreedWhenRevived(t *testing.T) {
 	tbl.MustSet(NewString("k05"), Nil)
 	tbl.MustSet(NewString("k07"), Nil)
 	tbl.MustSet(NewString("k05"), True)
-	if tbl.deadTracking() == nil {
-		t.Fatal("index should exist while a tombstone remains")
+	x := tbl.keyTracking()
+	if x == nil {
+		t.Fatal("reviving a tombstone above the threshold should build the index")
 	}
-	tbl.MustSet(NewString("k07"), True)
-	checkTable(t, tbl, "after both revivals")
+	tbl.MustSet(NewString("fresh"), True) // takes k07's slot
+	checkTable(t, tbl, "after revival and reuse")
 	if tbl.deadKeys != 0 {
 		t.Fatalf("deadKeys = %d, want 0", tbl.deadKeys)
 	}
-	if tbl.deadTracking() != nil {
-		t.Fatal("tombstone index outlived the last tombstone")
+	if _, ok := x.str["k07"]; ok {
+		t.Fatal("the index still holds a dead key whose slot was reused")
+	}
+	if slot, ok := x.str["fresh"]; !ok || slot != 7 {
+		t.Fatalf("fresh key indexed at %d (%v), want the first dead slot 7", slot, ok)
+	}
+
+	for i := 0; i < 5000; i++ {
+		tbl.MustSet(NewString("k20"), Nil)
+		tbl.MustSet(NewString("k20"), True)
+	}
+	checkTable(t, tbl, "after delete/revive churn")
+	if n := len(x.free); n > 64 {
+		t.Fatalf("free list grew to %d entries for %d tombstones", n, tbl.deadKeys)
 	}
 }
 

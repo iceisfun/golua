@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"unsafe"
@@ -49,10 +50,11 @@ import (
 //     a recorded slot as soon as that slot is found to hold the key. That is
 //     only the right answer because (1) guarantees no *other* slot holds an
 //     equal key whose successor would differ.
-//   - the deadIndex (see below) identifies tombstones by their normalized key
-//     rather than by slot, so two slots holding the same key would make a
-//     revival free the wrong one. It is built and discarded on the strength of
-//     (2), which tells it how many tombstones to expect.
+//   - on a long keys slice, tombstone revival and slot reuse go through the
+//     slot index (see keyIndex), which maps each normalized key to a single
+//     slot, so two slots holding the same key would make a revival or a delete
+//     act on the wrong one. Its free list is built on the strength of (2),
+//     which tells it how many tombstones to expect.
 //
 // A third invariant belongs to the array part:
 //
@@ -83,7 +85,7 @@ type Table struct {
 	isThread  bool             // true if this table represents a coroutine thread
 	metatable LuaTable         // per-table metatable for operator/event overrides
 	extra     *tableExtra      // lazily allocated; holds rarely-used thread/weak state
-	kidx      unsafe.Pointer   // *keyIndex, read and written atomically; nil until a traversal builds one
+	kidx      unsafe.Pointer   // *keyIndex, read and written atomically; nil until a lookup needs one
 }
 
 // tableExtra holds Table fields that only a tiny minority of tables ever use:
@@ -97,176 +99,41 @@ type tableExtra struct {
 	vmRef    *VM           // reference to coroutine VM (only set for thread tables)
 	weakMode weakTableMode // controls whether table has weak keys, values, or both
 	weak     *weakStore    // non-nil when weakMode != 0; replaces normal storage
-	dead     *deadIndex    // tombstone index; nil until a big table needs one
 }
 
-// deadIndex is the O(1) tombstone lookup for a table whose ordered keys slice
-// has grown past deadIndexThreshold. Without it, every insert into a table
-// that holds tombstones costs a linear pass over t.keys — once to look for the
-// inserted key's own tombstone (revival) and once more, in reuseOrAppendKey,
-// to find a dead slot to overwrite — so a delete-everything/refill cycle is
-// quadratic in the number of keys.
-//
-// The index holds the same normalized key forms the storage maps use
-// (hashKey), split by type exactly like the storage maps themselves: string
-// and integer tombstones stay unboxed, so marking and probing them costs no
-// allocation. It is built lazily by buildDeadIndex on the first insert that
-// needs it and dropped again as soon as deadKeys returns to zero, so its
-// memory is proportional to the tombstones actually outstanding.
-//
-// scan is a monotone lower bound on the first dead slot: every t.keys index
-// below it is known live. reuseOrAppendKey resumes there instead of at 0,
-// which makes a bulk refill linear overall. Anything that can put a tombstone
-// below the bound — a fresh delete, or a splice that shifts slot indices —
-// must reset it to 0.
-type deadIndex struct {
-	str   map[string]struct{} // tombstoned string keys
-	ints  map[int64]struct{}  // tombstoned integer keys
-	other map[any]struct{}    // tombstoned bool/float/pointer keys, in hashKey form
-	scan  int                 // t.keys indices below this hold no tombstone
-}
-
-// deadIndexThreshold is the t.keys length below which tombstone handling stays
-// index-free: on a short keys slice the original linear scan is cheaper than
-// allocating (and then freeing) the index, and it keeps small tables — the
-// overwhelming majority — allocating exactly as they did before. A variable
-// only so that tests can force either path and check the two agree on the
-// (observable) slot each insert takes; never written outside tests.
+// deadIndexThreshold is the t.keys length up to which tombstone handling stays
+// index-free. On a short keys slice a linear scan — for a re-inserted key's own
+// tombstone, or for the first dead slot a new key can take — is cheaper than
+// building the slot index, and it keeps small tables, the overwhelming
+// majority, allocating exactly as they always have. Past it, the first insert
+// that has to consult the tombstones builds the slot index (see keyIndex) and
+// keeps it. A variable only so that tests can force either path and check the
+// two agree on the (observable) slot each insert takes; never written outside
+// tests.
 var deadIndexThreshold = 32
 
-func (d *deadIndex) addStr(s string) {
-	if d.str == nil {
-		d.str = make(map[string]struct{})
-	}
-	d.str[s] = struct{}{}
-}
-
-func (d *deadIndex) addInt(k int64) {
-	if d.ints == nil {
-		d.ints = make(map[int64]struct{})
-	}
-	d.ints[k] = struct{}{}
-}
-
-func (d *deadIndex) addOther(hk any) {
-	if d.other == nil {
-		d.other = make(map[any]struct{})
-	}
-	d.other[hk] = struct{}{}
-}
-
-// add records the tombstone for an ordered-keys entry.
-func (d *deadIndex) add(k Value) {
-	switch k.typ {
-	case typeString:
-		d.addStr(k.asString())
-	case typeInt:
-		d.addInt(k.ival())
-	default:
-		d.addOther(hashKey(k))
-	}
-}
-
-// has reports whether the ordered-keys entry k is a tombstone.
-func (d *deadIndex) has(k Value) bool {
-	switch k.typ {
-	case typeString:
-		_, ok := d.str[k.asString()]
-		return ok
-	case typeInt:
-		_, ok := d.ints[k.ival()]
-		return ok
-	default:
-		if d.other == nil {
-			return false
-		}
-		_, ok := d.other[hashKey(k)]
-		return ok
-	}
-}
-
-// remove drops the tombstone record for an ordered-keys entry.
-func (d *deadIndex) remove(k Value) {
-	switch k.typ {
-	case typeString:
-		delete(d.str, k.asString())
-	case typeInt:
-		delete(d.ints, k.ival())
-	default:
-		if d.other != nil {
-			delete(d.other, hashKey(k))
-		}
-	}
-}
-
-// deadTracking returns the table's tombstone index if one has been built, or
-// nil. While it is nil a delete costs only the deadKeys counter, so tables
-// that never revive or reuse a tombstone never pay for the index.
-func (t *Table) deadTracking() *deadIndex {
-	if e := t.extra; e != nil {
-		return e.dead
-	}
-	return nil
-}
-
 // markDeadStr/markDeadInt/markDeadOther record a live->dead transition in the
-// tombstone index, if one exists. They must be called at every site that
-// increments deadKeys, using the same normalized key form the storage map uses.
+// slot index's free list, if the table keeps one. They must be called at every
+// site that increments deadKeys, after the increment, using the same normalized
+// key form the storage map uses.
 func (t *Table) markDeadStr(s string) {
-	if d := t.deadTracking(); d != nil {
-		d.addStr(s)
-		d.scan = 0
+	if x := t.keyTracking(); x != nil && x.freeValid {
+		slot, ok := x.str[s]
+		t.noteDeadSlot(x, slot, ok)
 	}
 }
 
 func (t *Table) markDeadInt(k int64) {
-	if d := t.deadTracking(); d != nil {
-		d.addInt(k)
-		d.scan = 0
+	if x := t.keyTracking(); x != nil && x.freeValid {
+		slot, ok := x.ints[k]
+		t.noteDeadSlot(x, slot, ok)
 	}
 }
 
 func (t *Table) markDeadOther(hk any) {
-	if d := t.deadTracking(); d != nil {
-		d.addOther(hk)
-		d.scan = 0
-	}
-}
-
-// buildDeadIndex scans t.keys once and records every tombstone it holds. The
-// scan stops as soon as all deadKeys tombstones have been found. Its cost is
-// amortized over the revivals and slot reuses of the current tombstone epoch,
-// which ends (and frees the index) when deadKeys returns to zero.
-//
-// pendingStr, when hasPending is set, is a string key whose store entry the
-// caller has *already* re-inserted (addStrKey runs after the sstr/strHash
-// insert): its slot would probe as live, so it is recognized by name instead.
-// Callers must only call this while deadKeys > 0.
-func (t *Table) buildDeadIndex(pendingStr string, hasPending bool) *deadIndex {
-	d := &deadIndex{}
-	found := 0
-	for i := range t.keys {
-		k := t.keys[i]
-		if hasPending && k.typ == typeString && k.asString() == pendingStr {
-			d.addStr(pendingStr)
-		} else if _, alive := t.getKeyValue(k); !alive {
-			d.add(k)
-		} else {
-			continue
-		}
-		if found++; found == t.deadKeys {
-			break
-		}
-	}
-	t.ensureExtra().dead = d
-	return d
-}
-
-// clearDeadTracking frees the tombstone index. Called when no tombstones
-// remain, and when the table's normal storage is torn down entirely.
-func (t *Table) clearDeadTracking() {
-	if e := t.extra; e != nil {
-		e.dead = nil
+	if x := t.keyTracking(); x != nil && x.freeValid {
+		slot, ok := x.other[hk]
+		t.noteDeadSlot(x, slot, ok)
 	}
 }
 
@@ -279,45 +146,43 @@ func (t *Table) clearDeadTracking() {
 // storage maps (or, for reviveDeadStr, that it was not live before the insert
 // it just performed), so a t.keys entry with an equal normalized key is
 // necessarily that key's tombstone.
+//
+// On a short keys slice the slot is found by scanning. On a long one the slot
+// index answers, and is built here if no traversal has built it yet: the scan
+// it replaces would otherwise be repeated by every insert that follows a
+// delete, which makes the ordinary FIFO-queue and growing-set idioms quadratic.
+// A revival leaves the free list alone; the slot's entry there goes stale and
+// is discarded when it surfaces.
 func (t *Table) reviveDeadStr(s string) bool {
-	d := t.deadTracking()
-	if d == nil {
-		if n := len(t.keys); n <= deadIndexThreshold {
-			for _, hk := range t.keys {
-				if hk.typ == typeString && hk.asString() == s {
-					t.deadKeys--
-					return true
-				}
-			}
-			return false
-		}
-		// Probe the first few slots directly, exactly as the old unbounded
-		// scan did, before paying to build the index: a short-lived
-		// delete/re-insert of a key near the front stays index-free.
-		for i := 0; i < deadIndexThreshold; i++ {
+	x := t.keyTracking()
+	if x == nil {
+		// Probe the first few slots directly before paying to build the index:
+		// a short-lived delete/re-insert of a key near the front stays
+		// index-free.
+		for i, n := 0, min(len(t.keys), deadIndexThreshold); i < n; i++ {
 			if hk := t.keys[i]; hk.typ == typeString && hk.asString() == s {
 				t.deadKeys--
 				return true
 			}
 		}
-		d = t.buildDeadIndex(s, true)
+		if len(t.keys) <= deadIndexThreshold {
+			return false
+		}
+		x = t.buildKeyIndex()
 	}
-	if _, dead := d.str[s]; !dead {
-		return false
+	if slot, ok := x.str[s]; ok && int(slot) < len(t.keys) {
+		if hk := t.keys[slot]; hk.typ == typeString && hk.asString() == s {
+			t.deadKeys--
+			return true
+		}
 	}
-	delete(d.str, s)
-	t.dropDeadKey()
-	return true
+	return false
 }
 
 func (t *Table) reviveDeadInt(k int64) bool {
-	d := t.deadTracking()
-	if d == nil {
-		bound := len(t.keys)
-		if bound > deadIndexThreshold {
-			bound = deadIndexThreshold
-		}
-		for i := 0; i < bound; i++ {
+	x := t.keyTracking()
+	if x == nil {
+		for i, n := 0, min(len(t.keys), deadIndexThreshold); i < n; i++ {
 			if hk := t.keys[i]; hk.typ == typeInt && hk.ival() == k {
 				t.deadKeys--
 				return true
@@ -326,24 +191,21 @@ func (t *Table) reviveDeadInt(k int64) bool {
 		if len(t.keys) <= deadIndexThreshold {
 			return false
 		}
-		d = t.buildDeadIndex("", false)
+		x = t.buildKeyIndex()
 	}
-	if _, dead := d.ints[k]; !dead {
-		return false
+	if slot, ok := x.ints[k]; ok && int(slot) < len(t.keys) {
+		if hk := t.keys[slot]; hk.typ == typeInt && hk.ival() == k {
+			t.deadKeys--
+			return true
+		}
 	}
-	delete(d.ints, k)
-	t.dropDeadKey()
-	return true
+	return false
 }
 
 func (t *Table) reviveDeadOther(keyValue Value, hk any) bool {
-	d := t.deadTracking()
-	if d == nil {
-		bound := len(t.keys)
-		if bound > deadIndexThreshold {
-			bound = deadIndexThreshold
-		}
-		for i := 0; i < bound; i++ {
+	x := t.keyTracking()
+	if x == nil {
+		for i, n := 0, min(len(t.keys), deadIndexThreshold); i < n; i++ {
 			if t.keys[i].RawEqual(keyValue) {
 				t.deadKeys--
 				return true
@@ -352,26 +214,86 @@ func (t *Table) reviveDeadOther(keyValue Value, hk any) bool {
 		if len(t.keys) <= deadIndexThreshold {
 			return false
 		}
-		d = t.buildDeadIndex("", false)
+		x = t.buildKeyIndex()
 	}
-	if d.other == nil {
-		return false
+	if slot, ok := x.other[hk]; ok && int(slot) < len(t.keys) && t.keys[slot].RawEqual(keyValue) {
+		t.deadKeys--
+		return true
 	}
-	if _, dead := d.other[hk]; !dead {
-		return false
-	}
-	delete(d.other, hk)
-	t.dropDeadKey()
-	return true
+	return false
 }
 
-// dropDeadKey accounts for one tombstone leaving the table, freeing the index
-// once the last one is gone.
-func (t *Table) dropDeadKey() {
-	t.deadKeys--
-	if t.deadKeys == 0 {
-		t.clearDeadTracking()
+// firstFreeSlot returns the lowest-numbered tombstone slot in t.keys, the one
+// the linear scan in reuseOrAppendKey would pick, taking it off the free list.
+// Entries whose slot has since been revived, reused or cut off the end of the
+// slice are discarded on the way. ok=false means the free list holds no
+// tombstone at all.
+func (t *Table) firstFreeSlot(x *keyIndex) (int, bool) {
+	if !x.freeValid {
+		t.buildFreeSlots(x)
 	}
+	for len(x.free) > 0 {
+		slot := int(x.popFree())
+		if slot < len(t.keys) {
+			if _, alive := t.getKeyValue(t.keys[slot]); !alive {
+				return slot, true
+			}
+		}
+	}
+	return -1, false
+}
+
+// buildFreeSlots fills the free list from a scan of t.keys, which stops as
+// soon as all deadKeys tombstones have been found. The slots come out in
+// ascending order, which is already a valid min-heap. Once built, the list is
+// kept current by every live->dead transition for as long as the index lives,
+// so this runs once per index rather than once per burst of deletes.
+func (t *Table) buildFreeSlots(x *keyIndex) {
+	x.free = x.free[:0]
+	for i := 0; i < len(t.keys) && len(x.free) < t.deadKeys; i++ {
+		if _, alive := t.getKeyValue(t.keys[i]); !alive {
+			x.free = append(x.free, int32(i))
+		}
+	}
+	x.freeValid = true
+}
+
+// noteDeadSlot adds a slot that has just become a tombstone to the free list.
+// ok=false means the index had no slot for the key, which its maintenance
+// rules out; the list is then marked for a rebuild rather than trusted.
+//
+// Entries are never removed when a slot is revived, so a key deleted and
+// re-inserted over and over would grow the list without bound. Once stale
+// entries outnumber the tombstones, the list is pruned back to exactly the
+// tombstone slots. A prune discards more than half the list, so the pushes
+// that piled the stale entries up pay for it.
+func (t *Table) noteDeadSlot(x *keyIndex, slot int32, ok bool) {
+	if !ok {
+		x.free = nil
+		x.freeValid = false
+		return
+	}
+	if len(x.free) >= 2*t.deadKeys+16 {
+		t.pruneFreeSlots(x)
+	}
+	x.pushFree(slot)
+}
+
+// pruneFreeSlots drops every free-list entry whose slot is no longer a
+// tombstone, and any duplicate, leaving the list sorted (and so a valid heap).
+func (t *Table) pruneFreeSlots(x *keyIndex) {
+	w := 0
+	for _, slot := range x.free {
+		if int(slot) < len(t.keys) {
+			if _, alive := t.getKeyValue(t.keys[slot]); !alive {
+				x.free[w] = slot
+				w++
+			}
+		}
+	}
+	x.free = x.free[:w]
+	slices.Sort(x.free)
+	x.free = slices.Compact(x.free)
 }
 
 // keyIndex maps an ordered-keys entry to the slot it occupies, so that next()
@@ -381,22 +303,85 @@ func (t *Table) dropDeadKey() {
 // ordered slice with no lookup structure of its own, so one is kept beside it.
 //
 // It mirrors the storage split — string and integer keys stay unboxed — and is
-// built lazily by the *traversal*, never by a mutation: a table that is never
-// iterated has no index, allocates nothing for one, and pays nothing to keep
-// one in step. Once a traversal has built one, the mutation paths that own
-// t.keys keep it current in O(1) per key (appendKey, takeKeySlot); the two
-// bulk operations that renumber slots wholesale drop it instead, and the next
-// traversal rebuilds it.
+// built lazily, by the operations that would otherwise have to find a key's
+// slot by scanning, and only on a keys slice long enough for that to matter:
 //
-// The index is a pure accelerator. Every slot it reports is confirmed against
-// t.keys before use, a miss falls back to the scan, and no answer changes if
-// the index is absent, so it can be dropped at any time. It is published
-// through an atomic pointer because building it happens on the traversal path,
-// and several goroutines may traverse a shared table at once.
+//   - a traversal whose cursor hint stops answering (slotForTraversal);
+//   - an insert into a table holding tombstones, which must find either the
+//     inserted key's own tombstone or the first dead slot it can take
+//     (reviveDead*, reuseOrAppendKey).
+//
+// Each of those scans is O(len(t.keys)) and is repeated by every operation of
+// its kind, so leaving them unindexed makes a table that is walked by nested
+// loops, or used as a FIFO queue or a growing set, quadratic in its size. A
+// table that is only filled and read never builds one, allocates nothing for
+// one, and pays nothing to keep one in step.
+//
+// Once built, the mutation paths that own t.keys keep it current in O(1) per
+// key (appendKey, takeKeySlot, removeLiveKey) for as long as the table lives;
+// the bulk operations that renumber slots wholesale drop it instead, and the
+// next operation that needs it rebuilds it. It must stay exact: an insert
+// believes a miss, so an index that lost a key would let that key be appended
+// a second time. checkInvariants audits it against t.keys.
+//
+// It also carries the free list, a min-heap of tombstone slots, which hands
+// reuseOrAppendKey the lowest-numbered dead slot — the same slot the linear
+// scan picks, so the index changes no iteration order. The list is built on
+// the first reuse that needs it and then kept current by every live->dead
+// transition (markDead*, removeLiveKey). A revival does not remove its slot's
+// entry; the entry is recognised as stale, and discarded, when it surfaces.
+//
+// The maps are published through an atomic pointer because a traversal may
+// build them, and several goroutines may traverse a shared table at once. The
+// free list is touched only by mutations, which already require exclusive
+// access to the table.
 type keyIndex struct {
 	str   map[string]int32 // slot of each string key
 	ints  map[int64]int32  // slot of each integer key
 	other map[any]int32    // slot of each bool/float/pointer key, in hashKey form
+
+	free      []int32 // min-heap of tombstone slots; may hold stale entries
+	freeValid bool    // free covers every tombstone; false until first needed
+}
+
+// pushFree adds slot to the free-list heap.
+func (x *keyIndex) pushFree(slot int32) {
+	h := append(x.free, slot)
+	for i := len(h) - 1; i > 0; {
+		p := (i - 1) / 2
+		if h[p] <= h[i] {
+			break
+		}
+		h[p], h[i] = h[i], h[p]
+		i = p
+	}
+	x.free = h
+}
+
+// popFree removes and returns the smallest slot on the free-list heap, which
+// must not be empty.
+func (x *keyIndex) popFree() int32 {
+	h := x.free
+	top := h[0]
+	n := len(h) - 1
+	h[0] = h[n]
+	h = h[:n]
+	for i := 0; ; {
+		c := 2*i + 1
+		if c >= n {
+			break
+		}
+		if c+1 < n && h[c+1] < h[c] {
+			c++
+		}
+		if h[i] <= h[c] {
+			break
+		}
+		h[i], h[c] = h[c], h[i]
+		i = c
+	}
+	x.free = h
+	return top
 }
 
 // keyIndexThreshold is the t.keys length below which slot lookup stays
@@ -467,21 +452,21 @@ func (t *Table) keyTracking() *keyIndex {
 	return (*keyIndex)(atomic.LoadPointer(&t.kidx))
 }
 
-// dropKeyIndex discards the slot index. The two bulk operations that renumber
-// slots wholesale (promoteIntKeysTo compacting t.keys, and weak-mode teardown
-// emptying it) call it: dropping once is O(1), and until a traversal wants it
-// again slot lookup simply falls back to the scan. Rebuilding here instead
-// would put the cost of the index on the mutation path, which is exactly what
-// the lazy build exists to avoid.
+// dropKeyIndex discards the slot index, free list included. The bulk
+// operations that renumber or empty t.keys wholesale (promoteIntKeysTo
+// compacting it, dropAllDeadKeys and weak-mode teardown emptying it) call it:
+// dropping once is O(1), and the next operation that needs an index rebuilds
+// it, which costs no more than the bulk operation that dropped it.
 func (t *Table) dropKeyIndex() {
 	atomic.StorePointer(&t.kidx, nil)
 }
 
 // buildKeyIndex records every ordered-keys slot in a fresh index and publishes
-// it. Called only from keySlot, i.e. only by a traversal, and only once per
-// index: the CAS lets two goroutines that start traversing the same fresh
-// table race to build one without either losing an entry, since both build the
-// same mapping from the same keys slice.
+// it, leaving the free list to be built when a reuse first needs it. Called at
+// most once per index: the CAS lets two goroutines that start traversing the
+// same fresh table race to build one without either losing an entry, since
+// both build the same mapping from the same keys slice. A mutation that builds
+// one has the table to itself.
 func (t *Table) buildKeyIndex() *keyIndex {
 	x := &keyIndex{}
 	for i := range t.keys {
@@ -511,8 +496,8 @@ func (t *Table) buildKeyIndex() *keyIndex {
 //   - the scan, for a short keys slice, for a table with no index, and
 //     whenever both of the above miss.
 //
-// It never builds an index itself; slotForTraversal is the only thing that
-// does, so a mutation that lands here cannot saddle the table with one.
+// It never builds an index itself, so the promotion path that uses it
+// (removeLiveKey) cannot saddle a table with one.
 //
 // The scan deliberately covers the whole slice rather than a traversal window:
 // a key the table holds must be found whatever window an earlier, abandoned
@@ -552,12 +537,13 @@ func (t *Table) scanForSlot(k Value) (int, bool) {
 	return -1, false
 }
 
-// slotForTraversal is keySlot for a traversal step: the same answer, but it
-// builds the slot index the first time the cursor hint fails to produce one.
+// slotForTraversal resolves the key a traversal step was handed: the same
+// answer as keySlot, but it builds the slot index the first time the cursor
+// hint fails to produce one.
 //
-// That is the whole trigger, and it is what keeps the index off the tables that
-// do not need it. One walk over a table, however long, keeps hitting its own
-// hint and never builds an index at all — so an ordinary
+// That is the traversal's whole trigger, and it is what keeps the index off
+// the tables that do not need it. One walk over a table, however long, keeps
+// hitting its own hint and never builds an index at all — so an ordinary
 //
 //	for k, v in pairs(t)
 //
@@ -565,12 +551,8 @@ func (t *Table) scanForSlot(k Value) (int, bool) {
 // alone cost. The hint stops answering exactly when more than one traversal is
 // live over the table (nested loops, two goroutines, a walk resumed from a key
 // that came from somewhere else), and that is precisely the case where a scan
-// of t.keys per step would make every walk quadratic. So the index is paid for
-// by, and only by, the traversals that need it.
-//
-// Only traversal steps call this. keySlot itself never builds, so the mutation
-// path that uses it (removeLiveKey) cannot saddle a table nobody has walked
-// with an index.
+// of t.keys per step would make every walk quadratic. So no traversal pays for
+// the index unless it needs it.
 func (t *Table) slotForTraversal(k Value) (int, bool) {
 	if c := int(atomic.LoadInt32(&t.iterCur)) - 1; c >= 0 && c < len(t.keys) && t.keys[c].RawEqual(k) {
 		return c, true
@@ -1006,26 +988,28 @@ func (t *Table) promoteIntKeysTo(size int) {
 	copy(newArr, t.array)
 	t.array = newArr
 
-	d := t.deadTracking()
 	w := 0
 	for _, kv := range t.keys {
 		if kv.typ == typeInt {
 			if k := kv.ival(); k >= 1 && k <= int64(size) {
-				if v, ok := t.intHash[k]; ok {
-					t.array[k-1] = v
+				v, ok := t.intHash[k]
+				if ok {
 					delete(t.intHash, k)
 				} else if t.hash != nil {
 					// Defensive: a float-keyed insert that normalized to an
 					// integer can live in the general hash (rehashToArray
 					// handles the same case).
-					if v, ok := t.hash[k]; ok {
-						t.array[k-1] = v
+					if v, ok = t.hash[k]; ok {
 						delete(t.hash, k)
-					} else {
-						t.dropPromotedTombstone(d, k)
 					}
+				}
+				if ok {
+					t.array[k-1] = v
 				} else {
-					t.dropPromotedTombstone(d, k)
+					// A tombstone: its slot goes and the array slot stays a
+					// hole, so the key stays invisible, but deadKeys must
+					// follow.
+					t.deadKeys--
 				}
 				continue // the key now lives in the array part
 			}
@@ -1037,12 +1021,9 @@ func (t *Table) promoteIntKeysTo(size int) {
 	// live as long as the Table and would pin their keys.
 	clear(t.keys[w:])
 	t.keys = t.keys[:w]
-	if d != nil {
-		// Slot indices shifted, so the "no tombstone below here" bound is void.
-		d.scan = 0
-	}
-	// The same shift invalidates every recorded slot. Dropping the index is
-	// O(1); the next traversal rebuilds it, and one that never comes never
+	// The compaction shifted slot indices, which invalidates every recorded
+	// slot and the free list with them. Dropping the index is O(1); the next
+	// operation that needs one rebuilds it, and one that never comes never
 	// pays. This runs only at integer-hash doubling points, so the rebuild is
 	// amortized over the inserts that provoked it.
 	t.dropKeyIndex()
@@ -1055,19 +1036,6 @@ func (t *Table) promoteIntKeysTo(size int) {
 	// fill with every key in its array part, in ascending order; draining
 	// here keeps golua matching it.
 	t.rehashToArray()
-}
-
-// dropPromotedTombstone accounts for a dead integer key whose t.keys slot is
-// being removed by promotion: the array slot stays a hole, so the key remains
-// invisible, but the tombstone is gone and deadKeys must follow.
-func (t *Table) dropPromotedTombstone(d *deadIndex, k int64) {
-	if d != nil {
-		delete(d.ints, k)
-	}
-	t.deadKeys--
-	if t.deadKeys == 0 {
-		t.clearDeadTracking()
-	}
 }
 
 // hashKey converts a Value to a map key.
@@ -1243,8 +1211,8 @@ func (t *Table) migrateStrStoreToMap() {
 // below must pick the same slot the old linear scan did.
 func (t *Table) reuseOrAppendKey(k Value) {
 	if t.deadKeys > 0 {
-		d := t.deadTracking()
-		if d == nil {
+		x := t.keyTracking()
+		if x == nil {
 			if len(t.keys) <= deadIndexThreshold {
 				for i, hk := range t.keys {
 					if _, alive := t.getKeyValue(hk); !alive {
@@ -1256,19 +1224,14 @@ func (t *Table) reuseOrAppendKey(k Value) {
 				t.appendKey(k)
 				return
 			}
-			d = t.buildDeadIndex("", false)
+			x = t.buildKeyIndex()
 		}
-		// d.scan is a lower bound on the first tombstone, so a bulk refill
-		// walks t.keys once in total instead of once per inserted key.
-		for i := d.scan; i < len(t.keys); i++ {
-			if d.has(t.keys[i]) {
-				old := t.keys[i]
-				d.remove(old)
-				t.takeKeySlot(i, old, k)
-				d.scan = i + 1
-				t.dropDeadKey()
-				return
-			}
+		// The free list yields the lowest tombstone slot in O(log n), however
+		// the deletes and inserts are interleaved.
+		if i, ok := t.firstFreeSlot(x); ok {
+			t.takeKeySlot(i, t.keys[i], k)
+			t.deadKeys--
+			return
 		}
 	}
 	t.appendKey(k)
@@ -1342,11 +1305,8 @@ func (t *Table) removeLiveKey(k Value) {
 	// an ascending drain) and a slot index invalidated wholesale each time.
 	// reuseOrAppendKey hands the slot to the next new key.
 	t.deadKeys++
-	if d := t.deadTracking(); d != nil {
-		d.add(k)
-		if i < d.scan {
-			d.scan = i
-		}
+	if x := t.keyTracking(); x != nil && x.freeValid {
+		t.noteDeadSlot(x, int32(i), true)
 	}
 }
 
@@ -1419,6 +1379,17 @@ func (t *Table) checkInvariants() error {
 			}
 			if slot != i {
 				return fmt.Errorf("key index puts %v at slot %d, keys slice has it at %d", hashKey(k), slot, i)
+			}
+		}
+		if x.freeValid {
+			free := map[int32]bool{}
+			for _, slot := range x.free {
+				free[slot] = true
+			}
+			for i, k := range t.keys {
+				if _, alive := t.getKeyValue(k); !alive && !free[int32(i)] {
+					return fmt.Errorf("tombstone %v at slot %d is missing from the free list", hashKey(k), i)
+				}
 			}
 		}
 	}
@@ -1761,7 +1732,6 @@ func (t *Table) dropAllDeadKeys() {
 	clear(t.keys) // release the boxed keys the empty slice would still pin
 	t.keys = t.keys[:0]
 	t.deadKeys = 0
-	t.clearDeadTracking()
 	t.dropKeyIndex()
 	// The window and the cursor hint both describe slots of the slice that
 	// has just gone away. Neither can mislead a step — an empty slice bounds
@@ -1969,7 +1939,6 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 	clear(t.keys[:cap(t.keys)])
 	t.keys = nil
 	t.deadKeys = 0
-	t.clearDeadTracking()
 	t.dropKeyIndex()
 
 	// Publish the weak backend and register for the global sweep atomically
