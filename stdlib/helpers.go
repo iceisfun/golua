@@ -52,7 +52,7 @@ func getString(v *vm.VM, idx int, fname string) string {
 	if val.IsNumber() {
 		return val.String()
 	}
-	got := v.ObjTypeName(val)
+	got := argTypeName(v, val)
 	if v.ArgCount() < idx {
 		got = "no value"
 	}
@@ -78,7 +78,7 @@ func getInt(v *vm.VM, idx int, fname string) int64 {
 	if isNum {
 		callerArgError(v, idx, fname, "number has no integer representation")
 	}
-	got := v.ObjTypeName(val)
+	got := argTypeName(v, val)
 	if v.ArgCount() < idx {
 		got = "no value"
 	}
@@ -102,7 +102,7 @@ func getNumber(v *vm.VM, idx int, fname string) float64 {
 	} else if n, ok := val.ToNumber(); ok {
 		return n
 	}
-	got := v.ObjTypeName(val)
+	got := argTypeName(v, val)
 	if v.ArgCount() < idx {
 		got = "no value"
 	}

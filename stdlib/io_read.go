@@ -153,7 +153,7 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 			}
 		} else {
 			// Invalid format type
-			fileArgError(v, firstArg+results, "read", fmt.Sprintf("string expected, got %s", v.ObjTypeName(arg)))
+			fileArgError(v, firstArg+results, "read", fmt.Sprintf("string expected, got %s", argTypeName(v, arg)))
 		}
 		results++
 	}

@@ -288,7 +288,7 @@ func luaUtf8Codes(v *vm.VM) int {
 		stateVal := v.Get(2)
 		state, ok := stateVal.ToInt()
 		if !ok {
-			callerArgError(v, 2, "?", fmt.Sprintf("number expected, got %s", v.ObjTypeName(stateVal)))
+			callerArgError(v, 2, "?", fmt.Sprintf("number expected, got %s", argTypeName(v, stateVal)))
 		}
 
 		// State is: 0 = initial, >0 = 1-indexed position of last returned codepoint.

@@ -44,8 +44,10 @@ func gotDesc(v *vm.VM, argn int) string {
 // argTypeName mirrors reference Lua's luaL_typeerror type resolution: it
 // reports a __name metafield if present, then distinguishes light userdata
 // (e.g. debug.upvalueid results) from full userdata, then falls back to the
-// ordinary type name. ObjTypeName collapses both userdata kinds to "userdata";
-// the light-userdata distinction only surfaces in argument error messages.
+// ordinary type name. Unlike vm.ObjTypeName (luaT_objtypename, used for VM
+// runtime errors), the __name lookup here also sees type metatables, so a
+// thread or string type metatable with __name renames the value, and light
+// userdata is distinguished from full userdata.
 func argTypeName(v *vm.VM, val vm.Value) string {
 	if name := v.GetMetafield(val, "__name"); name.IsString() {
 		return name.AsString()
@@ -181,7 +183,7 @@ func luaToString(v *vm.VM) int {
 			panic("'__tostring' must return a string")
 		}
 	}
-	v.Set(0, vm.NewString(valueToString(val)))
+	v.Set(0, vm.NewString(defaultToString(val, mt)))
 	return 1
 }
 
@@ -978,6 +980,21 @@ func tolstring(v *vm.VM, val vm.Value) string {
 				return valueToString(ret)
 			}
 			panic("'__tostring' must return a string")
+		}
+	}
+	return defaultToString(val, mt)
+}
+
+// defaultToString is the luaL_tolstring fallback for a value without
+// __tostring; mt is the metatable already resolved for val (its own, or the
+// type metatable), or nil. valueToString honours __name on a table's or
+// userdata's own metatable. luaL_tolstring reads __name from any metatable,
+// so a thread or function whose type metatable names it also prints that
+// name in place of its type.
+func defaultToString(val vm.Value, mt vm.LuaTable) string {
+	if mt != nil && (val.IsFunction() || val.IsNativeFunc() || (val.IsTable() && val.AsTable().IsThread())) {
+		if name := mt.Get(vm.NewString(vm.MetaName)); name.IsString() {
+			return name.AsString() + ": " + val.PointerString()
 		}
 	}
 	return valueToString(val)

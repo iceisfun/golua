@@ -32,7 +32,7 @@ func getPackInt(v *vm.VM, idx int) int64 {
 			callerArgError(v, idx, "string.pack", "number has no integer representation")
 		}
 	}
-	callerArgError(v, idx, "string.pack", fmt.Sprintf("number expected, got %s", v.ObjTypeName(val)))
+	callerArgError(v, idx, "string.pack", fmt.Sprintf("number expected, got %s", argTypeName(v, val)))
 	return 0 // unreachable
 }
 
@@ -46,7 +46,7 @@ func getPackNumber(v *vm.VM, idx int) float64 {
 	if n, ok := val.ToNumber(); ok {
 		return n
 	}
-	callerArgError(v, idx, "string.pack", fmt.Sprintf("number expected, got %s", v.ObjTypeName(val)))
+	callerArgError(v, idx, "string.pack", fmt.Sprintf("number expected, got %s", argTypeName(v, val)))
 	return 0 // unreachable
 }
 
@@ -63,7 +63,7 @@ func getPackString(v *vm.VM, idx int) string {
 	if val.IsNumber() {
 		return val.String()
 	}
-	callerArgError(v, idx, "string.pack", fmt.Sprintf("string expected, got %s", v.ObjTypeName(val)))
+	callerArgError(v, idx, "string.pack", fmt.Sprintf("string expected, got %s", argTypeName(v, val)))
 	return "" // unreachable
 }
 

@@ -44,7 +44,7 @@ func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 		((need&tabL) == 0 || !v.GetMetafield(val, vm.MetaLen).IsNil()) {
 		return val
 	}
-	got := v.ObjTypeName(val)
+	got := argTypeName(v, val)
 	if v.ArgCount() < idx {
 		got = "no value"
 	}
@@ -265,7 +265,7 @@ func tableSort(v *vm.VM) int {
 		auxSort(v, obj, 1, length, vm.Nil, &sortErr)
 	} else {
 		if !comp.IsFunction() && !comp.IsNativeFunc() {
-			callerArgError(v, 2, "table.sort", fmt.Sprintf("function expected, got %s", v.ObjTypeName(comp)))
+			callerArgError(v, 2, "table.sort", fmt.Sprintf("function expected, got %s", argTypeName(v, comp)))
 		}
 		auxSort(v, obj, 1, length, comp, &sortErr)
 	}

@@ -129,7 +129,7 @@ func getFileHandle(v *vm.VM, val vm.Value, funcName string) *fileHandle {
 		if v.ArgCount() < 1 {
 			gotStr = "got no value"
 		} else {
-			gotStr = fmt.Sprintf("got %s", v.ObjTypeName(val))
+			gotStr = fmt.Sprintf("got %s", argTypeName(v, val))
 		}
 		callerArgError(v, 1, funcName, fmt.Sprintf("FILE* expected, %s", gotStr))
 	}
@@ -352,12 +352,12 @@ func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 		} else if name.IsNumber() {
 			nameStr = vm.ValueToString(name)
 		} else {
-			callerArgError(v, 1, "io.open", fmt.Sprintf("string expected, got %s", v.ObjTypeName(name)))
+			callerArgError(v, 1, "io.open", fmt.Sprintf("string expected, got %s", argTypeName(v, name)))
 		}
 		mode := "r"
 		if modeArg := v.Get(2); !modeArg.IsNil() {
 			if !modeArg.IsString() {
-				callerArgError(v, 2, "io.open", fmt.Sprintf("string expected, got %s", v.ObjTypeName(modeArg)))
+				callerArgError(v, 2, "io.open", fmt.Sprintf("string expected, got %s", argTypeName(v, modeArg)))
 			}
 			mode = modeArg.AsString()
 		}
@@ -561,7 +561,7 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 		} else {
 			arg := v.Get(1)
 			if !arg.IsString() && !arg.IsNumber() {
-				callerArgError(v, 1, "io.lines", fmt.Sprintf("string expected, got %s", v.ObjTypeName(arg)))
+				callerArgError(v, 1, "io.lines", fmt.Sprintf("string expected, got %s", argTypeName(v, arg)))
 			}
 			name := vm.ValueToString(arg)
 			var err error
@@ -764,7 +764,7 @@ func doFileWrite(v *vm.VM, f vm.LuaFile, self vm.Value, firstArg int) int {
 			// Lua 5.5: io.write uses the same float format as tostring().
 			s = valueToString(arg)
 		} else {
-			fileArgError(v, i, "write", fmt.Sprintf("string expected, got %s", v.ObjTypeName(arg)))
+			fileArgError(v, i, "write", fmt.Sprintf("string expected, got %s", argTypeName(v, arg)))
 		}
 		err := f.Write(ctx, s)
 		if err != nil {
@@ -897,7 +897,7 @@ func fileSeek(v *vm.VM) int {
 			if _, isNum := arg.ToNumber(); isNum {
 				fileArgError(v, 3, "seek", "number has no integer representation")
 			}
-			fileArgError(v, 3, "seek", fmt.Sprintf("number expected, got %s", v.ObjTypeName(arg)))
+			fileArgError(v, 3, "seek", fmt.Sprintf("number expected, got %s", argTypeName(v, arg)))
 		}
 	}
 
@@ -931,7 +931,7 @@ func fileSetVBuf(v *vm.VM) int {
 	} else if mode.IsNumber() {
 		modeStr = mode.String()
 	} else {
-		fileArgError(v, 2, "setvbuf", fmt.Sprintf("string expected, got %s", v.ObjTypeName(mode)))
+		fileArgError(v, 2, "setvbuf", fmt.Sprintf("string expected, got %s", argTypeName(v, mode)))
 	}
 
 	var sizeReq int64 // the request as written, before it is narrowed to int
@@ -948,7 +948,7 @@ func fileSetVBuf(v *vm.VM) int {
 			if _, isNum := arg.ToNumber(); isNum {
 				fileArgError(v, 3, "setvbuf", "number has no integer representation")
 			}
-			fileArgError(v, 3, "setvbuf", fmt.Sprintf("number expected, got %s", v.ObjTypeName(arg)))
+			fileArgError(v, 3, "setvbuf", fmt.Sprintf("number expected, got %s", argTypeName(v, arg)))
 		}
 		sizeReq = sz
 	}
@@ -1040,12 +1040,12 @@ func fileCloseGC(v *vm.VM) int {
 	ud := val.AsUserdata()
 	if ud == nil {
 		name, _ := v.ArgErrorFuncName()
-		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", name, v.ObjTypeName(val)))
+		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", name, argTypeName(v, val)))
 	}
 	fh, ok := ud.Data.(*fileHandle)
 	if !ok {
 		name, _ := v.ArgErrorFuncName()
-		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", name, v.ObjTypeName(val)))
+		panic(fmt.Sprintf("bad argument #1 to '%s' (FILE* expected, got %s)", name, argTypeName(v, val)))
 	}
 	if fh.gcCloseFn != nil {
 		fh.gcCloseFn(fh)

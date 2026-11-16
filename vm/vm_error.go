@@ -119,12 +119,20 @@ func (vm *VM) ArgErrorFuncName() (name, nameWhat string) {
 	return "?", ""
 }
 
-// ObjTypeName returns the type name for a value, checking __name in
-// the metatable first (matching Lua 5.4's luaT_objtypename).
+// ObjTypeName returns the type name the VM uses in its runtime errors
+// ("attempt to index a X value"), matching luaT_objtypename: a string __name
+// metafield is honoured only for a table or a full userdata with its own
+// metatable. A type metatable (strings, numbers, functions, threads, ...)
+// never renames the value here, so a thread is always "thread".
+//
+// Library argument errors follow luaL_typeerror instead, which reads __name
+// from any metatable, type metatables included; stdlib has its own helper
+// for that.
 func (vm *VM) ObjTypeName(v Value) string {
-	name := vm.getMetafield(v, MetaName)
-	if name.IsString() {
-		return name.AsString()
+	if (v.IsTable() && !v.isThread()) || v.AsUserdata() != nil {
+		if name := vm.getMetafield(v, MetaName); name.IsString() {
+			return name.AsString()
+		}
 	}
 	return v.Type()
 }

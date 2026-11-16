@@ -173,4 +173,39 @@ do
     print("PASS: thread _ENV upvalue")
 end
 
+-- Bug 8: A __name in the thread type metatable does not rename the thread in
+-- VM runtime errors (luaT_objtypename only consults tables and full
+-- userdata), but library argument errors and tostring (luaL_typeerror,
+-- luaL_tolstring) do use it.
+do
+    local co = coroutine.create(function() end)
+    debug.setmetatable(co, {__name = "MyThread"})
+    local ok, err = pcall(function() local _ENV = co; xx = 1 end)
+    assert(not ok and err:find("attempt to index a thread value (local '_ENV')", 1, true),
+        "index error names a thread by type: " .. tostring(err))
+    ok, err = pcall(function() return co + 1 end)
+    assert(not ok and err:find("arithmetic on a thread value", 1, true), tostring(err))
+    ok, err = pcall(function() return co() end)
+    assert(not ok and err:find("attempt to call a thread value", 1, true), tostring(err))
+    ok, err = pcall(string.rep, co)
+    assert(not ok and err:find("(string expected, got MyThread)", 1, true), tostring(err))
+    assert(tostring(co):find("^MyThread: "), "tostring uses thread __name: " .. tostring(co))
+    debug.setmetatable(co, nil)
+    assert(tostring(co):find("^thread: "), tostring(co))
+
+    -- Likewise for a function type metatable.
+    debug.setmetatable(print, {__name = "FN"})
+    local ok2, err2 = pcall(function() return print + 1 end)
+    local s = tostring(print)
+    debug.setmetatable(print, nil)
+    assert(not ok2 and err2:find("arithmetic on a function value", 1, true), tostring(err2))
+    assert(s:find("^FN: "), "tostring uses function __name: " .. s)
+
+    -- A table's own __name still renames it in runtime errors.
+    local named = setmetatable({}, {__name = "Named"})
+    ok, err = pcall(function() return named + 1 end)
+    assert(not ok and err:find("arithmetic on a Named value", 1, true), tostring(err))
+    print("PASS: thread __name")
+end
+
 print("OK")
