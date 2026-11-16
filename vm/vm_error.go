@@ -141,6 +141,17 @@ func (vm *VM) ArgErrorFuncName() (name, nameWhat string) {
 	return "?", ""
 }
 
+// ArgErrorExtraArgs returns how many arguments __call metamethods prepended
+// to the current native function's arguments (debug.getinfo's extraargs).
+// Lua 5.5's luaL_argerror reports those as "extra argument" and leaves them
+// out of the number of any other argument.
+func (vm *VM) ArgErrorExtraArgs() int {
+	if n := len(vm.callStack); n > 0 {
+		return vm.callStack[n-1].extraArgs
+	}
+	return 0
+}
+
 // ObjTypeName returns the type name the VM uses in its runtime errors
 // ("attempt to index a X value"), matching luaT_objtypename: a string __name
 // metafield is honoured only for a table or a full userdata with its own

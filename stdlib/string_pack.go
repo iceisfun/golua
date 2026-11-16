@@ -72,12 +72,12 @@ func getPackString(v *vm.VM, idx int) string {
 // a direct call resolves to the short field name ("pack"); a call made
 // indirectly (e.g. via pcall) falls back to the qualified global name
 // ("string.pack"). The fallback is used only when resolution fails entirely.
-func packCallName(v *vm.VM, fallback string) (name string, method bool) {
-	name, nameWhat := v.ArgErrorFuncName()
+func packCallName(v *vm.VM, fallback string) (name, nameWhat string) {
+	name, nameWhat = v.ArgErrorFuncName()
 	if name == "?" && nameWhat == "" {
 		name = fallback
 	}
-	return name, nameWhat == "method"
+	return name, nameWhat
 }
 
 // packDirective describes a single parsed format directive.
@@ -162,30 +162,25 @@ type formatState struct {
 	byteOrder binary.ByteOrder
 	maxAlign  int
 	funcName  string // e.g. "string.pack" for error messages
-	method    bool   // called with method syntax: argument numbers exclude self
+	nameWhat  string // how funcName was resolved ("method": numbers exclude self)
+	extraArgs int    // arguments prepended by __call, excluded from numbers
 }
 
 func newFormatState(v *vm.VM, fallback string) *formatState {
-	name, method := packCallName(v, fallback)
+	name, nameWhat := packCallName(v, fallback)
 	return &formatState{
 		byteOrder: binary.LittleEndian, // native = little on x86/ARM
 		maxAlign:  1,
 		funcName:  name,
-		method:    method,
+		nameWhat:  nameWhat,
+		extraArgs: v.ArgErrorExtraArgs(),
 	}
 }
 
-// argMsg builds a luaL_argerror-style message for argument idx, applying the
-// same method-call adjustment as callerArgError: the implicit self is not
-// counted, and an error about self itself reads "calling 'f' on bad self".
+// argMsg builds a luaL_argerror-style message for argument idx, numbered as
+// callerArgError does (see argErrorMsg).
 func (fs *formatState) argMsg(idx int, msg string) string {
-	if fs.method {
-		if idx == 1 {
-			return fmt.Sprintf("calling '%s' on bad self (%s)", fs.funcName, msg)
-		}
-		idx--
-	}
-	return fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, fs.funcName, msg)
+	return argErrorMsg(fs.funcName, fs.nameWhat, fs.extraArgs, idx, msg)
 }
 
 // effectiveAlign computes the effective alignment for a directive with the
