@@ -607,6 +607,24 @@ func (c *compiler) foldArith(e *ast.BinopExpr) ast.Expr {
 		return nil
 	}
 
+	// Bitwise operators work on integers: reference validop folds them only
+	// when each float operand has an exact integer value (the conversion
+	// luaO_rawarith then performs), since any other float raises at run time.
+	switch e.Op {
+	case "&", "|", "~", "<<", ">>":
+		if !lIsInt {
+			if lInt, lOk = floatToIntExact(lFloat); !lOk {
+				return nil
+			}
+		}
+		if !rIsInt {
+			if rInt, rOk = floatToIntExact(rFloat); !rOk {
+				return nil
+			}
+		}
+		lIsInt, rIsInt = true, true
+	}
+
 	// Both integers: try integer arithmetic.
 	if lIsInt && rIsInt {
 		if result, ok := foldIntOp(e.Op, lInt, rInt); ok {
@@ -656,16 +674,21 @@ func (c *compiler) foldArith(e *ast.BinopExpr) ast.Expr {
 		}
 		return floatFold(r)
 	case "^":
-		r := powWithSubnormalFix(lFloat, rFloat)
-		if math.IsNaN(r) || math.IsInf(r, 0) {
-			return nil // leave edge cases to runtime for correct NaN/Inf sign
-		}
-		return floatFold(r)
-	case "&", "|", "~", "<<", ">>":
-		// Bitwise ops require integers; if either is float, no fold.
-		return nil
+		// An infinite power folds like any other result (2^10000 is a
+		// constant in reference); floatFold still leaves NaN to run time.
+		return floatFold(powWithSubnormalFix(lFloat, rFloat))
 	}
 	return nil
+}
+
+// floatToIntExact converts f to an integer when it has an exact integer value
+// in range, as reference luaV_tointegerns does in its default F2Ieq mode.
+func floatToIntExact(f float64) (int64, bool) {
+	// -2^63 is exact; 2^63 is the first float past MaxInt64.
+	if f != math.Trunc(f) || f < -(1<<63) || f >= 1<<63 {
+		return 0, false
+	}
+	return int64(f), true
 }
 
 // foldIntOp performs integer arithmetic for constant folding.
@@ -733,6 +756,20 @@ func (c *compiler) numericValue(e ast.Expr) (bool, int64, float64, bool) {
 		return true, n.Value, float64(n.Value), true
 	case *ast.FloatExpr:
 		return false, 0, n.Value, true
+	case *ast.ParenExpr:
+		// Parentheses keep a numeric constant a constant in reference, so
+		// (2)+(3) and -(1) fold too.
+		return c.numericValue(n.Inner)
+	case *ast.NameExpr:
+		// So does an inlined <const> local: K+1 folds when K is one.
+		if v, ok := lookupInlinedAny(c.fs, n.Name); ok {
+			switch v.Type {
+			case ValInt:
+				return true, v.IVal, float64(v.IVal), true
+			case ValFloat:
+				return false, 0, v.FVal, true
+			}
+		}
 	case *ast.BinopExpr:
 		if r, ok := c.foldMemo[n]; ok {
 			return r.isInt, r.iv, r.fv, r.ok
@@ -900,11 +937,19 @@ func (c *compiler) foldUnaryArith(e *ast.UnopExpr) ast.Expr {
 			r := -iv
 			return &ast.NumberExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%d", r)}
 		}
+		// Reference constfolding leaves a float zero result to run time, so
+		// -0.0 is a UNM of 0.0 there, not a constant: it is not a deciding
+		// and/or operand, nor an inlined <const> value (see foldArith).
+		if fv == 0 {
+			return nil
+		}
 		r := -fv
 		return &ast.FloatExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%g", r)}
 	case "~":
 		if !isInt {
-			return nil
+			if iv, ok = floatToIntExact(fv); !ok {
+				return nil
+			}
 		}
 		r := ^iv
 		return &ast.NumberExpr{P: e.P, Value: r, Raw: fmt.Sprintf("%d", r)}

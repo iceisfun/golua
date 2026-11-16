@@ -125,3 +125,41 @@ print(old.k, u.k, v.a, v.b)`)
 		t.Fatalf("constant and/or assignment operand: got %q want %q", got, want)
 	}
 }
+
+// Which and/or operands count as deciding constants follows reference
+// constfolding: it folds infinite powers, bitwise operators on floats with an
+// exact integer value, parenthesised constants and inlined <const> locals, but
+// never a float zero or NaN result, so -0.0 is a UNM at run time and neither
+// decides the operator nor makes an inlined <const>. Each line reads `a` live
+// (10) exactly when reference folds the left operand and snapshots it (1)
+// otherwise. Expected output is reference Lua 5.5's.
+func TestConstShortCircuitFoldsLikeReference(t *testing.T) {
+	got := runLuaCapture(t, `
+local K <const> = 1
+local Z <const> = -0.0
+local W <const> = 0.0
+local P <const> = -(2)
+local KK <const> = K + 1
+local a = 1
+local function seta() a = 10 return 0 end
+local out = {}
+a = 1 out[#out+1] = (-0.0 and a) + seta()
+a = 1 out[#out+1] = (Z and a) + seta()
+a = 1 out[#out+1] = (not -0.0 or a) + seta()
+a = 1 out[#out+1] = (-W and a) + seta()
+a = 1 out[#out+1] = ((0/0) and a) + seta()
+a = 1 out[#out+1] = (1.0 - 1.0 and a) + seta()
+a = 1 out[#out+1] = (W and a) + seta()
+a = 1 out[#out+1] = (2^10000 and a) + seta()
+a = 1 out[#out+1] = (1.0|2 and a) + seta()
+a = 1 out[#out+1] = (~1.0 and a) + seta()
+a = 1 out[#out+1] = ((2)+(3) and a) + seta()
+a = 1 out[#out+1] = (P and a) + seta()
+a = 1 out[#out+1] = (K+1 and a) + seta()
+a = 1 out[#out+1] = (KK and a) + seta()
+print(table.concat(out, " "), 1/Z, 1.0|2, math.type(2.0<<1), -(2^10000))`)
+	want := "1 1 1 1 1 1 10 10 10 10 10 10 10 10\t-inf\t3\tinteger\t-inf"
+	if got != want {
+		t.Fatalf("constant folding of and/or operands: got %q want %q", got, want)
+	}
+}
