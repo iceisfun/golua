@@ -138,6 +138,43 @@ func (vm *VM) fireReturnHook() {
 	}
 }
 
+// nativeHookArgs returns the arguments of the native frame at base as they
+// stand after its call hook, which may have changed them with
+// debug.setlocal. With no hook set it returns args unchanged.
+func (vm *VM) nativeHookArgs(base int, args []Value) []Value {
+	if vm.hookMask == 0 {
+		return args
+	}
+	return append([]Value(nil), vm.stack[base+1:base+1+len(args)]...)
+}
+
+// fireNativeReturnHook fires the return hook for the native frame on top of
+// the call stack, which was called with args and returned results. The
+// native wrote its results over its own function and argument slots, so
+// first lay the stack out as reference Lua leaves it, [args..., results...],
+// and point ftransfer/ntransfer at the results so the hook can reach them
+// with debug.getlocal (and change them with debug.setlocal).
+func (vm *VM) fireNativeReturnHook(args, results []Value) {
+	if vm.hookMask&HookMaskReturn == 0 || vm.inHook {
+		return
+	}
+	nf := &vm.callStack[len(vm.callStack)-1]
+	retStart := nf.base + 1 + len(args)
+	vm.ensureStack(retStart + len(results) + stackSafetyMargin)
+	copy(vm.stack[nf.base+1:], args)
+	copy(vm.stack[retStart:], results)
+	vm.top = retStart + len(results)
+	if len(results) > 0 {
+		nf.ftransfer = retStart - nf.base
+		nf.ntransfer = len(results)
+	} else {
+		nf.ftransfer = 0
+		nf.ntransfer = 0
+	}
+	vm.fireReturnHook()
+	copy(results, vm.stack[retStart:])
+}
+
 // fireTailCallHook fires a "tail call" hook event.
 func (vm *VM) fireTailCallHook() {
 	if vm.hookMask&HookMaskCall != 0 && !vm.inHook {

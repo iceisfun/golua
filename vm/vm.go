@@ -815,6 +815,8 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 			argc:                  len(args),
 			funcValue:             fn,
 			suppressTracebackName: vm.pendingSuppressTracebackName,
+			ftransfer:             1,
+			ntransfer:             len(args),
 		})
 		vm.pendingSuppressTracebackName = false
 
@@ -825,21 +827,22 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 
 		// Fire call hook after frame is pushed (matching doCall behavior)
 		vm.fireCallHook()
+		args = vm.nativeHookArgs(base, args)
 
 		// Call native function
 		nResults := nf(vm)
-
-		// Fire return hook before popping the frame
-		vm.fireReturnHook()
-
-		// Pop the call frame
-		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 
 		// Collect results
 		results = make([]Value, nResults)
 		for i := 0; i < nResults; i++ {
 			results[i] = vm.stack[base+i]
 		}
+
+		// Fire return hook before popping the frame
+		vm.fireNativeReturnHook(args, results)
+
+		// Pop the call frame
+		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 
 		vm.top = savedTop
 		return results, nil
@@ -904,19 +907,22 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 			argc:                  len(args),
 			funcValue:             fn,
 			suppressTracebackName: vm.pendingSuppressTracebackName,
+			ftransfer:             1,
+			ntransfer:             len(args),
 		})
 		vm.pendingSuppressTracebackName = false
 		vm.top = base + 1 + len(args)
 		vm.fireCallHook()
+		args = vm.nativeHookArgs(base, args)
 
 		nResults := nf(vm)
-		vm.fireReturnHook()
-		vm.callStack = vm.callStack[:len(vm.callStack)-1]
-
 		results = make([]Value, nResults)
 		for i := 0; i < nResults; i++ {
 			results[i] = vm.stack[base+i]
 		}
+
+		vm.fireNativeReturnHook(args, results)
+		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 
 		vm.top = savedTop
 		return results, nil
