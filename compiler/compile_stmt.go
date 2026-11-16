@@ -1349,7 +1349,7 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 			}
 			offset := fs.pc() - (pg.pc + 1)
 			if offset > MaxSJ || offset < MinSJ {
-				c.error(nil, errControlStructureTooLong)
+				c.errorAtLine(afterLine, errControlStructureTooLong)
 			} else {
 				fs.proto.Code[pg.pc] = fs.proto.Code[pg.pc].SetSJ(offset)
 			}

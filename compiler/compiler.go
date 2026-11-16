@@ -386,6 +386,13 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 		case int:
 			line = p
 		}
+		// A limit hit with no node at hand (a jump patched at block end, an
+		// upvalue slot) still gets a position: reference raises these as
+		// syntax errors at the parser's current line, which the most
+		// recently emitted instruction approximates.
+		if pos == nil && line == 0 && c.fs != nil {
+			line = c.lastEmittedLine()
+		}
 		if source != "" && line > 0 {
 			c.err = fmt.Errorf("%s:%d: %s", shortSrc(source), line, msg)
 		} else if source != "" {
