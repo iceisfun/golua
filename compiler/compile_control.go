@@ -284,8 +284,15 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 
 	// Jump back to condition — use the last emitted line (typically the
 	// last line of the loop body), matching Lua 5.4 which uses ls->lastline
-	// (the 'end' keyword line) for the backward JMP.
+	// (the 'end' keyword line) for the backward JMP. A body ending in a
+	// label emits nothing for it, but reference reads the label's closing
+	// '::' before the jump, so the jump takes the label's line.
 	backLine := c.lastEmittedLine()
+	if n := len(s.Body.Stmts); n > 0 {
+		if _, ok := s.Body.Stmts[n-1].(*ast.LabelStmt); ok && fs.blockLastLine > backLine {
+			backLine = fs.blockLastLine
+		}
+	}
 	backJump := fs.emitJump(backLine)
 	offset := loopStart - (fs.pc()) // negative
 	if offset > MaxSJ || offset < MinSJ {

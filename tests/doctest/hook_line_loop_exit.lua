@@ -44,3 +44,10 @@ print(trace("for i = 1, 2 do\n  local f = function() return i end\n  ::cont::\ne
 --> =1 2 3 1 2 3 1 5
 print(trace("do\n  local x <close> = nil\n  ::a::\nend\nlocal z = 1"))
 --> =2 3 5
+
+-- A while body ending in a label jumps back on the label's line: the
+-- body's back JMP is emitted after the label's closing '::' is read.
+print(trace("local i = 0\nwhile i < 2 do\n  local function g() return i end\n  i = i + 1\n  ::continue::\nend"))
+--> =1 2 3 4 5 2 3 4 5 2 6
+print(trace("local i = 0\nwhile i < 2 do\n  i = i + 1\n  ::a:: ::b::\n\nend"))
+--> =1 2 3 4 2 3 4 2 6
