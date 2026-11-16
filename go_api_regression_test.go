@@ -13,6 +13,44 @@ import (
 	"github.com/iceisfun/golua/v2/vm"
 )
 
+// customTable is a LuaTable that is not a *vm.Table.
+type customTable struct{ *vm.Table }
+
+// The LuaTable interface is documented as open to custom implementations;
+// Lua code must be able to index, assign to, and use the table library on
+// one, as it can on any table.
+func TestGoAPICustomLuaTableIndexing(t *testing.T) {
+	v := vm.New()
+	stdlib.Open(v)
+	ct := customTable{vm.NewEmptyTable()}
+	if err := ct.Set(vm.NewString("k"), vm.NewString("v")); err != nil {
+		t.Fatal(err)
+	}
+	v.SetGlobal("t", vm.NewTable(ct))
+
+	cases := []struct{ src, want string }{
+		{`return t.k`, "v"},
+		{`local key = "k" return t[key]`, "v"},
+		{`t.x = 1 return rawget(t, "x")`, "1"},
+		{`local key = "y" t[key] = 2 return rawget(t, "y")`, "2"},
+		{`t[1] = "one" return t[1]`, "one"},
+		{`table.insert(t, "two") return t[2]`, "two"},
+		{`table.remove(t) return #t`, "1"},
+		{`local _ENV = t return k`, "v"},
+		{`function t.m(self) return self.k end return t:m()`, "v"},
+		{`local ct = t setmetatable(ct, {__index = function(_, key) return "mm:" .. key end}) return ct.missing`, "mm:missing"},
+	}
+	for _, tc := range cases {
+		res, err := v.Run(embedProto(t, tc.src))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.src, err)
+		}
+		if len(res) != 1 || res[0].String() != tc.want {
+			t.Fatalf("%s: got %v, want %s", tc.src, res, tc.want)
+		}
+	}
+}
+
 // ValueToString renders numbers the way Lua's tostring does, since its
 // result reaches Lua code (require names, searcher messages, load errors)
 // and hosts (LuaError.Error).
