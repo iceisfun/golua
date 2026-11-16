@@ -438,3 +438,74 @@ func TestAssignOrder_ManyGlobalTargetsWithEnvRebind(t *testing.T) {
 	`
 	runLuaSource(t, src, "assign_many_globals_env_rebind")
 }
+
+// An upvalue table indexed by a key that emits code is read only after the
+// key has been evaluated: reference luaK_indexed leaves a bare upvalue table
+// undischarged while the key is parsed. A key that rebinds the upvalue is
+// therefore seen by the read and by the store. A plain local key, a constant
+// key, and a parenthesised table are read up front, as in reference.
+func TestAssignOrder_UpvalueTableReadAfterKey(t *testing.T) {
+	src := `
+		local c = {name = "old", [1] = "old1"}
+		local function key() c = {name = "new", [1] = "new1"}; return "name" end
+		local function reset() c = {name = "old", [1] = "old1"}; return c end
+
+		-- reads
+		assert((function() return c[key()] end)() == "new")
+		reset()
+		assert((function() return c[key() and 1] end)() == "new1")
+		reset()
+		assert((function() return (c)[key()] end)() == "old")
+
+		-- index assignment, single and multiple
+		local old = reset()
+		;(function() c[key()] = "set" end)()
+		assert(old.name == "old" and c.name == "set", "single: "..old.name.." "..c.name)
+		old = reset()
+		;(function() local v; c[key()], v = "m", 1 end)()
+		assert(old.name == "old" and c.name == "m", "multi: "..old.name.." "..c.name)
+
+		-- a local or constant key does not delay the table read
+		old = reset()
+		local k = "name"
+		;(function() c[k] = key() end)()
+		assert(old.name == "name" and c.name == "new", "local key: "..old.name.." "..c.name)
+		old = reset()
+		;(function() c[1] = key() end)()
+		assert(old[1] == "name" and c[1] == "new1", "int key: "..old[1].." "..c[1])
+	`
+	runLuaSource(t, src, "assign_upvalue_table_read_after_key")
+}
+
+// A store to an upvalue table under a short constant string key compiles to
+// SETTABUP in reference Lua, which reads the upvalue when the store executes,
+// after the right-hand side; a value expression that rebinds the upvalue
+// redirects the store. In a multiple assignment a later target that rebinds
+// the upvalue forces a copy of the table first (check_conflict).
+func TestAssignOrder_UpvalueFieldStoreAfterRHS(t *testing.T) {
+	src := `
+		local c = {}
+		local old = c
+		local function new() c = {}; return 1 end
+		local function reset() c = {}; old = c end
+
+		;(function() c.x = new() end)()
+		assert(old.x == nil and c.x == 1, "field")
+		reset()
+		;(function() c["x"] = new() end)()
+		assert(old.x == nil and c.x == 1, "string key")
+		reset()
+		;(function() c.x, c.y = new(), 2 end)()
+		assert(old.x == nil and c.x == 1 and c.y == 2, "multi")
+		reset()
+		;(function() c.x, c.y, c = 1, 2, {} end)()
+		assert(old.x == 1 and old.y == 2 and c.x == nil, "conflict")
+		reset()
+		;(function() c, c.x = {}, 1 end)()
+		assert(old.x == 1 and c.x == nil, "conflict after")
+		reset()
+		local ok, err = pcall(function() c.x = (function() c = nil; return 1 end)() end)
+		assert(not ok and err:find("attempt to index a nil value %(upvalue 'c'%)"), err)
+	`
+	runLuaSource(t, src, "assign_upvalue_field_store_after_rhs")
+}

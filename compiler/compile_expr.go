@@ -2088,9 +2088,62 @@ func (c *compiler) finishFieldExpr(e *ast.FieldExpr, reg, tableReg int, needFree
 	}
 }
 
+// upvalueTableKeyFirst reports whether t[key] must evaluate key before it
+// reads t, returning t's upvalue index when it must. Reference
+// luaK_exp2anyregup leaves a bare upvalue table undischarged while the key is
+// parsed, and luaK_indexed only then loads it with GETUPVAL (a constant short
+// string key takes GETTABUP instead), so a key that reassigns the upvalue is
+// seen by the access. A parenthesised table is discharged at the ')' and a
+// local is read live anyway, so only a bare upvalue name qualifies, and only a
+// key that emits code can tell the difference.
+func (c *compiler) upvalueTableKeyFirst(table, key ast.Expr) (int, bool) {
+	fs := c.fs
+	name, ok := table.(*ast.NameExpr)
+	if !ok {
+		return 0, false
+	}
+	if _, ok := c.tryFoldConstScalar(key); ok {
+		return 0, false
+	}
+	if kn, ok := bareOperand(fs, key).(*ast.NameExpr); ok {
+		if _, inlined := lookupInlinedAny(fs, kn.Name); inlined {
+			return 0, false
+		}
+		if _, local := fs.lookupLocal(kn.Name); local {
+			return 0, false
+		}
+	}
+	if _, inlined := lookupInlinedAny(fs, name.Name); inlined {
+		return 0, false
+	}
+	if _, local := fs.lookupLocal(name.Name); local {
+		return 0, false
+	}
+	return c.resolveUpvalue(fs, name.Name)
+}
+
 // compileIndexExpr compiles t[key] into GETI (constant int 0-255) or GETTABLE.
 func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
+	if uvIdx, ok := c.upvalueTableKeyFirst(e.Table, e.Key); ok {
+		// Evaluate the key, then read the upvalue table (see
+		// upvalueTableKeyFirst). A scratch target holds the key in place.
+		line := suffixLine(e.EndP, e.P)
+		saved := fs.freeReg
+		keyReg := reg
+		if reg < fs.nActVar {
+			keyReg = fs.reserveReg()
+		}
+		c.compileExprToReg(e.Key, keyReg)
+		if fs.freeReg <= keyReg {
+			fs.freeReg = keyReg + 1
+		}
+		tableReg := fs.reserveReg()
+		fs.emit(ABC(OP_GETUPVAL, tableReg, uvIdx, 0, 0), line)
+		fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), line)
+		fs.freeReg = saved
+		return
+	}
 	// When the table is a local variable, use its register directly to
 	// avoid emitting an unnecessary MOVE. This matches Lua 5.4's behavior
 	// where VINDEXED expressions reference the table register directly.
