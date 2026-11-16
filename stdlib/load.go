@@ -59,6 +59,13 @@ func setLoadReaderError(v *vm.VM, err error) {
 	appendTraceback := v.CoroutineID() == 0
 	if le, ok := err.(*vm.LuaError); ok {
 		if !le.Value.IsString() {
+			if le.Value.IsNil() && (preserveRaw || !appendTraceback) {
+				// Lua 5.5 replaces a nil error object with this string
+				// whenever an error status is delivered; only the
+				// standalone interpreter's handler says otherwise.
+				v.Set(1, vm.NewString("<no error object>"))
+				return
+			}
 			if preserveRaw {
 				v.Set(1, le.Value)
 				return
@@ -312,6 +319,13 @@ func luaLoad(v *vm.VM) int {
 				}
 				v.Set(0, fn)
 				return 1
+			}
+			if firstRead && !strings.Contains(mode, "t") {
+				// The reference checks the mode against the first byte
+				// of the first piece, so the reader is not drained.
+				v.Set(0, vm.Nil)
+				v.Set(1, vm.NewString(fmt.Sprintf("attempt to load a text chunk (mode is '%s')", mode)))
+				return 2
 			}
 			firstRead = false
 			lineCount += strings.Count(s, "\n")
