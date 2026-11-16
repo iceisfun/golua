@@ -70,7 +70,7 @@ val, ok, received := ch.TryRecv()
 | `ch:try_send(val)` | Non-blocking send; returns `bool` |
 | `ch:try_recv()` | Non-blocking receive; returns `val, ok, received` |
 
-`chan.select` returns a 1-based index of the channel that fired, or `0` on timeout. Blocking operations respect context cancellation.
+`chan.select` returns a 1-based index of the channel that fired, or `0` on timeout. The timeout is in seconds and must be a non-negative number; a timeout too long for a Go `time.Duration`, such as `math.huge`, waits about 292 years. Blocking operations respect context cancellation.
 
 ## Default Implementation
 

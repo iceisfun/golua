@@ -276,6 +276,33 @@ func TestChan_SelectTimeout(t *testing.T) {
 	runLuaWithChan(t, source, "test_chan_select_timeout", nil, vm.Limits{}, nil)
 }
 
+// A timeout too large for a time.Duration must wait, not overflow into a
+// negative duration that times out at once.
+func TestChan_SelectHugeTimeoutBlocks(t *testing.T) {
+	for _, timeout := range []string{"math.huge", "1e10", "2^63 / 1e9"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		source := `
+			local idx = chan.select(chan.make(0), ` + timeout + `)
+			error("select returned " .. tostring(idx))
+		`
+		_, err := runLuaWithChan(t, source, "test_chan_select_huge_timeout", ctx, vm.Limits{}, nil)
+		cancel()
+		if err == nil || !strings.Contains(err.Error(), "interrupted") {
+			t.Fatalf("timeout %s: expected 'interrupted', got: %v", timeout, err)
+		}
+	}
+}
+
+func TestChan_SelectNaNTimeout(t *testing.T) {
+	source := `
+		local ok, err = pcall(chan.select, chan.make(0), 0/0)
+		assert(not ok and err:find("non-negative timeout expected", 1, true), tostring(err))
+	`
+	if _, err := runLuaWithChan(t, source, "test_chan_select_nan_timeout", nil, vm.Limits{}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestChan_SelectClosedChannel(t *testing.T) {
 	source := `
 		local ch = chan.make(1)

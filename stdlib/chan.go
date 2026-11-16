@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"errors"
+	"math"
 	"reflect"
 	"sync"
 	"time"
@@ -245,10 +246,17 @@ func makeChanSelect(luaVM *vm.VM, provider vm.LuaChanProvider) vm.NativeFunc {
 		if lastArg.IsNumber() {
 			// Last arg is timeout in seconds
 			t, _ := lastArg.ToNumber()
-			if t < 0 {
+			if !(t >= 0) { // also rejects NaN
 				panic("bad argument to 'chan.select' (non-negative timeout expected)")
 			}
-			timeout = time.Duration(t * float64(time.Second))
+			// Clamp before converting: a float out of int64 range (math.huge,
+			// 1e10 s) converts to a negative Duration, which fires at once.
+			// float64(math.MaxInt64) is 2^63, so anything below it fits.
+			if d := t * float64(time.Second); d >= float64(math.MaxInt64) {
+				timeout = math.MaxInt64 // about 292 years
+			} else {
+				timeout = time.Duration(d)
+			}
 			hasTimeout = true
 			channelCount = argc - 1
 		}
