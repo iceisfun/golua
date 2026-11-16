@@ -605,7 +605,7 @@ func luaCollectgarbage(v *vm.VM) int {
 func luaWarn(v *vm.VM) int {
 	argc := v.ArgCount()
 	if argc < 1 {
-		callerArgError(v, 1, "warn", "string expected, got no value")
+		callerArgError(v, 1, "warn", "string expected"+gotDesc(v, 1))
 	}
 	// Lua 5.4: all arguments must be strings or numbers (coerced to string)
 	first := v.Get(1)
@@ -919,7 +919,7 @@ func luaSetmetatable(v *vm.VM) int {
 		callerArgError(v, 1, "setmetatable", "table expected"+gotDesc(v, 1))
 	}
 	if v.ArgCount() < 2 {
-		callerArgError(v, 2, "setmetatable", "nil or table expected, got no value")
+		callerArgError(v, 2, "setmetatable", "nil or table expected"+gotDesc(v, 2))
 	}
 	// Check __metatable protection on existing metatable
 	if existingMT := tbl.Metatable(); existingMT != nil {

@@ -125,13 +125,7 @@ func fileArgError(v *vm.VM, idx int, _ string, msg string) {
 func getFileHandle(v *vm.VM, val vm.Value, funcName string) *fileHandle {
 	ud := val.AsUserdata()
 	if ud == nil {
-		var gotStr string
-		if v.ArgCount() < 1 {
-			gotStr = "got no value"
-		} else {
-			gotStr = fmt.Sprintf("got %s", argTypeName(v, val))
-		}
-		callerArgError(v, 1, funcName, fmt.Sprintf("FILE* expected, %s", gotStr))
+		callerArgError(v, 1, funcName, "FILE* expected, got "+argTypeOrNone(v, val, v.ArgCount() < 1))
 	}
 	fh, ok := ud.Data.(*fileHandle)
 	if !ok {
@@ -347,19 +341,13 @@ func readNumberFromReader(reader *bufio.Reader) (string, error) {
 func makeIoOpen(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
-		if name.IsNil() {
-			if v.ArgCount() < 1 {
-				callerArgError(v, 1, "io.open", "string expected, got no value")
-			}
-			callerArgError(v, 1, "io.open", "string expected, got nil")
-		}
 		var nameStr string
 		if name.IsString() {
 			nameStr = name.AsString()
 		} else if name.IsNumber() {
 			nameStr = vm.ValueToString(name)
 		} else {
-			callerArgError(v, 1, "io.open", fmt.Sprintf("string expected, got %s", argTypeName(v, name)))
+			callerArgError(v, 1, "io.open", "string expected, got "+argTypeOrNone(v, name, v.ArgCount() < 1))
 		}
 		mode := "r"
 		if modeArg := v.Get(2); !modeArg.IsNil() {
@@ -930,7 +918,7 @@ func fileSetVBuf(v *vm.VM) int {
 
 	mode := v.Get(2)
 	if mode.IsNil() {
-		fileArgError(v, 2, "setvbuf", "string expected, got nil")
+		fileArgError(v, 2, "setvbuf", "string expected, got "+argTypeOrNone(v, mode, v.ArgCount() < 2))
 	}
 	var modeStr string
 	if mode.IsString() {

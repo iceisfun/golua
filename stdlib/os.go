@@ -438,14 +438,8 @@ func makeOsTmpname(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
-		if v.ArgCount() < 1 {
-			callerArgError(v, 1, "os.remove", "string expected, got no value")
-		}
-		if name.IsNil() {
-			callerArgError(v, 1, "os.remove", "string expected, got nil")
-		}
 		if !name.IsString() && !name.IsNumber() {
-			callerArgError(v, 1, "os.remove", fmt.Sprintf("string expected, got %s", argTypeName(v, name)))
+			callerArgError(v, 1, "os.remove", "string expected, got "+argTypeOrNone(v, name, v.ArgCount() < 1))
 		}
 		nameStr := valueToString(name)
 		err := ioProvider.Remove(v.Context(), nameStr)
@@ -502,24 +496,12 @@ func makeOsSetlocale(provider vm.LuaOsProvider) vm.NativeFunc {
 func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		arg1 := v.Get(1)
-		if v.ArgCount() < 1 {
-			callerArgError(v, 1, "os.rename", "string expected, got no value")
-		}
-		if arg1.IsNil() {
-			callerArgError(v, 1, "os.rename", "string expected, got nil")
-		}
 		if !arg1.IsString() && !arg1.IsNumber() {
-			callerArgError(v, 1, "os.rename", fmt.Sprintf("string expected, got %s", argTypeName(v, arg1)))
+			callerArgError(v, 1, "os.rename", "string expected, got "+argTypeOrNone(v, arg1, v.ArgCount() < 1))
 		}
 		arg2 := v.Get(2)
-		if v.ArgCount() < 2 {
-			callerArgError(v, 2, "os.rename", "string expected, got no value")
-		}
-		if arg2.IsNil() {
-			callerArgError(v, 2, "os.rename", "string expected, got nil")
-		}
 		if !arg2.IsString() && !arg2.IsNumber() {
-			callerArgError(v, 2, "os.rename", fmt.Sprintf("string expected, got %s", argTypeName(v, arg2)))
+			callerArgError(v, 2, "os.rename", "string expected, got "+argTypeOrNone(v, arg2, v.ArgCount() < 2))
 		}
 		oldname := valueToString(arg1)
 		newname := valueToString(arg2)
@@ -576,14 +558,8 @@ func makeOsExit(vmRef *vm.VM, handler vm.LuaExitHandler) vm.NativeFunc {
 func makeOsGetenv(provider vm.LuaOsProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		name := v.Get(1)
-		if v.ArgCount() < 1 {
-			callerArgError(v, 1, "os.getenv", "string expected, got no value")
-		}
-		if name.IsNil() {
-			callerArgError(v, 1, "os.getenv", "string expected, got nil")
-		}
 		if !name.IsString() && !name.IsNumber() {
-			callerArgError(v, 1, "os.getenv", fmt.Sprintf("string expected, got %s", argTypeName(v, name)))
+			callerArgError(v, 1, "os.getenv", "string expected, got "+argTypeOrNone(v, name, v.ArgCount() < 1))
 		}
 
 		val, ok := provider.Getenv(v.Context(), valueToString(name))

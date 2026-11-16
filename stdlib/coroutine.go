@@ -1003,7 +1003,7 @@ func coClose(v *vm.VM) int {
 		if tbl, ok := thread.AsTable().(*vm.Table); ok && tbl != nil && tbl.IsThread() {
 			coTable = tbl
 		} else {
-			callerArgError(v, 1, "coroutine.close", "thread expected, got no value")
+			callerArgError(v, 1, "coroutine.close", "thread expected"+gotDesc(v, 1))
 		}
 	} else {
 		coTable = getThreadTable(v, 1, "coroutine.close")

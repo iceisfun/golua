@@ -652,7 +652,7 @@ const (
 // no Go-internal allocation error can surface to Lua.
 func tableCreate(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		callerArgError(v, 1, "table.create", "number expected, got no value")
+		callerArgError(v, 1, "table.create", "number expected"+gotDesc(v, 1))
 	}
 	narr := getInt(v, 1, "table.create")
 	if narr < 0 || narr > maxTableCreateArg {

@@ -100,10 +100,10 @@ func openPackage(v *vm.VM) {
 func makePackageLoadlib(provider vm.LuaLoadLibProvider) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		if v.ArgCount() < 1 {
-			callerArgError(v, 1, "package.loadlib", "string expected, got no value")
+			callerArgError(v, 1, "package.loadlib", "string expected"+gotDesc(v, 1))
 		}
 		if v.ArgCount() < 2 {
-			callerArgError(v, 2, "package.loadlib", "string expected, got no value")
+			callerArgError(v, 2, "package.loadlib", "string expected"+gotDesc(v, 2))
 		}
 
 		path := getString(v, 1, "package.loadlib")
@@ -140,7 +140,7 @@ func makePackageLoadlib(provider vm.LuaLoadLibProvider) vm.NativeFunc {
 func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		if v.ArgCount() < 1 {
-			callerArgError(v, 1, "require", "string expected, got no value")
+			callerArgError(v, 1, "require", "string expected"+gotDesc(v, 1))
 		}
 		nameVal := v.Get(1)
 		if !nameVal.IsString() && !nameVal.IsNumber() {
