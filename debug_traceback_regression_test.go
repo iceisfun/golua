@@ -234,3 +234,24 @@ assert(n == 21 and skip == "11", n .. " " .. tostring(skip))
 `
 	runLuaWithDebug(t, source, "test_debug_traceback_skip_count", provider)
 }
+
+// A __close handler run by a normal block exit is called from the closing
+// Lua frame, so reference names it "metamethod 'close'" at every depth.
+// golua dropped the name whenever the traceback started in a deeper Lua
+// frame, a heuristic meant only for handlers run while an error unwinds.
+func TestDebugTracebackRegression_CloseHandlerNamedBelowDeeperFrame(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `local function tb(m) return debug.traceback(m) end
+local seen = {}
+local mt = {__close = function() seen[#seen + 1] = tb("x") end}
+do local c <close> = setmetatable({}, mt) end
+local function r() local c <close> = setmetatable({}, mt) return 1 end
+r()
+pcall(function() local c <close> = setmetatable({}, mt) error("e") end)
+assert(seen[1]:find("\n\t[^\n]*:3: in metamethod 'close'\n"), seen[1])
+assert(seen[2]:find("\n\t[^\n]*:3: in metamethod 'close'\n"), seen[2])
+-- closed while the error unwinds: called from pcall, so no name
+assert(seen[3]:find("\n\t[^\n]*:3: in function <"), seen[3])
+`
+	runLuaWithDebug(t, source, "test_debug_traceback_close_handler_deeper_frame", provider)
+}
