@@ -129,3 +129,23 @@ func TestDebugHookRegression_HookAlwaysGetsTwoArgs(t *testing.T) {
 	`
 	runLuaWithDebug(t, source, "test_debug_hook_two_args", provider)
 }
+
+// When pcall returns, rethook sets L->oldpc to the caller's pc, so the rest
+// of the line holding the pcall is not a new line. golua restored the
+// caller's line tracking only when the callee returned normally; an error()
+// unwinding past it left the callee's, and the line fired a second time.
+func TestDebugHookRegression_LineHookAfterCaughtError(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `local L = {}
+local function f() error("x") end
+local function g() return 1 end
+debug.sethook(function(e, l) L[#L+1] = l end, "l")
+local ok = pcall(f) local z = 1
+local ok2 = pcall(g) local z2 = 1
+local ok3 = xpcall(f, function(m) return m end) local z3 = 1
+debug.sethook()
+local got = table.concat(L, " ")
+assert(got == "5 2 6 3 7 2 7 8", got)
+`
+	runLuaWithDebug(t, source, "test_debug_line_hook_after_caught_error", provider)
+}
