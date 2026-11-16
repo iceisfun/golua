@@ -40,6 +40,12 @@ type weakStore struct {
 
 	dead      int // count of dead (tombstone) entries
 	iterBound int // snapshot of len(entries) at iteration start
+
+	// free stacks entry indices that were dead when pushed, so a new key
+	// reuses a dead slot without scanning entries. A slot revived since it
+	// was pushed stays on the stack and is skipped when popped; inFree keeps
+	// each slot on it at most once, bounding it by len(entries).
+	free []int
 }
 
 // weakEntry stores a single key-value pair with optional weak tracking.
@@ -60,7 +66,8 @@ type weakEntry struct {
 	// mapping is removed when the slot is reused for another key.
 	indexKey any
 
-	alive bool
+	alive  bool
+	inFree bool // index is on weakStore.free
 }
 
 // newWeakStore creates a new weak store with the given mode.
@@ -170,17 +177,20 @@ func (ws *weakStore) set(key, value Value) error {
 	ws.setEntryKey(&e, key)
 	ws.setEntryValue(&e, value)
 
-	// Try to reuse a dead slot to bound entries growth.
-	if ws.dead > 0 {
-		for i := range ws.entries {
-			if !ws.entries[i].alive {
-				delete(ws.index, ws.entries[i].indexKey)
-				ws.entries[i] = e
-				ws.index[wk] = i
-				ws.dead--
-				return nil
-			}
+	// Reuse a dead slot to bound entries growth. Every dead slot is on the
+	// free stack, so while one exists the loop finds it.
+	for ws.dead > 0 {
+		i := ws.free[len(ws.free)-1]
+		ws.free = ws.free[:len(ws.free)-1]
+		ws.entries[i].inFree = false
+		if ws.entries[i].alive {
+			continue // revived since it was pushed
 		}
+		delete(ws.index, ws.entries[i].indexKey)
+		ws.entries[i] = e
+		ws.index[wk] = i
+		ws.dead--
+		return nil
 	}
 
 	ws.index[wk] = len(ws.entries)
@@ -249,6 +259,10 @@ func (ws *weakStore) killEntry(idx int) {
 	e.keyRef = weakRef{}
 	e.valueRef = weakRef{}
 	ws.dead++
+	if !e.inFree {
+		e.inFree = true
+		ws.free = append(ws.free, idx)
+	}
 }
 
 // next implements the pairs() iterator for weak tables.

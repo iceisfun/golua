@@ -4,6 +4,7 @@ import (
 	"math"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // makeWeakTable creates a table with the given __mode and returns it.
@@ -350,5 +351,71 @@ func TestWeakTable_ClearDuringTraversal(t *testing.T) {
 			t.Errorf("mode %q: %d keys after re-storing two, want 2", mode, len(keys))
 		}
 		runtime.KeepAlive(objs)
+	}
+}
+
+// weakFill is the linear baseline for the weak-table scaling probes: n fresh
+// keys stored into an empty weak table.
+func weakFill(keys []Value) time.Duration {
+	wt := makeWeakTable("k")
+	start := time.Now()
+	for _, k := range keys {
+		wt.MustSet(k, True)
+	}
+	return time.Since(start)
+}
+
+// TestWeakTableChurnScalesLinearly guards a weak registry or cache under
+// churn: each store of a new key after a delete reuses the dead slot. Finding
+// that slot used to scan entries from the front, so each store paid O(n).
+func TestWeakTableChurnScalesLinearly(t *testing.T) {
+	churn := func(n int) time.Duration {
+		keys := intHashKeys(2 * n)
+		wt := makeWeakTable("k")
+		for _, k := range keys[:n] {
+			wt.MustSet(k, True)
+		}
+		start := time.Now()
+		for i := 0; i < n; i++ {
+			wt.MustSet(keys[i], Nil)
+			wt.MustSet(keys[n+i], True)
+		}
+		d := time.Since(start)
+		if !wt.Get(keys[n-1]).IsNil() || wt.Get(keys[2*n-1]).IsNil() {
+			t.Fatalf("weak table contents are wrong after %d replacements", n)
+		}
+		if got := len(wt.weakBackend().entries); got != n {
+			t.Fatalf("weak table holds %d slots for %d keys", got, n)
+		}
+		return d
+	}
+	checkCostIsLinear(t, "weak table churn", 1<<16, churn,
+		func(n int) time.Duration { return weakFill(intHashKeys(n)) })
+}
+
+// TestWeakTableFreeSlotsStayBounded checks that clearing and re-storing the
+// same key, which revives its slot in place, does not grow the free-slot
+// stack, and that a slot revived while on the stack is not handed out again.
+func TestWeakTableFreeSlotsStayBounded(t *testing.T) {
+	wt := makeWeakTable("k")
+	for i := 1; i <= 4; i++ {
+		wt.SetInt(i, NewInt(int64(i)))
+	}
+	for r := 0; r < 1000; r++ {
+		wt.SetInt(4, Nil)
+		wt.SetInt(4, NewInt(int64(r)))
+	}
+	ws := wt.weakBackend()
+	if len(ws.free) > len(ws.entries) {
+		t.Fatalf("free stack holds %d slots for %d entries", len(ws.free), len(ws.entries))
+	}
+	wt.SetInt(2, Nil)
+	wt.SetString("x", True)
+	wt.SetString("y", True)
+	if got := wt.GetInt(4); !got.IsInt() || got.ival() != 999 {
+		t.Errorf("t[4] = %v, want 999", got)
+	}
+	if n := len(collectNext(wt)); n != 5 {
+		t.Errorf("weak table has %d keys, want 5", n)
 	}
 }
