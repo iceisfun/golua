@@ -290,6 +290,13 @@ mainLoop:
 						}
 						vm.fireHook(hookEventCount, line)
 						frame = &vm.callStack[len(vm.callStack)-1]
+						// The hook's return left line tracking at
+						// VARARGPREP, which carries the first statement's
+						// line. Like reference, which sets L->oldpc = 1
+						// after VARARGPREP, make the next instruction a
+						// new line.
+						vm.lastHookLine = -1
+						vm.lastHookPC = 0
 					}
 				}
 			} else if vm.checkLineCountHooks(proto, frame.pc-1) {
