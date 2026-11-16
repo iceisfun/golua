@@ -603,41 +603,15 @@ func (v Value) ToNumber() (float64, bool) {
 	case typeFloat:
 		return v.fval(), true
 	case typeString:
-		s := TrimASCIISpace(v.asString())
-		if s == "" {
+		// Convert through the Lua numeral grammar (integer first, as
+		// luaO_str2num does) rather than strconv alone: "-0" is the integer 0
+		// and so +0.0, hex integers wrap modulo 2^64, and a sign after the
+		// 0x prefix ("0x-3") is not a numeral at all.
+		nv, ok := StringToNumericValue(v.asString())
+		if !ok {
 			return 0, false
 		}
-		// Reject underscore digit separators and inf/nan tokens.
-		if strings.IndexByte(s, '_') >= 0 {
-			return 0, false
-		}
-		if rejectInfNan(s) {
-			return 0, false
-		}
-		// Try parsing as float (accept ErrRange for overflow → ±Inf)
-		if f, err := strconv.ParseFloat(s, 64); err == nil || errors.Is(err, strconv.ErrRange) {
-			return f, true
-		}
-		// Try parsing hex (0x prefix, including signed +0x/-0x)
-		hexStart := 0
-		if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
-			hexStart = 2
-		} else if len(s) > 3 && (s[0] == '+' || s[0] == '-') &&
-			s[1] == '0' && (s[2] == 'x' || s[2] == 'X') {
-			hexStart = 3
-		}
-		if hexStart > 0 {
-			if i, err := strconv.ParseInt(s[hexStart:], 16, 64); err == nil {
-				if hexStart == 3 && s[0] == '-' {
-					return float64(-i), true
-				}
-				return float64(i), true
-			}
-			if f, ok := ParseHexFloat(s); ok {
-				return f, true
-			}
-		}
-		return 0, false
+		return nv.ToNumber()
 	default:
 		return 0, false
 	}
