@@ -305,7 +305,6 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 // compileRepeatStmt compiles "repeat ... until cond".
 func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	fs := c.fs
-	line := s.P.Line
 
 	loopStart := fs.pc()
 	fs.enterScope(true)
@@ -328,7 +327,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		if fs.needsClose(scope.nLocals) {
 			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), s.Cond.Pos().Line)
 		}
-		c.leaveScope(line)
+		c.leaveScope(s.Cond.Pos().Line)
 		return
 	}
 	if isConstFalsy(s.Cond) {
@@ -343,7 +342,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		} else {
 			fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 		}
-		c.leaveScope(line)
+		c.leaveScope(s.Cond.Pos().Line)
 		return
 	}
 
@@ -381,8 +380,9 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 	}
 
-	// Fall through here when condition is true (exit loop)
-	c.leaveScope(line)
+	// Fall through here when condition is true (exit loop). Like the exit
+	// close above, the scope's cleanup close follows the condition.
+	c.leaveScope(condLine)
 }
 
 // ---------------------------------------------------------------------------

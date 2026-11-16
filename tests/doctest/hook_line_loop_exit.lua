@@ -28,3 +28,10 @@ for k in iter, nil, nil, setmetatable({}, {__close = function()
 end}) do
 end
 --> =29
+
+-- A repeat whose body captures a local closes it on exit after reading the
+-- condition, so no event goes back to the 'repeat' line.
+print(trace("local x = 0\nrepeat\n  local y = x\n  x = x + 1\n  local f = function() return y end\nuntil x >\n  1\nx = 2"))
+--> =1 3 4 5 7 3 4 5 7 8
+print(trace("local x = 0\nrepeat\n  local y = x\n  local f = function() return y end\nuntil true\nx = 2"))
+--> =1 3 4 5 6
