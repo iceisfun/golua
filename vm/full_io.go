@@ -116,6 +116,13 @@ func (p *FullIoProvider) resolvePathLink(op, name string) (string, error) {
 // symlink inside the root is a door to anywhere the link points. Names that do
 // not exist yet (file creation) resolve through their deepest existing
 // ancestor, so a create cannot be aimed through a dangling link either.
+//
+// A name is never cleaned lexically before it is resolved. The kernel applies
+// "." and ".." to the directory it has reached, after following the symlinks
+// before them, and only through components that exist and are directories:
+// "lnk/../x" is x next to lnk's target, and "missing/../x" or "file/../x" fail.
+// Cleaning either one first turned it into plain "x", so a write, remove or
+// rename acted on a file the name does not reach.
 type pathJail struct {
 	mu sync.Mutex
 	// roots are absolute and, where the filesystem let them be inspected,
@@ -202,14 +209,16 @@ func (j *pathJail) contains(path string) bool {
 func (j *pathJail) resolveBase(candidate string) string {
 	j.mu.Lock()
 	for _, root := range j.roots {
-		if root.resolved && withinDir(root.path, candidate) {
+		if _, ok := pathBelow(root.path, candidate); ok && root.resolved {
 			j.mu.Unlock()
 			return root.path
 		}
 	}
 	j.mu.Unlock()
-	if tmp := runtimeTempRoot(); tmp != "" && withinDir(tmp, candidate) {
-		return tmp
+	if tmp := runtimeTempRoot(); tmp != "" {
+		if _, ok := pathBelow(tmp, candidate); ok {
+			return tmp
+		}
 	}
 	return ""
 }
@@ -233,17 +242,18 @@ func (j *pathJail) resolveReal(candidate string) (string, error) {
 	return realPath(candidate)
 }
 
-// candidate turns a caller-supplied name into the absolute, lexically clean
-// path resolution starts from.
+// candidate turns a caller-supplied name into the absolute path resolution
+// starts from. It is not cleaned: see pathJail for why "." and ".." must be
+// left for the walk to apply in order.
 func (j *pathJail) candidate(name string) (string, error) {
 	root := j.anchor()
 	if root == "" {
 		return "", accessDenied(name)
 	}
 	if filepath.IsAbs(name) {
-		return filepath.Clean(name), nil
+		return name, nil
 	}
-	return filepath.Join(root, name), nil
+	return root + string(filepath.Separator) + name, nil
 }
 
 // resolve returns the real path an operation must act on, following symlinks in
@@ -263,8 +273,8 @@ func (j *pathJail) resolve(name string) (string, error) {
 	return keepTrailingSeparator(name, resolved), nil
 }
 
-// keepTrailingSeparator re-appends the trailing separator that lexical
-// cleaning stripped from name. The kernel gives "x/" a meaning "x" does not
+// keepTrailingSeparator re-appends the trailing separator that resolution
+// stripped from name. The kernel gives "x/" a meaning "x" does not
 // have: it must name a directory (ENOTDIR for a file, EISDIR when open would
 // create one), so dropping it let remove/rename/open act on a regular file.
 func keepTrailingSeparator(name, resolved string) string {
@@ -281,7 +291,7 @@ func keepTrailingSeparator(name, resolved string) string {
 // ("remove" or "rename") in the errors it builds.
 //
 // Two kinds of name are answered here without touching the filesystem, because
-// lexical cleaning would otherwise turn them into a different entry:
+// resolving them would otherwise turn them into a different entry:
 //
 //   - A name whose final component is "." or ".." ("." "./" "x/.." "e/.") names
 //     a directory through a link the kernel never lets remove/rename act on.
@@ -303,10 +313,9 @@ func (j *pathJail) resolveLink(op, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	parent := filepath.Dir(candidate)
-	base := filepath.Base(candidate)
+	parent, base := splitLastComponent(candidate)
 	var resolved string
-	if parent == candidate || base == "." || base == string(filepath.Separator) {
+	if base == "" {
 		// A filesystem root has no final component to hold back.
 		resolved, err = j.resolve(name)
 		if err != nil {
@@ -370,6 +379,29 @@ func (j *pathJail) dotLinkError(op, name string) error {
 	return &fs.PathError{Op: op, Path: name, Err: errno}
 }
 
+// splitLastComponent splits an absolute path into its directory part and its
+// final component, ignoring trailing separators, without cleaning either: the
+// directory part still has to be resolved component by component. The final
+// component is "" for a bare filesystem root.
+func splitLastComponent(path string) (dir, last string) {
+	trimmed := path
+	for len(trimmed) > 1 && os.IsPathSeparator(trimmed[len(trimmed)-1]) {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	i := len(trimmed) - 1
+	for i >= 0 && !os.IsPathSeparator(trimmed[i]) {
+		i--
+	}
+	if i < 0 {
+		return ".", trimmed
+	}
+	dir = trimmed[:i]
+	if dir == "" || dir == filepath.VolumeName(trimmed) {
+		dir = trimmed[:i+1]
+	}
+	return dir, trimmed[i+1:]
+}
+
 // underlyingErrno strips the PathError wrapper so the caller's own name can be
 // put around the cause.
 func underlyingErrno(err error) error {
@@ -401,18 +433,40 @@ func (j *pathJail) isRoot(path string) bool {
 // reported as the OS reports it, so a permission problem inside the jail does
 // not masquerade as a sandbox violation with the wrong errno. That only applies
 // to a name that is lexically inside the jail: for anything else the answer must
-// not depend on the state of the filesystem outside it.
+// not depend on the state of the filesystem outside it. The same holds for
+// where the walk failed: "../d/../root/x" is lexically inside, but whether it
+// fails says whether d exists next to the root.
 func (j *pathJail) resolveError(name, candidate string, err error) error {
 	if !j.contains(candidate) {
 		return accessDenied(name)
 	}
 	var pe *fs.PathError
 	if errors.As(err, &pe) {
+		if !j.mayReport(pe.Path) {
+			return accessDenied(name)
+		}
 		// Report the name the caller gave rather than the internal path the
 		// walk failed on.
 		return &fs.PathError{Op: pe.Op, Path: name, Err: pe.Err}
 	}
 	return err
+}
+
+// mayReport reports whether a resolution failure at path says nothing about
+// the filesystem outside the jail: path is inside it, or on the way to one of
+// its roots, which a walk from the filesystem root has to pass through.
+func (j *pathJail) mayReport(path string) bool {
+	if j.contains(path) {
+		return true
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, root := range j.roots {
+		if withinDir(path, root.path) {
+			return true
+		}
+	}
+	return false
 }
 
 // accessDeniedError marks a refusal by the jail, as opposed to a failure of the
@@ -443,10 +497,12 @@ const (
 	maxPathSteps = 16384
 )
 
-// realPath returns path — which must be absolute and lexically clean — with
-// every symlink resolved. Unlike filepath.EvalSymlinks it tolerates a path that
-// does not exist yet: a component that is absent is kept as written, which is
-// where a create would land.
+// realPath returns path — which must be absolute — with every symlink and
+// every "." and ".." resolved in order, as the kernel resolves them. Unlike
+// filepath.EvalSymlinks it tolerates a final component that does not exist
+// yet: it is kept as written, which is where a create would land. A component
+// after a missing one or after a non-directory fails with ENOENT or ENOTDIR,
+// as it does in the kernel.
 //
 // Resolution is a single forward walk that inspects each component once, so the
 // cost is linear in the length of the name. Resolving the whole prefix again per
@@ -480,12 +536,29 @@ func realPathUnder(base, path string) (string, error) {
 	if err := checkPathLen(path); err != nil {
 		return "", err
 	}
-	rel, err := filepath.Rel(base, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		// Not actually under base after all; resolve it the long way.
+	rest, ok := pathBelow(base, path)
+	if !ok {
+		// Not spelled under base after all; resolve it the long way.
 		return realPath(path)
 	}
-	return walkPath(base, splitPathComponents(rel), path)
+	return walkPath(base, splitPathComponents(rest), path)
+}
+
+// pathBelow returns what follows dir in path when path literally starts with
+// dir as a whole number of components. It does not clean path: a walk may
+// start at dir and apply the rest, ".." included, in order.
+func pathBelow(dir, path string) (string, bool) {
+	if path == dir {
+		return "", true
+	}
+	prefix := dir
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	return path[len(prefix):], true
 }
 
 // walkPath resolves pending, the components below base, against the filesystem.
@@ -506,8 +579,8 @@ func walkPath(base string, pending []string, full string) (string, error) {
 		case ".":
 			continue
 		case "..":
-			// Resolved so far is symlink-free, so climbing lexically here is
-			// exactly what the kernel does with ".." after resolution.
+			// Resolved so far is a symlink-free directory, so climbing
+			// lexically here is exactly what the kernel does with "..".
 			resolved = filepath.Dir(resolved)
 			continue
 		}
@@ -523,18 +596,24 @@ func walkPath(base string, pending []string, full string) (string, error) {
 		// different error on every platform.
 		info, err := os.Lstat(next)
 		if err != nil {
-			// ENOENT and ENOTDIR mean the name does not exist yet (a create
-			// target, or a path through a plain file, which the operation
-			// itself will reject) and the rest of the path is therefore
-			// link-free. Anything else — EACCES, ELOOP, ENAMETOOLONG — leaves
+			// ENOENT and ENOTDIR mean the name does not exist yet. As the
+			// final component that is a create target; with more to come the
+			// kernel would look them up inside it and fail, "." and ".."
+			// included. Anything else — EACCES, ELOOP, ENAMETOOLONG — leaves
 			// containment undecidable, so it is surfaced rather than guessed at.
 			if !isMissingPathErr(err) {
 				return "", err
+			}
+			if len(pending) > 0 {
+				return "", &fs.PathError{Op: "open", Path: next, Err: underlyingErrno(err)}
 			}
 			resolved = next
 			continue
 		}
 		if info.Mode()&fs.ModeSymlink == 0 {
+			if len(pending) > 0 && !info.IsDir() {
+				return "", &fs.PathError{Op: "open", Path: next, Err: syscall.ENOTDIR}
+			}
 			resolved = next
 			continue
 		}
