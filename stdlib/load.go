@@ -95,6 +95,22 @@ func setLoadReaderError(v *vm.VM, err error) {
 
 func setLoadReaderTypeError(v *vm.VM, msg string) {
 	preserveRaw := v.InDirectProtectedLoad()
+	if !v.GetMsgHandler().IsNil() {
+		// Reference raises this error inside lua_load, under the active
+		// errfunc, so an enclosing xpcall's handler shapes it like it does
+		// an error the reader raises itself.
+		located := msg
+		if !preserveRaw {
+			located = v.AddCallerLocation(msg)
+		}
+		_, err := protectedCallPreserveMsgState(v, vm.NewNativeFunc(func(*vm.VM) int {
+			panic(&vm.LuaError{Value: vm.NewString(located)})
+		}), nil)
+		if he, ok := err.(*loadReaderHandledError); ok {
+			v.Set(1, he.value)
+			return
+		}
+	}
 	if preserveRaw {
 		v.Set(1, vm.NewString(msg))
 		return
@@ -116,7 +132,12 @@ func protectedCallPreserveMsgState(v *vm.VM, fn vm.Value, args []vm.Value) ([]vm
 		// Reference lua_load runs the reader under the active errfunc, so
 		// inside an xpcall the error load reports is what the message
 		// handler made of the reader's error.
-		err = &loadReaderHandledError{value: v.GetMsgHandlerResult()}
+		handled := v.GetMsgHandlerResult()
+		if handled.IsNil() {
+			// Lua 5.5 replaces a nil error object with this string.
+			handled = vm.NewString("<no error object>")
+		}
+		err = &loadReaderHandledError{value: handled}
 	}
 
 	v.SetMsgHandler(savedMsgHandler)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -344,7 +345,28 @@ func formatLuaValue(val vm.Value) string {
 // name carries the '@'/'=' prefix for proto.Source; displayName is used in
 // parser error messages.
 func compileChunk(name, displayName, source string) (proto *compiler.Proto, err error) {
-	if strings.HasPrefix(source, "\x1bLua") {
+	// Like luaL_loadfilex, a file source is checked for the binary signature
+	// after an optional BOM and an optional '#' first line. Strings (-e and
+	// LUA_INIT code) load like luaL_loadbuffer, which only looks at byte 0.
+	isFile := strings.HasPrefix(name, "@")
+	bin := source
+	if isFile {
+		bin = strings.TrimPrefix(bin, "\xEF\xBB\xBF")
+		if strings.HasPrefix(bin, "#") {
+			if i := strings.IndexByte(bin, '\n'); i >= 0 {
+				bin = bin[i+1:]
+			} else {
+				bin = ""
+			}
+		}
+	}
+	// Like lua_load, the first byte alone (LUA_SIGNATURE[0]) selects the
+	// undumper, so a bad signature reports "bad binary format".
+	if strings.HasPrefix(bin, "\x1b") {
+		if !isFile {
+			// lua.c loads -e and LUA_INIT strings in text mode.
+			return nil, errors.New("attempt to load a binary chunk (mode is 't')")
+		}
 		// The undumper panics on malformed chunks; report as an error.
 		defer func() {
 			if r := recover(); r != nil {
@@ -352,14 +374,17 @@ func compileChunk(name, displayName, source string) (proto *compiler.Proto, err 
 				err = fmt.Errorf("%v", r)
 			}
 		}()
-		proto, _, err = compiler.Undump([]byte(source), name)
+		// Undump uses its name only in error messages, which reference
+		// spells without the '@'/'=' prefix.
+		proto, _, err = compiler.Undump([]byte(bin), displayName)
 		return proto, err
 	}
-	// Strip UTF-8 BOM if present (like Lua 5.4)
-	if len(source) >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF {
-		source = source[3:]
+	// Only a file source drops its BOM and '#' first line (luaL_loadfilex);
+	// a string is parsed exactly as given, like luaL_loadbuffer.
+	if isFile {
+		source = strings.TrimPrefix(source, "\xEF\xBB\xBF")
 	}
-	block, err := parser.Parse(displayName, source)
+	block, err := parser.Parse(displayName, source, isFile)
 	if err != nil {
 		return nil, err
 	}

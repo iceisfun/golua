@@ -28,3 +28,10 @@ assert(table.concat(out, ",") == "1:97,2:8364,5:98")
 -- invalid sequences still raise
 local ok = pcall(function() for _ in utf8.codes("a\xE2\x82") do end end)
 assert(not ok)
+
+-- like lua_tointeger, a nil, missing or non-integral control value is 0
+local k, w = utf8.codes("ab")
+for _, args in ipairs({{w, nil}, {w}, {w, 1.5}, {w, "x"}}) do
+  local pos, cp = k(table.unpack(args, 1, 2))
+  assert(pos == 1 and cp == 97)
+end

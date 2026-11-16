@@ -246,3 +246,77 @@ func TestRunCLI_DoubleDashStopsOptionParsing(t *testing.T) {
 		t.Fatalf("expected empty stderr, got: %q", stderr.String())
 	}
 }
+
+func TestRunCLI_BinaryChunkAfterBOMOrShebang(t *testing.T) {
+	res, err := runLuaWithCLIProviders(t, false, "", `return string.dump(function() os.exit(7) end)`)
+	if err != nil || len(res) != 1 {
+		t.Fatalf("dump: %v %v", res, err)
+	}
+	dump := res[0].AsString()
+
+	for name, prefix := range map[string]string{
+		"bom":         "\xEF\xBB\xBF",
+		"shebang":     "#!x\n",
+		"bom+shebang": "\xEF\xBB\xBF#!x\n",
+	} {
+		script := writeTempLua(t, t.TempDir(), "chunk.luac", prefix+dump)
+		var stderr bytes.Buffer
+		if code := runCLI([]string{"lua", script}, &stderr); code != 7 {
+			t.Errorf("%s: exit code = %d, want 7; stderr=%q", name, code, stderr.String())
+		}
+	}
+}
+
+// Only file sources skip a BOM and '#' line before the binary check, like
+// luaL_loadfilex. -e and LUA_INIT strings load like lua.c's dostring: text
+// only, parsed exactly as given.
+func TestRunCLI_StringChunksAreTextOnly(t *testing.T) {
+	t.Setenv("LUA_INIT_5_5", "")
+	os.Unsetenv("LUA_INIT_5_5")
+	t.Setenv("LUA_INIT", "")
+	os.Unsetenv("LUA_INIT")
+	script := writeTempLua(t, t.TempDir(), "m.lua", "os.exit(5)")
+
+	cases := []struct {
+		name    string
+		argv    []string
+		init    string
+		wantErr string
+	}{
+		{"e shebang", []string{"lua", "-e", "#x"}, "", "(command line):1: unexpected symbol near '#'"},
+		{"e binary", []string{"lua", "-e", "\x1bLuaX"}, "", "attempt to load a binary chunk (mode is 't')"},
+		{"e bom", []string{"lua", "-e", "\xEF\xBB\xBFx=1"}, "", "(command line):1: unexpected symbol near '<\\239>'"},
+		{"init shebang binary", []string{"lua", script}, "#!x\n\x1bLua", "LUA_INIT:1: unexpected symbol near '#'"},
+		{"init binary", []string{"lua", script}, "\x1bLuaX", "attempt to load a binary chunk (mode is 't')"},
+	}
+	for _, c := range cases {
+		if c.init != "" {
+			os.Setenv("LUA_INIT", c.init)
+		} else {
+			os.Unsetenv("LUA_INIT")
+		}
+		var stderr bytes.Buffer
+		code := runCLI(c.argv, &stderr)
+		if code != 1 || !strings.Contains(stderr.String(), c.wantErr) {
+			t.Errorf("%s: code=%d stderr=%q, want 1 and %q", c.name, code, stderr.String(), c.wantErr)
+		}
+	}
+}
+
+// A file whose first byte (after any BOM/'#' prefix) is ESC goes to the
+// undumper, and its errors name the file without the '@' prefix.
+func TestRunCLI_BadBinaryScriptMessage(t *testing.T) {
+	dir := t.TempDir()
+	for name, tc := range map[string]struct{ src, want string }{
+		"bad signature":    {"\x1bXYZ", "bad binary format (not a binary chunk)"},
+		"prefixed garbage": {"#!x\n\x1bLuaGARBAGE", "bad binary format (version mismatch)"},
+	} {
+		script := writeTempLua(t, dir, "b.lua", tc.src)
+		var stderr bytes.Buffer
+		code := runCLI([]string{"lua", script}, &stderr)
+		want := "lua: " + script + ": " + tc.want
+		if code != 1 || !strings.Contains(stderr.String(), want) {
+			t.Errorf("%s: code=%d stderr=%q, want %q", name, code, stderr.String(), want)
+		}
+	}
+}

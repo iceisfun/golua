@@ -1,7 +1,6 @@
 package stdlib
 
 import (
-	"fmt"
 	"unicode/utf8"
 
 	"github.com/iceisfun/golua/v2/vm"
@@ -285,11 +284,9 @@ func luaUtf8Codes(v *vm.VM) int {
 	// Return iterator, string, initial state (0)
 	iter := vm.NewNativeFunc(func(v *vm.VM) int {
 		str := getString(v, 1, "?")
-		stateVal := v.Get(2)
-		state, ok := stateVal.ToInt()
-		if !ok {
-			callerArgError(v, 2, "?", fmt.Sprintf("number expected, got %s", argTypeName(v, stateVal)))
-		}
+		// Reference iter_aux reads the control value with lua_tointeger, so a
+		// nil, missing or non-integral control value counts as 0.
+		state, _ := v.Get(2).ToInt()
 
 		// State is the 1-indexed position of the last returned codepoint,
 		// which is also the 0-indexed offset just past its first byte. Like
@@ -325,11 +322,7 @@ func luaUtf8Codes(v *vm.VM) int {
 			return 2
 		}
 
-		// In strict mode, stray continuation bytes are invalid.
-		if !utf8.RuneStart(str[n]) {
-			panic("invalid UTF-8 code")
-		}
-
+		// n is at a character start: continuation bytes were skipped above.
 		r, size := utf8.DecodeRuneInString(str[n:])
 		if r == utf8.RuneError && size <= 1 {
 			panic("invalid UTF-8 code")
