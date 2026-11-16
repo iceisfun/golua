@@ -101,7 +101,7 @@ func protectedCallPreserveMsgState(v *vm.VM, fn vm.Value, args []vm.Value) ([]vm
 	savedMsgHandlerUsed := v.IsMsgHandlerUsed()
 	savedMsgHandlerResult := v.GetMsgHandlerResult()
 
-	results, err := v.ProtectedCall(fn, args)
+	results, err := v.ProtectedCallRaw(fn, args)
 
 	v.SetMsgHandler(savedMsgHandler)
 	v.SetMsgHandlerUsed(savedMsgHandlerUsed)
@@ -600,7 +600,7 @@ func luaDofile(v *vm.VM) int {
 	defer v.SetChunkName(oldChunkName)
 
 	// Execute
-	results, runErr := v.ProtectedCall(fn, nil)
+	results, runErr := v.ProtectedCallRaw(fn, nil)
 	if runErr != nil {
 		// Preserve LuaError so pcall(dofile, ...) returns the original value
 		if luaErr, ok := runErr.(*vm.LuaError); ok {

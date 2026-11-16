@@ -7,11 +7,51 @@ package golua_test
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/iceisfun/golua/v2/stdlib"
 	"github.com/iceisfun/golua/v2/vm"
 )
+
+// A host native that calls ProtectedCall and handles the error itself is a
+// lua_pcall with no message handler: a Lua xpcall around it must neither run
+// its handler on that error nor lose its own error to it.
+func TestGoAPIProtectedCallIgnoresOuterXpcallHandler(t *testing.T) {
+	v := vm.New()
+	stdlib.Open(v)
+	v.SetGlobal("try", vm.NewNativeFunc(func(v *vm.VM) int {
+		_, err := v.ProtectedCall(v.Get(1), nil)
+		if err != nil {
+			v.Set(0, vm.NewString("caught: "+err.Error()))
+		} else {
+			v.Set(0, vm.NewString("ok"))
+		}
+		return 1
+	}))
+
+	res := embedRun(t, v, `
+		local hits = 0
+		local function h(m) hits = hits + 1 return "H(" .. tostring(m) .. ")" end
+		local okA, eA = xpcall(function()
+			return try(function() error("inner", 0) end)
+		end, h)
+		local hitsA = hits
+		hits = 0
+		local okB, eB = xpcall(function()
+			local r = try(function() error("inner", 0) end)
+			error("outer: " .. r, 0)
+		end, h)
+		return okA, eA, hitsA, okB, eB, hits`)
+	got := make([]string, len(res))
+	for i, r := range res {
+		got[i] = r.String()
+	}
+	want := []string{"true", "caught: inner", "0", "false", "H(outer: caught: inner)", "1"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
 
 // customTable is a LuaTable that is not a *vm.Table.
 type customTable struct{ *vm.Table }

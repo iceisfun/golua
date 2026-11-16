@@ -2221,7 +2221,7 @@ mainLoop:
 					callMM := mt.Get(metaCall)
 					if !callMM.IsNil() {
 						// Call __call(self, state, ctrl)
-						results, err = vm.ProtectedCall(callMM, []Value{fn, state, ctrl})
+						results, err = vm.protectedCall(callMM, []Value{fn, state, ctrl})
 						if err != nil {
 							return nil, err
 						}
