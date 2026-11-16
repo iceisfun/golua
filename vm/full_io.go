@@ -1241,8 +1241,7 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 	tooLong := false
 
 	peekByte := func() (byte, bool) {
-		if offset >= maxNumLen {
-			tooLong = true
+		if tooLong {
 			return 0, false
 		}
 		peeked, _ := reader.Peek(offset + 1)
@@ -1252,7 +1251,15 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 		return peeked[offset], true
 	}
 
-	accept := func() { offset++ }
+	// Like the reference's nextc, the length limit only trips when a
+	// 201st character would be stored, not when one is merely looked at.
+	accept := func() {
+		if offset >= maxNumLen {
+			tooLong = true
+			return
+		}
+		offset++
+	}
 
 	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
 	isHexDigit := func(b byte) bool {
