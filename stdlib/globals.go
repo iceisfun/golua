@@ -521,15 +521,17 @@ func luaXpcall(v *vm.VM) int {
 func luaCollectgarbage(v *vm.VM) int {
 	// Go handles garbage collection automatically
 	// This is a no-op stub that returns 0 for compatibility
-	opt := ""
+	// luaL_checkoption: only an absent or nil option takes the default; an
+	// explicit "" is looked up like any other name and rejected below.
+	opt := "collect"
 	if !v.Get(1).IsNil() {
-		// luaL_checkoption: numbers coerce to their string form, anything else
-		// is a type error rather than an empty option name.
+		// Numbers coerce to their string form, anything else is a type error
+		// rather than an empty option name.
 		opt = getString(v, 1, "collectgarbage")
 	}
 
 	switch opt {
-	case "collect", "":
+	case "collect":
 		v.ProcessGcFinalizers()
 		v.Set(0, vm.NewInt(0))
 		return 1

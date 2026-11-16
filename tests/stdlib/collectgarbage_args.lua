@@ -9,6 +9,9 @@ end
 assert(msg({}) == "bad argument #1 to 'collectgarbage' (string expected, got table)")
 assert(msg(1) == "bad argument #1 to 'collectgarbage' (invalid option '1')")
 assert(msg('bogus') == "bad argument #1 to 'collectgarbage' (invalid option 'bogus')")
+-- only an absent or nil option defaults to "collect"; "" is just a bad name
+assert(msg('') == "bad argument #1 to 'collectgarbage' (invalid option '')")
+assert(collectgarbage() == 0 and collectgarbage(nil) == 0)
 
 -- numeric strings are accepted for the parameter value
 local old = collectgarbage('param', 'pause')
