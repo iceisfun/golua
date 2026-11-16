@@ -63,17 +63,13 @@ func (vm *VM) fireHook(event string, line int) {
 	vm.inHook = true
 	defer func() { vm.inHook = false }()
 
-	// Build args
-	args := []Value{NewString(event)}
-	if event == hookEventLine || event == hookEventCount {
-		if event == hookEventCount {
-			args = append(args, Nil)
-		} else if line >= 0 {
-			args = append(args, NewInt(int64(line)))
-		} else {
-			args = append(args, Nil)
-		}
+	// Build args. Like ldblib's hookf, always pass two: the line number for
+	// a line event, nil for every other event.
+	lineArg := Nil
+	if event == hookEventLine && line >= 0 {
+		lineArg = NewInt(int64(line))
 	}
+	args := []Value{NewString(event), lineArg}
 
 	// Call in non-yieldable context
 	exit := vm.EnterNonYieldable()

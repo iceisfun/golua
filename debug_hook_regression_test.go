@@ -101,3 +101,31 @@ func TestDebugHookRegression_HookErrorCaughtByPcall(t *testing.T) {
 	`
 	runLuaWithDebug(t, source, "test_debug_hook_error_caught", provider)
 }
+
+// ldblib's hookf always calls the hook with two arguments: the event and the
+// line number, which is nil for every event but "line". Call, return and
+// tail call events used to pass the event alone.
+func TestDebugHookRegression_HookAlwaysGetsTwoArgs(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `
+		local seen = {}
+		local function g() return 1 end
+		local function f() return g() end
+		debug.sethook(function(...)
+			local ev, line = ...
+			seen[ev] = seen[ev] or select("#", ...)
+			assert(select("#", ...) == 2, ev .. " hook got " .. select("#", ...) .. " args")
+			if ev == "line" then
+				assert(math.type(line) == "integer", "line event without a line")
+			else
+				assert(line == nil, ev .. " event got line " .. tostring(line))
+			end
+		end, "crl", 1)
+		f()
+		debug.sethook()
+		for _, ev in ipairs({"call", "return", "tail call", "line", "count"}) do
+			assert(seen[ev] == 2, ev .. " event not seen")
+		end
+	`
+	runLuaWithDebug(t, source, "test_debug_hook_two_args", provider)
+}
