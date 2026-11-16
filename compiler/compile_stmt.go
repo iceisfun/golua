@@ -561,10 +561,18 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 		fs.locals[baseIdx+i].startPC = fs.pc()
 	}
 
-	// Emit OP_TBC for <close> variables
+	// Emit OP_TBC for <close> variables. Reference checktoclose emits it
+	// after the whole explist has been parsed, so it carries the line of
+	// the statement's last token, not the line of 'local'.
+	tbcLine := line
+	if nValues > 0 {
+		if end := s.Values[nValues-1].End().Line; end > 0 {
+			tbcLine = end
+		}
+	}
 	for i := 0; i < nNames; i++ {
 		if fs.locals[baseIdx+i].attrib == attribClose {
-			fs.emit(ABC(OP_TBC, base+i, 0, 0, 0), line)
+			fs.emit(ABC(OP_TBC, base+i, 0, 0, 0), tbcLine)
 		}
 	}
 }
