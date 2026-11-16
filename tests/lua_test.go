@@ -211,6 +211,7 @@ func runLuaTest(t *testing.T, filename string) {
 
 	select {
 	case runErr := <-resultCh:
+		closeTestVM(t, v)
 		if runErr != nil {
 			logCapturedOutput(t, v)
 			t.Fatalf("Runtime error: %v", runErr)
@@ -229,6 +230,20 @@ func logCapturedOutput(t *testing.T, v *vm.VM) {
 	lines := v.OutputLines()
 	for _, line := range lines {
 		t.Logf("output: %s", line)
+	}
+}
+
+// closeTestVM closes a VM whose run has returned. Close reaps the goroutines
+// of coroutines the script left suspended (see
+// wontfix/coroutine-goroutine-leak); without it they, and everything they
+// reference, stay alive until the test binary exits. One file leaving 20k
+// suspended coroutines made every later forced GC in the run scan their
+// stacks and heap, which pushed the collectgarbage-heavy files past
+// luaTestTimeout.
+func closeTestVM(t *testing.T, v *vm.VM) {
+	t.Helper()
+	if err := v.Close(context.Background()); err != nil {
+		t.Errorf("Close: %v", err)
 	}
 }
 
@@ -292,6 +307,7 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 
 	select {
 	case runErr := <-resultCh:
+		closeTestVM(t, v)
 		if runErr != nil {
 			logCapturedOutput(t, v)
 			t.Fatalf("Runtime error: %v", runErr)
