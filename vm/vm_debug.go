@@ -800,9 +800,14 @@ func (vm *VM) frameStackLimit(stack []callFrame, idx, maxStack int, active bool)
 func activeLines(proto *compiler.Proto) map[int]bool {
 	lines := make(map[int]bool)
 	// Lua 5.4 simply reports all lines that have at least one instruction.
-	// No filtering by opcode type — every instruction's line is active.
+	// No filtering by opcode type — every instruction's line is active —
+	// except that collectvalidlines skips a vararg function's VARARGPREP,
+	// which the line hook never reports either.
 	for pc, line := range proto.Lines {
 		if line <= 0 || pc >= len(proto.Code) {
+			continue
+		}
+		if pc == 0 && proto.Code[0].OpCode() == compiler.OP_VARARGPREP {
 			continue
 		}
 		lines[line] = true
