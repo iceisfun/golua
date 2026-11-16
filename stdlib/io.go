@@ -582,28 +582,11 @@ func makeIoLines(v *vm.VM, provider vm.LuaIoProvider) vm.NativeFunc {
 				panic("file is already closed")
 			}
 
-			ctx := v.Context()
-			if len(formats) == 0 {
-				line, err := f.Read(ctx, "l")
-				if err != nil {
-					if err == io.EOF {
-						if toClose {
-							f.Close(ctx)
-							closed = true
-						}
-						// Return no results on EOF
-						return 0
-					}
-					panic(err.Error())
-				}
-				v.Set(0, vm.NewString(line))
-				return 1
-			}
-
 			results := doFileReadFormats(v, f, formats, 2)
 			if results > 0 && v.Get(0).IsNil() {
+				raiseLinesReadError(v, results)
 				if toClose {
-					f.Close(ctx)
+					f.Close(v.Context())
 					closed = true
 				}
 				// Return no results on EOF
@@ -838,25 +821,24 @@ func fileLines(v *vm.VM) int {
 			panic("file is already closed")
 		}
 
-		if len(formats) == 0 {
-			line, err := f.Read(ctx, "l")
-			if err != nil {
-				if err == io.EOF {
-					return 0
-				}
-				panic(err.Error())
-			}
-			v.Set(0, vm.NewString(line))
-			return 1
-		}
-
 		results := doFileReadFormats(v, f, formats, 2)
 		if results > 0 && v.Get(0).IsNil() {
+			raiseLinesReadError(v, results)
 			return 0
 		}
 		return results
 	}))
 	return 1
+}
+
+// raiseLinesReadError is the error half of reference io_readline: when a read
+// in a lines iterator fails with a message after the nil (a read error rather
+// than the end of the stream), the iterator raises that message instead of
+// ending the loop as if the file were exhausted.
+func raiseLinesReadError(v *vm.VM, results int) {
+	if results > 1 {
+		panic(vm.ValueToString(v.Get(1)))
+	}
 }
 
 // fileSeek implements f:seek([whence [, offset]]) method.
@@ -1000,17 +982,12 @@ func fileFlush(v *vm.VM) int {
 
 // fileToString implements __tostring for file handles.
 func fileToString(v *vm.VM) int {
+	// Reference f_tostring checks its argument like every other file method
+	// (luaL_checkudata), so a non-file is an argument error, not "file (?)".
+	// A metamethod has no name of its own: the reference reports '?'.
 	val := v.Get(1)
+	fh := getFileHandle(v, val, "?")
 	ud := val.AsUserdata()
-	if ud == nil {
-		v.Set(0, vm.NewString("file (?)"))
-		return 1
-	}
-	fh, ok := ud.Data.(*fileHandle)
-	if !ok {
-		v.Set(0, vm.NewString("file (?)"))
-		return 1
-	}
 	ctx := v.Context()
 	if fh.closed || fh.file.IsClosed(ctx) {
 		v.Set(0, vm.NewString("file (closed)"))

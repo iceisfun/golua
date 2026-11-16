@@ -106,9 +106,9 @@ func (f *popenFile) ReadBytes(ctx context.Context, n int) (string, error) {
 		f.reader = bufio.NewReader(processReadCloser{proc: f.proc})
 	}
 	if n == 0 {
-		_, err := f.reader.Peek(1)
-		if err != nil {
-			return "", io.EOF
+		// Any failure other than EOF is a read error (ferror in C).
+		if _, err := f.reader.Peek(1); err != nil {
+			return "", err
 		}
 		return "", nil
 	}
