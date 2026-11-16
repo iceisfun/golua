@@ -260,7 +260,19 @@ func (j *pathJail) resolve(name string) (string, error) {
 	if !j.contains(resolved) {
 		return "", accessDenied(name)
 	}
-	return resolved, nil
+	return keepTrailingSeparator(name, resolved), nil
+}
+
+// keepTrailingSeparator re-appends the trailing separator that lexical
+// cleaning stripped from name. The kernel gives "x/" a meaning "x" does not
+// have: it must name a directory (ENOTDIR for a file, EISDIR when open would
+// create one), so dropping it let remove/rename/open act on a regular file.
+func keepTrailingSeparator(name, resolved string) string {
+	if name != "" && os.IsPathSeparator(name[len(name)-1]) &&
+		!os.IsPathSeparator(resolved[len(resolved)-1]) {
+		return resolved + string(filepath.Separator)
+	}
+	return resolved
 }
 
 // resolveLink is resolve for remove/rename: the parent chain is resolved (that
@@ -313,7 +325,7 @@ func (j *pathJail) resolveLink(op, name string) (string, error) {
 	if j.isRoot(resolved) {
 		return "", accessDenied(name)
 	}
-	return resolved, nil
+	return keepTrailingSeparator(name, resolved), nil
 }
 
 // dotLinkError answers remove/rename of a name whose final component (after
@@ -815,7 +827,14 @@ func (p *FullIoProvider) Rename(ctx context.Context, oldname, newname string) er
 	if err != nil {
 		return err
 	}
-	return os.Rename(oldpath, newpath)
+	// os.Rename refuses to replace an existing directory (it reports EEXIST
+	// before ever calling rename(2)), which C's rename() does not: that
+	// replaces an empty directory and answers EISDIR / ENOTEMPTY otherwise.
+	// Call the syscall itself so the kernel decides, as it does for C Lua.
+	if err := syscall.Rename(oldpath, newpath); err != nil {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: err}
+	}
+	return nil
 }
 
 // fullFile wraps an os.File with buffered reading and writing.
@@ -1241,8 +1260,7 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 	tooLong := false
 
 	peekByte := func() (byte, bool) {
-		if offset >= maxNumLen {
-			tooLong = true
+		if tooLong {
 			return 0, false
 		}
 		peeked, _ := reader.Peek(offset + 1)
@@ -1252,7 +1270,15 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 		return peeked[offset], true
 	}
 
-	accept := func() { offset++ }
+	// Like the reference's nextc, the length limit only trips when a
+	// 201st character would be stored, not when one is merely looked at.
+	accept := func() {
+		if offset >= maxNumLen {
+			tooLong = true
+			return
+		}
+		offset++
+	}
 
 	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
 	isHexDigit := func(b byte) bool {

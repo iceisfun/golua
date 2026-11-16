@@ -72,11 +72,12 @@ func getPackString(v *vm.VM, idx int) string {
 // a direct call resolves to the short field name ("pack"); a call made
 // indirectly (e.g. via pcall) falls back to the qualified global name
 // ("string.pack"). The fallback is used only when resolution fails entirely.
-func packCallName(v *vm.VM, fallback string) string {
-	if name, _ := v.ArgErrorFuncName(); name != "" && name != "?" {
-		return name
+func packCallName(v *vm.VM, fallback string) (name string, method bool) {
+	name, nameWhat := v.ArgErrorFuncName()
+	if name == "" || name == "?" {
+		name = fallback
 	}
-	return fallback
+	return name, nameWhat == "method"
 }
 
 // packDirective describes a single parsed format directive.
@@ -161,14 +162,30 @@ type formatState struct {
 	byteOrder binary.ByteOrder
 	maxAlign  int
 	funcName  string // e.g. "string.pack" for error messages
+	method    bool   // called with method syntax: argument numbers exclude self
 }
 
-func newFormatState(funcName string) *formatState {
+func newFormatState(v *vm.VM, fallback string) *formatState {
+	name, method := packCallName(v, fallback)
 	return &formatState{
 		byteOrder: binary.LittleEndian, // native = little on x86/ARM
 		maxAlign:  1,
-		funcName:  funcName,
+		funcName:  name,
+		method:    method,
 	}
+}
+
+// argMsg builds a luaL_argerror-style message for argument idx, applying the
+// same method-call adjustment as callerArgError: the implicit self is not
+// counted, and an error about self itself reads "calling 'f' on bad self".
+func (fs *formatState) argMsg(idx int, msg string) string {
+	if fs.method {
+		if idx == 1 {
+			return fmt.Sprintf("calling '%s' on bad self (%s)", fs.funcName, msg)
+		}
+		idx--
+	}
+	return fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, fs.funcName, msg)
 }
 
 // effectiveAlign computes the effective alignment for a directive with the
@@ -181,7 +198,7 @@ func (fs *formatState) effectiveAlign(natAlign int) int {
 		align = fs.maxAlign
 	}
 	if !isPow2(align) {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (format asks for alignment not power of 2)", fs.funcName))
+		panic(fs.argMsg(1, "format asks for alignment not power of 2"))
 	}
 	return align
 }
@@ -191,7 +208,7 @@ func stringPack(v *vm.VM) int {
 	format := getString(v, 1, "string.pack")
 	argIdx := 2
 	var buf bytes.Buffer
-	fs := newFormatState(packCallName(v, "string.pack"))
+	fs := newFormatState(v, "string.pack")
 
 	i := 0
 	for i < len(format) {
@@ -283,7 +300,7 @@ func stringPack(v *vm.VM) int {
 // getXAlign parses the directive after X and returns its natural alignment.
 func getXAlign(format string, i *int, fs *formatState) int {
 	if *i >= len(format) {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	}
 	ch := format[*i]
 	*i++
@@ -323,16 +340,16 @@ func getXAlign(format string, i *int, fs *formatState) int {
 			panic("missing size for format option 'c'")
 		}
 		_, *i = parsePackSize(format, *i, 0)
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	case 'z', '<', '>', '=', '!', 'X':
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	case ' ':
 		// skip spaces and try next
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
 		}
 		// but space is not a valid option after X
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	default:
 		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}
@@ -355,12 +372,12 @@ func packInt(v *vm.VM, buf *bytes.Buffer, fs *formatState, kind byte, size int, 
 			lo := -(int64(1) << (uint(size)*8 - 1))
 			hi := (int64(1) << (uint(size)*8 - 1)) - 1
 			if val < lo || val > hi {
-				panic(fmt.Sprintf("bad argument #%d to '%s' (integer overflow)", *argIdx-1, fs.funcName))
+				panic(fs.argMsg(*argIdx-1, "integer overflow"))
 			}
 		} else {
 			umax := uint64(1)<<(uint(size)*8) - 1
 			if val < 0 || uint64(val) > umax {
-				panic(fmt.Sprintf("bad argument #%d to '%s' (unsigned overflow)", *argIdx-1, fs.funcName))
+				panic(fs.argMsg(*argIdx-1, "unsigned overflow"))
 			}
 		}
 	} else if size == 8 && !signed {
@@ -457,14 +474,14 @@ func packFixedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, size int64, a
 	// OOM that aborts the host (a sandbox escape). Convert it to a catchable Lua
 	// error, matching the cap string.rep/concat/gsub use.
 	if size > maxPackSize-int64(buf.Len()) || size > maxStrResultSize-int64(buf.Len()) {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (result too long)", fs.funcName))
+		panic(fs.argMsg(1, "result too long"))
 	}
 
 	s := getPackString(v, *argIdx)
 	*argIdx++
 
 	if int64(len(s)) > size {
-		panic(fmt.Sprintf("bad argument #%d to '%s' (string longer than given size)", *argIdx-1, fs.funcName))
+		panic(fs.argMsg(*argIdx-1, "string longer than given size"))
 	}
 	// Reserve the whole directive (string + padding) up front. Without this the
 	// zero-padding below grows the bytes.Buffer by repeated doubling, peaking at
@@ -492,7 +509,7 @@ func packZeroTermString(v *vm.VM, buf *bytes.Buffer, argIdx *int, fs *formatStat
 	*argIdx++
 
 	if strings.ContainsRune(s, '\x00') {
-		panic(fmt.Sprintf("bad argument #%d to '%s' (string contains zeros)", *argIdx-1, fs.funcName))
+		panic(fs.argMsg(*argIdx-1, "string contains zeros"))
 	}
 	buf.WriteString(s)
 	buf.WriteByte(0)
@@ -514,7 +531,7 @@ func packSizedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, prefixSize in
 	if prefixSize < 8 {
 		maxLen := uint64(1)<<(uint(prefixSize)*8) - 1
 		if slen > maxLen {
-			panic(fmt.Sprintf("bad argument #%d to '%s' (string length does not fit in given size)", *argIdx-1, fs.funcName))
+			panic(fs.argMsg(*argIdx-1, "string length does not fit in given size"))
 		}
 	}
 
@@ -553,7 +570,7 @@ func packSizedString(v *vm.VM, buf *bytes.Buffer, fs *formatState, prefixSize in
 func stringUnpack(v *vm.VM) int {
 	format := getString(v, 1, "string.unpack")
 	data := getString(v, 2, "string.unpack")
-	fs := newFormatState(packCallName(v, "string.unpack"))
+	fs := newFormatState(v, "string.unpack")
 	pos := int64(1)
 	if v.ArgCount() >= 3 && !v.Get(3).IsNil() {
 		pos = getInt(v, 3, "string.unpack")
@@ -569,7 +586,7 @@ func stringUnpack(v *vm.VM) int {
 
 	offset := int(pos) - 1 // 0-based byte offset
 	if offset > len(data) {
-		panic(fmt.Sprintf("bad argument #3 to '%s' (initial position out of string)", fs.funcName))
+		panic(fs.argMsg(3, "initial position out of string"))
 	}
 
 	nret := 0
@@ -661,7 +678,7 @@ func stringUnpack(v *vm.VM) int {
 		case 'x':
 			applyAlignPad(&offset, fs, 1)
 			if offset+1 > len(data) {
-				panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+				panic(fs.argMsg(2, "data string too short"))
 			}
 			offset++
 		case 'X':
@@ -673,7 +690,7 @@ func stringUnpack(v *vm.VM) int {
 			// so alignment padding past the end of the data is a "data string
 			// too short" error rather than a silent success.
 			if offset+pad > len(data) {
-				panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+				panic(fs.argMsg(2, "data string too short"))
 			}
 			offset += pad
 		default:
@@ -689,7 +706,7 @@ func stringUnpack(v *vm.VM) int {
 // getXAlignUnpack parses X directive for unpack (same logic, different error source).
 func getXAlignUnpack(format string, i *int, fs *formatState) int {
 	if *i >= len(format) {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	}
 	ch := format[*i]
 	*i++
@@ -729,14 +746,14 @@ func getXAlignUnpack(format string, i *int, fs *formatState) int {
 			panic("missing size for format option 'c'")
 		}
 		_, *i = parsePackSize(format, *i, 0)
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	case 'z', '<', '>', '=', '!', 'X':
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
 		}
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	default:
 		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}
@@ -755,7 +772,7 @@ func unpackInt(data string, offset *int, fs *formatState, kind byte, size int, s
 	*offset += pad
 
 	if *offset+size > len(data) {
-		panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+		panic(fs.argMsg(2, "data string too short"))
 	}
 
 	raw := []byte(data[*offset : *offset+size])
@@ -832,7 +849,7 @@ func unpackFloat32(data string, offset *int, fs *formatState) vm.Value {
 	*offset += pad
 
 	if *offset+4 > len(data) {
-		panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+		panic(fs.argMsg(2, "data string too short"))
 	}
 
 	raw := []byte(data[*offset : *offset+4])
@@ -855,7 +872,7 @@ func unpackFloat64(data string, offset *int, fs *formatState, kind byte) vm.Valu
 	*offset += pad
 
 	if *offset+8 > len(data) {
-		panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+		panic(fs.argMsg(2, "data string too short"))
 	}
 
 	raw := []byte(data[*offset : *offset+8])
@@ -875,7 +892,7 @@ func unpackFixedString(data string, offset *int, size int64, fs *formatState) vm
 	// A 'c' directive may declare a size up to MAX_SIZE; guard the int math so a
 	// huge size reports "data string too short" rather than overflowing.
 	if size < 0 || size > int64(len(data)-*offset) {
-		panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+		panic(fs.argMsg(2, "data string too short"))
 	}
 	s := data[*offset : *offset+int(size)]
 	*offset += int(size)
@@ -885,7 +902,7 @@ func unpackFixedString(data string, offset *int, size int64, fs *formatState) vm
 func unpackZeroTermString(data string, offset *int, fs *formatState) vm.Value {
 	idx := strings.IndexByte(data[*offset:], 0)
 	if idx < 0 {
-		panic(fmt.Sprintf("bad argument #2 to '%s' (unfinished string for format 'z')", fs.funcName))
+		panic(fs.argMsg(2, "unfinished string for format 'z'"))
 	}
 	s := data[*offset : *offset+idx]
 	*offset += idx + 1 // skip the null terminator
@@ -898,7 +915,7 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 	*offset += pad
 
 	if *offset+prefixSize > len(data) {
-		panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+		panic(fs.argMsg(2, "data string too short"))
 	}
 
 	// Read length
@@ -939,7 +956,7 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 	// becomes vacuously true while the slice operation panics with a Go
 	// "slice bounds out of range" runtime error that leaks through pcall.
 	if slen > uint64(len(data)-*offset) {
-		panic(fmt.Sprintf("bad argument #2 to '%s' (data string too short)", fs.funcName))
+		panic(fs.argMsg(2, "data string too short"))
 	}
 
 	s := data[*offset : *offset+int(slen)]
@@ -950,7 +967,7 @@ func unpackSizedString(data string, offset *int, fs *formatState, prefixSize int
 // stringPacksize implements string.packsize(fmt)
 func stringPacksize(v *vm.VM) int {
 	format := getString(v, 1, "string.packsize")
-	fs := newFormatState(packCallName(v, "string.packsize"))
+	fs := newFormatState(v, "string.packsize")
 	var totalSize int64
 
 	// addSize accumulates 'pad + size' for one directive, mirroring Lua 5.5's
@@ -959,7 +976,7 @@ func stringPacksize(v *vm.VM) int {
 	addSize := func(pad int, size int64) {
 		add := int64(pad) + size
 		if add < 0 || totalSize > maxPackSize-add {
-			panic(fmt.Sprintf("bad argument #1 to '%s' (format result too large)", fs.funcName))
+			panic(fs.argMsg(1, "format result too large"))
 		}
 		totalSize += add
 	}
@@ -1018,7 +1035,7 @@ func stringPacksize(v *vm.VM) int {
 		case 'z':
 			// 'z' is char-aligned (no alignment), so it never triggers the
 			// power-of-2 check; it is simply a variable-length format.
-			panic(fmt.Sprintf("bad argument #1 to '%s' (variable-length format)", fs.funcName))
+			panic(fs.argMsg(1, "variable-length format"))
 		case 's':
 			// Reference Lua resolves an option's alignment (getdetails) before
 			// classifying it as variable-length. The 's' prefix size is used as
@@ -1030,7 +1047,7 @@ func stringPacksize(v *vm.VM) int {
 				panic(fmt.Sprintf("integral size (%d) out of limits [1,16]", size))
 			}
 			fs.effectiveAlign(int(size)) // may panic "alignment not power of 2"
-			panic(fmt.Sprintf("bad argument #1 to '%s' (variable-length format)", fs.funcName))
+			panic(fs.argMsg(1, "variable-length format"))
 		default:
 			panic(fmt.Sprintf("invalid format option '%c'", ch))
 		}
@@ -1043,7 +1060,7 @@ func stringPacksize(v *vm.VM) int {
 // getXAlignPacksize parses X directive for packsize.
 func getXAlignPacksize(format string, i *int, fs *formatState) int {
 	if *i >= len(format) {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	}
 	ch := format[*i]
 	*i++
@@ -1083,14 +1100,14 @@ func getXAlignPacksize(format string, i *int, fs *formatState) int {
 			panic("missing size for format option 'c'")
 		}
 		_, *i = parsePackSize(format, *i, 0)
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	case 'z', '<', '>', '=', '!', 'X':
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	case ' ':
 		for *i < len(format) && format[*i] == ' ' {
 			*i++
 		}
-		panic(fmt.Sprintf("bad argument #1 to '%s' (invalid next option for option 'X')", fs.funcName))
+		panic(fs.argMsg(1, "invalid next option for option 'X'"))
 	default:
 		panic(fmt.Sprintf("invalid format option '%c'", ch))
 	}

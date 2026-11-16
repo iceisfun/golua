@@ -32,10 +32,7 @@ const coroutineStopGrace = time.Second
 
 // coArgType returns the type name for error messages, using "no value" when argc is insufficient.
 func coArgType(v *vm.VM, idx int) string {
-	if v.ArgCount() < idx {
-		return "no value"
-	}
-	return v.Get(idx).Type()
+	return argTypeOrNone(v, v.Get(idx), v.ArgCount() < idx)
 }
 
 // ctxDone returns the Done channel from the VM's context, or nil if no context is set.
@@ -1006,7 +1003,7 @@ func coClose(v *vm.VM) int {
 		if tbl, ok := thread.AsTable().(*vm.Table); ok && tbl != nil && tbl.IsThread() {
 			coTable = tbl
 		} else {
-			callerArgError(v, 1, "coroutine.close", "thread expected, got no value")
+			callerArgError(v, 1, "coroutine.close", "thread expected"+gotDesc(v, 1))
 		}
 	} else {
 		coTable = getThreadTable(v, 1, "coroutine.close")
@@ -1250,7 +1247,7 @@ func coIsYieldable(v *vm.VM) int {
 	if v.ArgCount() >= 1 {
 		arg := v.Get(1)
 		if !arg.IsTable() || !arg.AsTable().IsThread() {
-			callerArgError(v, 1, "coroutine.isyieldable", fmt.Sprintf("thread expected, got %s", arg.Type()))
+			callerArgError(v, 1, "coroutine.isyieldable", fmt.Sprintf("thread expected, got %s", argTypeName(v, arg)))
 		}
 		tbl := arg.AsTable()
 		// Check coroutine VM ref first (set after first resume)

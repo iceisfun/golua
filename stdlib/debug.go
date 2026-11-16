@@ -355,10 +355,7 @@ func luaDebugGetUpvalue(v *vm.VM) int {
 
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		got := arg1.Type()
-		if v.ArgCount() < 1 {
-			got = "no value"
-		}
+		got := argTypeOrNone(v, arg1, v.ArgCount() < 1)
 		callerArgError(v, 1, "debug.getupvalue", fmt.Sprintf("function expected, got %s", got))
 	}
 
@@ -408,10 +405,7 @@ func luaDebugSetUpvalue(v *vm.VM) int {
 
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		got := arg1.Type()
-		if v.ArgCount() < 1 {
-			got = "no value"
-		}
+		got := argTypeOrNone(v, arg1, v.ArgCount() < 1)
 		callerArgError(v, 1, "debug.setupvalue", fmt.Sprintf("function expected, got %s", got))
 	}
 
@@ -455,10 +449,7 @@ func luaDebugUpvalueID(v *vm.VM) int {
 
 	arg1 := v.Get(1)
 	if !arg1.IsCallable() {
-		got := arg1.Type()
-		if v.ArgCount() < 1 {
-			got = "no value"
-		}
+		got := argTypeOrNone(v, arg1, v.ArgCount() < 1)
 		callerArgError(v, 1, "debug.upvalueid", fmt.Sprintf("function expected, got %s", got))
 	}
 
@@ -785,7 +776,7 @@ func luaDebugSetHook(v *vm.VM) int {
 	maskStr := getString(v, hookIdx+1, "debug.sethook")
 
 	if !arg1.IsCallable() {
-		callerArgError(v, hookIdx, "debug.sethook", fmt.Sprintf("function expected, got %s", arg1.Type()))
+		callerArgError(v, hookIdx, "debug.sethook", fmt.Sprintf("function expected, got %s", argTypeName(v, arg1)))
 	}
 
 	var mask byte
@@ -835,10 +826,7 @@ func luaDebugUpvalueJoin(v *vm.VM) int {
 
 	f1 := v.Get(1)
 	if !f1.IsCallable() {
-		got := f1.Type()
-		if v.ArgCount() < 1 {
-			got = "no value"
-		}
+		got := argTypeOrNone(v, f1, v.ArgCount() < 1)
 		callerArgError(v, 1, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
 	}
 
@@ -856,10 +844,7 @@ func luaDebugUpvalueJoin(v *vm.VM) int {
 	n2 := getInt(v, 4, "debug.upvaluejoin")
 	f2 := v.Get(3)
 	if !f2.IsCallable() {
-		got := f2.Type()
-		if v.ArgCount() < 3 {
-			got = "no value"
-		}
+		got := argTypeOrNone(v, f2, v.ArgCount() < 3)
 		callerArgError(v, 3, "debug.upvaluejoin", fmt.Sprintf("function expected, got %s", got))
 	}
 	var n2ups int

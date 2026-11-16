@@ -429,10 +429,7 @@ func stringGsub(v *vm.VM) int {
 		repl = vm.NewString(valueToString(repl))
 	} else if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() &&
 		(!repl.IsTable() || repl.AsTable().IsThread()) {
-		got := repl.Type()
-		if v.ArgCount() < 3 {
-			got = "no value"
-		}
+		got := argTypeOrNone(v, repl, v.ArgCount() < 3)
 		callerArgError(v, 3, "string.gsub", fmt.Sprintf("string/function/table expected, got %s", got))
 	}
 	// Handle anchor

@@ -45,10 +45,7 @@ func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 		((need&tabL) == 0 || val.IsString() || !v.GetMetafield(val, vm.MetaLen).IsNil()) {
 		return val
 	}
-	got := argTypeName(v, val)
-	if v.ArgCount() < idx {
-		got = "no value"
-	}
+	got := argTypeOrNone(v, val, v.ArgCount() < idx)
 	callerArgError(v, idx, fname, fmt.Sprintf("table expected, got %s", got))
 	return vm.Nil // unreachable
 }
@@ -655,7 +652,7 @@ const (
 // no Go-internal allocation error can surface to Lua.
 func tableCreate(v *vm.VM) int {
 	if v.ArgCount() < 1 {
-		callerArgError(v, 1, "table.create", "number expected, got no value")
+		callerArgError(v, 1, "table.create", "number expected"+gotDesc(v, 1))
 	}
 	narr := getInt(v, 1, "table.create")
 	if narr < 0 || narr > maxTableCreateArg {

@@ -59,10 +59,7 @@ func getString(v *vm.VM, idx int, fname string) string {
 // was passed (or, if noValue, omitted) as argument idx. It lets a caller that
 // snapshotted its arguments before running metamethods validate them later.
 func stringArgFail(v *vm.VM, idx int, val vm.Value, noValue bool, fname string) string {
-	got := argTypeName(v, val)
-	if noValue {
-		got = "no value"
-	}
+	got := argTypeOrNone(v, val, noValue)
 	callerArgError(v, idx, fname, fmt.Sprintf("string expected, got %s", got))
 	return "" // unreachable
 }
@@ -91,10 +88,7 @@ func intArgFail(v *vm.VM, idx int, val vm.Value, noValue bool, fname string) int
 	if isNum {
 		callerArgError(v, idx, fname, "number has no integer representation")
 	}
-	got := argTypeName(v, val)
-	if noValue {
-		got = "no value"
-	}
+	got := argTypeOrNone(v, val, noValue)
 	callerArgError(v, idx, fname, fmt.Sprintf("number expected, got %s", got))
 	return 0 // unreachable
 }
@@ -115,10 +109,7 @@ func getNumber(v *vm.VM, idx int, fname string) float64 {
 	} else if n, ok := val.ToNumber(); ok {
 		return n
 	}
-	got := argTypeName(v, val)
-	if v.ArgCount() < idx {
-		got = "no value"
-	}
+	got := argTypeOrNone(v, val, v.ArgCount() < idx)
 	callerArgError(v, idx, fname, fmt.Sprintf("number expected, got %s", got))
 	return 0 // unreachable
 }
