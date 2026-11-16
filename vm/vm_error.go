@@ -48,11 +48,8 @@ func (vm *VM) callerLocationPrefix() string {
 	if pc >= 0 && pc < len(proto.Lines) {
 		return fmt.Sprintf("%s:%d: ", shortSrc(proto.Source), proto.Lines[pc])
 	}
-	if proto.Source != "" {
-		// Stripped functions have no line info; use "?" per Lua 5.5
-		// (Lua 5.4 used -1; 5.5 changed to "?").
-		return fmt.Sprintf("%s:?: ", shortSrc(proto.Source))
-	}
+	// Stripped functions have no line info; luaL_where adds no position
+	// when currentline is not positive.
 	return ""
 }
 

@@ -1,0 +1,12 @@
+-- dofile re-raises load/open/syntax errors without the caller's position.
+local name = os.tmpname()
+local f = io.open(name, "w")
+f:write("x=")
+f:close()
+local ok, e = pcall(function() return dofile(name) end)
+assert(not ok)
+assert(e:find("^[^:]*:1: unexpected symbol near <eof>$") and not e:find("%.lua:%d+: "), e)
+os.remove(name)
+local ok2, e2 = pcall(function() dofile("nonexist_zz.lua") end)
+assert(not ok2 and e2 == "cannot open nonexist_zz.lua: No such file or directory", e2)
+print("OK")
