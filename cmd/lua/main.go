@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -336,14 +335,6 @@ func formatLuaValue(val vm.Value) string {
 	}
 	if val.IsInt() {
 		return fmt.Sprintf("%d", val.AsInt())
-	}
-	if val.IsFloat() {
-		f := val.AsFloat()
-		s := fmt.Sprintf("%g", f)
-		if !math.IsInf(f, 0) && !math.IsNaN(f) && !strings.Contains(s, ".") && !strings.Contains(s, "e") {
-			s += ".0"
-		}
-		return s
 	}
 	return val.String()
 }
