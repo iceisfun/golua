@@ -102,3 +102,52 @@ func TestCloseErrorLineAttribution(t *testing.T) {
 		})
 	}
 }
+
+// TestCloseLibraryErrorPosition covers a library (luaL_error-style) error
+// that crosses a __close handler while an error is already unwinding, or
+// while coroutine.close runs the handlers. Reference positions it at the Lua
+// line that called the library function, as it does everywhere else; golua
+// recovered it after that frame was gone and dropped the position, so the
+// handler saw one value and pcall another, or both lost it.
+func TestCloseLibraryErrorPosition(t *testing.T) {
+	const src = `local floormsg = "bad argument #1 to 'floor' (number expected, got string)"
+local function check(got, want) assert(got == want, "got: " .. tostring(got)) end
+
+local seen
+local ok, e = pcall(function()
+  local a <close> = setmetatable({}, {__close = function(_, e) seen = e end})
+  math.floor("x")
+end)
+check(seen, "lib.lua:7: " .. floormsg)
+check(e, "lib.lua:7: " .. floormsg)
+
+ok, e = pcall(function()
+  local b <close> = setmetatable({}, {__close = function() math.floor("x") end})
+  error("orig")
+end)
+check(e, "lib.lua:13: " .. floormsg)
+
+ok, e = xpcall(function()
+  local a <close> = setmetatable({}, {__close = function(_, e) seen = e end})
+  local b <close> = setmetatable({}, {__close = function() math.floor("x") end})
+  error("orig")
+end, function(m) return "H:" .. m end)
+check(seen, "H:lib.lua:20: " .. floormsg)
+check(e, "H:lib.lua:20: " .. floormsg)
+
+local co = coroutine.create(function()
+  local b <close> = setmetatable({}, {__close = function()
+    local c <close> = setmetatable({}, {__close = function(_, e) seen = e end})
+    math.floor("w")
+  end})
+  coroutine.yield()
+end)
+coroutine.resume(co)
+ok, e = coroutine.close(co)
+check(seen, "lib.lua:29: " .. floormsg)
+check(e, "lib.lua:29: " .. floormsg)
+`
+	if got := runForError(t, "lib.lua", src); got != "" {
+		t.Fatal(got)
+	}
+}

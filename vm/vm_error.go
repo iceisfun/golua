@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -68,6 +69,20 @@ func (vm *VM) AddCallerLocation(msg string) string {
 		return msg
 	}
 	return prefix + msg
+}
+
+// locatePanic positions a recovered luaL_error-style string panic at the
+// Lua frame that called the raising native function, while that frame is
+// still on vm.callStack, and returns it as an error so no later boundary
+// positions it again against a different stack. Other panic values are
+// returned unchanged. Recovery sites that keep unwinding after recovering
+// -- the __close loops -- must call it first: ProtectedCall adds the prefix
+// itself, but only from the stack it sees when the panic reaches it.
+func (vm *VM) locatePanic(r interface{}) interface{} {
+	if s, ok := r.(string); ok {
+		return errors.New(vm.AddCallerLocation(s))
+	}
+	return r
 }
 
 // PrependCallerLocation unconditionally prepends the caller's source:line:

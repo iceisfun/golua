@@ -687,7 +687,7 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error)
 				} else if le, ok := r.(*LuaError); ok {
 					closeErrVal = le.Value
 				} else {
-					closeErrVal = NewString(fmt.Sprintf("%v", r))
+					closeErrVal = NewString(locatedMsg)
 				}
 				if !msgh.IsNil() {
 					vm.msgHandler = msgh
