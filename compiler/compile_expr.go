@@ -37,6 +37,11 @@ func exprEndLine(e ast.Expr) int {
 		return expr.P.Line
 	case *ast.ParenExpr:
 		return exprEndLine(expr.Inner)
+	case *ast.FuncExpr, *ast.TableConstructor:
+		// The closing 'end' or '}'.
+		if end := e.End().Line; end > 0 {
+			return end
+		}
 	}
 	return e.Pos().Line
 }
