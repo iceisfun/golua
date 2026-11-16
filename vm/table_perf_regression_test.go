@@ -6,8 +6,11 @@ import (
 	"math/rand"
 	"runtime"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 // This file guards the table optimizations that trade a linear scan for an
@@ -1148,5 +1151,49 @@ func TestForEachSurvivesMutationDuringIteration(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestSetListGrowsLargeConstructorLinearly pins that a table constructor
+// longer than the NEWTABLE preallocation clamp (maxTablePrealloc) grows its
+// array geometrically. SETLIST used to grow the array to exactly the last
+// index of each batch, copying the whole array once per batch, so a 2^18
+// element constructor (as in the official big.lua) took tens of seconds and
+// allocated tens of gigabytes.
+func TestSetListGrowsLargeConstructorLinearly(t *testing.T) {
+	const n = 2 * maxTablePrealloc
+	var src strings.Builder
+	src.WriteString("return {")
+	for i := 1; i <= n; i++ {
+		src.WriteString(strconv.Itoa(i))
+		src.WriteByte(',')
+	}
+	src.WriteString("}")
+	proto := compileSource(t, src.String())
+
+	v := New()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	results, err := v.Run(proto)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	tbl := results[0].AsTable()
+	if got := tbl.Len(); got != n {
+		t.Fatalf("#t = %d, want %d", got, n)
+	}
+	for _, i := range []int64{1, maxTablePrealloc, maxTablePrealloc + 1, n} {
+		if got := tbl.Get(NewInt(i)); !got.Equal(NewInt(i)) {
+			t.Fatalf("t[%d] = %v, want %d", i, got, i)
+		}
+	}
+
+	// The final array is n*sizeof(Value) bytes; geometric growth stays within
+	// a small multiple of that, while per-batch regrowth allocates ~n^2/batch.
+	limit := uint64(16 * n * unsafe.Sizeof(Value{}))
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > limit {
+		t.Fatalf("constructor of %d items allocated %d bytes, want <= %d", n, alloc, limit)
 	}
 }
