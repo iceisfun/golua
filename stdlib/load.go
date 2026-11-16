@@ -701,6 +701,12 @@ func compileChunk(v *vm.VM, source, chunkName string, env vm.Value, hasEnv bool,
 	compileSource := chunkName
 	if o.hasRawSource {
 		compileSource = o.rawSource
+		if compileSource == "" {
+			// An empty source reads as "no source" to the compiler and would
+			// drop or double the position prefix; setProtoSource restores
+			// the empty name below.
+			compileSource = "=" + chunkName
+		}
 	}
 	proto, compileErr := compiler.Compile(compileSource, block,
 		compiler.WithLimits(v.GetLimits().CompilerLimits))
