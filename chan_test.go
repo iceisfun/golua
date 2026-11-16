@@ -159,8 +159,13 @@ func TestChan_SendClosedPanics(t *testing.T) {
 		ch:close()
 		local ok, err = pcall(function() ch:send(1) end)
 		assert(not ok, "expected error on send to closed")
+		assert(err:find("send on closed channel", 1, true), "unexpected error: " .. tostring(err))
+		ok, err = pcall(ch.send, ch, 1)
+		assert(err == "send on closed channel", "unexpected error: " .. tostring(err))
 	`
-	runLuaWithChan(t, source, "test_chan_send_closed", nil, vm.Limits{}, nil)
+	if _, err := runLuaWithChan(t, source, "test_chan_send_closed", nil, vm.Limits{}, nil); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestChan_FIFOOrdering(t *testing.T) {

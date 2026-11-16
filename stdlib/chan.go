@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"errors"
 	"reflect"
 	"sync"
 	"time"
@@ -165,6 +166,10 @@ func makeChanSend(luaVM *vm.VM, ch *vm.LuaChannel) vm.NativeFunc {
 		// v.Get(1) is self (the channel table), v.Get(2) is the value
 		val := v.Get(2)
 		if err := ch.Send(v.Context(), val); err != nil {
+			// Keep a closed channel distinguishable from a cancelled VM.
+			if errors.Is(err, vm.ErrClosedChannel) {
+				panic(err.Error())
+			}
 			panic("interrupted")
 		}
 		if err := v.CheckInterrupt(); err != nil {

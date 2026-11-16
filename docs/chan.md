@@ -64,7 +64,7 @@ val, ok, received := ch.TryRecv()
 |----------|-------------|
 | `chan.make(size?)` | Create a new channel (0 = unbuffered) |
 | `chan.select(ch1, ..., timeout?)` | Receive from any ready channel; returns `idx, val, ok` |
-| `ch:send(val)` | Blocking send |
+| `ch:send(val)` | Blocking send; raises `send on closed channel` if the channel is or becomes closed |
 | `ch:recv()` | Blocking receive; returns `val, ok` |
 | `ch:close()` | Close the channel |
 | `ch:try_send(val)` | Non-blocking send; returns `bool` |
