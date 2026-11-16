@@ -1269,6 +1269,9 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 		fs.emit(ABC(OP_RETURN0, 0, 0, 0, 0), line)
 		return
 	}
+	// Reference retstat calls luaK_ret after the explist is parsed, so the
+	// return instruction carries the line of the explist's last token.
+	line = exprEndLine(s.Values[len(s.Values)-1])
 
 	if len(s.Values) == 1 {
 		// Check for tail call — cannot tail-call when there are to-be-closed
