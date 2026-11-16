@@ -438,6 +438,7 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 	// adjustments (no missing/extra values).
 	inlineLast := false
 	var inlineVal Value
+	var inlineEffects []ast.Expr
 	if nNames == nValues && nNames > 0 {
 		lastIdx := nNames - 1
 		lastAttrib := ""
@@ -453,9 +454,10 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 		// fallback paths continue to work; runtime semantics still
 		// match (assigning a global indexes the local _ENV value).
 		if lastAttrib == attribConst && s.Names[lastIdx].Name != envUpvalueName {
-			if v, ok := c.tryFoldConstScalar(s.Values[lastIdx]); ok {
+			if v, effects, ok := c.exp2const(s.Values[lastIdx]); ok {
 				inlineLast = true
 				inlineVal = v
+				inlineEffects = effects
 			}
 		}
 	}
@@ -473,7 +475,9 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 	if nValues > 0 {
 		for i := 0; i < nValues; i++ {
 			if inlineLast && i == nValues-1 {
-				// Inlined trailing value — no code, no register.
+				// Inlined trailing value — no register, and no code beyond
+				// the operands an and/or passes over on the way to it.
+				c.compileForEffect(inlineEffects)
 				continue
 			}
 			if i == nValues-1 && i < nNames-1 && isMultiRet(s.Values[i]) {
