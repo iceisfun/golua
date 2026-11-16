@@ -736,7 +736,7 @@ func luaDebugSetMetatable(v *vm.VM) int {
 	mt := v.Get(2)
 
 	var mtTable vm.LuaTable
-	if mt.IsTable() {
+	if mt.IsTable() && !mt.AsTable().IsThread() {
 		mtTable = mt.AsTable()
 	} else if !mt.IsNil() || v.ArgCount() < 2 {
 		callerArgError(v, 2, "debug.setmetatable", "nil or table expected"+gotDesc(v, 2))

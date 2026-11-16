@@ -935,7 +935,7 @@ func luaSetmetatable(v *vm.VM) int {
 	mt := v.Get(2)
 	if mt.IsNil() {
 		tbl.SetMetatable(nil)
-	} else if mt.IsTable() {
+	} else if mt.IsTable() && !mt.AsTable().IsThread() {
 		tbl.SetMetatable(mt.AsTable())
 	} else {
 		callerArgError(v, 2, "setmetatable", "nil or table expected"+gotDesc(v, 2))
