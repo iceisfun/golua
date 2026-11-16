@@ -724,7 +724,14 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		lv.startPC = -1
 	}
 
-	c.leaveScope(line)
+	// The loop-exit OP_CLOSE of the closing variable is emitted by reference
+	// forstat's leaveblock after 'end' is consumed, so it carries the 'end'
+	// line: that is where __close sees the loop end and a line hook stops.
+	endLine := s.EndLine
+	if endLine == 0 {
+		endLine = line
+	}
+	c.leaveScope(endLine)
 }
 
 // ---------------------------------------------------------------------------
