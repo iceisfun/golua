@@ -686,7 +686,9 @@ mainLoop:
 			table := vm.stack[frame.base+b]
 			vm.stack[frame.base+a+1] = table
 			key := proto.Constants[c].SVal
-			if t := table.AsTable(); t != nil {
+			// A thread is backed by a *Table, but its metatable is the
+			// thread type metatable: leave it to the getMetafield path.
+			if t := table.AsTable(); t != nil && !t.IsThread() {
 				val, err := vm.tableGetString(t, key)
 				if err != nil {
 					return nil, err

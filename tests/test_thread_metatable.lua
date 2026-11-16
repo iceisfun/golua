@@ -111,4 +111,22 @@ do
     print("PASS: thread metatable from library code and __index chains")
 end
 
+-- Bug 6: A method call on a thread (co:m()) must resolve through the thread
+-- type metatable exactly like the field read co.m does.
+do
+    local co = coroutine.create(function() end)
+    local ok, err = pcall(function() return co:status() end)
+    assert(not ok and err:find("attempt to index a thread value %(upvalue 'co'%)"),
+        "method call on a thread without metatable: " .. tostring(err))
+    debug.setmetatable(co, {__index = coroutine})
+    assert(co.status(co) == "suspended", "field read through thread __index")
+    assert(co:status() == "suspended", "method call through thread __index")
+    -- A string __index resolves string.len, which then rejects the thread.
+    debug.setmetatable(co, {__index = "abc"})
+    ok, err = pcall(function() return co:len() end)
+    assert(not ok and err:find("bad self"), "thread __index = string: " .. tostring(err))
+    debug.setmetatable(co, nil)
+    print("PASS: thread method call")
+end
+
 print("OK")
