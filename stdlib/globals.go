@@ -515,12 +515,10 @@ func luaCollectgarbage(v *vm.VM) int {
 	// Go handles garbage collection automatically
 	// This is a no-op stub that returns 0 for compatibility
 	opt := ""
-	arg1 := v.Get(1)
-	if !arg1.IsNil() {
-		if !arg1.IsString() {
-			callerArgError(v, 1, "collectgarbage", fmt.Sprintf("invalid option '%s'", arg1.AsString()))
-		}
-		opt = arg1.AsString()
+	if !v.Get(1).IsNil() {
+		// luaL_checkoption: numbers coerce to their string form, anything else
+		// is a type error rather than an empty option name.
+		opt = getString(v, 1, "collectgarbage")
 	}
 
 	switch opt {
@@ -570,23 +568,9 @@ func luaCollectgarbage(v *vm.VM) int {
 		curVal := v.GCParam(paramName, defaultVal)
 		// If a third argument is provided (and not nil), validate it's a number
 		// and store it so a subsequent read round-trips. Go's GC is unaffected.
-		arg3 := v.Get(3)
-		if !arg3.IsNil() {
-			if !arg3.IsNumber() {
-				callerArgError(v, 3, "collectgarbage", fmt.Sprintf("number expected%s", gotDesc(v, 3)))
-			}
-			var setVal int64
-			if arg3.IsInt() {
-				setVal = arg3.AsInt()
-			} else {
-				f := arg3.AsFloat()
-				if i := int64(f); float64(i) == f {
-					setVal = i
-				} else {
-					callerArgError(v, 3, "collectgarbage", "number has no integer representation")
-				}
-			}
-			v.SetGCParam(paramName, setVal)
+		if !v.Get(3).IsNil() {
+			// luaL_optinteger: numeric strings are accepted.
+			v.SetGCParam(paramName, getInt(v, 3, "collectgarbage"))
 		}
 		v.Set(0, vm.NewInt(curVal))
 		return 1
@@ -595,6 +579,9 @@ func luaCollectgarbage(v *vm.VM) int {
 		// Go manages its own GC, so individual Lua-side "steps" never directly
 		// complete a Go cycle — return false to match the reference behavior
 		// observed under typical script execution.
+		if !v.Get(2).IsNil() {
+			getInt(v, 2, "collectgarbage") // luaL_optinteger: validate only
+		}
 		v.ProcessGcFinalizers()
 		v.Set(0, vm.False)
 		return 1
