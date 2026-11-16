@@ -44,10 +44,13 @@ func walkAll(t *testing.T, tbl *Table) []string {
 	return out
 }
 
-// A table that is only ever filled and read must never build a slot index: the
-// index is what a traversal pays for, and construction must not pay it.
+// A table that is only ever filled and read must never build a slot index:
+// the index is what traversals and tombstone reuse pay for, and construction
+// must not pay it. Deleting alone does not build one either; only the insert
+// that then has to find a tombstone does.
 func TestKeyIndexIsNotBuiltByConstruction(t *testing.T) {
 	withKeyIndexThreshold(t, 4)
+	withDeadIndexThreshold(t, 4)
 	tbl := NewEmptyTable()
 	for i := 0; i < 200; i++ {
 		tbl.SetString(fmt.Sprintf("k%03d", i), NewInt(int64(i)))
@@ -55,13 +58,13 @@ func TestKeyIndexIsNotBuiltByConstruction(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		tbl.SetInt(1000+i, NewInt(int64(i)))
 	}
+	for i := 0; i < 200; i++ {
+		tbl.SetString(fmt.Sprintf("k%03d", i), NewInt(int64(-i)))
+	}
 	for i := 0; i < 100; i++ {
 		tbl.SetString(fmt.Sprintf("k%03d", i), Nil)
 	}
-	for i := 0; i < 100; i++ {
-		tbl.SetString(fmt.Sprintf("k%03d", i), NewInt(int64(i)))
-	}
-	if tbl.GetString("k000").IsNil() {
+	if tbl.GetString("k150").IsNil() || tbl.GetInt(1100).IsNil() {
 		t.Fatal("lost a key")
 	}
 	if x := tbl.keyTracking(); x != nil {
