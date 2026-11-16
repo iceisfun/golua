@@ -246,3 +246,23 @@ func TestRunCLI_DoubleDashStopsOptionParsing(t *testing.T) {
 		t.Fatalf("expected empty stderr, got: %q", stderr.String())
 	}
 }
+
+func TestRunCLI_BinaryChunkAfterBOMOrShebang(t *testing.T) {
+	res, err := runLuaWithCLIProviders(t, false, "", `return string.dump(function() os.exit(7) end)`)
+	if err != nil || len(res) != 1 {
+		t.Fatalf("dump: %v %v", res, err)
+	}
+	dump := res[0].AsString()
+
+	for name, prefix := range map[string]string{
+		"bom":         "\xEF\xBB\xBF",
+		"shebang":     "#!x\n",
+		"bom+shebang": "\xEF\xBB\xBF#!x\n",
+	} {
+		script := writeTempLua(t, t.TempDir(), "chunk.luac", prefix+dump)
+		var stderr bytes.Buffer
+		if code := runCLI([]string{"lua", script}, &stderr); code != 7 {
+			t.Errorf("%s: exit code = %d, want 7; stderr=%q", name, code, stderr.String())
+		}
+	}
+}

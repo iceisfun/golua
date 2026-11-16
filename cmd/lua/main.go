@@ -344,7 +344,18 @@ func formatLuaValue(val vm.Value) string {
 // name carries the '@'/'=' prefix for proto.Source; displayName is used in
 // parser error messages.
 func compileChunk(name, displayName, source string) (proto *compiler.Proto, err error) {
-	if strings.HasPrefix(source, "\x1bLua") {
+	// Like luaL_loadfilex, look for the binary signature after an optional
+	// BOM and an optional '#' first line.
+	bin := strings.TrimPrefix(source, "\xEF\xBB\xBF")
+	if strings.HasPrefix(bin, "#") {
+		if i := strings.IndexByte(bin, '\n'); i >= 0 {
+			bin = bin[i+1:]
+		} else {
+			bin = ""
+		}
+	}
+	if strings.HasPrefix(bin, "\x1bLua") {
+		source = bin
 		// The undumper panics on malformed chunks; report as an error.
 		defer func() {
 			if r := recover(); r != nil {

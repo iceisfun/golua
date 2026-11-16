@@ -295,8 +295,8 @@ func makeLuaFileSearcher(machine *vm.VM, pkg *vm.Table) vm.NativeFunc {
 			var fn vm.Value
 			var errMsg string
 			sourceStr := string(source)
-			if len(sourceStr) > 0 && sourceStr[0] == '\x1b' {
-				fn, errMsg = loadBinaryChunk(v, sourceStr, chunkName, vm.Nil, false)
+			if bin := skipFilePrefix(source); len(bin) > 0 && bin[0] == '\x1b' {
+				fn, errMsg = loadBinaryChunk(v, string(bin), chunkName, vm.Nil, false)
 			} else {
 				displayName := chunkNameForDisplay(chunkName)
 				fn, errMsg = compileChunk(v, sourceStr, displayName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
