@@ -140,6 +140,10 @@ type jailRoot struct {
 	// be inspected — EACCES on a parent, a symlink loop — is still a valid
 	// containment boundary, it just cannot be trusted as a shortcut.
 	resolved bool
+	// given is the absolute spelling the host supplied, before symlinks were
+	// resolved. A name may reach the root through it, so its ancestors are
+	// on the way to the root just as the resolved path's are.
+	given string
 }
 
 func newPathJail(root string) *pathJail {
@@ -157,13 +161,13 @@ func newPathJail(root string) *pathJail {
 func resolveJailRoot(dir string) jailRoot {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
-		return jailRoot{path: dir}
+		return jailRoot{path: dir, given: dir}
 	}
-	resolved, err := realPath(abs)
+	resolved, err := realPath(abs, nil)
 	if err != nil {
-		return jailRoot{path: abs}
+		return jailRoot{path: abs, given: abs}
 	}
-	return jailRoot{path: resolved, resolved: true}
+	return jailRoot{path: resolved, resolved: true, given: abs}
 }
 
 // allowRoot adds another root directory to the jail.
@@ -237,9 +241,9 @@ func (j *pathJail) resolveBase(candidate string) string {
 // guarantee, only cost.
 func (j *pathJail) resolveReal(candidate string) (string, error) {
 	if base := j.resolveBase(candidate); base != "" {
-		return realPathUnder(base, candidate)
+		return realPathUnder(base, candidate, j.mayLookUp)
 	}
-	return realPath(candidate)
+	return realPath(candidate, j.mayLookUp)
 }
 
 // candidate turns a caller-supplied name into the absolute path resolution
@@ -433,16 +437,20 @@ func (j *pathJail) isRoot(path string) bool {
 // reported as the OS reports it, so a permission problem inside the jail does
 // not masquerade as a sandbox violation with the wrong errno. That only applies
 // to a name that is lexically inside the jail: for anything else the answer must
-// not depend on the state of the filesystem outside it. The same holds for
-// where the walk failed: "../d/../root/x" is lexically inside, but whether it
-// fails says whether d exists next to the root.
+// not depend on the state of the filesystem outside it. The same holds for a
+// name that is lexically inside but whose walk steps outside: the walk is
+// refused before it looks anything up out there (see mayLookUp), so
+// "../d/../root/x" is denied whether or not d exists.
 func (j *pathJail) resolveError(name, candidate string, err error) error {
 	if !j.contains(candidate) {
 		return accessDenied(name)
 	}
+	if errors.Is(err, errLookupOutsideJail) {
+		return accessDenied(name)
+	}
 	var pe *fs.PathError
 	if errors.As(err, &pe) {
-		if !j.mayReport(pe.Path) {
+		if !j.mayLookUp(pe.Path) {
 			return accessDenied(name)
 		}
 		// Report the name the caller gave rather than the internal path the
@@ -452,22 +460,33 @@ func (j *pathJail) resolveError(name, candidate string, err error) error {
 	return err
 }
 
-// mayReport reports whether a resolution failure at path says nothing about
-// the filesystem outside the jail: path is inside it, or on the way to one of
-// its roots, which a walk from the filesystem root has to pass through.
-func (j *pathJail) mayReport(path string) bool {
+// mayLookUp reports whether a resolution walk may inspect path: path is inside
+// the jail, or on the way to one of its roots (a root itself or an ancestor of
+// one), which a walk from the filesystem root has to pass through. Anything
+// else is refused before it is looked up, whatever is there. Merely hiding the
+// failures out there is not enough: if "../d/../root/x" opened whenever d is a
+// searchable directory and was denied otherwise, the outcome would still say
+// whether d exists beside the root.
+func (j *pathJail) mayLookUp(path string) bool {
 	if j.contains(path) {
 		return true
 	}
 	j.mu.Lock()
-	defer j.mu.Unlock()
+	rooted := len(j.roots) > 0
 	for _, root := range j.roots {
-		if withinDir(path, root.path) {
+		if withinDir(path, root.path) || (root.given != "" && withinDir(path, root.given)) {
+			j.mu.Unlock()
 			return true
 		}
 	}
-	return false
+	j.mu.Unlock()
+	tmp := runtimeTempRoot()
+	return rooted && tmp != "" && withinDir(path, tmp)
 }
+
+// errLookupOutsideJail is returned by a guarded walk that would have had to
+// inspect a path the jail does not let it look at.
+var errLookupOutsideJail = errors.New("path lookup outside the jail")
 
 // accessDeniedError marks a refusal by the jail, as opposed to a failure of the
 // operation itself. Callers that phrase their own messages (the code provider)
@@ -508,13 +527,16 @@ const (
 // cost is linear in the length of the name. Resolving the whole prefix again per
 // component (what EvalSymlinks does when called level by level) is quadratic,
 // and every jailed entry point would inherit it as an uninterruptible CPU sink.
-func realPath(path string) (string, error) {
+//
+// allow, when not nil, is asked about every path before the walk inspects it;
+// a refusal ends the walk with errLookupOutsideJail.
+func realPath(path string, allow func(string) bool) (string, error) {
 	if err := checkPathLen(path); err != nil {
 		return "", err
 	}
 	sep := string(filepath.Separator)
 	volume := filepath.VolumeName(path)
-	return walkPath(volume+sep, splitPathComponents(path[len(volume):]), path)
+	return walkPath(volume+sep, splitPathComponents(path[len(volume):]), path, allow)
 }
 
 // checkPathLen refuses an over-long name before anything splits or walks it.
@@ -532,16 +554,16 @@ func checkPathLen(path string) error {
 // has. A symlink below base is still followed, and an absolute link target
 // restarts the walk at the filesystem root, so nothing is assumed about where
 // the name ends up — only about where it starts.
-func realPathUnder(base, path string) (string, error) {
+func realPathUnder(base, path string, allow func(string) bool) (string, error) {
 	if err := checkPathLen(path); err != nil {
 		return "", err
 	}
 	rest, ok := pathBelow(base, path)
 	if !ok {
 		// Not spelled under base after all; resolve it the long way.
-		return realPath(path)
+		return realPath(path, allow)
 	}
-	return walkPath(base, splitPathComponents(rest), path)
+	return walkPath(base, splitPathComponents(rest), path, allow)
 }
 
 // pathBelow returns what follows dir in path when path literally starts with
@@ -563,8 +585,9 @@ func pathBelow(dir, path string) (string, bool) {
 
 // walkPath resolves pending, the components below base, against the filesystem.
 // base must be absolute and symlink-free; full is the whole name the caller
-// asked about and is used only for error reporting.
-func walkPath(base string, pending []string, full string) (string, error) {
+// asked about and is used only for error reporting. allow, when not nil, must
+// approve each path before it is inspected.
+func walkPath(base string, pending []string, full string, allow func(string) bool) (string, error) {
 	sep := string(filepath.Separator)
 	resolved := base
 
@@ -590,6 +613,9 @@ func walkPath(base string, pending []string, full string) (string, error) {
 			next += sep
 		}
 		next += name
+		if allow != nil && !allow(next) {
+			return "", errLookupOutsideJail
+		}
 
 		// Lstat rather than Readlink to decide: "this is not a symlink" is a
 		// portable answer from Lstat, while Readlink reports it with a

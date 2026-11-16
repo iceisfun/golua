@@ -84,27 +84,73 @@ func TestJailResolvesDotDotLikeTheKernel(t *testing.T) {
 	}
 }
 
-// A walk that leaves the jail through ".." and fails out there must not say
-// so: whether "../probe/../root/ok.txt" fails tells the script whether probe
-// exists beside the root.
-func TestJailDoesNotReportFailuresOutsideIt(t *testing.T) {
+// A walk that steps outside the jail through ".." must be refused before it
+// looks at anything out there, whatever is there: if "../probe/../root/ok.txt"
+// opened when probe is a directory and failed otherwise, the outcome would say
+// whether probe exists beside the root. Walking up through the root's own
+// ancestors and straight back into it reveals nothing and still works.
+func TestJailDoesNotProbeOutsideIt(t *testing.T) {
 	l := newJailLayout(t)
 	p := vm.NewFullIoProvider(l.root)
 	ctx := context.Background()
 
-	if f, err := p.Open(ctx, "../outdir/../root/ok.txt", "r"); err != nil {
-		t.Fatalf("a name that walks back into the jail was refused: %v", err)
-	} else {
+	for _, name := range []string{
+		"../root/ok.txt",
+		"sub/../../root/ok.txt",
+		filepath.Join(l.root, "ok.txt"),
+		l.root + "/../root/ok.txt",
+	} {
+		f, err := p.Open(ctx, name, "r")
+		if err != nil {
+			t.Fatalf("Open(%q) through the root's own ancestors was refused: %v", name, err)
+		}
 		f.Close(ctx)
 	}
-	for _, name := range []string{"../absent/../root/ok.txt", "../SECRET.txt/../root/ok.txt"} {
-		f, err := p.Open(ctx, name, "r")
-		if err == nil {
-			f.Close(ctx)
-			t.Fatalf("Open(%q) succeeded through a path the kernel cannot walk", name)
+
+	for _, name := range []string{
+		"../outdir/../root/ok.txt",     // a directory that exists
+		"../absent/../root/ok.txt",     // nothing there
+		"../SECRET.txt/../root/ok.txt", // a plain file
+		"../outdir/",
+		"../absent",
+		filepath.Join(l.base, "outdir") + "/../root/ok.txt",
+		filepath.Join(l.base, "absent") + "/../root/ok.txt",
+		"/nonexistent_golua_probe/.." + l.root + "/ok.txt",
+	} {
+		for _, mode := range []string{"r", "w"} {
+			f, err := p.Open(ctx, name, mode)
+			if err == nil {
+				f.Close(ctx)
+				t.Fatalf("Open(%q, %q) succeeded through a lookup outside the jail", name, mode)
+			}
+			if !strings.Contains(err.Error(), "access denied") {
+				t.Errorf("Open(%q, %q) = %v, want access denied", name, mode, err)
+			}
 		}
-		if !strings.Contains(err.Error(), "access denied") {
-			t.Errorf("Open(%q) = %v, want access denied", name, err)
+		if err := p.Remove(ctx, name); err == nil || !strings.Contains(err.Error(), "access denied") {
+			t.Errorf("Remove(%q) = %v, want access denied", name, err)
 		}
 	}
+	if data, err := os.ReadFile(filepath.Join(l.root, "ok.txt")); err != nil || string(data) != "inside" {
+		t.Fatalf("ok.txt was touched: data=%q err=%v", data, err)
+	}
+}
+
+// A root the host named through a symlink is still reachable by absolute
+// names spelled that way: the walk passes the link and its target's ancestors,
+// all of which are on the way to the root.
+func TestJailAdmitsTheRootsGivenSpelling(t *testing.T) {
+	base := t.TempDir()
+	mkdir(t, filepath.Join(base, "real", "root"))
+	writeFile(t, filepath.Join(base, "real", "root", "ok.txt"), "inside")
+	symlink(t, filepath.Join(base, "real"), filepath.Join(base, "alias"))
+	given := filepath.Join(base, "alias", "root")
+
+	p := vm.NewFullIoProvider(given)
+	ctx := context.Background()
+	f, err := p.Open(ctx, filepath.Join(given, "ok.txt"), "r")
+	if err != nil {
+		t.Fatalf("Open through the given spelling of the root: %v", err)
+	}
+	f.Close(ctx)
 }
