@@ -39,11 +39,21 @@ func (vm *VM) equal(v1, v2 Value) (bool, error) {
 // CompareEQ reports whether v1 == v2, honoring __eq metamethods (the
 // equivalent of lua_compare with LUA_OPEQ).
 func (vm *VM) CompareEQ(v1, v2 Value) (bool, error) {
+	// Only two tables or full userdata can reach __eq.
+	if vm.outsideCall() && (v1.IsTable() || v1.IsUserdata()) && (v2.IsTable() || v2.IsUserdata()) {
+		return hostProtect(vm, func() (bool, error) { return vm.CompareEQ(v1, v2) })
+	}
 	return vm.equal(v1, v2)
 }
 
 // CompareLT performs a less-than comparison, honoring __lt metamethods.
 func (vm *VM) CompareLT(v1, v2 Value) (bool, error) {
+	if vm.outsideCall() {
+		if res, ok := v1.LessThan(v2); ok {
+			return res, nil
+		}
+		return hostProtect(vm, func() (bool, error) { return vm.CompareLT(v1, v2) })
+	}
 	return vm.lessThan(v1, v2)
 }
 

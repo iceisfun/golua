@@ -609,13 +609,56 @@ func (vm *VM) tableSetIntDepth(t LuaTable, key int, value Value, depth int) erro
 	return vm.runtimeError("'__newindex' chain too long; possible loop")
 }
 
+// outsideCall reports whether no call is in progress, so the caller is host
+// code rather than a native function running under Run or ProtectedCall.
+//
+// Inside a call, an error a metamethod raises unwinds as a Go panic to the
+// enclosing protected boundary, as lua_gettable longjmps to the enclosing
+// lua_pcall, and that boundary restores the call stack and top. Outside one
+// there is no such boundary: the panic would escape the method's error return
+// and leave the metamethod's frames on the call stack. The exported methods
+// that can run a metamethod therefore re-enter themselves through hostProtect
+// when outsideCall is true.
+func (vm *VM) outsideCall() bool {
+	return len(vm.callStack) == 0
+}
+
+// hostProtect runs op under a protected call and returns an error raised in
+// it as op's error. op runs with a call in progress, so an exported method can
+// pass a closure that calls itself back.
+func hostProtect[T any](vm *VM, op func() (T, error)) (T, error) {
+	var res T
+	var opErr error
+	_, err := vm.protectedCall(NewNativeFunc(func(*VM) int {
+		res, opErr = op()
+		return 0
+	}), nil)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return res, opErr
+}
+
+// hostProtectErr is hostProtect for an operation that returns only an error.
+func hostProtectErr(vm *VM, op func() error) error {
+	_, err := hostProtect(vm, func() (struct{}, error) { return struct{}{}, op() })
+	return err
+}
+
 // TableGet retrieves t[key] with __index metamethod support.
 func (vm *VM) TableGet(t LuaTable, key Value) (Value, error) {
+	if vm.outsideCall() && t.Metatable() != nil {
+		return hostProtect(vm, func() (Value, error) { return vm.TableGet(t, key) })
+	}
 	return vm.tableGet(t, key)
 }
 
 // TableGetInt retrieves t[key] with __index metamethod support.
 func (vm *VM) TableGetInt(t LuaTable, key int) (Value, error) {
+	if vm.outsideCall() && t.Metatable() != nil {
+		return hostProtect(vm, func() (Value, error) { return vm.TableGetInt(t, key) })
+	}
 	return vm.tableGetInt(t, key)
 }
 
@@ -628,7 +671,13 @@ func (vm *VM) SetIndexValue(val Value, key Value, value Value) error {
 			}
 			return nil
 		}
+		if vm.outsideCall() {
+			return hostProtectErr(vm, func() error { return vm.SetIndexValue(val, key, value) })
+		}
 		return vm.tableSet(val.ptr.(LuaTable), key, value)
+	}
+	if vm.outsideCall() {
+		return hostProtectErr(vm, func() error { return vm.SetIndexValue(val, key, value) })
 	}
 	if val.typ == typeTable && !val.AsTable().IsThread() {
 		return vm.tableSet(val.AsTable(), key, value)
@@ -654,7 +703,13 @@ func (vm *VM) SetIndexInt(val Value, key int, value Value) error {
 			ct.SetInt(key, value)
 			return nil
 		}
+		if vm.outsideCall() {
+			return hostProtectErr(vm, func() error { return vm.SetIndexInt(val, key, value) })
+		}
 		return vm.tableSetInt(val.ptr.(LuaTable), key, value)
+	}
+	if vm.outsideCall() {
+		return hostProtectErr(vm, func() error { return vm.SetIndexInt(val, key, value) })
 	}
 	if val.typ == typeTable && !val.AsTable().IsThread() {
 		return vm.tableSetInt(val.AsTable(), key, value)
@@ -675,6 +730,9 @@ func (vm *VM) SetIndexInt(val Value, key int, value Value) error {
 
 // TableSetInt sets t[key]=value with __newindex metamethod support.
 func (vm *VM) TableSetInt(t LuaTable, key int, value Value) error {
+	if vm.outsideCall() && t.Metatable() != nil {
+		return hostProtectErr(vm, func() error { return vm.TableSetInt(t, key, value) })
+	}
 	return vm.tableSetInt(t, key, value)
 }
 
@@ -684,6 +742,9 @@ func (vm *VM) IndexValue(val Value, key Value) (Value, error) {
 	// the GETTABLE opcode), avoiding the AsTable/tableGet interface round-trip.
 	if ct, ok := val.ptr.(*Table); ok && val.typ == typeTable && !ct.isThread && ct.metatable == nil {
 		return ct.Get(key), nil
+	}
+	if vm.outsideCall() {
+		return hostProtect(vm, func() (Value, error) { return vm.IndexValue(val, key) })
 	}
 	if val.IsTable() && !val.AsTable().IsThread() {
 		return vm.tableGet(val.AsTable(), key)
@@ -699,6 +760,9 @@ func (vm *VM) IndexInt(val Value, key int) (Value, error) {
 	if ct, ok := val.ptr.(*Table); ok && val.typ == typeTable && !ct.isThread && ct.metatable == nil {
 		return ct.GetInt(key), nil
 	}
+	if vm.outsideCall() {
+		return hostProtect(vm, func() (Value, error) { return vm.IndexInt(val, key) })
+	}
 	if val.IsTable() && !val.AsTable().IsThread() {
 		return vm.tableGetInt(val.AsTable(), key)
 	}
@@ -712,6 +776,9 @@ func (vm *VM) ObjLen(val Value) (int, error) {
 	}
 	mm := vm.getMetafield(val, MetaLen)
 	if !mm.IsNil() {
+		if vm.outsideCall() {
+			return hostProtect(vm, func() (int, error) { return vm.ObjLen(val) })
+		}
 		// Reference lvm.c passes the object twice (luaT_callTMres(L, tm, rb, rb, ra)),
 		// so __len must see the same second argument here as it does from OP_LEN.
 		res, err := vm.callMetamethod("len", mm, val, val)
