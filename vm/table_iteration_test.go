@@ -458,6 +458,45 @@ func TestConcurrentReadOnlyTraversalsDoNotRace(t *testing.T) {
 	}
 }
 
+// A fresh traversal records how far the run of tombstones at the front of
+// t.keys reaches, so it is a write even on a read-only walk. Run under -race,
+// this checks that several goroutines starting walks over one shared table
+// with deleted leading keys do not race on it, and that none of them is
+// misled by what another recorded.
+func TestConcurrentTraversalsPastLeadingTombstones(t *testing.T) {
+	tbl := NewEmptyTable()
+	const n, deleted = 64, 20
+	for i := 0; i < n; i++ {
+		tbl.SetString(fmt.Sprintf("k%02d", i), NewInt(int64(i)))
+	}
+	for i := 0; i < deleted; i++ {
+		tbl.SetString(fmt.Sprintf("k%02d", i), Nil)
+	}
+
+	const goroutines = 4
+	counts := make([]int, goroutines)
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for r := 0; r < 200; r++ {
+				k, _, err := tbl.Next(Nil)
+				for !k.IsNil() && err == nil {
+					counts[g]++
+					k, _, err = tbl.Next(k)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	for g, c := range counts {
+		if c != (n-deleted)*200 {
+			t.Fatalf("goroutine %d visited %d entries, want %d", g, c, (n-deleted)*200)
+		}
+	}
+}
+
 // An integer key the array part covers must never also be live in the hash
 // part. next() crosses from the array into the hash part with no memory of
 // where it was, and that is only correct because such a key is always a

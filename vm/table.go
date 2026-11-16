@@ -88,6 +88,7 @@ type Table struct {
 	iterShape int32            // len(keys)+deadKeys when that window was opened; atomic
 	iterCur   int32            // slot a traversal reached last, biased by one (0 = none); atomic
 	noPromote int32            // intHash size at which array promotion was last declined
+	liveFrom  int32            // every keys slot below this is a tombstone (see firstLiveHashEntry); atomic
 	isThread  bool             // true if this table represents a coroutine thread
 	intTombs  bool             // t.keys may hold a tombstone for an integer key >= 1 (see orphanIndexTombstones)
 	metatable LuaTable         // per-table metatable for operator/event overrides
@@ -169,7 +170,7 @@ func (t *Table) reviveDeadStr(s string) bool {
 		// index-free.
 		for i, n := 0, min(len(t.keys), deadIndexThreshold); i < n; i++ {
 			if hk := t.keys[i]; hk.typ == typeString && hk.asString() == s {
-				t.deadKeys--
+				t.slotRevived(i)
 				return true
 			}
 		}
@@ -180,7 +181,7 @@ func (t *Table) reviveDeadStr(s string) bool {
 	}
 	if slot, ok := x.str[s]; ok && int(slot) < len(t.keys) {
 		if hk := t.keys[slot]; hk.typ == typeString && hk.asString() == s {
-			t.deadKeys--
+			t.slotRevived(int(slot))
 			return true
 		}
 	}
@@ -192,7 +193,7 @@ func (t *Table) reviveDeadInt(k int64) bool {
 	if x == nil {
 		for i, n := 0, min(len(t.keys), deadIndexThreshold); i < n; i++ {
 			if hk := t.keys[i]; hk.typ == typeInt && hk.ival() == k {
-				t.deadKeys--
+				t.slotRevived(i)
 				return true
 			}
 		}
@@ -203,7 +204,7 @@ func (t *Table) reviveDeadInt(k int64) bool {
 	}
 	if slot, ok := x.ints[k]; ok && int(slot) < len(t.keys) {
 		if hk := t.keys[slot]; hk.typ == typeInt && hk.ival() == k {
-			t.deadKeys--
+			t.slotRevived(int(slot))
 			return true
 		}
 	}
@@ -215,7 +216,7 @@ func (t *Table) reviveDeadOther(keyValue Value, hk any) bool {
 	if x == nil {
 		for i, n := 0, min(len(t.keys), deadIndexThreshold); i < n; i++ {
 			if t.keys[i].RawEqual(keyValue) {
-				t.deadKeys--
+				t.slotRevived(i)
 				return true
 			}
 		}
@@ -225,7 +226,7 @@ func (t *Table) reviveDeadOther(keyValue Value, hk any) bool {
 		x = t.buildKeyIndex()
 	}
 	if slot, ok := x.other[hk]; ok && int(slot) < len(t.keys) && t.keys[slot].RawEqual(keyValue) {
-		t.deadKeys--
+		t.slotRevived(int(slot))
 		return true
 	}
 	return false
@@ -1045,6 +1046,7 @@ func (t *Table) promoteIntKeysTo(size int) {
 	// pays. This runs only at integer-hash doubling points, so the rebuild is
 	// amortized over the inserts that provoked it.
 	t.dropKeyIndex()
+	atomic.StoreInt32(&t.liveFrom, 0)
 	t.noPromote = 0
 	// Absorb whatever now sits directly above the enlarged array. Without
 	// this, a backward fill (t[20]..t[1]) that promotes at 16 would strand
@@ -1235,7 +1237,6 @@ func (t *Table) reuseOrAppendKey(k Value) {
 				for i, hk := range t.keys {
 					if _, alive := t.getKeyValue(hk); !alive {
 						t.takeKeySlot(i, hk, k)
-						t.deadKeys--
 						return
 					}
 				}
@@ -1248,7 +1249,6 @@ func (t *Table) reuseOrAppendKey(k Value) {
 		// the deletes and inserts are interleaved.
 		if i, ok := t.firstFreeSlot(x); ok {
 			t.takeKeySlot(i, t.keys[i], k)
-			t.deadKeys--
 			return
 		}
 	}
@@ -1282,6 +1282,16 @@ func (t *Table) takeKeySlot(i int, old, k Value) {
 	if x := t.keyTracking(); x != nil {
 		x.remove(old)
 		x.set(k, i)
+	}
+	t.slotRevived(i)
+}
+
+// slotRevived records that tombstone slot i has just become live again, by a
+// revival or by a new key taking it over.
+func (t *Table) slotRevived(i int) {
+	t.deadKeys--
+	if int(atomic.LoadInt32(&t.liveFrom)) > i {
+		atomic.StoreInt32(&t.liveFrom, int32(i))
 	}
 }
 
@@ -1419,6 +1429,15 @@ func (t *Table) checkInvariants() error {
 					return fmt.Errorf("tombstone %v at slot %d is missing from the free list", hashKey(k), i)
 				}
 			}
+		}
+	}
+	lf := int(atomic.LoadInt32(&t.liveFrom))
+	if lf > len(t.keys) {
+		return fmt.Errorf("liveFrom = %d, past the %d-slot keys slice", lf, len(t.keys))
+	}
+	for i, k := range t.keys[:lf] {
+		if _, alive := t.getKeyValue(k); alive {
+			return fmt.Errorf("key %v at slot %d is live, below liveFrom = %d", hashKey(k), i, lf)
 		}
 	}
 	for i, k := range t.keys {
@@ -1845,6 +1864,7 @@ func (t *Table) dropAllDeadKeys() {
 	atomic.StoreInt32(&t.iterBound, 0)
 	atomic.StoreInt32(&t.iterShape, 0)
 	atomic.StoreInt32(&t.iterCur, 0)
+	atomic.StoreInt32(&t.liveFrom, 0)
 	t.intTombs = false
 }
 
@@ -2045,6 +2065,7 @@ func (t *Table) enableWeakMode(mode weakTableMode) {
 	t.keys = nil
 	t.deadKeys = 0
 	t.dropKeyIndex()
+	atomic.StoreInt32(&t.liveFrom, 0)
 	t.intTombs = false
 
 	// Publish the weak backend and register for the global sweep atomically
@@ -2327,18 +2348,51 @@ func (t *Table) iterWindow() int {
 
 // firstLiveHashEntry returns the first live (non-dead) hash entry below bound,
 // skipping tombstones left by deletions during iteration.
+//
+// The scan starts at liveFrom, a slot below which every ordered-keys entry is
+// known to be a tombstone, and records where it found the first live entry.
+// Without it the clear-by-next idiom
+//
+//	local k = next(t)
+//	while k ~= nil do t[k] = nil; k = next(t) end
+//
+// rescanned the growing run of tombstones at the front of t.keys on every
+// call, which is quadratic in the table's size. With it each tombstone is
+// stepped over once, however many traversals start after it.
+//
+// liveFrom only ever has to be a lower bound, and never past len(t.keys).
+// Deleting a key cannot falsify it, and the paths that bring a slot back to
+// life lower it (slotRevived). Appending cannot either: the new slot is at
+// len(t.keys), at or above the bound. Dropping the tail slot (removeLiveKey)
+// drops a live key, which the bound already sits at or below, and the paths
+// that renumber or empty t.keys reset it. So appendKey, the insert path,
+// never touches it. A traversal writes it, atomically like the cursor hint:
+// concurrent traversals of an unmodified shared table all derive it from the
+// same slice, so whichever store lands last is still a true bound.
 func (t *Table) firstLiveHashEntry(bound int) (Value, Value, bool) {
 	if bound > len(t.keys) {
 		bound = len(t.keys)
 	}
-	for i := 0; i < bound; i++ {
+	from := int(atomic.LoadInt32(&t.liveFrom))
+	i := from
+	for ; i < bound; i++ {
 		k := t.keys[i]
 		if v, alive := t.getKeyValue(k); alive {
+			t.advanceLiveFrom(from, i)
 			t.publishCursor(i)
 			return k, v, true
 		}
 	}
+	t.advanceLiveFrom(from, i)
 	return Nil, Nil, false
+}
+
+// advanceLiveFrom records that the slots in [from, i) were all found dead,
+// where from is the liveFrom value the scan started at.
+func (t *Table) advanceLiveFrom(from, i int) {
+	if i > from && i <= math.MaxInt32 {
+		atomic.StoreInt32(&t.liveFrom, int32(i))
+	}
 }
 
 // nextHashAfter returns the next live hash entry after key k.

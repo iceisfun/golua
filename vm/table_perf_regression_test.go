@@ -731,6 +731,69 @@ func TestTombstoneChurnScalesLinearly(t *testing.T) {
 		func(n int) time.Duration { return hashFill(strKeys(n)) })
 }
 
+// TestClearByNextScalesLinearly guards the clear-by-next idiom
+//
+//	local k = next(t)
+//	while k ~= nil do t[k] = nil; k = next(t) end
+//
+// on a hash table. Every next(t) starts a fresh traversal, and each one used to
+// step over the whole run of tombstones the loop had left at the front of
+// t.keys, so emptying a table cost O(n^2). A pairs() loop that breaks out and
+// is restarted after deleting what it saw is the same pattern.
+func TestClearByNextScalesLinearly(t *testing.T) {
+	for name, keys := range map[string]func(int) []Value{"string keys": strKeys, "integer keys": intHashKeys} {
+		t.Run(name, func(t *testing.T) {
+			drain := func(n int) time.Duration {
+				tbl := NewEmptyTable()
+				for _, k := range keys(n) {
+					tbl.MustSet(k, True)
+				}
+				start := time.Now()
+				cleared := 0
+				for k, _ := tbl.MustNext(Nil); !k.IsNil(); k, _ = tbl.MustNext(Nil) {
+					tbl.MustSet(k, Nil)
+					cleared++
+				}
+				d := time.Since(start)
+				if cleared != n {
+					t.Fatalf("cleared %d of %d keys", cleared, n)
+				}
+				return d
+			}
+			checkCostIsLinear(t, "clear by next(t)", 1<<15, drain,
+				func(n int) time.Duration { return hashFill(keys(n)) })
+		})
+	}
+}
+
+// Every revival or takeover of a slot below the first live one must pull the
+// bound next(t) starts from back down, or next(t) skips that key.
+func TestClearByNextSeesRevivedAndReusedSlots(t *testing.T) {
+	enableTableDebugChecks(t)
+	for _, thr := range []int{1 << 30, 0} {
+		t.Run(fmt.Sprintf("threshold=%d", thr), func(t *testing.T) {
+			withDeadIndexThreshold(t, thr)
+			tbl := NewEmptyTable()
+			for i := 0; i < 8; i++ {
+				tbl.SetString(fmt.Sprintf("k%d", i), True)
+			}
+			for i := 0; i < 6; i++ {
+				k, _ := tbl.MustNext(Nil)
+				tbl.MustSet(k, Nil)
+			}
+			wantOrder(t, tbl, "k6", "k7")
+
+			tbl.SetString("k2", True) // revives its own tombstone at slot 2
+			checkTable(t, tbl, "after revival")
+			wantOrder(t, tbl, "k2", "k6", "k7")
+
+			tbl.SetString("new", True) // takes over the lowest dead slot, 0
+			checkTable(t, tbl, "after reuse")
+			wantOrder(t, tbl, "new", "k2", "k6", "k7")
+		})
+	}
+}
+
 // --- OPT 3: co-allocated small-table block --------------------------------
 
 // TestCoAllocatedTableIsOneAllocation checks the small-hash-hint constructor
