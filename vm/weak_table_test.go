@@ -1,8 +1,10 @@
 package vm
 
 import (
+	"math"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // makeWeakTable creates a table with the given __mode and returns it.
@@ -274,5 +276,205 @@ func TestWeakStore_SweepCleansDeadEntries(t *testing.T) {
 	}
 	if keys[0].AsString() != "c" {
 		t.Errorf("expected surviving key 'c', got %v", keys[0])
+	}
+}
+
+// TestWeakTable_FloatKeysNormalized checks that a weak table stores a float key
+// with an exact integer value as that integer, as a normal table does, so
+// next() hands back 2 and 0 rather than 2.0 and -0.0.
+func TestWeakTable_FloatKeysNormalized(t *testing.T) {
+	for _, mode := range []string{"k", "v", "kv"} {
+		wt := makeWeakTable(mode)
+		wt.MustSet(NewFloat(2.0), NewString("b"))
+		wt.MustSet(NewFloat(math.Copysign(0, -1)), NewString("z"))
+		wt.MustSet(NewFloat(2.5), NewString("f"))
+
+		keys := collectNext(wt)
+		if len(keys) != 3 {
+			t.Fatalf("mode %q: got %d keys, want 3", mode, len(keys))
+		}
+		for _, k := range keys {
+			switch {
+			case k.IsInt():
+				if i := k.ival(); i != 2 && i != 0 {
+					t.Errorf("mode %q: unexpected integer key %v", mode, k)
+				}
+			case k.IsFloat() && k.fval() == 2.5:
+			default:
+				t.Errorf("mode %q: key %v not normalized to an integer", mode, k)
+			}
+		}
+		if got := wt.GetInt(2); got.AsString() != "b" {
+			t.Errorf("mode %q: t[2] = %v, want b", mode, got)
+		}
+	}
+}
+
+// TestWeakTable_ClearDuringTraversal checks that a field cleared during a
+// traversal stays a valid key to next(), as the manual allows, so the
+// `for k in pairs(t) do t[k] = nil end` idiom empties a weak table instead of
+// failing with "invalid key to 'next'".
+func TestWeakTable_ClearDuringTraversal(t *testing.T) {
+	for _, mode := range []string{"k", "v", "kv"} {
+		wt := makeWeakTable(mode)
+		objs := make([]*Table, 8)
+		for i := range objs {
+			objs[i] = NewEmptyTable()
+			wt.MustSet(NewTable(objs[i]), NewInt(int64(i)))
+			wt.MustSet(NewInt(int64(i+1)), NewTable(objs[i]))
+			wt.MustSet(NewString(string(rune('a'+i))), NewInt(int64(i)))
+		}
+
+		visited := 0
+		k, _, err := wt.Next(Nil)
+		for !k.IsNil() {
+			visited++
+			wt.MustSet(k, Nil)
+			if k, _, err = wt.Next(k); err != nil {
+				t.Fatalf("mode %q: next after clearing a field: %v", mode, err)
+			}
+		}
+		if visited != 3*len(objs) {
+			t.Errorf("mode %q: traversal visited %d keys, want %d", mode, visited, 3*len(objs))
+		}
+		if keys := collectNext(wt); len(keys) != 0 {
+			t.Errorf("mode %q: %d keys left after clearing, want 0", mode, len(keys))
+		}
+
+		// A cleared key can be stored again and is found and traversed.
+		wt.MustSet(NewTable(objs[3]), NewInt(30))
+		wt.MustSet(NewString("c"), NewInt(3))
+		if got := wt.Get(NewTable(objs[3])); !got.IsInt() || got.ival() != 30 {
+			t.Errorf("mode %q: revived key reads %v, want 30", mode, got)
+		}
+		if keys := collectNext(wt); len(keys) != 2 {
+			t.Errorf("mode %q: %d keys after re-storing two, want 2", mode, len(keys))
+		}
+		runtime.KeepAlive(objs)
+	}
+}
+
+// weakFill is the linear baseline for the weak-table scaling probes: n fresh
+// keys stored into an empty weak table.
+func weakFill(keys []Value) time.Duration {
+	wt := makeWeakTable("k")
+	start := time.Now()
+	for _, k := range keys {
+		wt.MustSet(k, True)
+	}
+	return time.Since(start)
+}
+
+// TestWeakTableChurnScalesLinearly guards a weak registry or cache under
+// churn: each store of a new key after a delete reuses the dead slot. Finding
+// that slot used to scan entries from the front, so each store paid O(n).
+func TestWeakTableChurnScalesLinearly(t *testing.T) {
+	churn := func(n int) time.Duration {
+		keys := intHashKeys(2 * n)
+		wt := makeWeakTable("k")
+		for _, k := range keys[:n] {
+			wt.MustSet(k, True)
+		}
+		start := time.Now()
+		for i := 0; i < n; i++ {
+			wt.MustSet(keys[i], Nil)
+			wt.MustSet(keys[n+i], True)
+		}
+		d := time.Since(start)
+		if !wt.Get(keys[n-1]).IsNil() || wt.Get(keys[2*n-1]).IsNil() {
+			t.Fatalf("weak table contents are wrong after %d replacements", n)
+		}
+		if got := len(wt.weakBackend().entries); got != n {
+			t.Fatalf("weak table holds %d slots for %d keys", got, n)
+		}
+		return d
+	}
+	checkCostIsLinear(t, "weak table churn", 1<<16, churn,
+		func(n int) time.Duration { return weakFill(intHashKeys(n)) })
+}
+
+// TestWeakTableAppendScalesLinearly guards the t[#t+1] = v append idiom on a
+// weak table: # used to count up from 1, so every append paid O(n).
+func TestWeakTableAppendScalesLinearly(t *testing.T) {
+	appendAll := func(n int) time.Duration {
+		wt := makeWeakTable("v")
+		start := time.Now()
+		for i := 0; i < n; i++ {
+			wt.SetInt(wt.Len()+1, True)
+		}
+		d := time.Since(start)
+		if got := wt.Len(); got != n {
+			t.Fatalf("#t = %d after %d appends", got, n)
+		}
+		return d
+	}
+	checkCostIsLinear(t, "weak table append", 1<<15, appendAll,
+		func(n int) time.Duration { return weakFill(intHashKeys(n)) })
+}
+
+// TestWeakTableLenIsBorder checks that # on a weak table returns a border:
+// 0 when t[1] is absent, otherwise some n with t[n] present and t[n+1]
+// absent, including when values in the sequence have been collected.
+func TestWeakTableLenIsBorder(t *testing.T) {
+	isBorder := func(wt *Table, n int) bool {
+		if n == 0 {
+			return wt.GetInt(1).IsNil()
+		}
+		return !wt.GetInt(n).IsNil() && wt.GetInt(n+1).IsNil()
+	}
+	for _, size := range []int{0, 1, 2, 3, 7, 8, 9, 100, 1000} {
+		for _, hole := range []int{0, 1, 2, size / 2, size} {
+			wt := makeWeakTable("v")
+			for i := 1; i <= size; i++ {
+				wt.SetInt(i, NewInt(int64(i)))
+			}
+			if hole > 0 {
+				wt.SetInt(hole, Nil)
+			}
+			if n := wt.Len(); !isBorder(wt, n) {
+				t.Errorf("size %d, hole %d: #t = %d is not a border", size, hole, n)
+			}
+		}
+	}
+
+	wt := makeWeakTable("v")
+	keep := make([]*Table, 64)
+	for i := range keep {
+		keep[i] = NewEmptyTable()
+		wt.SetInt(i+1, NewTable(keep[i]))
+	}
+	keep[40] = nil // t[41] becomes collectable
+	runtime.GC()
+	runtime.GC()
+	if n := wt.Len(); !isBorder(wt, n) {
+		t.Errorf("#t = %d is not a border after a value was collected", n)
+	}
+	runtime.KeepAlive(keep)
+}
+
+// TestWeakTableFreeSlotsStayBounded checks that clearing and re-storing the
+// same key, which revives its slot in place, does not grow the free-slot
+// stack, and that a slot revived while on the stack is not handed out again.
+func TestWeakTableFreeSlotsStayBounded(t *testing.T) {
+	wt := makeWeakTable("k")
+	for i := 1; i <= 4; i++ {
+		wt.SetInt(i, NewInt(int64(i)))
+	}
+	for r := 0; r < 1000; r++ {
+		wt.SetInt(4, Nil)
+		wt.SetInt(4, NewInt(int64(r)))
+	}
+	ws := wt.weakBackend()
+	if len(ws.free) > len(ws.entries) {
+		t.Fatalf("free stack holds %d slots for %d entries", len(ws.free), len(ws.entries))
+	}
+	wt.SetInt(2, Nil)
+	wt.SetString("x", True)
+	wt.SetString("y", True)
+	if got := wt.GetInt(4); !got.IsInt() || got.ival() != 999 {
+		t.Errorf("t[4] = %v, want 999", got)
+	}
+	if n := len(collectNext(wt)); n != 5 {
+		t.Errorf("weak table has %d keys, want 5", n)
 	}
 }

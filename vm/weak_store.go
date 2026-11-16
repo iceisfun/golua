@@ -40,6 +40,12 @@ type weakStore struct {
 
 	dead      int // count of dead (tombstone) entries
 	iterBound int // snapshot of len(entries) at iteration start
+
+	// free stacks entry indices that were dead when pushed, so a new key
+	// reuses a dead slot without scanning entries. A slot revived since it
+	// was pushed stays on the stack and is skipped when popped; inFree keeps
+	// each slot on it at most once, bounding it by len(entries).
+	free []int
 }
 
 // weakEntry stores a single key-value pair with optional weak tracking.
@@ -54,11 +60,14 @@ type weakEntry struct {
 	value    Value
 	valueRef weakRef // non-zero for collectable values in weak-value mode
 
-	// indexKey is the key used in ws.index for this entry, retained so that
-	// killEntry can remove it without recomputing (which might fail for dead keys).
+	// indexKey is the key used in ws.index for this entry. A dead entry keeps
+	// its index mapping, as reference Lua keeps a dead key in its node, so
+	// next() can still step past a field cleared during traversal. The
+	// mapping is removed when the slot is reused for another key.
 	indexKey any
 
-	alive bool
+	alive  bool
+	inFree bool // index is on weakStore.free
 }
 
 // newWeakStore creates a new weak store with the given mode.
@@ -70,10 +79,11 @@ func newWeakStore(mode weakTableMode) *weakStore {
 }
 
 // weakKeyFor returns the lookup key for the index map.
-// For weak-key tables with collectable keys, uses uintptr to avoid
-// holding a strong reference that would prevent garbage collection.
+// Collectable keys use their address as a uintptr so the index never holds
+// a strong reference: in weak-key tables that would prevent collection, and
+// in any weak table it would pin the key of a cleared (dead) entry.
 func (ws *weakStore) weakKeyFor(key Value) any {
-	if ws.hasWeakKeys() && isCollectable(key) {
+	if isCollectable(key) {
 		return reflect.ValueOf(key.ptr).Pointer()
 	}
 	return hashKey(key)
@@ -128,6 +138,13 @@ func (ws *weakStore) set(key, value Value) error {
 	if key.IsFloat() && key.fval() != key.fval() {
 		return fmt.Errorf("table index is NaN")
 	}
+	// A float key with an exact integer value is stored as that integer, as
+	// in a normal table, so traversal hands back 2 rather than 2.0.
+	if key.IsFloat() {
+		if i, ok := key.ToInt(); ok {
+			key = NewInt(i)
+		}
+	}
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 
@@ -145,9 +162,11 @@ func (ws *weakStore) set(key, value Value) error {
 	if idx, ok := ws.index[wk]; ok {
 		e := &ws.entries[idx]
 		if !e.alive {
-			// Revive dead entry.
+			// Revive dead entry. killEntry dropped its key along with
+			// its value, so store the key again.
 			e.alive = true
 			ws.dead--
+			ws.setEntryKey(e, key)
 		}
 		ws.setEntryValue(e, value)
 		return nil
@@ -158,16 +177,20 @@ func (ws *weakStore) set(key, value Value) error {
 	ws.setEntryKey(&e, key)
 	ws.setEntryValue(&e, value)
 
-	// Try to reuse a dead slot to bound entries growth.
-	if ws.dead > 0 {
-		for i := range ws.entries {
-			if !ws.entries[i].alive {
-				ws.entries[i] = e
-				ws.index[wk] = i
-				ws.dead--
-				return nil
-			}
+	// Reuse a dead slot to bound entries growth. Every dead slot is on the
+	// free stack, so while one exists the loop finds it.
+	for ws.dead > 0 {
+		i := ws.free[len(ws.free)-1]
+		ws.free = ws.free[:len(ws.free)-1]
+		ws.entries[i].inFree = false
+		if ws.entries[i].alive {
+			continue // revived since it was pushed
 		}
+		delete(ws.index, ws.entries[i].indexKey)
+		ws.entries[i] = e
+		ws.index[wk] = i
+		ws.dead--
+		return nil
 	}
 
 	ws.index[wk] = len(ws.entries)
@@ -223,7 +246,8 @@ func (ws *weakStore) entryValue(e *weakEntry) Value {
 	return e.value
 }
 
-// killEntry marks entry at idx as dead and removes it from the index.
+// killEntry marks entry at idx as dead and drops its key and value. The entry
+// stays in the index under its indexKey (see weakEntry.indexKey).
 func (ws *weakStore) killEntry(idx int) {
 	e := &ws.entries[idx]
 	if !e.alive {
@@ -235,7 +259,10 @@ func (ws *weakStore) killEntry(idx int) {
 	e.keyRef = weakRef{}
 	e.valueRef = weakRef{}
 	ws.dead++
-	delete(ws.index, e.indexKey)
+	if !e.inFree {
+		e.inFree = true
+		ws.free = append(ws.free, idx)
+	}
 }
 
 // next implements the pairs() iterator for weak tables.
@@ -296,30 +323,58 @@ func (ws *weakStore) nextAliveFrom(start int) (Value, Value, error) {
 	return Nil, Nil, nil
 }
 
-// length returns the sequence length (# operator) for the weak table.
+// length returns a border of the weak table (# operator). Like
+// hashSearchBorder for a normal table's hash part, it probes doubling
+// indices for an absent one and then binary-searches below it, so it costs
+// O(log n) lookups rather than one per element.
 func (ws *weakStore) length() int {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
-	n := 0
-	for {
-		nextKey := int64(n + 1)
-		// Integer keys are value types, always use int64 as lookup key.
-		idx, ok := ws.index[nextKey]
-		if !ok {
-			break
-		}
-		e := &ws.entries[idx]
-		if !e.alive {
-			break
-		}
-		v := ws.entryValue(e)
-		if v.IsNil() {
-			ws.killEntry(idx)
-			break
-		}
-		n++
+	if !ws.hasInt(1) {
+		return 0
 	}
-	return n
+	const maxInt = int(^uint(0) >> 1)
+	i, j := 1, 2 // t[i] present
+	for ws.hasInt(j) {
+		i = j
+		if j > maxInt/2 {
+			j = maxInt
+			if ws.hasInt(j) {
+				return j
+			}
+			break
+		}
+		j *= 2
+	}
+	// t[i] present, t[j] absent; binary search in (i, j].
+	for j-i > 1 {
+		mid := i + (j-i)/2
+		if ws.hasInt(mid) {
+			i = mid
+		} else {
+			j = mid
+		}
+	}
+	return i
+}
+
+// hasInt reports whether integer key i holds a live value. The caller holds
+// ws.mu.
+func (ws *weakStore) hasInt(i int) bool {
+	// Integer keys are value types, always use int64 as lookup key.
+	idx, ok := ws.index[int64(i)]
+	if !ok {
+		return false
+	}
+	e := &ws.entries[idx]
+	if !e.alive {
+		return false
+	}
+	if ws.entryValue(e).IsNil() {
+		ws.killEntry(idx)
+		return false
+	}
+	return true
 }
 
 // forEach calls fn for each live key-value pair in insertion order.
