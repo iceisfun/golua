@@ -2018,6 +2018,13 @@ func (c *compiler) finishMethodCall(e *ast.MethodCallExpr, base int, nResults in
 func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 	fs := c.fs
 	line := e.P.Line
+	// Reference lastlistfield discharges the last list item and emits the
+	// final SETLIST once the closing '}' has been read, so both carry its
+	// line rather than the '{' line.
+	closeLine := line
+	if e.EndP.Line > 0 {
+		closeLine = e.EndP.Line
+	}
 
 	// Ensure freeReg is past the table register so that reserveReg() for
 	// field values does not return reg itself, which would clobber the table.
@@ -2105,7 +2112,7 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 				// Compile with all results
 				c.compileExprMultiRet(f.Value, 0) // 0 = all results
 				// Emit SETLIST with count=0 to capture all values up to top
-				c.emitSetList(reg, 0, arrIdx-pendingList+1, line)
+				c.emitSetList(reg, 0, arrIdx-pendingList+1, closeLine)
 				pendingList = 0
 				fs.freeReg = reg + 1
 				continue
@@ -2114,10 +2121,18 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 			c.compileExprToReg(f.Value, arrReg)
 			// Keep exactly the pending slots reserved (drop stale value temps)
 			fs.freeReg = arrReg + 1
+			// An item is discharged once the token after it has been read:
+			// for the last field that is the '}'. (Elsewhere it is the ','
+			// that follows, normally on the item's own last line.)
+			flushLine := fieldStoreLine(f, line)
+			if i == lastFieldIdx {
+				c.fixDischargedLine(closeLine)
+				flushLine = closeLine
+			}
 
 			// Flush when pending items reach the dynamic threshold
 			if pendingList >= flushThreshold {
-				c.emitSetList(reg, pendingList, arrIdx-pendingList+1, line)
+				c.emitSetList(reg, pendingList, arrIdx-pendingList+1, flushLine)
 				pendingList = 0
 				fs.freeReg = reg + 1
 			}
@@ -2158,7 +2173,7 @@ func (c *compiler) compileTableConstructor(e *ast.TableConstructor, reg int) {
 
 	// Flush remaining array items
 	if pendingList > 0 {
-		c.emitSetList(reg, pendingList, arrIdx-pendingList+1, line)
+		c.emitSetList(reg, pendingList, arrIdx-pendingList+1, closeLine)
 	}
 
 	fs.freeReg = reg + 1
