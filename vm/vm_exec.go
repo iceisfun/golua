@@ -154,9 +154,15 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		panic(&LuaError{Value: NewString(err.Error())})
 	}
 
-	// Restore lastHookLine/lastHookPC so the caller continues with its own line tracking
-	vm.lastHookLine = savedHookLine
-	vm.lastHookPC = savedHookPC
+	// Restore lastHookLine/lastHookPC so the caller continues with its own
+	// line tracking. With a hook set, a Lua caller resumes as rethook leaves
+	// it, which also covers a hook that the callee installed.
+	if n := len(vm.callStack); vm.hookMask != 0 && n > 1 && vm.callStack[n-2].closure != nil {
+		vm.hookReturnTo(&vm.callStack[n-2])
+	} else {
+		vm.lastHookLine = savedHookLine
+		vm.lastHookPC = savedHookPC
+	}
 
 	// Pop call frame and restore top
 	vm.callStack = vm.callStack[:len(vm.callStack)-1]
@@ -270,7 +276,9 @@ mainLoop:
 		// Skip line hook for VARARGPREP (pc=0) — in Lua 5.4, OP_VARARGPREP
 		// suppresses its own line hook and sets L->oldpc = 1 so the next
 		// instruction fires. Count hooks still fire for VARARGPREP.
-		if vm.hookMask != 0 && !vm.inHook {
+		if vm.hookSkipNext {
+			vm.hookSkipNext = false
+		} else if vm.hookMask != 0 && !vm.inHook {
 			skipLine := frame.pc == 1 && inst.OpCode() == compiler.OP_VARARGPREP
 			if skipLine {
 				// Only fire count hook, not line hook, for VARARGPREP
@@ -284,6 +292,13 @@ mainLoop:
 						}
 						vm.fireHook(hookEventCount, line)
 						frame = &vm.callStack[len(vm.callStack)-1]
+						// The hook's return left line tracking at
+						// VARARGPREP, which carries the first statement's
+						// line. Like reference, which sets L->oldpc = 1
+						// after VARARGPREP, make the next instruction a
+						// new line.
+						vm.lastHookLine = -1
+						vm.lastHookPC = 0
 					}
 				}
 			} else if vm.checkLineCountHooks(proto, frame.pc-1) {
@@ -803,8 +818,10 @@ mainLoop:
 			v := vm.stack[frame.base+b]
 			if v.IsInt() {
 				vm.stack[frame.base+a] = NewInt(v.AsInt() + int64(sc))
+				frame.pc++ // skip the MMBINI, as reference does on success
 			} else if v.IsFloat() {
 				vm.stack[frame.base+a] = NewFloat(v.fval() + float64(sc))
+				frame.pc++
 			} else {
 				// Non-numeric: dispatch to the metamethod implied by the
 				// following MMBINI. The compiler emits ADDI for both x + n
@@ -867,6 +884,9 @@ mainLoop:
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
+			if v.IsNumber() {
+				frame.pc++ // no metamethod ran: skip the MMBINK
+			}
 
 		case compiler.OP_BANDK, compiler.OP_BORK, compiler.OP_BXORK:
 			a, b, c := inst.A(), inst.B(), inst.C()
@@ -878,6 +898,9 @@ mainLoop:
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
+			if v.IsNumber() {
+				frame.pc++ // no metamethod ran: skip the MMBINK
+			}
 
 		// R[A] := R[B] >> sC. (The shift-immediate opcodes carry the opposite
 		// names here and in the binary format: this is what reference calls
@@ -890,6 +913,7 @@ mainLoop:
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(shiftLeft(i, int64(-sc)))
+					frame.pc++ // skip the MMBINI, as reference does on success
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				}
@@ -906,6 +930,7 @@ mainLoop:
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(shiftLeft(int64(sc), i))
+					frame.pc++ // skip the MMBINI, as reference does on success
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				}
@@ -940,6 +965,7 @@ mainLoop:
 					r = PowWithSubnormalFix(n1, n2)
 				}
 				vm.stack[frame.base+a] = NewFloat(r)
+				frame.pc++ // skip the MMBIN, as reference does on success
 			} else if v1.typ == typeInt && v2.typ == typeInt && op != compiler.OP_DIV && op != compiler.OP_POW {
 				i1, i2 := v1.ival(), v2.ival()
 				var r int64
@@ -976,12 +1002,16 @@ mainLoop:
 					}
 				}
 				vm.stack[frame.base+a] = NewInt(r)
+				frame.pc++
 			} else {
 				result, err := vm.arith(op, v1, v2, b, c)
 				if err != nil {
 					return nil, err
 				}
 				vm.stack[frame.base+a] = result
+				if v1.IsNumber() && v2.IsNumber() {
+					frame.pc++ // no metamethod ran: skip the MMBIN
+				}
 			}
 
 		case compiler.OP_BAND, compiler.OP_BOR, compiler.OP_BXOR,
@@ -994,6 +1024,9 @@ mainLoop:
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
+			if v1.IsNumber() && v2.IsNumber() {
+				frame.pc++ // no metamethod ran: skip the MMBIN
+			}
 
 		// The metamethod follow-ups that reference emits after an arithmetic
 		// or bitwise instruction. GoLua's own code generator emits none of
@@ -2161,6 +2194,8 @@ mainLoop:
 			}
 			vm.tbcVars = append(vm.tbcVars, frame.base+a+2)
 			frame.pc += bx
+			// Reference jumps straight into TFORCALL without tracing it.
+			vm.skipTForLoopHooks()
 
 		case compiler.OP_TFORCALL:
 			a, c := inst.A(), inst.C()
@@ -2199,6 +2234,7 @@ mainLoop:
 					for i := 0; i < c; i++ {
 						vm.stack[frame.base+a+3+i] = vm.stack[frame.base+callBase+i]
 					}
+					vm.tforCallReturned(frame)
 					break
 				}
 				// Set up stack for native call at R[A+4] so results land there
@@ -2262,6 +2298,7 @@ mainLoop:
 			for i := len(results); i < c; i++ {
 				vm.stack[frame.base+a+3+i] = Nil
 			}
+			vm.tforCallReturned(frame)
 
 		case compiler.OP_TFORLOOP:
 			a, bx := inst.A(), inst.Bx()
@@ -2585,12 +2622,9 @@ func (vm *VM) popInLoopFrame(results []Value) {
 		vm.stack[i] = Nil
 	}
 	// If a debug hook was enabled while the callee ran (it cannot have been
-	// active when the fast path was taken), reproduce rethook's "set 'oldpc'"
-	// correction: the reference sets L->oldpc to the caller's saved pc when
-	// returning into a Lua frame, so the instruction after the call is seen
-	// as a new line event.
+	// active when the fast path was taken), reproduce rethook's "set 'oldpc'".
 	if vm.hookMask != 0 {
-		vm.lastHookPC = caller.pc
+		vm.hookReturnTo(caller)
 	}
 }
 
@@ -2770,6 +2804,7 @@ dispatch:
 
 		// Pop the native frame
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]
+		vm.hookReturnTo(&vm.callStack[len(vm.callStack)-1])
 	} else {
 		// Check for __call metamethod
 		mm := vm.getMetafield(fn, MetaCall)

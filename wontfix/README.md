@@ -43,6 +43,7 @@ lua5.5.0            wontfix/<issue-name>/example.lua    # reference
 | [`untrusted-binary-chunks`](untrusted-binary-chunks/) | Executing a crafted `load(…,"b")` binary chunk can hang/crash — inherently unsafe in golua *and* reference Lua (no bytecode verifier); loading is hardened to a catchable error. |
 | [`load-stack-overflow-traceback`](load-stack-overflow-traceback/) | Reference's `load()` embeds a stack traceback into the `"C stack overflow"` error message (golua returns the clean message); plus related compiler-limit near-token and C-stack-vs-fixed-limit wording divergences. |
 | [`coroutine-goroutine-leak`](coroutine-goroutine-leak/) | An *abandoned suspended* coroutine (never completed, never `coroutine.close`'d) leaks its backing goroutine — Go can't reap a parked goroutine. Completed/closed coroutines reap fully; reference collects abandoned ones. Mitigation: close or complete coroutines. |
+| [`debug-debug-console`](debug-debug-console/) | `debug.debug()`, reference's interactive stdin console, is not provided (`debug.debug` is `nil`); an embedding host can register its own. |
 
 ## Filing an issue
 

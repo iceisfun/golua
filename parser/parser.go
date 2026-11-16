@@ -621,6 +621,7 @@ func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.Name
 	}
 	p.expect(token.IN)
 	iters := p.parseExprList()
+	doLine := p.tok.Pos.Line
 	p.expect(token.DO)
 	p.enterBlock()
 	p.trackLocals(3 + len(names)) // Lua 5.5 generic-for slots: 3 internal state + user vars
@@ -630,6 +631,7 @@ func (p *parser) parseForInStmt(pos token.Pos, openLine int, firstName *ast.Name
 	endLine := p.tok.Pos.Line
 	p.checkMatch(token.END, "for", openLine)
 	s := ast.NewForInStmt(pos, names, iters, body, endLine)
+	s.DoLine = doLine
 	s.EndP = tokenEnd(endTok)
 	return s
 }

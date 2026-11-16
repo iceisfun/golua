@@ -173,7 +173,10 @@ func (vm *VM) Traceback(msg string, level int) string {
 			nameWhat := ""
 			// Hook functions are called by the VM, not by a CALL instruction.
 			// Skip caller-based name resolution and use nwHook directly.
-			if vm.inHook && frame.funcValue.RawEqual(vm.hookFunc) {
+			// fireHook marks the hook's frame itself (like CIST_HOOKED), so
+			// this also holds once an error from the hook has unwound
+			// fireHook, when the traceback is built in a message handler.
+			if frame.callNameWhat == nwHook && !frame.isTailCall {
 				name = "?"
 				nameWhat = nwHook
 			} else {
@@ -447,7 +450,7 @@ type FrameInfo struct {
 // Level 0 = current frame, 1 = caller, etc.
 // Returns nil if the level is out of range.
 func (vm *VM) GetFrameInfo(level int) *FrameInfo {
-	stack, active := vm.debugCallStack()
+	stack, _ := vm.debugCallStack()
 	idx := len(stack) - 1 - level
 	if idx < 0 || idx >= len(stack) {
 		// For the main VM (not coroutines), synthesize a terminal [C] frame
@@ -534,7 +537,9 @@ func (vm *VM) GetFrameInfo(level int) *FrameInfo {
 	// the hook. Looking up a name from that bytecode would produce wrong
 	// results (e.g., nwMetamethod for GETTABUP near an MMBIN).
 	// Check this FIRST, before attempting caller-based name resolution.
-	if active && vm.inHook && info.Func.RawEqual(vm.hookFunc) {
+	// fireHook marks the hook's own frame, which outlives inHook when the
+	// hook raises an error and a message handler inspects the stack.
+	if frame.callNameWhat == nwHook && !frame.isTailCall {
 		info.Name = "?"
 		info.NameWhat = nwHook
 	} else if !frame.isTailCall {
@@ -797,9 +802,14 @@ func (vm *VM) frameStackLimit(stack []callFrame, idx, maxStack int, active bool)
 func activeLines(proto *compiler.Proto) map[int]bool {
 	lines := make(map[int]bool)
 	// Lua 5.4 simply reports all lines that have at least one instruction.
-	// No filtering by opcode type — every instruction's line is active.
+	// No filtering by opcode type — every instruction's line is active —
+	// except that collectvalidlines skips a vararg function's VARARGPREP,
+	// which the line hook never reports either.
 	for pc, line := range proto.Lines {
 		if line <= 0 || pc >= len(proto.Code) {
+			continue
+		}
+		if pc == 0 && proto.Code[0].OpCode() == compiler.OP_VARARGPREP {
 			continue
 		}
 		lines[line] = true

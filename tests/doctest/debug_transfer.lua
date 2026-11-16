@@ -40,5 +40,41 @@ assert(#inp == 1 and inp[1] == 20, "call: expected {20}, got " .. #inp)
 -- return values are the varargs
 assert(#out == 2 and out[1] == 10 and out[2] == 0)
 
+-- Test 4: a native called by another native (pcall, gsub) reports its
+-- arguments and results too
+local function onlyInner(f)
+  return function(event)
+    local ar = debug.getinfo(2, "fr")
+    if ar.func ~= f then return end
+    local t = {}
+    for i = ar.ftransfer, ar.ftransfer + ar.ntransfer - 1 do
+      local _, v = debug.getlocal(2, i)
+      t[#t + 1] = v
+    end
+    if event == "return" then out = t else inp = t end
+  end
+end
+inp, out = nil, nil
+debug.sethook(onlyInner(type), "cr")
+pcall(type, 42)
+assert(#inp == 1 and inp[1] == 42)
+assert(#out == 1 and out[1] == "number")
+
+inp, out = nil, nil
+debug.sethook(onlyInner(string.upper), "cr")
+string.gsub("a", ".", string.upper)
+assert(#inp == 1 and inp[1] == "a")
+assert(#out == 1 and out[1] == "A")
+
+-- Test 5: the return hook can change those results with setlocal
+debug.sethook(function(event)
+  local ar = debug.getinfo(2, "fr")
+  if event == "return" and ar.func == type then
+    debug.setlocal(2, ar.ftransfer, "patched")
+  end
+end, "r")
+local _, r = pcall(type, 42)
+assert(r == "patched")
+
 debug.sethook()
 print("PASS") --> PASS

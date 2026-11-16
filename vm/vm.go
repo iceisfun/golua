@@ -105,13 +105,17 @@ type VM struct {
 	registeredProviders []any
 
 	// Hook support
-	hookFunc     Value // Hook callback function
-	hookMask     byte  // Bitmask of active hook events
-	hookCount    int   // Instruction count interval for count hooks
-	hookCounter  int   // Current counter (counts down to 0)
-	inHook       bool  // Re-entrancy guard
-	lastHookLine int   // Last line reported by line hook (-1 = none)
-	lastHookPC   int   // Last pc checked by line hook (for backward jump detection)
+	hookFunc    Value // Hook callback function
+	hookMask    byte  // Bitmask of active hook events
+	hookCount   int   // Instruction count interval for count hooks
+	hookCounter int   // Current counter (counts down to 0)
+	inHook      bool  // Re-entrancy guard
+	// hookSkipNext makes the next instruction skip line and count hooks,
+	// as reference enters a generic for's first TFORCALL with
+	// 'goto l_tforcall' and does not trace it.
+	hookSkipNext bool
+	lastHookLine int // Last line reported by line hook (-1 = none)
+	lastHookPC   int // Last pc checked by line hook (for backward jump detection)
 
 	// Pending call name hint for debug.getinfo name inference.
 	// Set before calling vm.call() and consumed by vm.call().
@@ -818,6 +822,8 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 			argc:                  len(args),
 			funcValue:             fn,
 			suppressTracebackName: vm.pendingSuppressTracebackName,
+			ftransfer:             1,
+			ntransfer:             len(args),
 		})
 		vm.pendingSuppressTracebackName = false
 		noHooks := vm.pendingNoHooks
@@ -832,23 +838,24 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 		if !noHooks {
 			vm.fireCallHook()
 		}
+		args = vm.nativeHookArgs(base, args)
 
 		// Call native function
 		nResults := nf(vm)
-
-		// Fire return hook before popping the frame
-		if !noHooks {
-			vm.fireReturnHook()
-		}
-
-		// Pop the call frame
-		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 
 		// Collect results
 		results = make([]Value, nResults)
 		for i := 0; i < nResults; i++ {
 			results[i] = vm.stack[base+i]
 		}
+
+		// Fire return hook before popping the frame
+		if !noHooks {
+			vm.fireNativeReturnHook(args, results)
+		}
+
+		// Pop the call frame
+		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 
 		vm.top = savedTop
 		return results, nil
@@ -917,19 +924,22 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 			funcValue:             fn,
 			suppressTracebackName: vm.pendingSuppressTracebackName,
 			extraArgs:             extraArgs,
+			ftransfer:             1,
+			ntransfer:             len(args),
 		})
 		vm.pendingSuppressTracebackName = false
 		vm.top = base + 1 + len(args)
 		vm.fireCallHook()
+		args = vm.nativeHookArgs(base, args)
 
 		nResults := nf(vm)
-		vm.fireReturnHook()
-		vm.callStack = vm.callStack[:len(vm.callStack)-1]
-
 		results = make([]Value, nResults)
 		for i := 0; i < nResults; i++ {
 			results[i] = vm.stack[base+i]
 		}
+
+		vm.fireNativeReturnHook(args, results)
+		vm.callStack = vm.callStack[:len(vm.callStack)-1]
 
 		vm.top = savedTop
 		return results, nil

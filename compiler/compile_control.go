@@ -284,8 +284,15 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 
 	// Jump back to condition — use the last emitted line (typically the
 	// last line of the loop body), matching Lua 5.4 which uses ls->lastline
-	// (the 'end' keyword line) for the backward JMP.
+	// (the 'end' keyword line) for the backward JMP. A body ending in a
+	// label emits nothing for it, but reference reads the label's closing
+	// '::' before the jump, so the jump takes the label's line.
 	backLine := c.lastEmittedLine()
+	if n := len(s.Body.Stmts); n > 0 {
+		if _, ok := s.Body.Stmts[n-1].(*ast.LabelStmt); ok && fs.blockLastLine > backLine {
+			backLine = fs.blockLastLine
+		}
+	}
 	backJump := fs.emitJump(backLine)
 	offset := loopStart - (fs.pc()) // negative
 	if offset > MaxSJ || offset < MinSJ {
@@ -305,7 +312,6 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 // compileRepeatStmt compiles "repeat ... until cond".
 func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 	fs := c.fs
-	line := s.P.Line
 
 	loopStart := fs.pc()
 	fs.enterScope(true)
@@ -328,7 +334,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		if fs.needsClose(scope.nLocals) {
 			fs.emit(ABC(OP_CLOSE, scope.baseReg, 0, 0, 0), s.Cond.Pos().Line)
 		}
-		c.leaveScope(line)
+		c.leaveScope(s.Cond.Pos().Line)
 		return
 	}
 	if isConstFalsy(s.Cond) {
@@ -343,7 +349,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		} else {
 			fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 		}
-		c.leaveScope(line)
+		c.leaveScope(s.Cond.Pos().Line)
 		return
 	}
 
@@ -381,8 +387,9 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 	}
 
-	// Fall through here when condition is true (exit loop)
-	c.leaveScope(line)
+	// Fall through here when condition is true (exit loop). Like the exit
+	// close above, the scope's cleanup close follows the condition.
+	c.leaveScope(condLine)
 }
 
 // ---------------------------------------------------------------------------
@@ -597,10 +604,18 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 				fs.freeReg = tmp
 			}
 		}
-		// Fill missing with nil (only needed when last expr was not multires)
+		// Fill missing with nil (only needed when last expr was not multires).
+		// Like reference adjust_assign, the padding takes the line of the
+		// explist's last token, not the 'for' line.
 		lastFillsRemaining := nIter > 0 && nIter <= 4 && isMultiRet(s.Iters[nIter-1])
+		padLine := line
+		if nIter > 0 {
+			if l := exprEndLine(s.Iters[nIter-1]); l > 0 {
+				padLine = l
+			}
+		}
 		for i := nIter; i < 4 && !lastFillsRemaining; i++ {
-			fs.emit(ABC(OP_LOADNIL, base+i, 0, 0, 0), line)
+			fs.emit(ABC(OP_LOADNIL, base+i, 0, 0, 0), padLine)
 			fs.freeReg = base + i + 1
 			if fs.freeReg > fs.maxReg {
 				fs.maxReg = fs.freeReg
@@ -636,8 +651,13 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	)
 	fs.nActVar += 3
 
-	// TFORPREP
-	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), line)
+	// TFORPREP — like FORPREP, stamped with the line of 'do' (and so is
+	// the error for a closing value that is not closable).
+	prepLine := s.DoLine
+	if prepLine == 0 {
+		prepLine = line
+	}
+	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), prepLine)
 
 	// Loop variables start at base+3 (the first is the control variable).
 	// Record their index in fs.locals now, before the body adds more locals:
@@ -695,8 +715,8 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	tforCallPC := fs.emit(ABC(OP_TFORCALL, base, 0, nVars, 0), iterLine)
 	_ = tforCallPC
 
-	// TFORLOOP — checks if control variable is nil
-	tforLoopPC := fs.emit(ABx(OP_TFORLOOP, base, 0), line)
+	// TFORLOOP — checks if control variable is nil (fixlined like TFORCALL)
+	tforLoopPC := fs.emit(ABx(OP_TFORLOOP, base, 0), iterLine)
 
 	// Patch TFORPREP to jump to TFORCALL
 	bodyLen := tforCallPC - tforPrepPC - 1

@@ -28,17 +28,15 @@ do
     --> =13	1
 end
 
--- Generic for: GoLua emits more instructions than Lua 5.4 (25 vs 19),
--- a known architectural difference in for-in loop compilation. (Lua 5.5
--- folds the to-be-closed setup into TFORPREP, so GoLua no longer emits a
--- separate OP_TBC instruction here.) The body `return i + 1` reads the
--- local `i` directly in the ADDI operand instead of MOVEing it to a temp,
--- and the guard `if i < 2` now compiles to a fused immediate OP_LTI + JMP
--- instead of materializing a boolean and testing it
--- (was 42, then 40 after the ADDI in-place fix, then 37, now 25).
--- The residual gap to reference is the JMP: reference executes the jump
--- that follows a comparison inline (donextjump), so its count hook never
--- sees it, while GoLua dispatches it as a real instruction.
+-- Generic for: matches Lua 5.5 (19). Reference reaches the first TFORCALL
+-- from TFORPREP, and every TFORLOOP from TFORCALL, with a goto that skips
+-- the count hook, and GoLua now leaves them uncounted too. (The count was
+-- 42, then 40 after the ADDI in-place fix, then 37, then 25, then 23 since
+-- a successful ADDI skips its MMBINI as reference's does.) The per-event
+-- lines still differ in one place: on the last iterator call, GoLua counts
+-- the JMP after the comparison (reference runs it inline with donextjump),
+-- and that JMP leaves the function without the trailing RETURN0 reference
+-- emits and counts.
 do
     local function iter(_, i)
         if i < 2 then
@@ -52,5 +50,5 @@ do
     end
     debug.sethook()
     print(n)
-    --> =25
+    --> =19
 end
