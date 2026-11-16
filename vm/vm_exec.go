@@ -351,7 +351,10 @@ mainLoop:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := frame.closure.Upvalues[b].Get()
 			key := consts[c]
-			if t := table.AsTable(); t != nil {
+			// A thread is backed by a *Table, but it must not be indexed as
+			// one: an _ENV upvalue holding a thread resolves through the
+			// thread type metatable (or raises) like the other index paths.
+			if t := table.AsTable(); t != nil && !table.isThread() {
 				val, err := vm.tableGet(t, key)
 				if err != nil {
 					return nil, err
@@ -461,7 +464,7 @@ mainLoop:
 			} else {
 				value = vm.stack[frame.base+c]
 			}
-			if t := table.AsTable(); t != nil {
+			if t := table.AsTable(); t != nil && !table.isThread() {
 				if err := vm.tableSet(t, key, value); err != nil {
 					return nil, err
 				}

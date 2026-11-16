@@ -137,4 +137,40 @@ do
     print("PASS: thread method call")
 end
 
+-- Bug 7: An _ENV upvalue holding a thread (OP_GETTABUP/OP_SETTABUP) must
+-- resolve globals through the thread type metatable, not read and write the
+-- thread's empty backing table.
+do
+    local co = coroutine.create(function() end)
+    local store = {}
+    debug.setmetatable(co, {
+        __index = function(_, k) return "got:" .. k end,
+        __newindex = function(_, k, v) store[k] = v end,
+    })
+    local ok, r = pcall(load("return zz", "c", "t", co))
+    assert(ok and r == "got:zz", "global read through thread _ENV: " .. tostring(r))
+    ok, r = pcall(load("qq = 5", "c", "t", co))
+    assert(ok and store.qq == 5, "global write through thread _ENV: " .. tostring(r))
+    -- The same with _ENV captured as an upvalue of a nested function.
+    local function viaUpvalue()
+        local _ENV = co
+        local function get() return foo end
+        local function set() bar = 1 end
+        set()
+        return get()
+    end
+    assert(viaUpvalue() == "got:foo" and store.bar == 1, "nested _ENV upvalue holding a thread")
+    debug.setmetatable(co, {__index = {zz = 7}})
+    assert(load("return zz", "c", "t", co)() == 7, "thread __index table for globals")
+
+    debug.setmetatable(co, nil)
+    ok, r = pcall(load("return zz", "c", "t", co))
+    assert(not ok and r:find("attempt to index a thread value (upvalue '_ENV')", 1, true),
+        "global read through thread _ENV without metatable: " .. tostring(r))
+    ok, r = pcall(load("zz = 1", "c", "t", co))
+    assert(not ok and r:find("attempt to index a thread value (upvalue '_ENV')", 1, true),
+        "global write through thread _ENV without metatable: " .. tostring(r))
+    print("PASS: thread _ENV upvalue")
+end
+
 print("OK")
