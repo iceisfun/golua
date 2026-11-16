@@ -16,7 +16,7 @@ end
 -- Qualified function names in errors
 check_err(string.char, {256}, "'string.char'")
 check_err(math.abs, {}, "'math.abs'")
-check_err(table.concat, {"x"}, "'table.concat'")
+check_err(table.concat, {}, "'table.concat'")
 check_err(table.insert, {}, "'table.insert'")
 
 -- "got no value" vs "got nil"

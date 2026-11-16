@@ -3,8 +3,10 @@ do
     print(pcall(table.concat))
     --> ~^false\t.*table expected
 
+    -- Lua 5.5: a string passes the table check (it needs no __len) and then
+    -- fails on its first element
     print(pcall(table.concat, "not a table"))
-    --> ~^false\t.*table expected
+    --> ~^false\t.*invalid value \(nil\) at index 1
 
     -- Lua 5.4 coerces number separator to string (result is empty string)
     print(table.concat({}, 1))
