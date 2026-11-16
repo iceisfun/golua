@@ -42,164 +42,231 @@ func configureCLIProviders(v *vm.VM, testMode bool, scriptDir string) {
 	v.SetDebugProvider(vm.NewDefaultDebugProvider())
 }
 
-func runCLI(argv []string, stderr io.Writer) int {
-	var timeoutMs int
-	var evalCode string
-	var testMode bool
-	var gcStepInterval int
-	args := argv[1:]
+// Streams used for the standalone interpreter's own output (-v) and for
+// reading a script from standard input. Variables so tests can substitute them.
+var (
+	cliStdout io.Writer = os.Stdout
+	cliStdin  io.Reader = os.Stdin
+)
 
-	// Parse flags
-	for len(args) > 0 {
-		switch args[0] {
-		case "--":
-			args = args[1:]
-			goto done
-		case "--timeout":
-			if len(args) < 2 {
-				fmt.Fprintln(stderr, "--timeout requires a value in milliseconds")
-				return 1
+// luaVersionBanner is what -v prints, like reference lua.c's printversion.
+const luaVersionBanner = "Lua 5.5.1  Copyright (C) 1994-2026 Lua.org, PUC-Rio"
+
+const cliUsage = `usage: %s [options] [script [args]]
+Available options are:
+  -e stat   execute string 'stat'
+  -i        enter interactive mode after executing 'script'
+            (limited: standard input is then run as a script)
+  -l mod    require library 'mod' into global 'mod'
+  -l g=mod  require library 'mod' into global 'g'
+  -v        show version information
+  -E        ignore environment variables
+  -W        turn warnings on
+  --        stop handling options
+  -         stop handling options and execute stdin
+  --timeout <ms>   abort the run after the given number of milliseconds
+  --gc-step <n>    set the collector step interval (instructions)
+  --test           run with the jailed test-mode providers
+`
+
+// cliAction is one -e or -l option, run in command-line order.
+type cliAction struct {
+	kind byte // 'e' or 'l'
+	arg  string
+}
+
+// cliOptions is the result of collecting the command line, like the flags
+// gathered by reference lua.c's collectargs.
+type cliOptions struct {
+	hasI, hasV, hasE, hasW bool
+	actions                []cliAction
+	hasEStat               bool // at least one -e was given
+	script                 int  // index in argv of the script operand, len(argv) if none
+	timeoutMs              int
+	gcStep                 int
+	testMode               bool
+}
+
+// collectArgs scans the options before the script, like lua.c's collectargs.
+// A non-empty return is the error message to report before the usage text.
+func collectArgs(argv []string) (cliOptions, string) {
+	o := cliOptions{script: len(argv)}
+	// needArg returns the argument of an option that takes one, attached
+	// ("-ecode") or in the next word.
+	needArg := func(i int, opt string) (string, int, string) {
+		if len(argv[i]) > len(opt) {
+			return argv[i][len(opt):], i, ""
+		}
+		if i+1 < len(argv) {
+			return argv[i+1], i + 1, ""
+		}
+		return "", i, fmt.Sprintf("'%s' needs argument", opt)
+	}
+	i := 1
+	for ; i < len(argv); i++ {
+		a := argv[i]
+		if a == "" || a[0] != '-' {
+			o.script = i // not an option: the script name
+			return o, ""
+		}
+		switch {
+		case a == "--":
+			o.script = i + 1
+			return o, ""
+		case a == "-":
+			o.script = i // stdin script
+			return o, ""
+		case a == "--timeout" || a == "--gc-step":
+			if i+1 >= len(argv) {
+				return o, fmt.Sprintf("'%s' needs argument", a)
 			}
-			var err error
-			timeoutMs, err = strconv.Atoi(args[1])
-			if err != nil || timeoutMs <= 0 {
-				fmt.Fprintln(stderr, "--timeout value must be a positive integer (milliseconds)")
-				return 1
+			n, err := strconv.Atoi(argv[i+1])
+			if err != nil || n <= 0 {
+				return o, fmt.Sprintf("'%s' value must be a positive integer", a)
 			}
-			args = args[2:]
-		case "-e", "--e":
-			if len(args) < 2 {
-				fmt.Fprintln(stderr, "-e requires a string argument")
-				return 1
+			if a == "--timeout" {
+				o.timeoutMs = n
+			} else {
+				o.gcStep = n
 			}
-			evalCode = args[1]
-			args = args[2:]
-		case "--test":
-			testMode = true
-			args = args[1:]
-		case "--gc-step":
-			if len(args) < 2 {
-				fmt.Fprintln(stderr, "--gc-step requires a value (instruction interval)")
-				return 1
+			i++
+		case a == "--test":
+			o.testMode = true
+		case a == "--e": // historical spelling
+			val, ni, msg := needArg(i, "--e")
+			if msg != "" {
+				return o, msg
 			}
-			var err error
-			gcStepInterval, err = strconv.Atoi(args[1])
-			if err != nil || gcStepInterval <= 0 {
-				fmt.Fprintln(stderr, "--gc-step value must be a positive integer")
-				return 1
+			o.actions = append(o.actions, cliAction{'e', val})
+			o.hasEStat = true
+			i = ni
+		case a == "-E":
+			o.hasE = true
+		case a == "-W":
+			o.hasW = true
+		case a == "-v":
+			o.hasV = true
+		case a == "-i":
+			o.hasI = true
+			o.hasV = true
+		case a[1] == 'e' || a[1] == 'l':
+			opt := a[:2]
+			val, ni, msg := needArg(i, opt)
+			if msg != "" {
+				return o, msg
 			}
-			args = args[2:]
+			if opt == "-e" {
+				o.hasEStat = true
+			} else if val == "" || val[0] == '-' {
+				return o, "'-l' needs argument"
+			}
+			o.actions = append(o.actions, cliAction{opt[1], val})
+			i = ni
 		default:
-			goto done
+			return o, fmt.Sprintf("unrecognized option '%s'", a)
 		}
 	}
-done:
+	return o, ""
+}
 
-	var source string
-	var name string
-	var scriptArgs []string
-	// scriptArgvIdx is the position of the script in the original argv, used
-	// to place the interpreter name and pre-script options at negative arg
-	// indices like reference Lua (manual §7). -1 for -e runs (no script).
-	scriptArgvIdx := -1
-
-	if evalCode != "" {
-		source = evalCode
-		name = "=(command line)"
-		scriptArgs = args
-	} else {
-		if len(args) < 1 {
-			fmt.Fprintln(stderr, "Usage: lua [--timeout <ms>] [-e <code>] [--test] [<script.lua> [args...]]")
-			return 1
-		}
-		filename := args[0]
-		scriptArgvIdx = len(argv) - len(args)
-		scriptArgs = args[1:]
-		src, err := os.ReadFile(filename)
-		if err != nil {
-			fmt.Fprintf(stderr, "Error reading file: %v\n", err)
-			return 1
-		}
-		source = string(src)
-		name = "@" + filename
-	}
-
-	// Parse — use the display name (without '@') for parser error messages
-	displayName := name
-	if len(displayName) > 0 && displayName[0] == '@' {
-		displayName = displayName[1:]
-	} else if len(displayName) > 0 && displayName[0] == '=' {
-		displayName = displayName[1:]
-	}
-	// Determine program name for error messages (like Lua 5.4 uses argv[0])
+func runCLI(argv []string, stderr io.Writer) int {
 	progName := filepath.Base(argv[0])
-
-	proto, err := compileChunk(name, displayName, source)
-	if err != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+	opts, bad := collectArgs(argv)
+	if bad != "" {
+		fmt.Fprintf(stderr, "%s: %s\n", progName, bad)
+		fmt.Fprintf(stderr, cliUsage, progName)
 		return 1
 	}
+	if opts.hasV {
+		fmt.Fprintln(cliStdout, luaVersionBanner)
+	}
+
+	scriptName := ""
+	if opts.script < len(argv) {
+		scriptName = argv[opts.script]
+	}
+	fromStdin := scriptName == "-"
 
 	// Create VM and register standard library
 	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeoutMs > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	if opts.timeoutMs > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(opts.timeoutMs)*time.Millisecond)
 		defer cancel()
 	}
 
 	var vmOpts []vm.VMOption
 	vmOpts = append(vmOpts, vm.WithContext(ctx))
-	if gcStepInterval > 0 {
-		vmOpts = append(vmOpts, vm.WithLimits(vm.Limits{GCStepInterval: gcStepInterval}))
+	if opts.gcStep > 0 {
+		vmOpts = append(vmOpts, vm.WithLimits(vm.Limits{GCStepInterval: opts.gcStep}))
 	}
 	v := vm.New(vmOpts...)
-	v.SetOsProvider(vm.NewDefaultOsProvider())
+	defer v.Close(context.Background())
+
+	// -E (LUA_NOENV): LUA_PATH and LUA_CPATH are read while the package
+	// library opens, so hide the path variables from it only.
+	if opts.hasE {
+		v.SetOsProvider(vm.NewFilteredOsProvider(func(name string) bool {
+			return !strings.HasPrefix(name, "LUA_PATH") && !strings.HasPrefix(name, "LUA_CPATH")
+		}))
+	} else {
+		v.SetOsProvider(vm.NewDefaultOsProvider())
+	}
 
 	// Determine script directory for IO provider
 	scriptDir := "."
-	if name != "=(command line)" {
-		// Strip '@' prefix for filesystem operations
-		fsName := name
-		if len(fsName) > 0 && fsName[0] == '@' {
-			fsName = fsName[1:]
-		}
-		if d := filepath.Dir(fsName); d != "" {
+	if scriptName != "" && !fromStdin {
+		if d := filepath.Dir(scriptName); d != "" {
 			scriptDir = d
 		}
 	}
 
-	configureCLIProviders(v, testMode, scriptDir)
+	configureCLIProviders(v, opts.testMode, scriptDir)
 	stdlib.Open(v)
-
-	// Set command line arguments — use displayName (without '@' prefix).
-	// Reference Lua places the interpreter name and any pre-script options at
-	// negative indices (manual §7): argv[i] lands at arg[i - scriptIdx].
-	luaArgs := vm.NewEmptyTable()
-	luaArgs.SetInt(0, vm.NewString(displayName))
-	if scriptArgvIdx > 0 {
-		for i := 0; i < scriptArgvIdx; i++ {
-			luaArgs.SetInt(i-scriptArgvIdx, vm.NewString(argv[i]))
-		}
+	if opts.hasW {
+		v.SetWarnEnabled(true)
 	}
-	for i, arg := range scriptArgs {
-		luaArgs.SetInt(i+1, vm.NewString(arg))
+
+	// Set command line arguments. Like reference Lua (manual §7, lua.c
+	// createargtable), argv[i] lands at arg[i - script]: the script name is
+	// arg[0] and the interpreter and options precede it at negative
+	// indices. With no script, the interpreter name is arg[0].
+	scriptIdx := opts.script
+	if scriptIdx >= len(argv) {
+		scriptIdx = 0
+	}
+	luaArgs := vm.NewEmptyTable()
+	for i, a := range argv {
+		luaArgs.SetInt(i-scriptIdx, vm.NewString(a))
 	}
 	v.SetGlobal("arg", vm.NewTable(luaArgs))
 
+	// finish reports err, if any, and gives the exit status for a run that
+	// stops here. It reports whether the CLI must stop.
+	finish := func(code int, exited bool, err error) (int, bool) {
+		if err != nil {
+			reportLuaError(v, err, progName, stderr)
+			return 1, true
+		}
+		return code, exited
+	}
+	loadErr := func(err error) (int, bool) {
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		return 1, true
+	}
+
 	// LUA_INIT_5_5 / LUA_INIT (reference handle_luainit): a value of the
 	// form '@filename' runs the file, anything else runs as code — before
-	// the main chunk. Errors abort the run like any script error.
+	// the main chunk. Errors abort the run like any script error. -E skips it.
 	initName := "=LUA_INIT_5_5"
 	initVal, haveInit := os.LookupEnv("LUA_INIT_5_5")
 	if !haveInit {
 		initName = "=LUA_INIT"
 		initVal, haveInit = os.LookupEnv("LUA_INIT")
 	}
-	var exitCode int
-	var exited bool
-	if haveInit && initVal != "" {
+	if haveInit && initVal != "" && !opts.hasE {
 		var initProto *compiler.Proto
+		var err error
 		if strings.HasPrefix(initVal, "@") {
 			fname := initVal[1:]
 			src, rerr := os.ReadFile(fname)
@@ -212,44 +279,105 @@ done:
 			initProto, err = compileChunk(initName, initName[1:], initVal)
 		}
 		if err != nil {
-			fmt.Fprintf(stderr, "%s: %v\n", progName, err)
-			return 1
+			code, _ := loadErr(err)
+			return code
 		}
-		exitCode, exited, err = runProto(v, initProto)
+		if code, stop := finish(runProto(v, initProto)); stop {
+			return code
+		}
+	}
+
+	// -e and -l, in command-line order (lua.c runargs).
+	for _, act := range opts.actions {
+		if act.kind == 'e' {
+			p, err := compileChunk("=(command line)", "(command line)", act.arg)
+			if err != nil {
+				code, _ := loadErr(err)
+				return code
+			}
+			if code, stop := finish(runProto(v, p)); stop {
+				return code
+			}
+			continue
+		}
+		global, mod := act.arg, act.arg
+		if i := strings.IndexByte(act.arg, '='); i >= 0 {
+			global, mod = act.arg[:i], act.arg[i+1:]
+		}
+		code, exited, err := guardExit(func() error {
+			res, err := v.ProtectedCall(v.GetGlobal("require"), []vm.Value{vm.NewString(mod)})
+			if err == nil {
+				val := vm.Nil
+				if len(res) > 0 {
+					val = res[0]
+				}
+				v.SetGlobal(global, val)
+			}
+			return err
+		})
+		if code, stop := finish(code, exited, err); stop {
+			return code
+		}
+	}
+
+	// Run the script, passing its arguments as the main chunk's varargs.
+	if scriptName != "" {
+		var proto *compiler.Proto
+		var err error
+		if fromStdin {
+			var src []byte
+			if src, err = io.ReadAll(cliStdin); err == nil {
+				proto, err = compileChunk("=stdin", "stdin", string(src))
+			}
+		} else {
+			var src []byte
+			if src, err = os.ReadFile(scriptName); err != nil {
+				fmt.Fprintf(stderr, "Error reading file: %v\n", err)
+				return 1
+			}
+			proto, err = compileChunk("@"+scriptName, scriptName, string(src))
+		}
+		if err != nil {
+			code, _ := loadErr(err)
+			return code
+		}
+		rest := argv[opts.script+1:]
+		mainArgs := make([]vm.Value, len(rest))
+		for i, a := range rest {
+			mainArgs[i] = vm.NewString(a)
+		}
+		code, exited, err := runProtoArgs(v, proto, mainArgs)
+		if code, stop := finish(code, exited, err); stop {
+			return code
+		}
+	}
+
+	// No script and nothing else to do (or -i): run standard input. There is
+	// no line-by-line REPL; stdin is executed as one chunk named "stdin".
+	// Like lua.c's dofile(NULL) in the no-script case, its failure is
+	// reported but does not change the exit status.
+	if opts.hasI || (scriptName == "" && !opts.hasEStat && !opts.hasV) {
+		src, err := io.ReadAll(cliStdin)
+		var proto *compiler.Proto
+		if err == nil {
+			proto, err = compileChunk("=stdin", "stdin", string(src))
+		}
+		if err != nil {
+			code, _ := loadErr(err)
+			if opts.hasI {
+				return code
+			}
+			return 0
+		}
+		code, _, err := runProto(v, proto)
 		if err != nil {
 			reportLuaError(v, err, progName, stderr)
-			v.Close(context.Background())
-			return 1
+			if opts.hasI {
+				return 1
+			}
+			return 0
 		}
-		if exited {
-			v.Close(context.Background())
-			return exitCode
-		}
-	}
-
-	// Run — recover LuaExitError for os.exit support. Script arguments are
-	// passed as the main chunk's varargs, like the reference interpreter.
-	mainArgs := make([]vm.Value, len(scriptArgs))
-	for i, a := range scriptArgs {
-		mainArgs[i] = vm.NewString(a)
-	}
-	exitCode, _, err = runProtoArgs(v, proto, mainArgs)
-
-	v.Close(context.Background())
-
-	if err != nil {
-		// Format error like Lua 5.4's msghandler + report in lua.c.
-		// msghandler logic:
-		//   1. If error is a string/number, append traceback
-		//   2. If error has __tostring returning string, use it (no traceback)
-		//   3. If __tostring errors, that error propagates (shown recursively)
-		//   4. Otherwise "(error object is a TYPE value)" with traceback
-		reportLuaError(v, err, progName, stderr)
-		return 1
-	}
-
-	if exitCode != 0 {
-		return exitCode
+		return code
 	}
 	return 0
 }
@@ -399,6 +527,14 @@ func runProto(v *vm.VM, proto *compiler.Proto) (int, bool, error) {
 }
 
 func runProtoArgs(v *vm.VM, proto *compiler.Proto, args []vm.Value) (exitCode int, exited bool, err error) {
+	return guardExit(func() error {
+		_, err := v.RunArgs(proto, args)
+		return err
+	})
+}
+
+// guardExit runs f, recovering the os.exit sentinel.
+func guardExit(f func() error) (exitCode int, exited bool, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if exitErr, ok := r.(*vm.LuaExitError); ok {
@@ -410,6 +546,6 @@ func runProtoArgs(v *vm.VM, proto *compiler.Proto, args []vm.Value) (exitCode in
 			panic(r)
 		}
 	}()
-	_, err = v.RunArgs(proto, args)
+	err = f()
 	return exitCode, exited, err
 }
