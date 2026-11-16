@@ -150,8 +150,9 @@ const linearSlack = 16
 //
 // Each run starts from a freshly collected heap, with the collector kept from
 // starting mid-run, and the fastest of three runs counts, since anything else
-// a loaded host does only ever adds time. Once op takes over a second it is
-// not run again.
+// a loaded host does only ever adds time. Once op has taken over a second on
+// two runs it is not run a third time; one slow run alone is not believed,
+// since a single stall on a busy host can cost that much.
 func checkCostIsLinear(t *testing.T, what string, n int, op, base func(n int) time.Duration) {
 	t.Helper()
 	if testing.Short() {
@@ -164,7 +165,7 @@ func checkCostIsLinear(t *testing.T, what string, n int, op, base func(n int) ti
 		bestOp = min(bestOp, op(n))
 		runtime.GC()
 		bestBase = min(bestBase, base(n))
-		if bestOp > time.Second {
+		if i > 0 && bestOp > time.Second {
 			break
 		}
 	}
