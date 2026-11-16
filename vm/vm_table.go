@@ -215,9 +215,11 @@ func (vm *VM) indexValueDepth(val Value, key Value, depth int) (Value, error) {
 	if depth <= 0 {
 		return Nil, vm.runtimeError("'__index' chain too long; possible loop")
 	}
-	// Get the metatable for this value type
+	// Get the metatable for this value type. A thread is backed by a *Table
+	// whose own metatable is always nil; its metatable is the shared thread
+	// type metatable that GetTypeMeta returns.
 	var mt LuaTable
-	if val.IsTable() {
+	if val.IsTable() && !valueIsThread(val) {
 		mt = val.AsTable().Metatable()
 	} else if ud := val.AsUserdata(); ud != nil {
 		mt = ud.Metatable()
@@ -231,7 +233,7 @@ func (vm *VM) indexValueDepth(val Value, key Value, depth int) (Value, error) {
 	if index.IsNil() {
 		return Nil, vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 	}
-	if index.IsTable() {
+	if index.IsTable() && !valueIsThread(index) {
 		return vm.tableGetDepth(index.AsTable(), key, depth-1)
 	}
 	if index.IsFunction() || index.IsNativeFunc() {
@@ -247,7 +249,7 @@ func (vm *VM) resolveIndex(mm Value, obj Value, key Value) (Value, error) {
 	// Reaching mm already consumed one hop of the chain budget (the caller
 	// looked up obj's type metatable), so the walk continues one short.
 	depth := vm.MaxMetaDepth() - 1
-	if mm.IsTable() {
+	if mm.IsTable() && !valueIsThread(mm) {
 		return vm.tableGetDepth(mm.AsTable(), key, depth)
 	}
 	if mm.IsFunction() || mm.IsNativeFunc() {
@@ -476,7 +478,7 @@ func (vm *VM) newIndexValue(val Value, key, value Value, depth int) error {
 	if newindex.IsNil() {
 		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 	}
-	if newindex.IsTable() {
+	if newindex.IsTable() && !valueIsThread(newindex) {
 		return vm.tableSetDepth(newindex.AsTable(), key, value, depth-1)
 	}
 	if newindex.IsFunction() || newindex.IsNativeFunc() {
@@ -633,11 +635,11 @@ func (vm *VM) SetIndexValue(val Value, key Value, value Value) error {
 			_, err := vm.callMetamethod3("newindex", mm, val, key, value)
 			return err
 		}
-		if mm.IsTable() {
-			// The metafield lookup above already consumed one hop.
+		// The metafield lookup above already consumed one hop.
+		if mm.IsTable() && !valueIsThread(mm) {
 			return vm.tableSetDepth(mm.AsTable(), key, value, vm.MaxMetaDepth()-1)
 		}
-		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
+		return vm.newIndexValue(mm, key, value, vm.MaxMetaDepth()-1)
 	}
 	return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 }
@@ -656,11 +658,11 @@ func (vm *VM) SetIndexInt(val Value, key int, value Value) error {
 			_, err := vm.callMetamethod3("newindex", mm, val, NewInt(int64(key)), value)
 			return err
 		}
-		if mm.IsTable() {
-			// The metafield lookup above already consumed one hop.
+		// The metafield lookup above already consumed one hop.
+		if mm.IsTable() && !valueIsThread(mm) {
 			return vm.tableSetDepth(mm.AsTable(), NewInt(int64(key)), value, vm.MaxMetaDepth()-1)
 		}
-		return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(mm))
+		return vm.newIndexValue(mm, NewInt(int64(key)), value, vm.MaxMetaDepth()-1)
 	}
 	return vm.runtimeError("attempt to index a %s value", vm.ObjTypeName(val))
 }
