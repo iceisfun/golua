@@ -604,7 +604,7 @@ func luaDofile(v *vm.VM) int {
 		source, chunkName, err = provider.LoadChunk(v.Context(), filename, ctx)
 	}
 	if err != nil {
-		panic(err.Error())
+		panic(&vm.LuaError{Value: vm.NewString(err.Error())})
 	}
 
 	// Detect binary chunk. A file may start with a shebang (#) line
@@ -617,7 +617,7 @@ func luaDofile(v *vm.VM) int {
 		var errMsg string
 		fn, errMsg = loadBinaryChunk(v, string(binarySource), chunkName, vm.Nil, false)
 		if errMsg != "" {
-			panic(errMsg)
+			panic(&vm.LuaError{Value: vm.NewString(errMsg)})
 		}
 	} else {
 		// Reuse compileChunk with shebang stripping (like loadfile).
@@ -627,7 +627,7 @@ func luaDofile(v *vm.VM) int {
 		var errMsg string
 		fn, errMsg = compileChunk(v, string(source), displayName, vm.Nil, false, compileChunkOpts{stripShebang: true, rawSource: chunkName, hasRawSource: true})
 		if errMsg != "" {
-			panic(errMsg)
+			panic(&vm.LuaError{Value: vm.NewString(errMsg)})
 		}
 	}
 
