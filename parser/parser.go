@@ -11,6 +11,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/iceisfun/golua/v2/ast"
 	"github.com/iceisfun/golua/v2/lexer"
@@ -289,10 +290,25 @@ func (p *parser) leaveBlock() {
 func (p *parser) pos() token.Pos { return p.tok.Pos }
 
 // tokenEnd returns the position just past a token, derived from its start
-// position and source length. Exact for single-line tokens (all keywords,
-// punctuation, names, numbers, and short strings); a multi-line token (e.g. a
-// long-bracket string) is approximated on its starting line.
+// position and source length. Only a string token can span lines (a long
+// bracket, or a short string with an escaped newline or \z); its end is found
+// by counting the line breaks in its source text the way the lexer does, so
+// \r\n and \n\r count once.
 func tokenEnd(tok token.Token) token.Pos {
+	if last := strings.LastIndexAny(tok.Raw, "\n\r"); last >= 0 {
+		end := tok.Pos
+		end.Offset += len(tok.Raw)
+		end.Column = len(tok.Raw) - last
+		for i := 0; i < len(tok.Raw); i++ {
+			if c := tok.Raw[i]; c == '\n' || c == '\r' {
+				if i+1 < len(tok.Raw) && (tok.Raw[i+1] == '\n' || tok.Raw[i+1] == '\r') && tok.Raw[i+1] != c {
+					i++
+				}
+				end.Line++
+			}
+		}
+		return end
+	}
 	n := len(tok.Literal)
 	if len(tok.Raw) > n {
 		n = len(tok.Raw)

@@ -8,35 +8,16 @@ import (
 	"github.com/iceisfun/golua/v2/token"
 )
 
-// exprEndLine returns the line of the last token in an expression.
-// For binary expressions, this is the end line of the right operand.
-// For index/field expressions, this is the end line of the key/field.
-// For simple expressions (names, numbers), this is the expression's own line.
-// This is used to match Lua 5.4's parser line tracking where the "current
-// line" after parsing an expression reflects the last token parsed.
+// exprEndLine returns the line of the last token in an expression: the
+// closing ')' of a call or parenthesized expression, the '}' of a table
+// constructor, the 'end' of a function, the closing bracket of a long
+// string, or the last token of the right operand of a binary expression.
+// This is used to match reference Lua's parser line tracking, where an
+// instruction emitted after an expression is parsed carries ls->lastline,
+// the line of the last token consumed.
 func exprEndLine(e ast.Expr) int {
-	switch expr := e.(type) {
-	case *ast.BinopExpr:
-		return exprEndLine(expr.Right)
-	case *ast.UnopExpr:
-		return exprEndLine(expr.Operand)
-	case *ast.IndexExpr:
-		return exprEndLine(expr.Key)
-	case *ast.FieldExpr:
-		// field name is on the same line as the dot
-		return expr.P.Line
-	case *ast.FuncCallExpr:
-		if len(expr.Args) > 0 {
-			return exprEndLine(expr.Args[len(expr.Args)-1])
-		}
-		return expr.P.Line
-	case *ast.MethodCallExpr:
-		if len(expr.Args) > 0 {
-			return exprEndLine(expr.Args[len(expr.Args)-1])
-		}
-		return expr.P.Line
-	case *ast.ParenExpr:
-		return exprEndLine(expr.Inner)
+	if end := e.End(); end.Line > 0 {
+		return end.Line
 	}
 	return e.Pos().Line
 }
