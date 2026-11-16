@@ -8,6 +8,7 @@ package golua_test
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -233,5 +234,23 @@ func TestEmbedProviderGating(t *testing.T) {
 	res := embedRun(t, v, "return type(os) == 'nil' or type(os.execute) == 'nil'")
 	if !res[0].AsBool() {
 		t.Fatalf("expected os/os.execute absent without a provider")
+	}
+}
+
+// --- a Go error raised by a native table.sort comparator reaches the host
+// unchanged, as it does from any other native callback. ------------------------
+func TestEmbedSortComparatorKeepsGoError(t *testing.T) {
+	sentinel := errors.New("sentinel")
+	v := vm.New()
+	stdlib.Open(v)
+	v.SetGlobal("cmp", vm.NewNativeFunc(func(v *vm.VM) int {
+		panic(fmt.Errorf("w: %w", sentinel))
+	}))
+	_, err := v.Run(embedProto(t, "table.sort({1, 2, 3}, cmp)"))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("errors.Is(err, sentinel) = false for %T %v", err, err)
+	}
+	if err.Error() != "w: sentinel" {
+		t.Fatalf("error = %q, want %q", err.Error(), "w: sentinel")
 	}
 }

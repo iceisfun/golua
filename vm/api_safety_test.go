@@ -161,6 +161,74 @@ func TestRunCatchesAllInternalPanics(t *testing.T) {
 	}
 }
 
+// The table, length and comparison methods run metamethods. Called from host
+// code with no call in progress, an error a metamethod raises must come back
+// as the returned error, and the VM must be left as it was.
+func TestHostAPIMetamethodErrorsReturned(t *testing.T) {
+	v := New(WithLimits(Limits{MaxCallDepth: 200}))
+	compile := func(src string) Value {
+		block, err := parser.Parse("=host", src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		proto, err := compiler.Compile("=host", block)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := v.Run(proto)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res[0]
+	}
+	luaErr := compile("return function() local x; return x.y end")
+	recurse := compile("return function(t, k) return t[k] end")
+	nativeErr := NewNativeFunc(func(*VM) int { panic("native err") })
+
+	ops := map[string]func(obj Value) error{
+		"IndexValue": func(obj Value) error { _, err := v.IndexValue(obj, NewString("k")); return err },
+		"IndexInt":   func(obj Value) error { _, err := v.IndexInt(obj, 1); return err },
+		"TableGet":   func(obj Value) error { _, err := v.TableGet(obj.AsTable(), NewString("k")); return err },
+		"TableGetInt": func(obj Value) error {
+			_, err := v.TableGetInt(obj.AsTable(), 1)
+			return err
+		},
+		"SetIndexValue": func(obj Value) error { return v.SetIndexValue(obj, NewString("k"), True) },
+		"SetIndexInt":   func(obj Value) error { return v.SetIndexInt(obj, 1, True) },
+		"TableSetInt":   func(obj Value) error { return v.TableSetInt(obj.AsTable(), 1, True) },
+		"ObjLen":        func(obj Value) error { _, err := v.ObjLen(obj); return err },
+		"CompareEQ":     func(obj Value) error { _, err := v.CompareEQ(obj, NewTable(NewEmptyTable())); return err },
+		"CompareLT":     func(obj Value) error { _, err := v.CompareLT(obj, obj); return err },
+	}
+	for name, op := range ops {
+		for mmName, mm := range map[string]Value{"lua": luaErr, "native": nativeErr, "recursive": recurse} {
+			mt := NewEmptyTable()
+			for _, ev := range []string{MetaIndex, MetaNewIndex, MetaLen, MetaEq, MetaLt} {
+				mt.SetString(ev, mm)
+			}
+			tbl := NewEmptyTable()
+			tbl.SetMetatable(mt)
+			obj := NewTable(tbl)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("%s with a %s metamethod: panic escaped: %v", name, mmName, r)
+					}
+				}()
+				if err := op(obj); err == nil {
+					t.Fatalf("%s with a %s metamethod: expected an error", name, mmName)
+				}
+			}()
+			if v.StackDepth() != 0 || v.Top() != 0 {
+				t.Fatalf("%s with a %s metamethod: left depth %d, top %d", name, mmName, v.StackDepth(), v.Top())
+			}
+		}
+	}
+	if got := compile("return 1 + 1"); got.AsInt() != 2 {
+		t.Fatalf("VM unusable afterwards: %v", got)
+	}
+}
+
 func TestProtectedCallCatchesAllPanics(t *testing.T) {
 	tests := []struct {
 		name string

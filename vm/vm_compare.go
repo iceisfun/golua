@@ -1,15 +1,16 @@
 package vm
 
-// equal checks for equality, handling __eq metamethod
-func (vm *VM) equal(v1, v2 Value) (bool, error) {
+// eqMetamethod returns the __eq metamethod that v1 == v2 would call, or Nil
+// with the result when it follows from the types and raw equality alone.
+func (vm *VM) eqMetamethod(v1, v2 Value) (mm Value, raw bool) {
 	// 1. If types are different and not numbers (int/float), false
 	if v1.typ != v2.typ && !v1.IsNumber() && !v2.IsNumber() {
-		return false, nil // Standard Lua behavior: different types are unequal
+		return Nil, false // Standard Lua behavior: different types are unequal
 	}
 
 	// 2. Raw equality
 	if v1.Equal(v2) {
-		return true, nil
+		return Nil, true
 	}
 
 	// 3. Userdata/Table check for __eq
@@ -17,33 +18,50 @@ func (vm *VM) equal(v1, v2 Value) (bool, error) {
 	// __eq is only called for tables and full userdata, NOT threads.
 	leftHasEqMeta := (v1.IsTable() && !v1.isThread()) || v1.IsUserdata()
 	rightHasEqMeta := (v2.IsTable() && !v2.isThread()) || v2.IsUserdata()
-	if leftHasEqMeta && rightHasEqMeta {
-		mm := vm.getMetafield(v1, MetaEq)
-		if mm.IsNil() {
-			mm = vm.getMetafield(v2, MetaEq)
-		}
-		if mm.IsNil() {
-			return false, nil
-		}
-
-		res, err := vm.callMetamethod(MetaEvent(MetaEq), mm, v1, v2)
-		if err != nil {
-			return false, err
-		}
-		return res.ToBool(), nil
+	if !leftHasEqMeta || !rightHasEqMeta {
+		return Nil, false
 	}
+	mm = vm.getMetafield(v1, MetaEq)
+	if mm.IsNil() {
+		mm = vm.getMetafield(v2, MetaEq)
+	}
+	return mm, false
+}
 
-	return false, nil
+// equal checks for equality, handling __eq metamethod
+func (vm *VM) equal(v1, v2 Value) (bool, error) {
+	mm, raw := vm.eqMetamethod(v1, v2)
+	if mm.IsNil() {
+		return raw, nil
+	}
+	res, err := vm.callMetamethod(MetaEvent(MetaEq), mm, v1, v2)
+	if err != nil {
+		return false, err
+	}
+	return res.ToBool(), nil
 }
 
 // CompareEQ reports whether v1 == v2, honoring __eq metamethods (the
 // equivalent of lua_compare with LUA_OPEQ).
 func (vm *VM) CompareEQ(v1, v2 Value) (bool, error) {
+	if vm.outsideCall() {
+		mm, raw := vm.eqMetamethod(v1, v2)
+		if mm.IsNil() {
+			return raw, nil
+		}
+		return hostProtect(vm, func() (bool, error) { return vm.CompareEQ(v1, v2) })
+	}
 	return vm.equal(v1, v2)
 }
 
 // CompareLT performs a less-than comparison, honoring __lt metamethods.
 func (vm *VM) CompareLT(v1, v2 Value) (bool, error) {
+	if vm.outsideCall() {
+		if res, ok := v1.LessThan(v2); ok {
+			return res, nil
+		}
+		return hostProtect(vm, func() (bool, error) { return vm.CompareLT(v1, v2) })
+	}
 	return vm.lessThan(v1, v2)
 }
 

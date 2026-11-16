@@ -36,4 +36,11 @@ do
     })
     print(pcall(table.sort, tt))
     --> =false	s
+
+    -- An error raised by a native comparator is positioned where it was
+    -- raised (a C function, so nowhere), not again at the sort call.
+    print(pcall(function() table.sort({1, 2, 3}, next) end))
+    --> =false	bad argument #1 to 'next' (table expected, got number)
+    print(pcall(function() table.sort({1, "x", 3}, math.max) end))
+    --> =false	attempt to compare string with number
 end

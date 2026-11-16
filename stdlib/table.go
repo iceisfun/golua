@@ -280,9 +280,11 @@ func tableSort(v *vm.VM) int {
 		if le, isLuaErr := sortErr.(*vm.LuaError); isLuaErr {
 			panic(le)
 		}
-		if err, isErr := sortErr.(error); isErr {
-			panic(err.Error())
-		}
+		// A Go error from a native comparator is re-raised unchanged: it was
+		// already positioned where it was raised, and converting it to a
+		// string would both prefix the caller's location again and drop its
+		// identity for errors.Is/As on the host side. The invalid-order
+		// message is a string, a luaL_error that does take that position.
 		panic(sortErr)
 	}
 
@@ -407,7 +409,7 @@ func auxSort(v *vm.VM, obj vm.Value, lo, up int, comp vm.Value, err *any) {
 					break
 				}
 				if i == up-1 {
-					*err = fmt.Errorf("invalid order function for sorting")
+					*err = "invalid order function for sorting"
 					return
 				}
 			}
@@ -419,7 +421,7 @@ func auxSort(v *vm.VM, obj vm.Value, lo, up int, comp vm.Value, err *any) {
 					break
 				}
 				if j < i {
-					*err = fmt.Errorf("invalid order function for sorting")
+					*err = "invalid order function for sorting"
 					return
 				}
 			}
