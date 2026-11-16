@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/iceisfun/golua/v2/compiler"
@@ -2315,10 +2316,17 @@ mainLoop:
 			// constructors like {nil, "a"} produce a correctly-sized array.
 			if ct, ok := tbl.(*Table); ok {
 				needed := offset + n - 1 // last 1-based index
-				if needed > len(ct.array) {
-					newArr := make([]Value, needed)
-					copy(newArr, ct.array)
-					ct.array = newArr
+				if old := len(ct.array); needed > old {
+					// Use the capacity NEWTABLE preallocated, and grow
+					// geometrically past it: the size hint is clamped to
+					// maxTablePrealloc, and growing to exactly needed would
+					// copy the whole array once per SETLIST batch, making a
+					// large constructor quadratic.
+					if needed > cap(ct.array) {
+						ct.array = slices.Grow(ct.array, needed-old)
+					}
+					ct.array = ct.array[:needed]
+					clear(ct.array[old:])
 				}
 				for i := 0; i < n; i++ {
 					idx := offset + i
