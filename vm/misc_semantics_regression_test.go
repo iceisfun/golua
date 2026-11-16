@@ -185,9 +185,8 @@ func TestCloseHandlerNormalExitHasNoErrorArg(t *testing.T) {
 }
 
 // TestHookExitSentinelPropagates covers os.exit fired from a main-thread debug
-// hook. The hook wrapper used to box every panic in a luaHookError, which hid
-// the LuaExitError sentinel from ProtectedCall and turned the exit into an
-// ordinary uncatchable error plus a traceback.
+// hook: the LuaExitError sentinel must reach the host, not be turned into an
+// ordinary error.
 func TestHookExitSentinelPropagates(t *testing.T) {
 	v := New()
 	v.SetHook(NewNativeFunc(func(*VM) int {
@@ -211,8 +210,8 @@ func TestHookExitSentinelPropagates(t *testing.T) {
 }
 
 // TestHookSelfCloseSentinelPropagates covers the coroutine self-close
-// long-jump raised from a hook: wrapping it leaked the Go rendering of the
-// struct ("{<nil> false}") into the Lua error message.
+// long-jump raised from a hook: it must reach the host as the sentinel, not
+// as the Go rendering of the struct ("{<nil> false}") in an error message.
 func TestHookSelfCloseSentinelPropagates(t *testing.T) {
 	v := New()
 	v.SetHook(NewNativeFunc(func(*VM) int {
@@ -231,9 +230,9 @@ func TestHookSelfCloseSentinelPropagates(t *testing.T) {
 	}
 }
 
-// TestHookErrorStillUncatchable guards the surrounding behaviour: a genuine
-// error raised by a hook remains wrapped and uncatchable by pcall.
-func TestHookErrorStillUncatchable(t *testing.T) {
+// TestHookErrorReachesRun guards the surrounding behaviour: a genuine error
+// raised by a hook with no pcall around the hooked code fails the run.
+func TestHookErrorReachesRun(t *testing.T) {
 	v := New()
 	v.SetHook(NewNativeFunc(func(*VM) int {
 		panic(&LuaError{Value: NewString("hook boom")})

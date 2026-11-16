@@ -1,22 +1,8 @@
 package vm
 
 import (
-	"fmt"
-
 	"github.com/iceisfun/golua/v2/compiler"
 )
-
-// luaHookError wraps a panic from a debug hook function. In Lua 5.4, hook
-// errors are uncatchable by pcall/xpcall — they propagate through all
-// protected frames (similar to os.exit). ProtectedCall detects this sentinel
-// and re-panics instead of recovering.
-type luaHookError struct {
-	original interface{} // the underlying panic value from the hook
-}
-
-func (e *luaHookError) Error() string {
-	return fmt.Sprintf("%v", e.original)
-}
 
 // Hook mask constants (bitmask for fast checking)
 const (
@@ -131,35 +117,10 @@ func (vm *VM) fireHook(event string, line int) {
 	defer func() { vm.top = savedTop }()
 
 	// Call the hook function directly (unprotected) so errors propagate.
-	// In Lua 5.4, hook errors are uncatchable by pcall/xpcall — they
-	// propagate through all protected frames. We wrap any panic from the
-	// hook in a luaHookError sentinel so ProtectedCall re-panics it.
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				if isControlSentinel(r) {
-					panic(r)
-				}
-				// Wrap the original panic in a hook error sentinel
-				panic(&luaHookError{original: r})
-			}
-		}()
-		vm.callUnprotected(vm.hookFunc, args)
-	}()
-}
-
-// isControlSentinel reports whether a recovered panic value is a control-flow
-// sentinel rather than a Lua error. Sentinels are matched by type at the
-// unwinding boundaries (ProtectedCall, the coroutine runner), so wrapping one
-// in a luaHookError would defeat those checks: os.exit would degrade into an
-// ordinary uncatchable error and CoroutineSelfClose would surface as the Go
-// rendering of the struct in a Lua error message.
-func isControlSentinel(r interface{}) bool {
-	switch r.(type) {
-	case *LuaExitError, CoroutineSelfClose:
-		return true
-	}
-	return false
+	// As in reference Lua, where luaD_hook runs the hook as an ordinary
+	// call, an error raised by the hook unwinds to the nearest protected
+	// call: a pcall/xpcall around the hooked code catches it.
+	vm.callUnprotected(vm.hookFunc, args)
 }
 
 // fireCallHook fires a "call" hook event.
