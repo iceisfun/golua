@@ -15,7 +15,8 @@ assert(type(loc) == "string" and #loc > 0)
 
 -- Set to unsupported locale returns nil
 assert(os.setlocale("en_US.UTF-8") == nil)
-assert(os.setlocale("POSIX") == nil)
+-- "POSIX" is the standard alias of the C locale
+assert(os.setlocale("POSIX") == "C")
 
 -- With category argument (all categories return "C" for "C" locale)
 assert(os.setlocale("C", "all") == "C")

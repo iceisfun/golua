@@ -172,7 +172,7 @@ func (p *DefaultOsProvider) Getenv(ctx context.Context, name string) (string, bo
 // SetLocale implements os.setlocale semantics for the default provider.
 // Go has no process-wide locale API, so we support:
 //   - query (nil/no arg → returns current locale)
-//   - set "C" → set and return "C"
+//   - set "C" (or its POSIX alias "POSIX") → set and return "C"
 //   - set "" → set to system default from environment
 //
 // Any other locale is treated as unsupported (returns nil).
@@ -181,7 +181,7 @@ func (p *DefaultOsProvider) SetLocale(ctx context.Context, locale, category stri
 		// Query current locale (nil arg in Lua maps to this sentinel)
 		return p.locale, true
 	}
-	if locale == "C" {
+	if locale == "C" || locale == "POSIX" {
 		p.locale = "C"
 		return "C", true
 	}
