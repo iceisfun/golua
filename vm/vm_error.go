@@ -120,9 +120,18 @@ func (vm *VM) ArgErrorFuncName() (name, nameWhat string) {
 	if name != "" {
 		return name, nameWhat
 	}
-	// Bytecode resolution failed — try global table lookup.
 	n := len(vm.callStack)
 	if n > 0 {
+		// A metamethod dispatched without a naming instruction at the
+		// caller's pc (__close from OP_CLOSE or OP_RETURN) carries its name
+		// on the frame, as getinfo already uses for Lua handlers. Like
+		// reference funcnamefromcall, only a Lua caller names it, and a
+		// close run while unwinding an error has no name.
+		if fr := &vm.callStack[n-1]; fr.callName != "" && !fr.suppressTracebackName &&
+			n >= 2 && vm.callStack[n-2].closure != nil {
+			return fr.callName, fr.callNameWhat
+		}
+		// Bytecode resolution failed — try global table lookup.
 		fn := vm.callStack[n-1].funcValue
 		if resolved, ok := vm.lookupNativeFuncName(fn); ok {
 			return resolved, ""

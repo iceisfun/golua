@@ -246,10 +246,13 @@ func (vm *VM) metamethodNameFromOp(proto *compiler.Proto, pc int) string {
 	case compiler.OP_GEI:
 		return "le" // __le with reversed operands
 
-	// Index operations (when __index metamethod is called)
-	case compiler.OP_GETTABLE, compiler.OP_GETI, compiler.OP_GETFIELD:
+	// Index operations (when __index metamethod is called). The upvalue
+	// forms and SELF index too, as in reference funcnamefromcode.
+	case compiler.OP_GETTABLE, compiler.OP_GETI, compiler.OP_GETFIELD,
+		compiler.OP_GETTABUP, compiler.OP_SELF:
 		return "index"
-	case compiler.OP_SETTABLE, compiler.OP_SETI, compiler.OP_SETFIELD:
+	case compiler.OP_SETTABLE, compiler.OP_SETI, compiler.OP_SETFIELD,
+		compiler.OP_SETTABUP:
 		return "newindex"
 
 	default:
