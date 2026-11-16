@@ -1269,6 +1269,11 @@ func (c *compiler) compileReturnStmt(s *ast.ReturnStmt) {
 		fs.emit(ABC(OP_RETURN0, 0, 0, 0, 0), line)
 		return
 	}
+	// Reference retstat emits the return once the whole expression list has
+	// been read, so it carries the line of the list's last token.
+	if end := s.Values[len(s.Values)-1].End().Line; end > line {
+		line = end
+	}
 
 	if len(s.Values) == 1 {
 		// Check for tail call — cannot tail-call when there are to-be-closed
