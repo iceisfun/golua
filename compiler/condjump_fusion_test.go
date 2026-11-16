@@ -860,8 +860,8 @@ func TestCountHookInstructionCounts(t *testing.T) {
 		// not an assertion, because a few unrelated shape differences remain
 		// (see tests/doctest/compiler_count_hook_shapes.lua).
 		{"if immediate", "local d = 0\nif d == 0 then d = 1 end", 6, 6, 10},
-		{"while immediate", "local x = 0\nwhile x < 4 do x = x + 1 end", 22, 17, 42},
-		{"repeat immediate", "local x = 4\nrepeat x = x - 1 until x < 1", 19, 12, 35},
+		{"while immediate", "local x = 0\nwhile x < 4 do x = x + 1 end", 18, 17, 42},
+		{"repeat immediate", "local x = 4\nrepeat x = x - 1 until x < 1", 15, 12, 35},
 	}
 	for _, tc := range cases {
 		src := "local n = 0\ndebug.sethook(function() n = n + 1 end, '', 1)\n" +

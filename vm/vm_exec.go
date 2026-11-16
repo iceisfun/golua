@@ -809,8 +809,10 @@ mainLoop:
 			v := vm.stack[frame.base+b]
 			if v.IsInt() {
 				vm.stack[frame.base+a] = NewInt(v.AsInt() + int64(sc))
+				frame.pc++ // skip the MMBINI, as reference does on success
 			} else if v.IsFloat() {
 				vm.stack[frame.base+a] = NewFloat(v.fval() + float64(sc))
+				frame.pc++
 			} else {
 				// Non-numeric: dispatch to the metamethod implied by the
 				// following MMBINI. The compiler emits ADDI for both x + n
@@ -873,6 +875,9 @@ mainLoop:
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
+			if v.IsNumber() {
+				frame.pc++ // no metamethod ran: skip the MMBINK
+			}
 
 		case compiler.OP_BANDK, compiler.OP_BORK, compiler.OP_BXORK:
 			a, b, c := inst.A(), inst.B(), inst.C()
@@ -884,6 +889,9 @@ mainLoop:
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
+			if v.IsNumber() {
+				frame.pc++ // no metamethod ran: skip the MMBINK
+			}
 
 		// R[A] := R[B] >> sC. (The shift-immediate opcodes carry the opposite
 		// names here and in the binary format: this is what reference calls
@@ -896,6 +904,7 @@ mainLoop:
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(shiftLeft(i, int64(-sc)))
+					frame.pc++ // skip the MMBINI, as reference does on success
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				}
@@ -912,6 +921,7 @@ mainLoop:
 			if !v.IsString() {
 				if i, ok := v.ToInt(); ok {
 					vm.stack[frame.base+a] = NewInt(shiftLeft(int64(sc), i))
+					frame.pc++ // skip the MMBINI, as reference does on success
 				} else if v.IsNumber() {
 					return nil, vm.runtimeErrorForNumber(b)
 				}
@@ -946,6 +956,7 @@ mainLoop:
 					r = PowWithSubnormalFix(n1, n2)
 				}
 				vm.stack[frame.base+a] = NewFloat(r)
+				frame.pc++ // skip the MMBIN, as reference does on success
 			} else if v1.typ == typeInt && v2.typ == typeInt && op != compiler.OP_DIV && op != compiler.OP_POW {
 				i1, i2 := v1.ival(), v2.ival()
 				var r int64
@@ -982,12 +993,16 @@ mainLoop:
 					}
 				}
 				vm.stack[frame.base+a] = NewInt(r)
+				frame.pc++
 			} else {
 				result, err := vm.arith(op, v1, v2, b, c)
 				if err != nil {
 					return nil, err
 				}
 				vm.stack[frame.base+a] = result
+				if v1.IsNumber() && v2.IsNumber() {
+					frame.pc++ // no metamethod ran: skip the MMBIN
+				}
 			}
 
 		case compiler.OP_BAND, compiler.OP_BOR, compiler.OP_BXOR,
@@ -1000,6 +1015,9 @@ mainLoop:
 				return nil, err
 			}
 			vm.stack[frame.base+a] = result
+			if v1.IsNumber() && v2.IsNumber() {
+				frame.pc++ // no metamethod ran: skip the MMBIN
+			}
 
 		// The metamethod follow-ups that reference emits after an arithmetic
 		// or bitwise instruction. GoLua's own code generator emits none of
