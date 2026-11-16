@@ -833,11 +833,16 @@ type fullFile struct {
 // beforeRead publishes pending writes so a read that follows a write on the
 // same stream sees them and starts at the logical position. glibc does this
 // implicitly; the separate bufio.Writer would otherwise flush at the wrong
-// offset, after the reader's read-ahead.
-func (f *fullFile) beforeRead() {
+// offset, after the reader's read-ahead. A failed flush fails the read: the
+// pending bytes never reached the file, so reading past them would return
+// stale data, and bufio keeps the error sticky, so dropping it here would
+// only defer it to an unrelated later write or close (glibc reports it
+// through the read, via ferror).
+func (f *fullFile) beforeRead() error {
 	if f.writer != nil && f.writer.Buffered() > 0 {
-		f.writer.Flush()
+		return f.writer.Flush()
 	}
+	return nil
 }
 
 // beforeWrite drops the reader's read-ahead and moves the descriptor back to
@@ -855,7 +860,9 @@ func (f *fullFile) Read(ctx context.Context, format string) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to use a closed file")
 	}
-	f.beforeRead()
+	if err := f.beforeRead(); err != nil {
+		return "", err
+	}
 
 	// Normalize format: strip leading * and check first character
 	// This matches Lua 5.4 behavior where "all" == "a", "line" == "l", etc.
@@ -890,7 +897,9 @@ func (f *fullFile) ReadBytes(ctx context.Context, n int) (string, error) {
 	if n < 0 {
 		return "", fmt.Errorf("not enough memory")
 	}
-	f.beforeRead()
+	if err := f.beforeRead(); err != nil {
+		return "", err
+	}
 	if n == 0 {
 		// EOF test: peek 1 byte to check if data remains
 		_, err := f.reader.Peek(1)
