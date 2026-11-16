@@ -52,8 +52,15 @@ func getString(v *vm.VM, idx int, fname string) string {
 	if val.IsNumber() {
 		return val.String()
 	}
+	return stringArgFail(v, idx, val, v.ArgCount() < idx, fname)
+}
+
+// stringArgFail raises the "string expected" argument error for val, which
+// was passed (or, if noValue, omitted) as argument idx. It lets a caller that
+// snapshotted its arguments before running metamethods validate them later.
+func stringArgFail(v *vm.VM, idx int, val vm.Value, noValue bool, fname string) string {
 	got := argTypeName(v, val)
-	if v.ArgCount() < idx {
+	if noValue {
 		got = "no value"
 	}
 	callerArgError(v, idx, fname, fmt.Sprintf("string expected, got %s", got))
@@ -68,6 +75,12 @@ func getInt(v *vm.VM, idx int, fname string) int64 {
 	if i, ok := val.ToInt(); ok {
 		return i
 	}
+	return intArgFail(v, idx, val, v.ArgCount() < idx, fname)
+}
+
+// intArgFail raises the integer argument error for val, which was passed (or,
+// if noValue, omitted) as argument idx and has no integer value.
+func intArgFail(v *vm.VM, idx int, val vm.Value, noValue bool, fname string) int64 {
 	// Reference interror decides via lua_isnumber, which is true for numeric
 	// strings too: a string that coerces to a (non-integral) number reports
 	// the representation error, not a type error.
@@ -79,7 +92,7 @@ func getInt(v *vm.VM, idx int, fname string) int64 {
 		callerArgError(v, idx, fname, "number has no integer representation")
 	}
 	got := argTypeName(v, val)
-	if v.ArgCount() < idx {
+	if noValue {
 		got = "no value"
 	}
 	callerArgError(v, idx, fname, fmt.Sprintf("number expected, got %s", got))

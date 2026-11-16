@@ -13,12 +13,13 @@ assert(err == "table index is NaN", "rawset NaN: expected 'table index is NaN', 
 -- table.unpack with nil
 ok, err = pcall(table.unpack, nil)
 assert(not ok)
-assert(err == "attempt to get length of a nil value", "unpack nil: got: " .. tostring(err))
+-- Lua 5.5 checks the argument first, so this is an argument error
+assert(err == "bad argument #1 to 'table.unpack' (table expected, got nil)", "unpack nil: got: " .. tostring(err))
 
 -- table.unpack with number
 ok, err = pcall(table.unpack, 42)
 assert(not ok)
-assert(err == "attempt to get length of a number value", "unpack num: got: " .. tostring(err))
+assert(err == "bad argument #1 to 'table.unpack' (table expected, got number)", "unpack num: got: " .. tostring(err))
 
 -- coroutine.yield from main thread
 ok, err = pcall(coroutine.yield)

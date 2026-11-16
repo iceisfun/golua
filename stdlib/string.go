@@ -125,7 +125,9 @@ func stringRep(v *vm.VM) int {
 		sep = getString(v, 3, "string.rep")
 	}
 
-	if n <= 0 {
+	// An empty result needs no work, however large n is (reference str_rep
+	// returns "" when l + lsep == 0 before looking at n).
+	if n <= 0 || len(s)+len(sep) == 0 {
 		v.Set(0, vm.NewString(""))
 		return 1
 	}
@@ -412,6 +414,15 @@ func stringGsub(v *vm.VM) int {
 	defer v.EnterNonYieldable()()
 	s := getString(v, 1, "string.gsub")
 	pattern := getString(v, 2, "string.gsub")
+	maxRepl := -1
+	if v.ArgCount() >= 4 && !v.Get(4).IsNil() {
+		n := int(getInt(v, 4, "string.gsub"))
+		if n < 0 {
+			n = 0
+		}
+		maxRepl = n
+	}
+
 	repl := v.Get(3)
 	// Validate replacement type — Lua 5.4 also accepts numbers (coerced to string)
 	if repl.IsNumber() {
@@ -424,15 +435,6 @@ func stringGsub(v *vm.VM) int {
 		}
 		callerArgError(v, 3, "string.gsub", fmt.Sprintf("string/function/table expected, got %s", got))
 	}
-	maxRepl := -1
-	if v.ArgCount() >= 4 && !v.Get(4).IsNil() {
-		n := int(getInt(v, 4, "string.gsub"))
-		if n < 0 {
-			n = 0
-		}
-		maxRepl = n
-	}
-
 	// Handle anchor
 	anchored := false
 	searchPat := pattern

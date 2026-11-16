@@ -16,15 +16,15 @@ local x, y, z = table.unpack(obj)
 assert(x == 10 and y == 20 and z == 30,
     "unpack with __len/__index: " .. tostring(x) .. "," .. tostring(y) .. "," .. tostring(z))
 
--- Non-indexable types should error via #
+-- Lua 5.5 rejects values that are neither tables nor indexable with a length
 local ok1, err1 = pcall(table.unpack, 42)
-assert(not ok1 and err1:find("attempt to get length of a number value"), "unpack(42): " .. tostring(err1))
+assert(not ok1 and err1:find("table expected, got number", 1, true), "unpack(42): " .. tostring(err1))
 
 local ok2, err2 = pcall(table.unpack, true)
-assert(not ok2 and err2:find("attempt to get length of a boolean value"), "unpack(true): " .. tostring(err2))
+assert(not ok2 and err2:find("table expected, got boolean", 1, true), "unpack(true): " .. tostring(err2))
 
 local ok3, err3 = pcall(table.unpack, nil)
-assert(not ok3 and err3:find("attempt to get length of a nil value"), "unpack(nil): " .. tostring(err3))
+assert(not ok3 and err3:find("table expected, got nil", 1, true), "unpack(nil): " .. tostring(err3))
 
 -- Normal table still works
 local a, b, c = table.unpack({10, 20, 30})

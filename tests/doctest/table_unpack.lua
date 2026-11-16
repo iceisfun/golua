@@ -1,10 +1,10 @@
 -- table.unpack tests
 do
     print(pcall(table.unpack))
-    --> ~^false\t.*attempt to get length of a nil value
+    --> ~^false\t.*table expected, got no value
 
     print(pcall(table.unpack, 1))
-    --> ~^false\t.*attempt to get length of a number value
+    --> ~^false\t.*table expected, got number
 
     print(pcall(table.unpack, {}, "a"))
     --> ~^false\t.*number expected

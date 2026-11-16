@@ -41,11 +41,11 @@ func (x *xoshiro256ss) next() uint64 {
 	return res
 }
 
-// float64 returns a random float64 in [0, 1) with 53 bits of precision,
-// matching Lua 5.4's I2d conversion.
-func (x *xoshiro256ss) float64() float64 {
+// float64FromRand converts a raw random value to a float64 in [0, 1) with 53
+// bits of precision, matching Lua 5.4's I2d conversion.
+func float64FromRand(rv uint64) float64 {
 	const figs = 53 // significant bits in a double
-	r := x.next() >> (64 - figs)
+	r := rv >> (64 - figs)
 	return float64(r) / float64(uint64(1)<<figs)
 }
 
@@ -431,20 +431,26 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 	return func(v *vm.VM) int {
 		n := v.ArgCount()
 
+		// Like reference math_random, draw the value before looking at the
+		// arguments, so every call (even random(m, m) or one that raises an
+		// argument error) advances the generator by exactly one step and
+		// seeded sequences stay in step with the reference.
+		rv := rng.next()
+
 		switch n {
 		case 0:
 			// random() -> [0, 1) with exactly 53 bits of randomness
-			v.Set(0, vm.NewFloat(rng.float64()))
+			v.Set(0, vm.NewFloat(float64FromRand(rv)))
 		case 1:
 			// random(0) -> raw internal state as integer (Lua 5.4)
 			// random(n) -> [1, n]
 			upper := getInt(v, 1, "math.random")
 			if upper == 0 {
-				v.Set(0, vm.NewInt(int64(rng.next())))
+				v.Set(0, vm.NewInt(int64(rv)))
 			} else if upper < 1 {
 				callerArgError(v, 1, "math.random", "interval is empty")
 			} else {
-				v.Set(0, vm.NewInt(xoshiroRange(rng, 1, upper)))
+				v.Set(0, vm.NewInt(xoshiroRange(rng, rv, 1, upper)))
 			}
 		case 2:
 			// random(m, n) -> [m, n]
@@ -453,7 +459,7 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 			if lower > upper {
 				callerArgError(v, 1, "math.random", "interval is empty")
 			}
-			v.Set(0, vm.NewInt(xoshiroRange(rng, lower, upper)))
+			v.Set(0, vm.NewInt(xoshiroRange(rng, rv, lower, upper)))
 		default:
 			panic("wrong number of arguments")
 		}
@@ -462,8 +468,9 @@ func mathRandomClosure(rng *xoshiro256ss) vm.NativeFunc {
 }
 
 // xoshiroRange returns a random int64 in [lower, upper] (inclusive)
-// using the xoshiro256** RNG, matching Lua 5.4's project() function.
-func xoshiroRange(rng *xoshiro256ss, lower, upper int64) int64 {
+// using the xoshiro256** RNG, matching Lua 5.4's project() function. rv is the
+// value already drawn for this call; rng supplies any rejection-sampling retries.
+func xoshiroRange(rng *xoshiro256ss, rv uint64, lower, upper int64) int64 {
 	r := uint64(upper) - uint64(lower)
 	if r == 0 {
 		return lower
@@ -472,13 +479,11 @@ func xoshiroRange(rng *xoshiro256ss, lower, upper int64) int64 {
 		// Full range: Lua 5.4 computes p = project(I2UInt(rv), MaxUint64)
 		// which is identity, then returns (lua_Integer)(p + (lua_Unsigned)low).
 		// All arithmetic is unsigned before the final cast to signed.
-		ran := rng.next()
-		return int64(ran + uint64(lower))
+		return int64(rv + uint64(lower))
 	}
 	// Lua 5.4's project(): bitmask rejection sampling.
 	// Uses the exact same algorithm as lmathlib.c for identical sequences.
-	ran := rng.next()
-	return lower + int64(project(ran, r, rng))
+	return lower + int64(project(rv, r, rng))
 }
 
 // project maps a random value into [0..n] using Lua 5.4's bitmask

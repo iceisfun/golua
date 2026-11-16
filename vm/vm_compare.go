@@ -36,6 +36,12 @@ func (vm *VM) equal(v1, v2 Value) (bool, error) {
 	return false, nil
 }
 
+// CompareEQ reports whether v1 == v2, honoring __eq metamethods (the
+// equivalent of lua_compare with LUA_OPEQ).
+func (vm *VM) CompareEQ(v1, v2 Value) (bool, error) {
+	return vm.equal(v1, v2)
+}
+
 // CompareLT performs a less-than comparison, honoring __lt metamethods.
 func (vm *VM) CompareLT(v1, v2 Value) (bool, error) {
 	return vm.lessThan(v1, v2)

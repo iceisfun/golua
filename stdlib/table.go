@@ -39,9 +39,10 @@ func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 	if val.IsTable() && !val.AsTable().IsThread() {
 		return val
 	}
+	// Strings need no __len to have a length (reference checktab).
 	if ((need&tabR) == 0 || !v.GetMetafield(val, vm.MetaIndex).IsNil()) &&
 		((need&tabW) == 0 || !v.GetMetafield(val, vm.MetaNewIndex).IsNil()) &&
-		((need&tabL) == 0 || !v.GetMetafield(val, vm.MetaLen).IsNil()) {
+		((need&tabL) == 0 || val.IsString() || !v.GetMetafield(val, vm.MetaLen).IsNil()) {
 		return val
 	}
 	got := argTypeName(v, val)
@@ -93,32 +94,38 @@ func tableConcat(v *vm.VM) int {
 	defer v.EnterNonYieldable()()
 	obj := tableCheckLike(v, 1, "table.concat", tabR|tabL)
 
-	// Snapshot all args before any metamethod calls (__len, __index).
-	// Metamethod frames can overlap arg slots on the stack.
-	sep := ""
-	if !v.Get(2).IsNil() {
-		sep = getString(v, 2, "table.concat")
-	}
-	hasI := !v.Get(3).IsNil()
-	hasJ := !v.Get(4).IsNil()
-	var iArg, jArg int64
-	if hasI {
-		iArg = getInt(v, 3, "table.concat")
-	}
-	if hasJ {
-		jArg = getInt(v, 4, "table.concat")
-	}
+	// Snapshot all args before any metamethod calls (__len, __index):
+	// metamethod frames can overlap arg slots on the stack. They are checked
+	// only after the length is taken, like reference tconcat, so an erroring
+	// __len wins over a bad separator or bound.
+	argc := v.ArgCount()
+	sepV, iV, jV := v.Get(2), v.Get(3), v.Get(4)
 
 	length := tableObjLen(v, v.Get(1))
 
-	i := int64(1)
-	if hasI {
-		i = iArg
+	sep := ""
+	if !sepV.IsNil() {
+		if sepV.IsString() {
+			sep = sepV.AsString()
+		} else if sepV.IsNumber() {
+			sep = sepV.String()
+		} else {
+			stringArgFail(v, 2, sepV, argc < 2, "table.concat")
+		}
 	}
-
+	i := int64(1)
+	if !iV.IsNil() {
+		var ok bool
+		if i, ok = iV.ToInt(); !ok {
+			intArgFail(v, 3, iV, argc < 3, "table.concat")
+		}
+	}
 	j := int64(length)
-	if hasJ {
-		j = jArg
+	if !jV.IsNil() {
+		var ok bool
+		if j, ok = jV.ToInt(); !ok {
+			intArgFail(v, 4, jV, argc < 4, "table.concat")
+		}
 	}
 
 	var parts []string
@@ -449,29 +456,28 @@ func tableUnpack(v *vm.VM) int {
 	// C-level function: metamethods (__len, __index) must not yield across this
 	// boundary, matching reference Lua.
 	defer v.EnterNonYieldable()()
-	list := v.Get(1)
+	list := tableCheckLike(v, 1, "table.unpack", tabR|tabL)
 
-	// Snapshot optional args before __len metamethod can clobber slots.
-	hasI := !v.Get(2).IsNil()
-	hasJ := !v.Get(3).IsNil()
-	var iArg, jArg int64
-	if hasI {
-		iArg = getInt(v, 2, "table.unpack")
-	}
-	if hasJ {
-		jArg = getInt(v, 3, "table.unpack")
-	}
+	// Snapshot optional args before __len metamethod can clobber slots. The
+	// length is always taken first (reference tunpack's aux_getn), so __len
+	// runs and its errors win even when j is given or i/j are bad.
+	argc := v.ArgCount()
+	iV, jV := v.Get(2), v.Get(3)
+	length := int64(tableObjLen(v, list))
 
 	i := int64(1)
-	if hasI {
-		i = iArg
+	if !iV.IsNil() {
+		var ok bool
+		if i, ok = iV.ToInt(); !ok {
+			intArgFail(v, 2, iV, argc < 2, "table.unpack")
+		}
 	}
-
-	var j int64
-	if hasJ {
-		j = jArg
-	} else {
-		j = int64(tableObjLen(v, list))
+	j := length
+	if !jV.IsNil() {
+		var ok bool
+		if j, ok = jV.ToInt(); !ok {
+			intArgFail(v, 3, jV, argc < 3, "table.unpack")
+		}
 	}
 
 	if j < i {
@@ -567,7 +573,22 @@ func tableMove(v *vm.VM) int {
 			}
 		}
 
-		if a1.RawEqual(a2) && tt > f && tt <= e {
+		backward := false
+		if tt > f && tt <= e {
+			// Overlapping move: copy backwards when both arguments denote the
+			// same table. Reference tmove asks lua_compare(OPEQ), so a
+			// distinct pair that __eq calls equal is copied backwards too.
+			if a1.RawEqual(a2) {
+				backward = true
+			} else {
+				eq, err := v.CompareEQ(a1, a2)
+				if err != nil {
+					panic(err)
+				}
+				backward = eq
+			}
+		}
+		if backward {
 			// Copy backwards to avoid overwriting (overlapping same-table move)
 			for i := count - 1; i >= 0; i-- {
 				moveCheckInterrupt(v, i)

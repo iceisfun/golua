@@ -18,7 +18,9 @@ assert(err2 == "table index is NaN", "rawset NaN: got: " .. tostring(err2))
 local function test_unpack_nil() return table.unpack(nil) end
 local ok3, err3 = pcall(test_unpack_nil)
 assert(not ok3)
-assert(err3 == "attempt to get length of a nil value", "unpack nil: got: " .. tostring(err3))
+-- Lua 5.5 checks the argument first; an argument error raised from a Lua
+-- caller carries that caller's file:line like any luaL_argerror.
+assert(err3:find("bad argument #1 to 'unpack' (table expected, got nil)", 1, true), "unpack nil: got: " .. tostring(err3))
 
 -- table.sort with incompatible types
 local function test_sort_mixed() table.sort({1, "a"}) end
@@ -29,7 +31,6 @@ assert(err4 == "attempt to compare string with number", "sort: got: " .. tostrin
 -- Verify no file:line prefix
 assert(not err:find("^.-:%d+: "), "rawset nil has file:line prefix: " .. err)
 assert(not err2:find("^.-:%d+: "), "rawset NaN has file:line prefix: " .. err2)
-assert(not err3:find("^.-:%d+: "), "unpack nil has file:line prefix: " .. err3)
 assert(not err4:find("^.-:%d+: "), "sort has file:line prefix: " .. err4)
 
 print("OK")
