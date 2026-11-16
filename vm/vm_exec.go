@@ -2180,22 +2180,13 @@ mainLoop:
 				// Pop native frame and restore top
 				vm.callStack = vm.callStack[:len(vm.callStack)-1]
 				vm.top = oldTop
-			} else if fn.IsTable() {
-				// Check for __call metamethod
-				mt := fn.AsTable().Metatable()
-				if mt != nil {
-					callMM := mt.Get(metaCall)
-					if !callMM.IsNil() {
-						// Call __call(self, state, ctrl)
-						results, err = vm.ProtectedCall(callMM, []Value{fn, state, ctrl})
-						if err != nil {
-							return nil, err
-						}
-					} else {
-						return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))
-					}
-				} else {
-					return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))
+			} else if callMM := vm.getMetafield(fn, MetaCall); !callMM.IsNil() {
+				// Any value with a __call metamethod (table, userdata, or a
+				// type metatable for strings, numbers, threads, ...) is a
+				// callable iterator: call __call(self, state, ctrl).
+				results, err = vm.ProtectedCall(callMM, []Value{fn, state, ctrl})
+				if err != nil {
+					return nil, err
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))

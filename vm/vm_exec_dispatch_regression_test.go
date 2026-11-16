@@ -366,3 +366,65 @@ func TestUserdataMethodIndexChainMatchesFieldAccess(t *testing.T) {
 		})
 	}
 }
+
+// OP_TFORCALL fell back to __call only for tables, so a callable userdata
+// (or a string/number/thread whose type metatable has __call) could be called
+// directly but not used as a generic-for iterator. Reference lvm.c runs the
+// iterator through luaD_call, which honours __call on any value.
+func TestGenericForCallsIteratorThroughCallMetamethod(t *testing.T) {
+	// __call(self, state, ctrl) counts the control variable up to 3.
+	callMM := NewNativeFunc(func(vm *VM) int {
+		var c int64
+		if v := vm.Get(3); v.IsInt() {
+			c = v.AsInt()
+		}
+		if c >= 3 {
+			return 0
+		}
+		vm.Set(0, NewInt(c+1))
+		return 1
+	})
+	const src = `local s = 0 for i in it, nil, 0 do s = s + i end return s`
+	run := func(t *testing.T, v *VM, it Value) {
+		t.Helper()
+		v.SetGlobal("it", it)
+		results, err := runWithVM(t, v, src)
+		if err != nil {
+			t.Fatalf("runtime error: %v", err)
+		}
+		if len(results) != 1 || results[0].AsInt() != 6 {
+			t.Errorf("sum = %v, want 6", results)
+		}
+	}
+
+	t.Run("userdata", func(t *testing.T) {
+		mt := NewEmptyTable()
+		mt.SetString(MetaCall, callMM)
+		run(t, New(), NewUserdataValue(nil, mt))
+	})
+	t.Run("string type metatable", func(t *testing.T) {
+		v := New()
+		smeta := NewEmptyTable()
+		smeta.SetString(MetaCall, callMM)
+		v.SetStringMeta(smeta)
+		run(t, v, NewString("iter"))
+	})
+	t.Run("thread type metatable", func(t *testing.T) {
+		v := New()
+		threadTbl := NewEmptyTable()
+		threadTbl.SetThread(true)
+		co := NewTable(threadTbl)
+		tmt := NewEmptyTable()
+		tmt.SetString(MetaCall, callMM)
+		v.SetTypeMeta(co, tmt)
+		run(t, v, co)
+	})
+	t.Run("no __call", func(t *testing.T) {
+		v := New()
+		v.SetGlobal("it", NewUserdataValue(nil, nil))
+		_, err := runWithVM(t, v, src)
+		if err == nil || !strings.Contains(err.Error(), "attempt to call a userdata value") {
+			t.Errorf("error = %v, want an attempt-to-call error", err)
+		}
+	})
+}
