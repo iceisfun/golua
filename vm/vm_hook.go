@@ -138,6 +138,19 @@ func (vm *VM) fireReturnHook() {
 	}
 }
 
+// hookReturnTo sets the line hook's tracking for a call returning into the
+// Lua frame caller, as rethook sets L->oldpc to the caller's pending
+// instruction: the rest of that instruction's line is not a new line, even
+// when the hook was installed while the callee ran.
+func (vm *VM) hookReturnTo(caller *callFrame) {
+	pc := caller.pc - 1
+	vm.lastHookPC = pc
+	vm.lastHookLine = -1
+	if lines := caller.closure.Proto.Lines; pc >= 0 && pc < len(lines) {
+		vm.lastHookLine = lines[pc]
+	}
+}
+
 // nativeHookArgs returns the arguments of the native frame at base as they
 // stand after its call hook, which may have changed them with
 // debug.setlocal. With no hook set it returns args unchanged.

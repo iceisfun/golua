@@ -154,9 +154,15 @@ func (vm *VM) call(closure *Closure, args []Value, nResults int) ([]Value, error
 		panic(&LuaError{Value: NewString(err.Error())})
 	}
 
-	// Restore lastHookLine/lastHookPC so the caller continues with its own line tracking
-	vm.lastHookLine = savedHookLine
-	vm.lastHookPC = savedHookPC
+	// Restore lastHookLine/lastHookPC so the caller continues with its own
+	// line tracking. With a hook set, a Lua caller resumes as rethook leaves
+	// it, which also covers a hook that the callee installed.
+	if n := len(vm.callStack); vm.hookMask != 0 && n > 1 && vm.callStack[n-2].closure != nil {
+		vm.hookReturnTo(&vm.callStack[n-2])
+	} else {
+		vm.lastHookLine = savedHookLine
+		vm.lastHookPC = savedHookPC
+	}
 
 	// Pop call frame and restore top
 	vm.callStack = vm.callStack[:len(vm.callStack)-1]
@@ -2581,12 +2587,9 @@ func (vm *VM) popInLoopFrame(results []Value) {
 		vm.stack[i] = Nil
 	}
 	// If a debug hook was enabled while the callee ran (it cannot have been
-	// active when the fast path was taken), reproduce rethook's "set 'oldpc'"
-	// correction: the reference sets L->oldpc to the caller's saved pc when
-	// returning into a Lua frame, so the instruction after the call is seen
-	// as a new line event.
+	// active when the fast path was taken), reproduce rethook's "set 'oldpc'".
 	if vm.hookMask != 0 {
-		vm.lastHookPC = caller.pc
+		vm.hookReturnTo(caller)
 	}
 }
 
@@ -2766,6 +2769,7 @@ dispatch:
 
 		// Pop the native frame
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]
+		vm.hookReturnTo(&vm.callStack[len(vm.callStack)-1])
 	} else {
 		// Check for __call metamethod
 		mm := vm.getMetafield(fn, MetaCall)
