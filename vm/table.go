@@ -106,10 +106,11 @@ type tableExtra struct {
 // tombstone, or for the first dead slot a new key can take — is cheaper than
 // building the slot index, and it keeps small tables, the overwhelming
 // majority, allocating exactly as they always have. Past it, the first insert
-// that has to consult the tombstones builds the slot index (see keyIndex) and
-// keeps it. A variable only so that tests can force either path and check the
-// two agree on the (observable) slot each insert takes; never written outside
-// tests.
+// that has to consult the tombstones, or the first promotion that has to turn
+// a key in the middle of t.keys into one, builds the slot index (see keyIndex)
+// and keeps it. A variable only so that tests can force either path and check
+// the two agree on the (observable) slot each insert takes; never written
+// outside tests.
 var deadIndexThreshold = 32
 
 // markDeadStr/markDeadInt/markDeadOther record a live->dead transition in the
@@ -309,13 +310,15 @@ func (t *Table) pruneFreeSlots(x *keyIndex) {
 //   - a traversal whose cursor hint stops answering (slotForTraversal);
 //   - an insert into a table holding tombstones, which must find either the
 //     inserted key's own tombstone or the first dead slot it can take
-//     (reviveDead*, reuseOrAppendKey).
+//     (reviveDead*, reuseOrAppendKey);
+//   - a promotion that moves a hash-resident integer key out of the middle of
+//     t.keys into the array part (removeLiveKey).
 //
 // Each of those scans is O(len(t.keys)) and is repeated by every operation of
 // its kind, so leaving them unindexed makes a table that is walked by nested
-// loops, or used as a FIFO queue or a growing set, quadratic in its size. A
-// table that is only filled and read never builds one, allocates nothing for
-// one, and pays nothing to keep one in step.
+// loops, used as a FIFO queue or a growing set, or filled evens-then-odds
+// quadratic in its size. A table that is only filled and read never builds
+// one, allocates nothing for one, and pays nothing to keep one in step.
 //
 // Once built, the mutation paths that own t.keys keep it current in O(1) per
 // key (appendKey, takeKeySlot, removeLiveKey) for as long as the table lives;
@@ -481,32 +484,35 @@ func (t *Table) buildKeyIndex() *keyIndex {
 }
 
 // keySlot returns the ordered-keys slot holding k — live entry or tombstone —
-// or ok=false when the table has no slot for k at all.
+// or ok=false when the table has no slot for k at all. It is the lookup for
+// the promotion paths (removeLiveKey); traversal steps use slotForTraversal.
 //
-// Three ways to answer, each confirmed against t.keys before it is believed,
-// so none of them can change what next() returns — only how long it takes to
-// say it:
+// Each way of answering is confirmed against t.keys before it is believed:
 //
-//   - the cursor hint, which a single sequential walk hits every step, and
-//     which costs nothing to be wrong about;
-//   - the slot index, if a traversal has had reason to build one. Being state
-//     on the table rather than on the walker, it serves any number of
-//     concurrent or interleaved traversals equally — including two goroutines
-//     walking the same table and so trading the single hint back and forth;
-//   - the scan, for a short keys slice, for a table with no index, and
-//     whenever both of the above miss.
-//
-// It never builds an index itself, so the promotion path that uses it
-// (removeLiveKey) cannot saddle a table with one.
+//   - the last slot, which is where a descending fill t[n], ..., t[2] leaves
+//     the key its final store t[1] drains next, every time;
+//   - the cursor hint, which costs nothing to be wrong about;
+//   - the slot index, built here on a long keys slice. A fill that leaves
+//     hash-resident keys in the middle of t.keys — evens then odds is the
+//     plain example — drains one of them per store, so a scan here would be
+//     repeated for every key the array absorbs;
+//   - the scan, for a short keys slice, and whenever all of the above miss.
 //
 // The scan deliberately covers the whole slice rather than a traversal window:
-// a key the table holds must be found whatever window an earlier, abandoned
-// traversal left behind, or next() would reject a key that is plainly present.
+// the key must be found whatever window an earlier, abandoned traversal left
+// behind.
 func (t *Table) keySlot(k Value) (int, bool) {
+	if n := len(t.keys); n > 0 && t.keys[n-1].RawEqual(k) {
+		return n - 1, true
+	}
 	if c := int(atomic.LoadInt32(&t.iterCur)) - 1; c >= 0 && c < len(t.keys) && t.keys[c].RawEqual(k) {
 		return c, true
 	}
-	if slot, ok := t.indexedSlot(k, t.keyTracking()); ok {
+	x := t.keyTracking()
+	if x == nil && len(t.keys) > deadIndexThreshold {
+		x = t.buildKeyIndex()
+	}
+	if slot, ok := t.indexedSlot(k, x); ok {
 		return slot, true
 	}
 	return t.scanForSlot(k)

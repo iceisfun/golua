@@ -300,6 +300,57 @@ func TestStringSetChurnScalesLinearly(t *testing.T) {
 		func(n int) time.Duration { return hashFill(strKeys(n)) })
 }
 
+// TestOutOfOrderFillScalesLinearly guards fills that leave every key in the
+// hash part until a final run of stores drains them into the array, one key
+// per store, from wherever they sit in t.keys. Power-of-two sizes are the
+// worst case: promotion only looks at power-of-two populations and declines a
+// table that is exactly half full, so nothing is promoted early.
+//
+//   - descending: t[n], ..., t[2] all land in the hash part and t[1] drains
+//     them, each from the end of t.keys;
+//   - evens then odds: t[2], t[4], ... land in the hash part, and each odd
+//     store drains the even key above it from the front of t.keys.
+//
+// Both used to find each drained key by scanning t.keys from slot 0.
+func TestOutOfOrderFillScalesLinearly(t *testing.T) {
+	check := func(tbl *Table, n int) {
+		if tbl.Len() != n || len(tbl.intHash) != 0 {
+			t.Fatalf("fill of %d left #t = %d, %d keys in the hash part", n, tbl.Len(), len(tbl.intHash))
+		}
+	}
+	fills := map[string]func(n int) time.Duration{
+		"descending": func(n int) time.Duration {
+			tbl := NewEmptyTable()
+			start := time.Now()
+			for i := n; i >= 1; i-- {
+				tbl.SetInt(i, NewInt(int64(i)))
+			}
+			d := time.Since(start)
+			check(tbl, n)
+			return d
+		},
+		"evens then odds": func(n int) time.Duration {
+			tbl := NewEmptyTable()
+			start := time.Now()
+			for i := 2; i <= n; i += 2 {
+				tbl.SetInt(i, NewInt(int64(i)))
+			}
+			for i := 1; i <= n; i += 2 {
+				tbl.SetInt(i, NewInt(int64(i)))
+			}
+			d := time.Since(start)
+			check(tbl, n)
+			return d
+		},
+	}
+	for name, fill := range fills {
+		t.Run(name, func(t *testing.T) {
+			checkCostIsLinear(t, name+" fill", 1<<16, fill,
+				func(n int) time.Duration { return hashFill(intHashKeys(n)) })
+		})
+	}
+}
+
 // --- OPT 2: tombstone index -----------------------------------------------
 
 // The three observable behaviours of tombstone reuse, each checked on both the
@@ -470,7 +521,8 @@ func TestTombstoneIndexMatchesLinearScan(t *testing.T) {
 // TestChurnPathsAgree is the same differential over the workloads the slot
 // index and its free list exist for: a FIFO queue in the hash part (where the
 // idiom's first pop leaves it), a string set growing under removals, integer
-// stores in and out of the array part, and traversals that
+// stores that drain hash-resident keys from the middle of t.keys into the
+// array part, and traversals that
 // clear part of what they visit as they go — which the manual allows, and
 // which must leave every next() step valid. Replayed with every lookup forced
 // through a scan and again with every lookup forced through the index, the
@@ -538,6 +590,9 @@ func TestChurnPathsAgree(t *testing.T) {
 			if err := tbl.checkInvariants(); err != nil {
 				t.Fatalf("threshold %d, step %d: %v", thr, step, err)
 			}
+			if step%500 == 499 {
+				log = append(log, drainFill(t, rng))
+			}
 		}
 		return append(log, fmt.Sprint(keyOrder(t, tbl)),
 			fmt.Sprintf("slots=%d dead=%d len=%d", len(tbl.keys), tbl.deadKeys, tbl.Len()))
@@ -553,6 +608,52 @@ func TestChurnPathsAgree(t *testing.T) {
 			t.Fatalf("entry %d differs between the scanned and indexed paths:\nscanned %s\nindexed %s", i, scanned[i], indexed[i])
 		}
 	}
+}
+
+// drainFill builds a table the evens-then-odds way, with some of the evens
+// deleted again and a string key among them, so that the odd stores drain
+// hash-resident keys from all over t.keys into the array part. A traversal is
+// parked part-way through the hash part while that happens and must resume
+// afterwards. It reports what the traversal and a fresh walk saw.
+func drainFill(t *testing.T, rng *rand.Rand) string {
+	t.Helper()
+	tbl := NewEmptyTable()
+	n := 200 + rng.Intn(200)
+	for i := 2; i <= n; i += 2 {
+		tbl.MustSet(NewInt(int64(i)), NewInt(int64(i)))
+		if i == n/2 {
+			tbl.MustSet(NewString("mid"), True)
+		}
+	}
+	for i := 2; i <= n; i += 2 {
+		if rng.Intn(6) == 0 {
+			tbl.MustSet(NewInt(int64(i)), Nil)
+		}
+	}
+	var parked []string
+	k, _ := tbl.MustNext(Nil)
+	for i := rng.Intn(n / 2); i > 0 && !k.IsNil(); i-- {
+		parked = append(parked, k.String())
+		k, _ = tbl.MustNext(k)
+	}
+	for i := 1; i <= n; i += 2 {
+		tbl.MustSet(NewInt(int64(i)), NewInt(int64(i)))
+		if err := tbl.checkInvariants(); err != nil {
+			t.Fatalf("drain fill of %d, store %d: %v", n, i, err)
+		}
+	}
+	for steps := 0; !k.IsNil(); steps++ {
+		if steps > 2*n+8 {
+			t.Fatal("parked traversal did not terminate after the drain")
+		}
+		parked = append(parked, k.String())
+		var err error
+		if k, _, err = tbl.Next(k); err != nil {
+			t.Fatalf("parked traversal could not resume after the drain: %v", err)
+		}
+	}
+	return fmt.Sprintf("parked %v; after %v; #t=%d slots=%d dead=%d",
+		parked, keyOrder(t, tbl), tbl.Len(), len(tbl.keys), tbl.deadKeys)
 }
 
 // TestTombstoneIndexReleasesReusedKeys checks the index tombstone handling
