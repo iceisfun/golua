@@ -225,8 +225,10 @@ func makeOsTime(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 			return 1
 		}
 
-		if !arg.IsTable() {
-			callerArgError(v, 1, "os.time", fmt.Sprintf("table expected, got %s", arg.Type()))
+		// A thread is backed by a *Table, so IsTable alone would let it
+		// through to the field reads below.
+		if !arg.IsTable() || arg.AsTable().IsThread() {
+			callerArgError(v, 1, "os.time", fmt.Sprintf("table expected, got %s", argTypeName(v, arg)))
 		}
 
 		dateTable := &vm.LuaTimeInput{}

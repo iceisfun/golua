@@ -22,3 +22,9 @@ pcall(setmetatable, t, co)
 assert(getmetatable(t) == nil)
 pcall(debug.setmetatable, t, co)
 assert(getmetatable(t) == nil)
+
+-- os.time reads date fields from its table argument; a thread is not one.
+expect_error("bad argument #1 to 'os.time' (table expected, got thread)", os.time, co)
+debug.setmetatable(co, {__name = "MyThread", __index = function() return 1 end})
+expect_error("bad argument #1 to 'os.time' (table expected, got MyThread)", os.time, co)
+debug.setmetatable(co, nil)
