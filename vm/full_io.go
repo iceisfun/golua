@@ -98,11 +98,11 @@ func (p *FullIoProvider) resolvePath(name string) (string, error) {
 // itself rather than on what it points at. C's remove() and rename() unlink and
 // move the LINK; dereferencing the last component here would silently destroy
 // the target instead, so only the parent chain is resolved.
-func (p *FullIoProvider) resolvePathLink(name string) (string, error) {
+func (p *FullIoProvider) resolvePathLink(op, name string) (string, error) {
 	if p.noJail {
 		return name, nil
 	}
-	return p.jail.resolveLink(name)
+	return p.jail.resolveLink(op, name)
 }
 
 // pathJail confines filesystem names to one or more root directories. Both the
@@ -265,12 +265,27 @@ func (j *pathJail) resolve(name string) (string, error) {
 
 // resolveLink is resolve for remove/rename: the parent chain is resolved (that
 // is what containment needs) but the final component is left alone, so the
-// operation hits the link and not the file it points at.
-func (j *pathJail) resolveLink(name string) (string, error) {
+// operation hits the link and not the file it points at. op names the caller
+// ("remove" or "rename") in the errors it builds.
+//
+// Two kinds of name are answered here without touching the filesystem, because
+// lexical cleaning would otherwise turn them into a different entry:
+//
+//   - A name whose final component is "." or ".." ("." "./" "x/.." "e/.") names
+//     a directory through a link the kernel never lets remove/rename act on.
+//     Cleaning it would yield a real entry — the jail root for "." and "x/..",
+//     or the parent for "a/b/.." — and os.Remove would delete it once empty.
+//   - A name that resolves to a jail root (or the runtime's temp directory) by
+//     any other spelling ("../root", the absolute root): the root is the
+//     sandbox boundary, not an entry inside it.
+func (j *pathJail) resolveLink(op, name string) (string, error) {
 	if name == "" {
 		// The empty name would otherwise anchor to the jail root itself, and
 		// remove/rename would act on the root directory. C reports ENOENT.
-		return "", &fs.PathError{Op: "remove", Path: name, Err: syscall.ENOENT}
+		return "", &fs.PathError{Op: op, Path: name, Err: syscall.ENOENT}
+	}
+	if err := j.dotLinkError(op, name); err != nil {
+		return "", err
 	}
 	candidate, err := j.candidate(name)
 	if err != nil {
@@ -278,19 +293,94 @@ func (j *pathJail) resolveLink(name string) (string, error) {
 	}
 	parent := filepath.Dir(candidate)
 	base := filepath.Base(candidate)
+	var resolved string
 	if parent == candidate || base == "." || base == string(filepath.Separator) {
-		// A filesystem root or a bare "." has no final component to hold back.
-		return j.resolve(name)
+		// A filesystem root has no final component to hold back.
+		resolved, err = j.resolve(name)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		realParent, err := j.resolveReal(parent)
+		if err != nil {
+			return "", j.resolveError(name, candidate, err)
+		}
+		resolved = filepath.Join(realParent, base)
+		if !j.contains(resolved) {
+			return "", accessDenied(name)
+		}
 	}
-	realParent, err := j.resolveReal(parent)
-	if err != nil {
-		return "", j.resolveError(name, candidate, err)
-	}
-	resolved := filepath.Join(realParent, base)
-	if !j.contains(resolved) {
+	if j.isRoot(resolved) {
 		return "", accessDenied(name)
 	}
 	return resolved, nil
+}
+
+// dotLinkError answers remove/rename of a name whose final component (after
+// any trailing separators) is "." or "..", the way the kernel does: the
+// directory part must still resolve, and must be a directory, but the
+// operation itself always fails — rmdir reports EINVAL for "." and ENOTEMPTY
+// for "..", and rename reports EBUSY for either. nil means name is an
+// ordinary one.
+func (j *pathJail) dotLinkError(op, name string) error {
+	trimmed := name
+	for len(trimmed) > 1 && os.IsPathSeparator(trimmed[len(trimmed)-1]) {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	last := filepath.Base(trimmed)
+	if last != "." && last != ".." {
+		return nil
+	}
+	dir := trimmed[:len(trimmed)-len(last)]
+	if dir == "" {
+		dir = "."
+	}
+	resolvedDir, err := j.resolve(dir)
+	if err != nil {
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			return &fs.PathError{Op: op, Path: name, Err: pe.Err}
+		}
+		return err
+	}
+	if fi, err := os.Stat(resolvedDir); err != nil {
+		return &fs.PathError{Op: op, Path: name, Err: underlyingErrno(err)}
+	} else if !fi.IsDir() {
+		return &fs.PathError{Op: op, Path: name, Err: syscall.ENOTDIR}
+	}
+	errno := syscall.EBUSY
+	if op == "remove" {
+		errno = syscall.EINVAL
+		if last == ".." {
+			errno = syscall.ENOTEMPTY
+		}
+	}
+	return &fs.PathError{Op: op, Path: name, Err: errno}
+}
+
+// underlyingErrno strips the PathError wrapper so the caller's own name can be
+// put around the cause.
+func underlyingErrno(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	return err
+}
+
+// isRoot reports whether an already-resolved path is one of the jail's roots or
+// the runtime's temp directory itself.
+func (j *pathJail) isRoot(path string) bool {
+	j.mu.Lock()
+	for _, root := range j.roots {
+		if root.path == path {
+			j.mu.Unlock()
+			return true
+		}
+	}
+	j.mu.Unlock()
+	tmp := runtimeTempRoot()
+	return tmp != "" && tmp == path
 }
 
 // resolveError decides what a resolution failure looks like to the caller. A
@@ -683,7 +773,7 @@ func mintTmpName(dir string) (string, error) {
 // followed (C's remove() behaves that way, and a script maintaining links
 // inside its own data root must not have their targets destroyed).
 func (p *FullIoProvider) Remove(ctx context.Context, name string) error {
-	path, err := p.resolvePathLink(name)
+	path, err := p.resolvePathLink("remove", name)
 	if err != nil {
 		return err
 	}
@@ -717,11 +807,11 @@ func (p *FullIoProvider) TmpFile(ctx context.Context) (LuaFile, error) {
 // endpoint is the link itself — C's rename() moves the link, leaving whatever
 // it points at where it is.
 func (p *FullIoProvider) Rename(ctx context.Context, oldname, newname string) error {
-	oldpath, err := p.resolvePathLink(oldname)
+	oldpath, err := p.resolvePathLink("rename", oldname)
 	if err != nil {
 		return err
 	}
-	newpath, err := p.resolvePathLink(newname)
+	newpath, err := p.resolvePathLink("rename", newname)
 	if err != nil {
 		return err
 	}
