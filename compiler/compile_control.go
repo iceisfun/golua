@@ -719,11 +719,7 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	bodyEnd := tforCallPC // exclusive: body ends just before TFORCALL
 	for i := 0; i < nVars; i++ {
 		lv := &fs.locals[loopVarStart+i]
-		fs.proto.Locals = append(fs.proto.Locals, LocalVar{
-			Name:    lv.name,
-			StartPC: lv.startPC,
-			EndPC:   bodyEnd,
-		})
+		fs.addLocVar(lv, bodyEnd)
 		// Mark as already emitted so leaveScope doesn't emit again
 		lv.startPC = -1
 	}

@@ -321,6 +321,10 @@ type funcState struct {
 	upvalLookup map[string]int // name → index in upvalues
 	constLookup map[Value]int  // deduplication map for constants
 	globalEnv   globalEnv      // Lua 5.5 global declaration tracking
+
+	// locRegs holds the register of each proto.Locals entry, index for
+	// index, for closeFuncState to order the entries (see addLocVar).
+	locRegs []int
 }
 
 // ---------------------------------------------------------------------------
@@ -516,25 +520,52 @@ func (c *compiler) closeFuncState() *Proto {
 	// Close all remaining locals (skip inlined <const>: no debug entry)
 	for i := range fs.locals {
 		if fs.locals[i].startPC >= 0 && !fs.locals[i].inlined {
-			p.Locals = append(p.Locals, LocalVar{
-				Name:    fs.locals[i].name,
-				StartPC: fs.locals[i].startPC,
-				EndPC:   len(p.Code),
-			})
+			fs.addLocVar(&fs.locals[i], len(p.Code))
 		}
 	}
 
-	// Sort locals by StartPC to match Lua 5.4's expected ordering.
-	// Scope-close appends locals in reverse register order; sorting
-	// restores the register-order invariant that localName relies on.
-	sort.SliceStable(p.Locals, func(i, j int) bool {
-		return p.Locals[i].StartPC < p.Locals[j].StartPC
-	})
+	// Entries are added as scopes close, inner scopes first. Reference Lua
+	// lists them in activation order, which localName relies on to map the
+	// active entries to registers: order by StartPC, and locals activated at
+	// the same pc by register. That happens when nothing is emitted between
+	// them, as for `local a = 1 do local function f() end end`, whose f
+	// is activated before its CLOSURE.
+	sort.Stable(locVarOrder{p.Locals, fs.locRegs})
 
 	p.MaxStack = fs.maxReg
 	p.Upvalues = fs.upvalues
 	c.fs = fs.parent
 	return p
+}
+
+// addLocVar adds the debug entry of lv, live until endPC.
+func (fs *funcState) addLocVar(lv *localVar, endPC int) {
+	fs.proto.Locals = append(fs.proto.Locals, LocalVar{
+		Name:    lv.name,
+		StartPC: lv.startPC,
+		EndPC:   endPC,
+	})
+	fs.locRegs = append(fs.locRegs, lv.reg)
+}
+
+// locVarOrder sorts debug entries by StartPC, then by register.
+type locVarOrder struct {
+	vars []LocalVar
+	regs []int
+}
+
+func (o locVarOrder) Len() int { return len(o.vars) }
+
+func (o locVarOrder) Less(i, j int) bool {
+	if o.vars[i].StartPC != o.vars[j].StartPC {
+		return o.vars[i].StartPC < o.vars[j].StartPC
+	}
+	return o.regs[i] < o.regs[j]
+}
+
+func (o locVarOrder) Swap(i, j int) {
+	o.vars[i], o.vars[j] = o.vars[j], o.vars[i]
+	o.regs[i], o.regs[j] = o.regs[j], o.regs[i]
 }
 
 // regTop returns the first register past all active local variables.
@@ -1116,11 +1147,7 @@ func (c *compiler) leaveScope(line int) {
 		endPC := fs.pc()
 		for i := start; i < len(fs.locals); i++ {
 			if fs.locals[i].startPC >= 0 && !fs.locals[i].inlined {
-				fs.proto.Locals = append(fs.proto.Locals, LocalVar{
-					Name:    fs.locals[i].name,
-					StartPC: fs.locals[i].startPC,
-					EndPC:   endPC,
-				})
+				fs.addLocVar(&fs.locals[i], endPC)
 			}
 		}
 		fs.locals = fs.locals[:start]
