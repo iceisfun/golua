@@ -281,3 +281,88 @@ func TestStringMethodIndexChainMatchesFieldAccess(t *testing.T) {
 		})
 	}
 }
+
+// OP_SELF on userdata handled only a table or function __index and raised a
+// bare "attempt to index a userdata value" for anything else, so u:len() with
+// __index = "str" failed while u.len resolved string.len. The error also
+// dropped the __name type and the variable name that the field path reports.
+func TestUserdataMethodIndexChainMatchesFieldAccess(t *testing.T) {
+	newUd := func(index Value) Value {
+		mt := NewEmptyTable()
+		mt.SetString("__name", NewString("Obj"))
+		if !index.IsNil() {
+			mt.SetString(MetaIndex, index)
+		}
+		return NewUserdataValue(nil, mt)
+	}
+
+	// A string __index chains through the string metatable for both forms.
+	for _, src := range []string{`return u:len()`, `return u.len()`} {
+		v := New()
+		smeta := NewEmptyTable()
+		lib := NewEmptyTable()
+		lib.SetString("len", NewNativeFunc(func(vm *VM) int {
+			vm.Set(0, NewString("from-string-lib"))
+			return 1
+		}))
+		smeta.SetString(MetaIndex, NewTable(lib))
+		v.SetStringMeta(smeta)
+		v.SetGlobal("u", newUd(NewString("str")))
+		results, err := runWithVM(t, v, src)
+		if err != nil {
+			t.Fatalf("%s: %v", src, err)
+		}
+		if len(results) != 1 || results[0].AsString() != "from-string-lib" {
+			t.Errorf("%s = %v, want \"from-string-lib\"", src, results)
+		}
+	}
+
+	// A thread __index chains through the thread type metatable rather than
+	// reading the thread's empty backing table.
+	{
+		v := New()
+		threadTbl := NewEmptyTable()
+		threadTbl.SetThread(true)
+		co := NewTable(threadTbl)
+		methods := NewEmptyTable()
+		methods.SetString("foo", NewNativeFunc(func(vm *VM) int {
+			vm.Set(0, NewString("from-thread-meta"))
+			return 1
+		}))
+		tmt := NewEmptyTable()
+		tmt.SetString(MetaIndex, NewTable(methods))
+		v.SetTypeMeta(co, tmt)
+		v.SetGlobal("u", newUd(co))
+		results, err := runWithVM(t, v, `return u:foo()`)
+		if err != nil {
+			t.Fatalf("u:foo() with __index = thread: %v", err)
+		}
+		if len(results) != 1 || results[0].AsString() != "from-thread-meta" {
+			t.Errorf("u:foo() = %v, want \"from-thread-meta\"", results)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		index Value
+		want  string
+	}{
+		{"number __index", NewInt(5), "attempt to index a number value"},
+		{"missing __index", Nil, "attempt to index a Obj value (local 'u')"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, src := range []string{`local u = ud return u:foo()`, `local u = ud return u.foo`} {
+				v := New()
+				v.SetGlobal("ud", newUd(tc.index))
+				_, err := runWithVM(t, v, src)
+				if err == nil {
+					t.Fatalf("%s: expected an error", src)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("%s: error = %v, want it to contain %q", src, err, tc.want)
+				}
+			}
+		})
+	}
+}

@@ -719,31 +719,32 @@ mainLoop:
 				consts = frame.closure.ConstValues()
 				vm.stack[frame.base+a] = val
 			} else if ud := table.AsUserdata(); ud != nil {
-				// Userdata method call - use __index from userdata metatable
+				// Userdata method call: a table __index is read directly (the
+				// common case for host objects); anything else runs the same
+				// luaV_finishget chain as the plain field path.
+				var index Value
 				if mt := ud.Metatable(); mt != nil {
-					index := mt.Get(metaIndex)
-					if index.IsTable() {
-						val, err := vm.tableGetString(index.AsTable(), key)
-						if err != nil {
-							return nil, err
-						}
-						vm.stack[frame.base+a] = val
-					} else if index.IsFunction() || index.IsNativeFunc() {
-						val, err := vm.callMetamethod("index", index, table, NewString(key))
-						if err != nil {
-							return nil, err
-						}
-						vm.stack[frame.base+a] = val
-						frame = &vm.callStack[len(vm.callStack)-1]
-						proto = frame.closure.Proto
-						code = proto.Code
-						consts = frame.closure.ConstValues()
-					} else {
-						return nil, vm.runtimeError("attempt to index a userdata value")
-					}
-				} else {
-					return nil, vm.runtimeError("attempt to index a userdata value")
+					index = mt.Get(metaIndex)
 				}
+				if index.IsNil() {
+					return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
+				}
+				var val Value
+				var err error
+				if index.IsTable() && !valueIsThread(index) {
+					val, err = vm.tableGetString(index.AsTable(), key)
+				} else {
+					val, err = vm.resolveIndex(index, table, NewString(key))
+				}
+				if err != nil {
+					return nil, err
+				}
+				// Resolving the chain can call back into Lua and grow the call stack.
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
+				vm.stack[frame.base+a] = val
 			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewString(key))
 				if err != nil {
