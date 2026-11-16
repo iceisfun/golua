@@ -2187,6 +2187,19 @@ mainLoop:
 				// Any value with a __call metamethod (table, userdata, or a
 				// type metatable for strings, numbers, threads, ...) is a
 				// callable iterator: call __call(self, state, ctrl).
+				//
+				// Walk the rest of the __call chain first: when it ends at a
+				// value that is not callable, report that value with the
+				// for-iterator context, as reference luaD_tryfuncTM does via
+				// funcnamefromcode. A chain that is merely too long is left
+				// to ProtectedCall, which raises its own error.
+				for cur, depth := callMM, 1; depth <= MaxCallChainDepth && !cur.IsFunction() && !cur.IsNativeFunc(); depth++ {
+					next := vm.getMetafield(cur, MetaCall)
+					if next.IsNil() {
+						return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(cur))
+					}
+					cur = next
+				}
 				results, err = vm.ProtectedCall(callMM, []Value{fn, state, ctrl})
 				if err != nil {
 					return nil, err

@@ -428,3 +428,38 @@ func TestGenericForCallsIteratorThroughCallMetamethod(t *testing.T) {
 		}
 	})
 }
+
+// When an iterator's __call (or a later link of its __call chain) was not
+// callable, OP_TFORCALL handed it to ProtectedCall, whose generic error lost
+// the "(for iterator 'for iterator')" context. Reference luaD_tryfuncTM
+// reports the first non-callable link with that context.
+func TestGenericForNonCallableCallMetamethodKeepsIteratorContext(t *testing.T) {
+	const src = `for x in it do end`
+	const suffix = "(for iterator 'for iterator')"
+	t.Run("__call is a number", func(t *testing.T) {
+		v := New()
+		mt := NewEmptyTable()
+		mt.SetString(MetaCall, NewInt(5))
+		v.SetGlobal("it", NewUserdataValue(nil, mt))
+		_, err := runWithVM(t, v, src)
+		if err == nil || !strings.Contains(err.Error(), "attempt to call a number value "+suffix) {
+			t.Errorf("error = %v, want a number call error with %s", err, suffix)
+		}
+	})
+	t.Run("chained __call ends at a boolean", func(t *testing.T) {
+		v := New()
+		innerMT := NewEmptyTable()
+		innerMT.SetString(MetaCall, True)
+		inner := NewEmptyTable()
+		inner.SetMetatable(innerMT)
+		outerMT := NewEmptyTable()
+		outerMT.SetString(MetaCall, NewTable(inner))
+		outer := NewEmptyTable()
+		outer.SetMetatable(outerMT)
+		v.SetGlobal("it", NewTable(outer))
+		_, err := runWithVM(t, v, src)
+		if err == nil || !strings.Contains(err.Error(), "attempt to call a boolean value "+suffix) {
+			t.Errorf("error = %v, want a boolean call error with %s", err, suffix)
+		}
+	})
+}
