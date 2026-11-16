@@ -118,7 +118,10 @@ type VM struct {
 	pendingCallName              string
 	pendingCallNameWhat          string
 	pendingSuppressTracebackName bool
-	pendingExtraArgs             int // Extra args count from __call chains, consumed by vm.call()
+	// pendingNoHooks makes protectedCall's next native frame fire no call
+	// or return hook; hostProtect sets it for its internal wrapper frame.
+	pendingNoHooks   bool
+	pendingExtraArgs int // Extra args count from __call chains, consumed by vm.call()
 
 	// Message handler for xpcall: called inside ProtectedCall's recovery
 	// BEFORE the call stack is truncated, so debug.traceback can see
@@ -817,6 +820,8 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 			suppressTracebackName: vm.pendingSuppressTracebackName,
 		})
 		vm.pendingSuppressTracebackName = false
+		noHooks := vm.pendingNoHooks
+		vm.pendingNoHooks = false
 
 		// Advance vm.top past the arguments so that any metamethod
 		// calls from within the native function (e.g. __lt in math.max)
@@ -824,13 +829,17 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 		vm.top = base + 1 + len(args)
 
 		// Fire call hook after frame is pushed (matching doCall behavior)
-		vm.fireCallHook()
+		if !noHooks {
+			vm.fireCallHook()
+		}
 
 		// Call native function
 		nResults := nf(vm)
 
 		// Fire return hook before popping the frame
-		vm.fireReturnHook()
+		if !noHooks {
+			vm.fireReturnHook()
+		}
 
 		// Pop the call frame
 		vm.callStack = vm.callStack[:len(vm.callStack)-1]

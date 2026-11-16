@@ -626,13 +626,22 @@ func (vm *VM) outsideCall() bool {
 // hostProtect runs op under a protected call and returns an error raised in
 // it as op's error. op runs with a call in progress, so an exported method can
 // pass a closure that calls itself back.
+//
+// The wrapper frame is internal: like lua_gettable called from C, the
+// operation itself fires no call or return hook (a metamethod it runs still
+// does), and an error leaves no call-stack snapshot behind for a later Run's
+// traceback to pick up in place of its own.
 func hostProtect[T any](vm *VM, op func() (T, error)) (T, error) {
 	var res T
 	var opErr error
+	savedErrorCallStack := vm.lastErrorCallStack
+	vm.pendingNoHooks = true
 	_, err := vm.protectedCall(NewNativeFunc(func(*VM) int {
 		res, opErr = op()
 		return 0
 	}), nil)
+	vm.pendingNoHooks = false
+	vm.lastErrorCallStack = savedErrorCallStack
 	if err != nil {
 		var zero T
 		return zero, err
