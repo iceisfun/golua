@@ -163,3 +163,37 @@ print(table.concat(out, " "), 1/Z, 1.0|2, math.type(2.0<<1), -(2^10000))`)
 		t.Fatalf("constant folding of and/or operands: got %q want %q", got, want)
 	}
 }
+
+// The reduction does not need a bare constant on the left: reference reduces
+// `L and x` (`L or x`) to x whenever L's final expression is a constant that
+// decides the operator and no false (true) jump of L is pending, even if L
+// emits code, since every path through L then continues to x. L still runs
+// first. The last line is a control: `true or a` ends in a, not a constant,
+// so reference tests it and snapshots. Expected output is reference Lua 5.5's.
+func TestDecidedShortCircuitWithCodeReadLive(t *testing.T) {
+	got := runLuaCapture(t, `
+local a = 1
+local n = 0
+local function f() a = a + 1 return a end
+local function g() n = n + 1 return n end
+local out = {}
+a = 1 out[#out+1] = tostring(((a or 's') and a) == f())
+a = 1 out[#out+1] = tostring(((g() and ('s' and false)) or a) == f())
+a = 1 out[#out+1] = tostring(((true or 0) and a) == f())
+a = 1 out[#out+1] = tostring((not (a or 0.0) or a) == f())
+a = 1 out[#out+1] = tostring((((a == 1) or 1) and a) == f())
+a = 1 out[#out+1] = tostring(((true or a) and a) == f())
+local u = {}
+local old = u
+local function r() u = {} return 9 end
+((g() or 1) and u).k = r()
+local k = "a"
+local v = {}
+local function s() k = "b" return 5 end
+v[(k or 1) and k] = s()
+print(table.concat(out, " "), n, old.k, u.k, v.a, v.b)`)
+	want := "true true true true true false\t2\tnil\t9\tnil\t5"
+	if got != want {
+		t.Fatalf("decided and/or operand snapshotted: got %q want %q", got, want)
+	}
+}

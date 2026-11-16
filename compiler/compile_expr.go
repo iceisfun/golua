@@ -440,12 +440,8 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 // "(temporary)" slot visible to debug.getlocal.
 func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 	fs := c.fs
-	if name, ok := bareOperand(fs, expr).(*ast.NameExpr); ok {
-		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
-			if localReg, ok := fs.lookupLocal(name.Name); ok {
-				return localReg, false
-			}
-		}
+	if localReg, ok := plainLocalReg(fs, expr); ok {
+		return localReg, false
 	}
 	reg = fs.reserveReg()
 	c.compileExprToReg(expr, reg)
@@ -457,15 +453,36 @@ func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 // instruction operand), matching operandToReg's in-place case. Returns ok=false
 // otherwise. Used to read a binary/comparison left operand live at execution
 // time instead of snapshotting it into a temp with a MOVE.
+//
+// When expr reaches the local through and/or operators that reduce to it (see
+// bareOperand), the code of their left operands is emitted here, before ok is
+// returned, so callers must use the register right away.
 func plainLocalReg(fs *funcState, expr ast.Expr) (int, bool) {
-	if name, ok := bareOperand(fs, expr).(*ast.NameExpr); ok {
-		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
-			if localReg, ok := fs.lookupLocal(name.Name); ok {
-				return localReg, true
-			}
-		}
+	operand, effects := bareOperand(fs, expr)
+	name, ok := operand.(*ast.NameExpr)
+	if !ok {
+		return 0, false
 	}
-	return 0, false
+	if _, inlined := lookupInlinedAny(fs, name.Name); inlined {
+		return 0, false
+	}
+	localReg, ok := fs.lookupLocal(name.Name)
+	if !ok {
+		return 0, false
+	}
+	fs.c.compileForEffect(effects)
+	return localReg, true
+}
+
+// compileForEffect compiles each expression for its side effects alone,
+// discarding the value in a scratch register.
+func (c *compiler) compileForEffect(exprs []ast.Expr) {
+	fs := c.fs
+	for _, e := range exprs {
+		tmp := fs.reserveReg()
+		c.compileExprToReg(e, tmp)
+		fs.freeReg = tmp
+	}
 }
 
 // unparen strips redundant parentheses from an expression. In reference Lua
@@ -487,90 +504,134 @@ func unparen(expr ast.Expr) ast.Expr {
 	}
 }
 
-// bareOperand is unparen that also sees through a short-circuit operator whose
-// left operand is a constant that decides it: `K and x` with K always true,
-// and `K or x` with K always false. Reference luaK_goiftrue/goiffalse emit no
-// test for such a constant, so the whole expression is just x — a local x
-// stays in its register and is read live, so `(nil or a) + f()` must see the
-// a that f() leaves behind, exactly like `(a) + f()`.
-func bareOperand(fs *funcState, expr ast.Expr) ast.Expr {
+// bareOperand is unparen that also sees through a short-circuit operator that
+// reduces to its right operand (see reducesToRight): `L and x` or `L or x` is
+// then just x, so a local x stays in its register and is read live, and
+// `(nil or a) + f()` must see the a that f() leaves behind, exactly like
+// `(a) + f()`. It returns the operand and, in evaluation order, the left
+// operands passed over that still emit code: they run before the operand is
+// read, so a caller that reads the operand in place must compile them first
+// (compileForEffect); one that compiles the whole expression ignores them.
+func bareOperand(fs *funcState, expr ast.Expr) (ast.Expr, []ast.Expr) {
+	var effects []ast.Expr
 	for {
 		expr = unparen(expr)
 		e, ok := expr.(*ast.BinopExpr)
-		if !ok || (e.Op != "and" && e.Op != "or") {
-			return expr
+		if !ok || !fs.c.reducesToRight(e) {
+			return expr, effects
 		}
-		truthy, ok := fs.c.constTruth(e.Left)
-		if !ok || truthy != (e.Op == "and") {
-			return expr
+		if fs.c.shapeOf(e.Left).code {
+			effects = append(effects, e.Left)
 		}
 		expr = e.Right
 	}
 }
 
-// constTruth reports the truthiness of expr when it is a compile-time
-// constant: nil, a boolean, a number or string literal, a folded arithmetic
-// constant, an inlined <const> local, `not` applied to one of these, or a
-// short-circuit operator that a constant left operand reduces to a constant
-// right one (`nil or false`). These are the operands reference Lua's
-// goiftrue/goiffalse resolve without code.
-func (c *compiler) constTruth(expr ast.Expr) (truthy, ok bool) {
+// exprShape is what reference Lua's expdesc says about an expression once it
+// is parsed, as far as and/or need it: whether its final kind is a constant
+// (nil, a boolean, a number or a string) and, if so, its truthiness; whether
+// it carries pending jumps taken when it is true (t) or false (f), which leave
+// with a value other than the final kind's; and whether it emits any code.
+type exprShape struct {
+	isConst bool
+	truthy  bool
+	t, f    bool
+	code    bool
+}
+
+// reducesToRight reports whether the short-circuit operator e is just its
+// right operand. Reference goiftrue (for and) emits no test when the left
+// operand's final kind is a constant that is always true, patches the left
+// operand's true jumps to the right operand and carries its false jumps into
+// the result; goiffalse mirrors this for or. So when no false jump (and) or
+// true jump (or) is pending either, every path through the left operand
+// arrives at the right operand, and the expression is exactly that operand
+// with no jumps of its own: `(nil or a)`, `(K and a)` and also
+// `((x or 's') and a)`, whose left operand emits a test but always ends in a
+// true constant.
+func (c *compiler) reducesToRight(e *ast.BinopExpr) bool {
+	l := c.shapeOf(e.Left)
+	switch e.Op {
+	case "and":
+		return l.isConst && l.truthy && !l.f
+	case "or":
+		return l.isConst && !l.truthy && !l.t
+	}
+	return false
+}
+
+// shapeOf computes the exprShape of expr. and/or chains are as long as the
+// source and compileAnd/compileOr ask again at each link, so they are settled
+// along their left spine with a slice and memoized, rather than by recursion
+// or by re-walking.
+func (c *compiler) shapeOf(expr ast.Expr) exprShape {
 	expr = unparen(expr)
 	top, isShortCircuit := expr.(*ast.BinopExpr)
 	if !isShortCircuit || (top.Op != "and" && top.Op != "or") {
-		return c.leafTruth(expr)
+		return c.leafShape(expr)
 	}
-	if r, done := c.truthMemo[top]; done {
-		return r.truthy, r.ok
+	if s, done := c.shapeMemo[top]; done {
+		return s
 	}
-	// Walk the left spine with a slice and settle it bottom-up, memoizing
-	// every link: chains are left-associative and as long as the source, and
-	// compileAnd/compileOr ask again at each link, so recursion or re-walking
-	// would cost a Go frame per link or quadratic time.
 	spine := []*ast.BinopExpr{top}
 	for {
 		left, ok := unparen(spine[len(spine)-1].Left).(*ast.BinopExpr)
 		if !ok || (left.Op != "and" && left.Op != "or") {
 			break
 		}
-		if _, done := c.truthMemo[left]; done {
+		if _, done := c.shapeMemo[left]; done {
 			break
 		}
 		spine = append(spine, left)
 	}
 	for i := len(spine) - 1; i >= 0; i-- {
 		n := spine[i]
-		var r truthResult
-		if lt, lok := c.constTruth(n.Left); lok && lt == (n.Op == "and") {
-			r.truthy, r.ok = c.constTruth(n.Right)
+		l, s := c.shapeOf(n.Left), c.shapeOf(n.Right)
+		// The result is the right operand's expdesc plus the left operand's
+		// jumps that survive the operator, and the jump the operator itself
+		// emits unless the left operand decides it.
+		if n.Op == "and" {
+			decided := l.isConst && l.truthy
+			s.f = s.f || l.f || !decided
+			s.code = s.code || l.code || !decided
+		} else {
+			decided := l.isConst && !l.truthy
+			s.t = s.t || l.t || !decided
+			s.code = s.code || l.code || !decided
 		}
-		c.truthMemo[n] = r
+		c.shapeMemo[n] = s
 	}
-	r := c.truthMemo[top]
-	return r.truthy, r.ok
+	return c.shapeMemo[top]
 }
 
-// leafTruth is constTruth for an operand that is not itself a short-circuit
-// operator.
-func (c *compiler) leafTruth(expr ast.Expr) (truthy, ok bool) {
+// leafShape is shapeOf for an operand that is not itself a short-circuit
+// operator: a constant (literal, folded arithmetic or inlined <const> local),
+// `not` applied to something, or anything else, which emits code.
+func (c *compiler) leafShape(expr ast.Expr) exprShape {
 	switch e := expr.(type) {
 	case *ast.NameExpr:
 		if v, inlined := lookupInlinedAny(c.fs, e.Name); inlined {
-			return v.Type != ValNil && v.Type != ValFalse, true
+			return exprShape{isConst: true, truthy: v.Type != ValNil && v.Type != ValFalse}
 		}
-		return false, false
+		return exprShape{code: true}
 	case *ast.UnopExpr:
 		if e.Op == "not" {
-			if t, ok := c.constTruth(e.Operand); ok {
-				return !t, true
+			// Reference codenot flips a constant without code, emits NOT
+			// for anything else, and swaps the jump lists either way.
+			x := c.shapeOf(e.Operand)
+			return exprShape{
+				isConst: x.isConst,
+				truthy:  !x.truthy,
+				t:       x.f,
+				f:       x.t,
+				code:    x.code || !x.isConst,
 			}
-			return false, false
 		}
 	}
 	if v, ok := c.tryFoldConstScalar(expr); ok {
-		return v.Type != ValNil && v.Type != ValFalse, true
+		return exprShape{isConst: true, truthy: v.Type != ValNil && v.Type != ValFalse}
 	}
-	return false, false
+	return exprShape{code: true}
 }
 
 // smallIntConst checks whether an expression is a small integer constant
@@ -1534,10 +1595,10 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	line := e.P.Line
 
-	// `K and x` with K a constant that is always true is just x: reference
-	// goiftrue emits no test for it (see bareOperand).
-	if truthy, ok := c.constTruth(e.Left); ok && truthy {
-		c.compileExprToReg(e.Right, reg)
+	// `L and x` with L ending in a constant that is always true is just x:
+	// reference goiftrue emits no test for it (see reducesToRight).
+	if c.reducesToRight(e) {
+		c.compileReducedToRight(e, reg, pend)
 		return
 	}
 
@@ -1593,6 +1654,39 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int, pend *[]pendItem) {
 	c.finishTest(e, reg, line, 0)
 }
 
+// compileReducedToRight compiles a short-circuit operator that is just its
+// right operand (reducesToRight). The left operand still runs for its effects
+// when it emits code, and every path through it continues to the right
+// operand, whose value lands in reg.
+func (c *compiler) compileReducedToRight(e *ast.BinopExpr, reg int, pend *[]pendItem) {
+	fs := c.fs
+	if !c.shapeOf(e.Left).code {
+		c.compileExprToReg(e.Right, reg)
+		return
+	}
+	// A live local target must keep its value until the right operand has
+	// read it, so the left operand then goes to a scratch temp (as in
+	// compileAnd); a temporary target is used in place.
+	tmp := reg
+	if reg < fs.nActVar {
+		tmp = fs.reserveReg()
+	}
+	rest := func() {
+		if tmp == reg {
+			fs.freeReg = reg + 1
+		} else {
+			fs.freeReg = tmp
+		}
+		c.compileExprToReg(e.Right, reg)
+	}
+	if spineLink(e.Left) {
+		c.deferLeft(e.Left, tmp, pend, rest)
+		return
+	}
+	c.compileExprToReg(e.Left, tmp)
+	rest()
+}
+
 // finishTestSet completes a short-circuit operator whose left operand was
 // discharged into a temporary because the target register holds a live local.
 // k selects the sense: 0 for `and`, 1 for `or`.
@@ -1628,10 +1722,10 @@ func (c *compiler) compileOr(e *ast.BinopExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	line := e.P.Line
 
-	// `K or x` with K a constant that is always false is just x: reference
-	// goiffalse emits no test for it (see bareOperand).
-	if truthy, ok := c.constTruth(e.Left); ok && !truthy {
-		c.compileExprToReg(e.Right, reg)
+	// `L or x` with L ending in a constant that is always false is just x:
+	// reference goiffalse emits no test for it (see reducesToRight).
+	if c.reducesToRight(e) {
+		c.compileReducedToRight(e, reg, pend)
 		return
 	}
 
@@ -2090,10 +2184,8 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int, pend *[]pendItem)
 	fs := c.fs
 	// When the table is a local variable, use its register directly.
 	tableReg := -1
-	if name, ok := bareOperand(fs, e.Table).(*ast.NameExpr); ok {
-		if localReg, found := fs.lookupLocal(name.Name); found {
-			tableReg = localReg
-		}
+	if localReg, ok := plainLocalReg(fs, e.Table); ok {
+		tableReg = localReg
 	}
 	needFree := false
 	if tableReg < 0 {
@@ -2150,12 +2242,16 @@ func (c *compiler) upvalueTableKeyFirst(table, key ast.Expr) (int, bool) {
 	if _, ok := c.tryFoldConstScalar(key); ok {
 		return 0, false
 	}
-	if kn, ok := bareOperand(fs, key).(*ast.NameExpr); ok {
-		if _, inlined := lookupInlinedAny(fs, kn.Name); inlined {
-			return 0, false
-		}
-		if _, local := fs.lookupLocal(kn.Name); local {
-			return 0, false
+	// A key that reduces to a local emits no code only if nothing it passes
+	// over does (see bareOperand).
+	if operand, effects := bareOperand(fs, key); len(effects) == 0 {
+		if kn, ok := operand.(*ast.NameExpr); ok {
+			if _, inlined := lookupInlinedAny(fs, kn.Name); inlined {
+				return 0, false
+			}
+			if _, local := fs.lookupLocal(kn.Name); local {
+				return 0, false
+			}
 		}
 	}
 	if _, inlined := lookupInlinedAny(fs, name.Name); inlined {
@@ -2193,10 +2289,8 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int, pend *[]pendItem)
 	// avoid emitting an unnecessary MOVE. This matches Lua 5.4's behavior
 	// where VINDEXED expressions reference the table register directly.
 	tableReg := -1
-	if name, ok := bareOperand(fs, e.Table).(*ast.NameExpr); ok {
-		if localReg, found := fs.lookupLocal(name.Name); found {
-			tableReg = localReg
-		}
+	if localReg, ok := plainLocalReg(fs, e.Table); ok {
+		tableReg = localReg
 	}
 	needFree := false
 	if tableReg < 0 {
