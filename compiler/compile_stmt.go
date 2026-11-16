@@ -224,6 +224,8 @@ func (c *compiler) compileBlockWith(block *ast.Block, labelEndOpt bool, blockAft
 				c.compileLabelStmt(lbl, atEnd, afterLine, runLastLabelLine)
 			}
 
+			// A block-exit OP_CLOSE after the run follows its last '::'.
+			c.fs.blockLastLine = runLastLabelLine
 			// Skip past the entire run (loop will increment i).
 			i = runEnd - 1
 			continue

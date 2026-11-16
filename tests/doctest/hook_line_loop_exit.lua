@@ -35,3 +35,12 @@ print(trace("local x = 0\nrepeat\n  local y = x\n  x = x + 1\n  local f = functi
 --> =1 3 4 5 7 3 4 5 7 8
 print(trace("local x = 0\nrepeat\n  local y = x\n  local f = function() return y end\nuntil true\nx = 2"))
 --> =1 3 4 5 6
+
+-- A block that ends in a label closes its captured locals once the
+-- label's closing '::' has been read, so on the label's line.
+print(trace("local t = {}\nfor k, v in pairs({1}) do\n  t[k] = function() return v end\n  ::continue::\nend\nt = nil"))
+--> =1 2 3 4 2 5 6
+print(trace("for i = 1, 2 do\n  local f = function() return i end\n  ::cont::\nend\nlocal z = 1"))
+--> =1 2 3 1 2 3 1 5
+print(trace("do\n  local x <close> = nil\n  ::a::\nend\nlocal z = 1"))
+--> =2 3 5
