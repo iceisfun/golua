@@ -255,3 +255,19 @@ assert(seen[3]:find("\n\t[^\n]*:3: in function <"), seen[3])
 `
 	runLuaWithDebug(t, source, "test_debug_traceback_close_handler_deeper_frame", provider)
 }
+
+// A tail call reuses the caller's frame, and reference funcnamefromcall
+// gives a CIST_TAIL frame no name. golua's traceback still labelled the
+// tail-called function with the metamethod name of the frame it replaced.
+func TestDebugTracebackRegression_TailCalledFrameDropsMetamethodName(t *testing.T) {
+	provider := vm.NewDefaultDebugProvider()
+	source := `local function tb(m) return debug.traceback(m) end
+local i = setmetatable({}, {__index = function() return tb("idx") end})
+local a = setmetatable({}, {__add = function() return tb("add") end})
+for _, msg in ipairs({i.x, a + 1}) do
+  assert(msg:find("\n\t[^\n]*:1: in function <[^\n]*:1>\n\t%(%.%.%.tail calls%.%.%.%)\n"), msg)
+  assert(not msg:find("in metamethod", 1, true), msg)
+end
+`
+	runLuaWithDebug(t, source, "test_debug_traceback_tail_called_metamethod", provider)
+}

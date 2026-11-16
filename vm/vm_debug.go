@@ -191,8 +191,11 @@ func (vm *VM) Traceback(msg string, level int) string {
 					name = ""
 					nameWhat = ""
 				}
-				// Check for override name (e.g., "close" for __close metamethod calls)
-				if name == "" && frame.callName != "" && !suppressCallName {
+				// Check for override name (e.g., "close" for __close metamethod calls).
+				// A tail call reuses the frame, so its override name belongs to
+				// the function the tail call replaced; like getinfo, leave a
+				// tail-called frame unnamed.
+				if name == "" && frame.callName != "" && !suppressCallName && !frame.isTailCall {
 					name = frame.callName
 					nameWhat = frame.callNameWhat
 				}
