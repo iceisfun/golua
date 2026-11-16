@@ -71,9 +71,9 @@ func doFileReadFormats(v *vm.VM, f vm.LuaFile, formats []vm.Value, firstArg int)
 	success := true
 	for _, arg := range formats {
 		if !success {
-			v.Set(results, vm.Nil)
-			results++
-			continue
+			// The failed format already produced its nil; reference Lua
+			// returns nothing for the formats after it.
+			break
 		}
 		if arg.IsNumber() {
 			// Read N bytes

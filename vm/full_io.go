@@ -1098,7 +1098,7 @@ func readNumberFromBuf(reader *bufio.Reader) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if b != ' ' && b != '\t' && b != '\n' && b != '\r' {
+		if b != ' ' && b != '\t' && b != '\n' && b != '\r' && b != '\v' && b != '\f' {
 			reader.UnreadByte()
 			break
 		}
