@@ -320,3 +320,131 @@ func TestRunCLI_BadBinaryScriptMessage(t *testing.T) {
 		}
 	}
 }
+
+// runCLIOut runs the CLI with stdin and returns its stdout (from -v), stderr
+// and exit status. Lua's own print goes to the process stdout, so scripts
+// here report through os.exit or a file instead.
+func runCLIOut(t *testing.T, stdin string, argv ...string) (string, string, int) {
+	t.Helper()
+	oldOut, oldIn := cliStdout, cliStdin
+	defer func() { cliStdout, cliStdin = oldOut, oldIn }()
+	var out, errb bytes.Buffer
+	cliStdout, cliStdin = &out, strings.NewReader(stdin)
+	code := runCLI(append([]string{"lua"}, argv...), &errb)
+	return out.String(), errb.String(), code
+}
+
+func clearLuaInit(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"LUA_INIT_5_5", "LUA_INIT"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+}
+
+func TestRunCLI_VersionOption(t *testing.T) {
+	out, _, code := runCLIOut(t, "", "-v")
+	if code != 0 || out != "Lua 5.5.1  Copyright (C) 1994-2026 Lua.org, PUC-Rio\n" {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+}
+
+func TestRunCLI_UnknownOptionPrintsUsage(t *testing.T) {
+	for _, argv := range [][]string{{"-x"}, {"-e"}, {"-l"}, {"-vx"}} {
+		_, errs, code := runCLIOut(t, "", argv...)
+		if code != 1 || !strings.Contains(errs, "usage: lua [options] [script [args]]") {
+			t.Errorf("%v: code=%d stderr=%q", argv, code, errs)
+		}
+	}
+	_, errs, _ := runCLIOut(t, "", "-x")
+	if !strings.HasPrefix(errs, "lua: unrecognized option '-x'\n") {
+		t.Errorf("stderr=%q", errs)
+	}
+}
+
+// -e chunks and the script run in order, and the arg table keeps the
+// options at negative indices.
+func TestRunCLI_EThenScriptOrderAndArgTable(t *testing.T) {
+	clearLuaInit(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	script := writeTempLua(t, dir, "s.lua", `
+local f = io.open(`+"[["+log+"]]"+`, "a")
+f:write(arg[-3] ~= nil and "neg " or "", arg[-2], "|", arg[-1], "|", arg[0] == `+"[["+filepath.Join(dir, "s.lua")+"]]"+` and "s" or "?", "|", ..., "\n")
+f:close()
+os.exit(#arg == 1 and 0 or 9)
+`)
+	_, errs, code := runCLIOut(t, "", "-e", `local f=io.open([[`+log+`]],"a") f:write("e1\n") f:close()`,
+		"-e", `local f=io.open([[`+log+`]],"a") f:write("e2\n") f:close()`, script, "x")
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, errs)
+	}
+	got, _ := os.ReadFile(log)
+	if !strings.HasPrefix(string(got), "e1\ne2\n") || !strings.HasSuffix(string(got), "|s|x\n") || !strings.Contains(string(got), "neg -e|") {
+		t.Fatalf("log=%q", got)
+	}
+}
+
+func TestRunCLI_NoScriptArgTable(t *testing.T) {
+	clearLuaInit(t)
+	// Without a script the interpreter is arg[0] and options follow it.
+	_, _, code := runCLIOut(t, "", "-e", `os.exit(arg[0] == "lua" and arg[1] == "-e" and 0 or 4)`)
+	if code != 0 {
+		t.Fatalf("code=%d", code)
+	}
+}
+
+func TestRunCLI_StdinScript(t *testing.T) {
+	clearLuaInit(t)
+	// '-' runs stdin as the script with arg[0] == "-" and varargs.
+	_, errs, code := runCLIOut(t, `os.exit(arg[0] == "-" and ... == "a" and 3 or 4)`, "-", "a")
+	if code != 3 {
+		t.Fatalf("code=%d stderr=%q", code, errs)
+	}
+	// No script and no -e/-v: stdin runs as chunk "stdin".
+	_, errs, code = runCLIOut(t, "os.exit(5)")
+	if code != 5 {
+		t.Fatalf("no-arg stdin: code=%d stderr=%q", code, errs)
+	}
+	// A failing stdin chunk is reported but, like lua.c, exits 0.
+	_, errs, code = runCLIOut(t, `error("e")`)
+	if code != 0 || !strings.Contains(errs, "stdin:1: e") {
+		t.Fatalf("code=%d stderr=%q", code, errs)
+	}
+	// With '-' the failure is a normal script failure.
+	_, _, code = runCLIOut(t, `error("e")`, "-")
+	if code != 1 {
+		t.Fatalf("'-' failing script: code=%d", code)
+	}
+}
+
+func TestRunCLI_RequireOption(t *testing.T) {
+	clearLuaInit(t)
+	_, errs, code := runCLIOut(t, "", "-l", "string", "-l", "g=math", "-e", `os.exit(string.len and g.pi and 0 or 6)`)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, errs)
+	}
+	_, errs, code = runCLIOut(t, "", "-l", "no_such_module_xyz")
+	if code != 1 || !strings.Contains(errs, "module 'no_such_module_xyz' not found") {
+		t.Fatalf("code=%d stderr=%q", code, errs)
+	}
+}
+
+func TestRunCLI_WarnOption(t *testing.T) {
+	clearLuaInit(t)
+	_, _, code := runCLIOut(t, "", "-W", "-e", `os.exit(warn ~= nil and 0 or 1)`)
+	if code != 0 {
+		t.Fatalf("code=%d", code)
+	}
+}
+
+func TestRunCLI_EnvOptionSkipsLuaInit(t *testing.T) {
+	clearLuaInit(t)
+	t.Setenv("LUA_INIT", "os.exit(7)")
+	if _, _, code := runCLIOut(t, "", "-e", "os.exit(0)"); code != 7 {
+		t.Fatalf("without -E: code=%d, want 7", code)
+	}
+	if _, _, code := runCLIOut(t, "", "-E", "-e", "os.exit(0)"); code != 0 {
+		t.Fatalf("with -E: code=%d, want 0", code)
+	}
+}
