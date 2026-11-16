@@ -2266,7 +2266,7 @@ func (c *compiler) upvalueTableKeyFirst(table, key ast.Expr) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	if _, ok := c.tryFoldConstScalar(key); ok {
+	if _, effects, ok := c.exp2const(key); ok && len(effects) == 0 {
 		return 0, false
 	}
 	// A key that reduces to a local emits no code only if nothing it passes
@@ -2298,6 +2298,16 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int, pend *[]pendItem)
 		// upvalueTableKeyFirst). A scratch target holds the key in place.
 		line := suffixLine(e.EndP, e.P)
 		saved := fs.freeReg
+		if k, effects, ok := c.exp2const(e.Key); ok && isCint(k) {
+			// A constant key whose and/or operands emit code: run them, then
+			// GETI as finishIndexExpr does.
+			c.compileForEffect(effects)
+			tableReg := fs.reserveReg()
+			fs.emit(ABC(OP_GETUPVAL, tableReg, uvIdx, 0, 0), line)
+			fs.emit(ABC(OP_GETI, reg, tableReg, int(k.IVal), 0), line)
+			fs.freeReg = saved
+			return
+		}
 		keyReg := reg
 		if reg < fs.nActVar {
 			keyReg = fs.reserveReg()
@@ -2346,12 +2356,16 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int, pend *[]pendItem)
 }
 
 // finishIndexExpr emits the indexed read for a t[key] expression whose table is
-// already in tableReg.
+// already in tableReg. Like reference luaK_indexed, it takes GETI for any key
+// that is an integer constant in C range once parsed, not only a literal:
+// t[K] for an inlined <const> K, t[1+1] or t[nil or 1]. Error messages name
+// such an access field 'integer index'.
 func (c *compiler) finishIndexExpr(e *ast.IndexExpr, reg, tableReg int, needFree bool) {
 	fs := c.fs
 	line := suffixLine(e.EndP, e.P)
-	if n, ok := e.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
-		fs.emit(ABC(OP_GETI, reg, tableReg, int(n.Value), 0), line)
+	if k, effects, ok := c.exp2const(e.Key); ok && isCint(k) {
+		c.compileForEffect(effects)
+		fs.emit(ABC(OP_GETI, reg, tableReg, int(k.IVal), 0), line)
 		if needFree {
 			fs.freeReg = tableReg
 		}
@@ -2365,6 +2379,11 @@ func (c *compiler) finishIndexExpr(e *ast.IndexExpr, reg, tableReg int, needFree
 			fs.freeReg = keyReg // reg is caller-owned; free only the key temp
 		}
 	}
+}
+
+// isCint reports whether k fits GETI's C operand, as reference isCint does.
+func isCint(k Value) bool {
+	return k.Type == ValInt && k.IVal >= 0 && k.IVal <= int64(MaxArgC)
 }
 
 // powWithSubnormalFix computes x^y with a rescaling fix for positive
