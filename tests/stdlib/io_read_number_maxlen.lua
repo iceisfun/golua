@@ -17,4 +17,18 @@ num, rest = try(201)
 assert(num == nil and rest == "1 X")
 
 os.remove(name)
+
+-- the same limit applies to the reader io.popen handles use
+local function trypopen(n)
+  local f = assert(io.popen("printf '%0" .. n .. "d X' 1"))
+  local num, rest = f:read('n'), f:read('a')
+  f:close()
+  return num, rest
+end
+num, rest = trypopen(199)
+assert(num == 1 and rest == " X")
+num, rest = trypopen(200)
+assert(num == 1 and rest == " X")
+num, rest = trypopen(201)
+assert(num == nil and rest == "1 X")
 print("PASS")
