@@ -39,7 +39,17 @@ const maxLoadReaderCalls = 1 << 22 // ~4 million calls
 const earlySyntaxCheckInterval = 100
 const earlySyntaxCheckInterval2 = 200
 
+// loadReaderHandledError carries a reader error that the active xpcall
+// message handler has already turned into the value load must report.
+type loadReaderHandledError struct{ value vm.Value }
+
+func (e *loadReaderHandledError) Error() string { return vm.ValueToString(e.value) }
+
 func setLoadReaderError(v *vm.VM, err error) {
+	if he, ok := err.(*loadReaderHandledError); ok {
+		v.Set(1, he.value)
+		return
+	}
 	preserveRaw := v.InDirectProtectedLoad() || v.InUserProtected()
 	// Reference Lua only adds a traceback to load's returned error message
 	// when an errfunc (message handler) is active on the stack. The standalone
@@ -102,6 +112,12 @@ func protectedCallPreserveMsgState(v *vm.VM, fn vm.Value, args []vm.Value) ([]vm
 	savedMsgHandlerResult := v.GetMsgHandlerResult()
 
 	results, err := v.ProtectedCallRaw(fn, args)
+	if err != nil && !savedMsgHandler.IsNil() && v.IsMsgHandlerUsed() {
+		// Reference lua_load runs the reader under the active errfunc, so
+		// inside an xpcall the error load reports is what the message
+		// handler made of the reader's error.
+		err = &loadReaderHandledError{value: v.GetMsgHandlerResult()}
+	}
 
 	v.SetMsgHandler(savedMsgHandler)
 	v.SetMsgHandlerUsed(savedMsgHandlerUsed)
