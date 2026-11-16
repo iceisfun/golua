@@ -140,6 +140,7 @@ type ForInStmt struct {
 	Names   []*NameExpr
 	Iters   []Expr
 	Body    *Block
+	DoLine  int // line of the 'do' keyword (0 if unknown)
 	EndLine int // line of 'end' keyword
 }
 

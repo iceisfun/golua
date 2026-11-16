@@ -636,8 +636,13 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	)
 	fs.nActVar += 3
 
-	// TFORPREP
-	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), line)
+	// TFORPREP — like FORPREP, stamped with the line of 'do' (and so is
+	// the error for a closing value that is not closable).
+	prepLine := s.DoLine
+	if prepLine == 0 {
+		prepLine = line
+	}
+	tforPrepPC := fs.emit(ABx(OP_TFORPREP, base, 0), prepLine)
 
 	// Loop variables start at base+3 (the first is the control variable).
 	// Record their index in fs.locals now, before the body adds more locals:
@@ -695,8 +700,8 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	tforCallPC := fs.emit(ABC(OP_TFORCALL, base, 0, nVars, 0), iterLine)
 	_ = tforCallPC
 
-	// TFORLOOP — checks if control variable is nil
-	tforLoopPC := fs.emit(ABx(OP_TFORLOOP, base, 0), line)
+	// TFORLOOP — checks if control variable is nil (fixlined like TFORCALL)
+	tforLoopPC := fs.emit(ABx(OP_TFORLOOP, base, 0), iterLine)
 
 	// Patch TFORPREP to jump to TFORCALL
 	bodyLen := tforCallPC - tforPrepPC - 1
@@ -724,7 +729,13 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 		lv.startPC = -1
 	}
 
-	c.leaveScope(line)
+	// The loop scope's OP_CLOSE (which closes the iterator's closing value)
+	// is emitted by reference leaveblock after 'end' has been read.
+	endLine := s.EndLine
+	if endLine == 0 {
+		endLine = line
+	}
+	c.leaveScope(endLine)
 }
 
 // ---------------------------------------------------------------------------

@@ -1126,11 +1126,10 @@ func (c *compiler) leaveScope(line int) {
 		// that fires __close must be attributed to the block's last
 		// statement, not the construct's closing token — reference Lua emits
 		// this in leaveblock with ls->lastline. blockLastLine tracks the AST
-		// end line of that statement. Loop scopes are excluded: their close
-		// sites (per-iteration body close, and the generic-for iterator
-		// to-be-closed slot) are emitted explicitly elsewhere and reference
-		// attributes the loop-scope close to the loop header line, so they
-		// keep the supplied line to preserve line-hook parity.
+		// end line of that statement. Loop scopes are excluded: their
+		// per-iteration body close is emitted explicitly elsewhere, and the
+		// caller supplies the line of the loop-scope close (for a generic
+		// for, which always has one, the line of its 'end').
 		closeLine := line
 		if !scope.isLoop && fs.blockLastLine != 0 {
 			closeLine = fs.blockLastLine
