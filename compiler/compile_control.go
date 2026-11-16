@@ -254,7 +254,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 		backJump := fs.emitJump(backLine)
 		offset := loopStart - (fs.pc()) // negative
 		if offset > MaxSJ || offset < MinSJ {
-			c.error(nil, errControlStructureTooLong)
+			c.errorAtLine(s.End().Line, errControlStructureTooLong)
 		} else {
 			fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 		}
@@ -289,7 +289,7 @@ func (c *compiler) compileWhileStmt(s *ast.WhileStmt) {
 	backJump := fs.emitJump(backLine)
 	offset := loopStart - (fs.pc()) // negative
 	if offset > MaxSJ || offset < MinSJ {
-		c.error(nil, errControlStructureTooLong)
+		c.errorAtLine(s.End().Line, errControlStructureTooLong)
 	} else {
 		fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 	}
@@ -339,7 +339,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 		backJump := fs.emitJump(c.lastEmittedLine())
 		offset := loopStart - fs.pc()
 		if offset > MaxSJ || offset < MinSJ {
-			c.error(nil, errControlStructureTooLong)
+			c.errorAtLine(s.Cond.End().Line, errControlStructureTooLong)
 		} else {
 			fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 		}
@@ -376,7 +376,7 @@ func (c *compiler) compileRepeatStmt(s *ast.RepeatStmt) {
 
 	offset := loopStart - (backJump + 1)
 	if offset > MaxSJ || offset < MinSJ {
-		c.error(nil, errControlStructureTooLong)
+		c.errorAtLine(s.Cond.End().Line, errControlStructureTooLong)
 	} else {
 		fs.proto.Code[backJump] = fs.proto.Code[backJump].SetSJ(offset)
 	}
@@ -528,7 +528,7 @@ func (c *compiler) compileForNumStmt(s *ast.ForNumStmt) {
 	// Patch FORPREP to jump to FORLOOP
 	bodyLen := loopPC - forPrepPC - 1
 	if bodyLen > MaxArgBx {
-		c.error(nil, errControlStructureTooLong)
+		c.errorAtLine(s.End().Line, errControlStructureTooLong)
 	}
 	fs.proto.Code[forPrepPC] = fs.proto.Code[forPrepPC].SetBx(bodyLen)
 
@@ -701,14 +701,14 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 	// Patch TFORPREP to jump to TFORCALL
 	bodyLen := tforCallPC - tforPrepPC - 1
 	if bodyLen > MaxArgBx {
-		c.error(nil, errControlStructureTooLong)
+		c.errorAtLine(s.End().Line, errControlStructureTooLong)
 	}
 	fs.proto.Code[tforPrepPC] = fs.proto.Code[tforPrepPC].SetBx(bodyLen)
 
 	// Patch TFORLOOP to jump back to loop body (after TFORPREP)
 	backLen := tforLoopPC - tforPrepPC - 1
 	if backLen > MaxArgBx {
-		c.error(nil, errControlStructureTooLong)
+		c.errorAtLine(s.End().Line, errControlStructureTooLong)
 	}
 	fs.proto.Code[tforLoopPC] = fs.proto.Code[tforLoopPC].SetBx(backLen)
 

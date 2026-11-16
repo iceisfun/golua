@@ -102,3 +102,30 @@ func TestCloseErrorLineAttribution(t *testing.T) {
 		})
 	}
 }
+
+// TestNonClosableValueErrorLine verifies that the "got a non-closable value"
+// error raised by OP_TBC carries the line of the last token of the local
+// statement, as reference checktoclose emits TBC only after the whole
+// explist has been parsed; it used to report the line of 'local'.
+func TestNonClosableValueErrorLine(t *testing.T) {
+	cases := []struct {
+		name    string
+		src     string
+		wantLoc string
+	}{
+		{"value on next line", "local x <close> =\n 5\n", ":2:"},
+		{"equals on next line", "local x <close>\n = 5\n", ":2:"},
+		{"two lines down", "local x <close> =\n\n {}\n", ":3:"},
+		{"second name", "local a, x <close> = 1,\n 5\n", ":2:"},
+		{"call closing paren", "local x <close> = tostring(\n5\n)\n", ":3:"},
+		{"single line", "local x <close> = 5\n", ":1:"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runForError(t, "tbc.lua", tc.src)
+			if !strings.Contains(got, "tbc.lua"+tc.wantLoc+" variable 'x' got a non-closable value") {
+				t.Errorf("expected error at %q, got: %q", "tbc.lua"+tc.wantLoc, got)
+			}
+		})
+	}
+}

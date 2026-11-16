@@ -561,10 +561,18 @@ func (c *compiler) compileLocalStmtWithNext(s *ast.LocalStmt, nextLine int, next
 		fs.locals[baseIdx+i].startPC = fs.pc()
 	}
 
-	// Emit OP_TBC for <close> variables
+	// Emit OP_TBC for <close> variables. Reference checktoclose emits it
+	// after the whole explist has been parsed, so it carries the line of
+	// the statement's last token, not the line of 'local'.
+	tbcLine := line
+	if nValues > 0 {
+		if end := s.Values[nValues-1].End().Line; end > 0 {
+			tbcLine = end
+		}
+	}
 	for i := 0; i < nNames; i++ {
 		if fs.locals[baseIdx+i].attrib == attribClose {
-			fs.emit(ABC(OP_TBC, base+i, 0, 0, 0), line)
+			fs.emit(ABC(OP_TBC, base+i, 0, 0, 0), tbcLine)
 		}
 	}
 }
@@ -657,6 +665,10 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		}
 	}
 	var pendingGlobals []int
+	// pendingUpvals holds, per upvalue index, the targets that store into
+	// that upvalue's table at store time (upvalueKstrTarget) since the last
+	// copy of it; the same check_conflict rule applies to them.
+	var pendingUpvals map[int][]int
 
 	// Phase 1: Resolve LHS indexed targets' table/key operands.
 	type precomputedTarget struct {
@@ -665,6 +677,8 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		fieldK   int // constant index for field targets (-1 otherwise)
 		intKey   int // constant integer key for SETI (-1 if not applicable)
 		envSnap  int // reg holding the environment copy a global target stores through (-1: none)
+		upval    int // upvalue whose table a store-time target writes through (-1: none)
+		upSnap   int // reg holding the copy of that table a later target forced (-1: none)
 	}
 	precomputed := make([]precomputedTarget, nTargets)
 	tempBase := fs.freeReg
@@ -674,19 +688,50 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 		conflict := func(reg int) bool { return conflictsLaterThan(i, reg) }
 		switch t := s.Targets[i].(type) {
 		case *ast.IndexExpr:
+			if sk, isStr := t.Key.(*ast.StringExpr); isStr {
+				if uvIdx, kIdx, ok := c.upvalueKstrTarget(t.Table, sk.Value); ok {
+					precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: kIdx, intKey: -1, envSnap: -1, upval: uvIdx, upSnap: -1}
+					pendingUpvals = addPendingUpval(pendingUpvals, uvIdx, i)
+					break
+				}
+			}
+			if uvIdx, ok := c.upvalueTableKeyFirst(t.Table, t.Key); ok {
+				kReg := c.indexAssignOperand(t.Key, conflict)
+				tReg := c.upvalueAssignOperand(uvIdx, t)
+				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1, intKey: -1, envSnap: -1, upval: -1, upSnap: -1}
+				break
+			}
 			tReg := c.indexAssignOperand(t.Table, conflict)
 			if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
-				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: -1, intKey: int(n.Value), envSnap: -1}
+				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: -1, intKey: int(n.Value), envSnap: -1, upval: -1, upSnap: -1}
 			} else {
 				kReg := c.indexAssignOperand(t.Key, conflict)
-				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1, intKey: -1, envSnap: -1}
+				precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: kReg, fieldK: -1, intKey: -1, envSnap: -1, upval: -1, upSnap: -1}
 			}
 		case *ast.FieldExpr:
+			if uvIdx, kIdx, ok := c.upvalueKstrTarget(t.Table, t.Field); ok {
+				precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: kIdx, intKey: -1, envSnap: -1, upval: uvIdx, upSnap: -1}
+				pendingUpvals = addPendingUpval(pendingUpvals, uvIdx, i)
+				break
+			}
 			tReg := c.indexAssignOperand(t.Table, conflict)
 			fK := fs.stringConstant(t.Field)
-			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK, intKey: -1, envSnap: -1}
+			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK, intKey: -1, envSnap: -1, upval: -1, upSnap: -1}
 		default:
-			precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: -1, intKey: -1, envSnap: -1}
+			precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: -1, intKey: -1, envSnap: -1, upval: -1, upSnap: -1}
+			if ne, ok := s.Targets[i].(*ast.NameExpr); ok && len(pendingUpvals) > 0 {
+				// A target rebinding an upvalue whose table earlier targets
+				// store through: copy the table aside now, before the value
+				// list runs, as reference check_conflict does for VINDEXUP.
+				if uvIdx, ok := c.upvalueName(ne); ok && len(pendingUpvals[uvIdx]) > 0 {
+					snap := fs.reserveReg()
+					fs.emit(ABC(OP_GETUPVAL, snap, uvIdx, 0, 0), ne.P.Line)
+					for _, j := range pendingUpvals[uvIdx] {
+						precomputed[j].upSnap = snap
+					}
+					delete(pendingUpvals, uvIdx)
+				}
+			}
 			if ne, ok := s.Targets[i].(*ast.NameExpr); ok && envTargeted {
 				switch {
 				case c.targetRebindsEnv(ne):
@@ -779,7 +824,13 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 	}
 	for i := nTargets - 1; i >= 0; i-- {
 		pc := precomputed[i]
-		if pc.tableReg >= 0 {
+		if pc.upval >= 0 {
+			if pc.upSnap >= 0 {
+				fs.emitSetField(pc.upSnap, pc.fieldK, valBase+i, 0, rhsStoreLine)
+			} else {
+				fs.emitSetTabUp(pc.upval, pc.fieldK, valBase+i, 0, rhsStoreLine)
+			}
+		} else if pc.tableReg >= 0 {
 			storeLine := rhsStoreLine
 			if pc.intKey >= 0 {
 				fs.emit(ABC(OP_SETI, pc.tableReg, pc.intKey, valBase+i, 0), storeLine)
@@ -860,6 +911,12 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 		// uses the value line).
 		storeLine := exprEndLine(value)
 		startReg := fs.freeReg
+		if uvIdx, kIdx, ok := c.upvalueKstrTarget(t.Table, t.Field); ok {
+			valC, valK := c.storeValueOperand(value)
+			fs.emitSetTabUp(uvIdx, kIdx, valC, valK, storeLine)
+			fs.freeReg = startReg
+			return
+		}
 		tableReg := c.indexAssignOperand(t.Table, nil)
 		valC, valK := c.storeValueOperand(value)
 		fieldK := fs.stringConstant(t.Field)
@@ -869,6 +926,22 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 	case *ast.IndexExpr:
 		storeLine := exprEndLine(value)
 		startReg := fs.freeReg
+		if sk, isStr := t.Key.(*ast.StringExpr); isStr {
+			if uvIdx, kIdx, ok := c.upvalueKstrTarget(t.Table, sk.Value); ok {
+				valC, valK := c.storeValueOperand(value)
+				fs.emitSetTabUp(uvIdx, kIdx, valC, valK, storeLine)
+				fs.freeReg = startReg
+				return
+			}
+		}
+		if uvIdx, ok := c.upvalueTableKeyFirst(t.Table, t.Key); ok {
+			keyReg := c.indexAssignOperand(t.Key, nil)
+			tableReg := c.upvalueAssignOperand(uvIdx, t)
+			valC, valK := c.storeValueOperand(value)
+			fs.emit(ABC(OP_SETTABLE, tableReg, keyReg, valC, valK), storeLine)
+			fs.freeReg = startReg
+			return
+		}
 		tableReg := c.indexAssignOperand(t.Table, nil)
 		if n, ok := t.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
 			valC, valK := c.storeValueOperand(value)
@@ -900,7 +973,7 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 // possible).
 func (c *compiler) indexAssignOperand(e ast.Expr, conflictsLater func(reg int) bool) int {
 	fs := c.fs
-	if ne, ok := unparen(e).(*ast.NameExpr); ok {
+	if ne, ok := bareOperand(fs, e).(*ast.NameExpr); ok {
 		// Inlined consts are scalar literals, not live locals — fall through
 		// to load them into a temp.
 		if _, inlined := lookupInlinedAny(fs, ne.Name); !inlined {
@@ -913,6 +986,67 @@ func (c *compiler) indexAssignOperand(e ast.Expr, conflictsLater func(reg int) b
 	}
 	reg := fs.reserveReg()
 	c.compileExprToReg(e, reg)
+	return reg
+}
+
+// maxShortLen is reference Lua's LUAI_MAXSHORTLEN: only strings up to this
+// length are short strings, which is what a Kstr key must be.
+const maxShortLen = 40
+
+// upvalueName returns the upvalue index of a bare name that resolves to an
+// upvalue (not an inlined <const>, a local or a global).
+func (c *compiler) upvalueName(ne *ast.NameExpr) (int, bool) {
+	fs := c.fs
+	if _, inlined := lookupInlinedAny(fs, ne.Name); inlined {
+		return 0, false
+	}
+	if _, local := fs.lookupLocal(ne.Name); local {
+		return 0, false
+	}
+	return c.resolveUpvalue(fs, ne.Name)
+}
+
+// upvalueKstrTarget reports whether the assignment target table.key, or
+// table["key"], is one reference Lua stores through SETTABUP: the table is a
+// bare upvalue name and the key a short string constant whose index fits an
+// instruction operand (luaK_indexed makes it VINDEXUP). Such a store reads
+// the upvalue when it executes, after the right-hand side, so a value
+// expression that reassigns the upvalue redirects the store. It returns the
+// upvalue and constant indices.
+func (c *compiler) upvalueKstrTarget(table ast.Expr, key string) (uvIdx, kIdx int, ok bool) {
+	ne, isName := table.(*ast.NameExpr)
+	if !isName || len(key) > maxShortLen {
+		return 0, 0, false
+	}
+	uvIdx, ok = c.upvalueName(ne)
+	if !ok {
+		return 0, 0, false
+	}
+	kIdx = c.fs.stringConstant(key)
+	if kIdx > MaxArgC {
+		return 0, 0, false
+	}
+	return uvIdx, kIdx, true
+}
+
+// addPendingUpval records target i as storing through upvalue uvIdx's table.
+func addPendingUpval(pending map[int][]int, uvIdx, i int) map[int][]int {
+	if pending == nil {
+		pending = make(map[int][]int)
+	}
+	pending[uvIdx] = append(pending[uvIdx], i)
+	return pending
+}
+
+// upvalueAssignOperand loads the upvalue table of an indexed assignment
+// target t[k] into a fresh temp after its key has been evaluated, as
+// reference luaK_indexed does for an upvalue table with a non-constant key
+// (see upvalueTableKeyFirst). Like indexAssignOperand for any non-local
+// operand, the copy is pinned before the right-hand side runs.
+func (c *compiler) upvalueAssignOperand(uvIdx int, t *ast.IndexExpr) int {
+	fs := c.fs
+	reg := fs.reserveReg()
+	fs.emit(ABC(OP_GETUPVAL, reg, uvIdx, 0, 0), suffixLine(t.EndP, t.P))
 	return reg
 }
 
@@ -1341,7 +1475,7 @@ func (c *compiler) compileLabelStmt(s *ast.LabelStmt, atBlockEnd bool, afterLine
 			}
 			offset := fs.pc() - (pg.pc + 1)
 			if offset > MaxSJ || offset < MinSJ {
-				c.error(nil, errControlStructureTooLong)
+				c.errorAtLine(afterLine, errControlStructureTooLong)
 			} else {
 				fs.proto.Code[pg.pc] = fs.proto.Code[pg.pc].SetSJ(offset)
 			}

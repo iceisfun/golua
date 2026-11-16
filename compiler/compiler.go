@@ -94,7 +94,7 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 	if endLine == 0 {
 		endLine = blockMaxLine(block)
 	}
-	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: endLine, foldMemo: make(map[ast.Expr]foldResult)}
+	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: endLine, foldMemo: make(map[ast.Expr]foldResult), truthMemo: make(map[*ast.BinopExpr]truthResult)}
 	p := c.compileChunk(source, block)
 	if c.err != nil {
 		return nil, c.err
@@ -340,6 +340,8 @@ type compiler struct {
 	// chain re-walked the entire left spine at every node (O(n^2) compile time,
 	// a source-level DoS).
 	foldMemo map[ast.Expr]foldResult
+	// truthMemo caches constTruth for and/or nodes, for the same reason.
+	truthMemo map[*ast.BinopExpr]truthResult
 	// exprDepth counts nested expression compilations, bounding Go recursion
 	// on deeply nested expressions (see maxExprDepth).
 	exprDepth int
@@ -351,6 +353,12 @@ type foldResult struct {
 	iv    int64
 	fv    float64
 	ok    bool
+}
+
+// truthResult is a memoized constTruth outcome for one and/or node.
+type truthResult struct {
+	truthy bool
+	ok     bool
 }
 
 // internString returns a string that shares the same backing memory as
@@ -385,6 +393,13 @@ func (c *compiler) error(pos interface{}, format string, args ...interface{}) {
 			}
 		case int:
 			line = p
+		}
+		// A limit hit with no node at hand (a jump patched at block end, an
+		// upvalue slot) still gets a position: reference raises these as
+		// syntax errors at the parser's current line, which the most
+		// recently emitted instruction approximates.
+		if pos == nil && line == 0 && c.fs != nil {
+			line = c.lastEmittedLine()
 		}
 		if source != "" && line > 0 {
 			c.err = fmt.Errorf("%s:%d: %s", shortSrc(source), line, msg)

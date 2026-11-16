@@ -198,10 +198,13 @@ func NewFieldExpr(p token.Pos, table Expr, field string) *FieldExpr {
 	return &FieldExpr{P: p, Table: table, Field: field}
 }
 
-// MethodCallExpr represents table:method(args). EndP records the closing
-// delimiter of the call (')' or the end of a string/table argument).
+// MethodCallExpr represents table:method(args). P is the method name, ArgsP
+// the opening token of the argument list ('(' or the string/table argument),
+// and EndP the closing delimiter of the call (')' or the end of a
+// string/table argument).
 type MethodCallExpr struct {
 	P      token.Pos
+	ArgsP  token.Pos
 	EndP   token.Pos
 	Object Expr
 	Method string

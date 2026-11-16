@@ -308,13 +308,16 @@ func (p *parser) continueSuffixedExpr(expr ast.Expr) ast.Expr {
 		case p.check(token.Type(':')):
 			p.advance()
 			method := p.parseName()
-			// The method name, not the ':', positions the call: SELF and CALL
-			// are emitted after the name has been read, and reference Lua
-			// stamps an instruction with the line of the last token consumed
-			// before it.
+			// The method name, not the ':', positions SELF: it is emitted
+			// after the name has been read, and reference Lua stamps an
+			// instruction with the line of the last token consumed before it.
+			// The CALL takes the line where the arguments start (ArgsP), as
+			// reference funcargs fixes it with luaK_fixline.
 			pos := method.Pos()
+			argsPos := p.pos()
 			args, argsEnd := p.parseFuncArgs()
 			mc := ast.NewMethodCallExpr(pos, expr, method.Name, args)
+			mc.ArgsP = argsPos
 			mc.EndP = argsEnd
 			expr = mc
 		case p.check(token.Type('(')) || p.check(token.STRING) || p.check(token.Type('{')):

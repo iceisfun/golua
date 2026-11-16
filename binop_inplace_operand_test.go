@@ -74,3 +74,54 @@ print(ln, n, nt, bn)`)
 		t.Fatalf("unop in-place operand: got %q want %q", got, want)
 	}
 }
+
+// A short-circuit operator whose constant left operand decides it (`K and a`
+// with K always true, `K or a` with K always false) is just `a`: reference
+// goiftrue/goiffalse emit no test, so a local `a` stays in its register and is
+// read live like `(a)`. golua used to materialise the constant, test it and
+// copy `a` into a temp, snapshotting it before the other operand ran. The
+// last two lines are controls whose left operand does not fold away, where
+// reference snapshots too. Expected output is reference Lua 5.5's.
+func TestConstShortCircuitOperandReadLive(t *testing.T) {
+	got := runLuaCapture(t, `
+local K <const> = true
+local N <const> = nil
+local a = 1
+local function seta() a = 10 return 0 end
+local out = {}
+a = 1 out[#out+1] = (nil or a) + seta()
+a = 1 out[#out+1] = (true and a) + seta()
+a = 1 out[#out+1] = (false or a) * (seta() + 1)
+a = 1 out[#out+1] = (K and a) + seta()
+a = 1 out[#out+1] = (N or a) + seta()
+a = 1 out[#out+1] = (not nil and a) + seta()
+a = 1 out[#out+1] = ('s' and a) // (seta() + 1)
+a = 1 out[#out+1] = (nil or nil or a) + seta()
+a = 1 out[#out+1] = (true and (nil or a)) + seta()
+a = 1 out[#out+1] = (nil and a or a) + seta()
+a = 1 out[#out+1] = (a or nil) + seta()
+print(table.concat(out, " "))`)
+	want := "10 10 10 10 10 10 10 10 10 1 1"
+	if got != want {
+		t.Fatalf("constant and/or operand snapshotted: got %q want %q", got, want)
+	}
+}
+
+// The same reduction applies to the table and key of an indexed assignment
+// target: the store reads the live local after the right-hand side ran.
+func TestConstShortCircuitAssignTargetReadLive(t *testing.T) {
+	got := runLuaCapture(t, `
+local u = {}
+local old = u
+local function r() u = {} return 9 end
+(nil or u).k = r()
+local k = "a"
+local v = {}
+local function s() k = "b" return 5 end
+v[(true and k)] = s()
+print(old.k, u.k, v.a, v.b)`)
+	want := "nil\t9\tnil\t5"
+	if got != want {
+		t.Fatalf("constant and/or assignment operand: got %q want %q", got, want)
+	}
+}

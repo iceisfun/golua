@@ -440,7 +440,7 @@ func (c *compiler) compileName(e *ast.NameExpr, reg int) {
 // "(temporary)" slot visible to debug.getlocal.
 func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 	fs := c.fs
-	if name, ok := unparen(expr).(*ast.NameExpr); ok {
+	if name, ok := bareOperand(fs, expr).(*ast.NameExpr); ok {
 		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
 			if localReg, ok := fs.lookupLocal(name.Name); ok {
 				return localReg, false
@@ -458,7 +458,7 @@ func (c *compiler) operandToReg(expr ast.Expr) (reg int, tmp bool) {
 // otherwise. Used to read a binary/comparison left operand live at execution
 // time instead of snapshotting it into a temp with a MOVE.
 func plainLocalReg(fs *funcState, expr ast.Expr) (int, bool) {
-	if name, ok := unparen(expr).(*ast.NameExpr); ok {
+	if name, ok := bareOperand(fs, expr).(*ast.NameExpr); ok {
 		if _, inlined := lookupInlinedAny(fs, name.Name); !inlined {
 			if localReg, ok := fs.lookupLocal(name.Name); ok {
 				return localReg, true
@@ -485,6 +485,92 @@ func unparen(expr ast.Expr) ast.Expr {
 		}
 		expr = p.Inner
 	}
+}
+
+// bareOperand is unparen that also sees through a short-circuit operator whose
+// left operand is a constant that decides it: `K and x` with K always true,
+// and `K or x` with K always false. Reference luaK_goiftrue/goiffalse emit no
+// test for such a constant, so the whole expression is just x — a local x
+// stays in its register and is read live, so `(nil or a) + f()` must see the
+// a that f() leaves behind, exactly like `(a) + f()`.
+func bareOperand(fs *funcState, expr ast.Expr) ast.Expr {
+	for {
+		expr = unparen(expr)
+		e, ok := expr.(*ast.BinopExpr)
+		if !ok || (e.Op != "and" && e.Op != "or") {
+			return expr
+		}
+		truthy, ok := fs.c.constTruth(e.Left)
+		if !ok || truthy != (e.Op == "and") {
+			return expr
+		}
+		expr = e.Right
+	}
+}
+
+// constTruth reports the truthiness of expr when it is a compile-time
+// constant: nil, a boolean, a number or string literal, a folded arithmetic
+// constant, an inlined <const> local, `not` applied to one of these, or a
+// short-circuit operator that a constant left operand reduces to a constant
+// right one (`nil or false`). These are the operands reference Lua's
+// goiftrue/goiffalse resolve without code.
+func (c *compiler) constTruth(expr ast.Expr) (truthy, ok bool) {
+	expr = unparen(expr)
+	top, isShortCircuit := expr.(*ast.BinopExpr)
+	if !isShortCircuit || (top.Op != "and" && top.Op != "or") {
+		return c.leafTruth(expr)
+	}
+	if r, done := c.truthMemo[top]; done {
+		return r.truthy, r.ok
+	}
+	// Walk the left spine with a slice and settle it bottom-up, memoizing
+	// every link: chains are left-associative and as long as the source, and
+	// compileAnd/compileOr ask again at each link, so recursion or re-walking
+	// would cost a Go frame per link or quadratic time.
+	spine := []*ast.BinopExpr{top}
+	for {
+		left, ok := unparen(spine[len(spine)-1].Left).(*ast.BinopExpr)
+		if !ok || (left.Op != "and" && left.Op != "or") {
+			break
+		}
+		if _, done := c.truthMemo[left]; done {
+			break
+		}
+		spine = append(spine, left)
+	}
+	for i := len(spine) - 1; i >= 0; i-- {
+		n := spine[i]
+		var r truthResult
+		if lt, lok := c.constTruth(n.Left); lok && lt == (n.Op == "and") {
+			r.truthy, r.ok = c.constTruth(n.Right)
+		}
+		c.truthMemo[n] = r
+	}
+	r := c.truthMemo[top]
+	return r.truthy, r.ok
+}
+
+// leafTruth is constTruth for an operand that is not itself a short-circuit
+// operator.
+func (c *compiler) leafTruth(expr ast.Expr) (truthy, ok bool) {
+	switch e := expr.(type) {
+	case *ast.NameExpr:
+		if v, inlined := lookupInlinedAny(c.fs, e.Name); inlined {
+			return v.Type != ValNil && v.Type != ValFalse, true
+		}
+		return false, false
+	case *ast.UnopExpr:
+		if e.Op == "not" {
+			if t, ok := c.constTruth(e.Operand); ok {
+				return !t, true
+			}
+			return false, false
+		}
+	}
+	if v, ok := c.tryFoldConstScalar(expr); ok {
+		return v.Type != ValNil && v.Type != ValFalse, true
+	}
+	return false, false
 }
 
 // smallIntConst checks whether an expression is a small integer constant
@@ -1403,6 +1489,13 @@ func (c *compiler) compileAnd(e *ast.BinopExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	line := e.P.Line
 
+	// `K and x` with K a constant that is always true is just x: reference
+	// goiftrue emits no test for it (see bareOperand).
+	if truthy, ok := c.constTruth(e.Left); ok && truthy {
+		c.compileExprToReg(e.Right, reg)
+		return
+	}
+
 	// Optimization: if left is a comparison, fuse with and short-circuit.
 	// Instead of: materialize boolean → TESTSET → JMP,
 	// emit: comparison → JMP-to-false (2 instructions, not 7).
@@ -1489,6 +1582,13 @@ func (c *compiler) finishTest(e *ast.BinopExpr, reg, line, k int) {
 func (c *compiler) compileOr(e *ast.BinopExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
 	line := e.P.Line
+
+	// `K or x` with K a constant that is always false is just x: reference
+	// goiffalse emits no test for it (see bareOperand).
+	if truthy, ok := c.constTruth(e.Left); ok && !truthy {
+		c.compileExprToReg(e.Right, reg)
+		return
+	}
 
 	// Optimization: if left is a comparison, fuse with or short-circuit.
 	if cmp, ok := e.Left.(*ast.BinopExpr); ok && isComparisonOp(cmp.Op) {
@@ -1714,12 +1814,19 @@ func (c *compiler) finishMethodCall(e *ast.MethodCallExpr, base int, nResults in
 		fs.limitError("registers", fs.c.limits.MaxRegs, line, "")
 	}
 
+	// SELF keeps the method-name line; the CALL takes the line where the
+	// arguments start, like a plain call (reference funcargs luaK_fixline).
+	callLine := line
+	if e.ArgsP.Line > 0 {
+		callLine = e.ArgsP.Line
+	}
+
 	// Arguments start at base+2
 	nArgs := len(e.Args)
 	for i, arg := range e.Args {
 		if i == nArgs-1 && isMultiRet(arg) {
 			c.compileExprMultiRet(arg, 0)
-			fs.emit(ABC(OP_CALL, base, 0, nResults, 0), line)
+			fs.emit(ABC(OP_CALL, base, 0, nResults, 0), callLine)
 			return
 		}
 		argReg := base + 2 + i
@@ -1732,7 +1839,7 @@ func (c *compiler) finishMethodCall(e *ast.MethodCallExpr, base int, nResults in
 	}
 
 	// +1 for self
-	fs.emit(ABC(OP_CALL, base, nArgs+2, nResults, 0), line)
+	fs.emit(ABC(OP_CALL, base, nArgs+2, nResults, 0), callLine)
 	fs.freeReg = base + 1
 }
 
@@ -1938,7 +2045,7 @@ func (c *compiler) compileFieldExpr(e *ast.FieldExpr, reg int, pend *[]pendItem)
 	fs := c.fs
 	// When the table is a local variable, use its register directly.
 	tableReg := -1
-	if name, ok := unparen(e.Table).(*ast.NameExpr); ok {
+	if name, ok := bareOperand(fs, e.Table).(*ast.NameExpr); ok {
 		if localReg, found := fs.lookupLocal(name.Name); found {
 			tableReg = localReg
 		}
@@ -1981,14 +2088,67 @@ func (c *compiler) finishFieldExpr(e *ast.FieldExpr, reg, tableReg int, needFree
 	}
 }
 
+// upvalueTableKeyFirst reports whether t[key] must evaluate key before it
+// reads t, returning t's upvalue index when it must. Reference
+// luaK_exp2anyregup leaves a bare upvalue table undischarged while the key is
+// parsed, and luaK_indexed only then loads it with GETUPVAL (a constant short
+// string key takes GETTABUP instead), so a key that reassigns the upvalue is
+// seen by the access. A parenthesised table is discharged at the ')' and a
+// local is read live anyway, so only a bare upvalue name qualifies, and only a
+// key that emits code can tell the difference.
+func (c *compiler) upvalueTableKeyFirst(table, key ast.Expr) (int, bool) {
+	fs := c.fs
+	name, ok := table.(*ast.NameExpr)
+	if !ok {
+		return 0, false
+	}
+	if _, ok := c.tryFoldConstScalar(key); ok {
+		return 0, false
+	}
+	if kn, ok := bareOperand(fs, key).(*ast.NameExpr); ok {
+		if _, inlined := lookupInlinedAny(fs, kn.Name); inlined {
+			return 0, false
+		}
+		if _, local := fs.lookupLocal(kn.Name); local {
+			return 0, false
+		}
+	}
+	if _, inlined := lookupInlinedAny(fs, name.Name); inlined {
+		return 0, false
+	}
+	if _, local := fs.lookupLocal(name.Name); local {
+		return 0, false
+	}
+	return c.resolveUpvalue(fs, name.Name)
+}
+
 // compileIndexExpr compiles t[key] into GETI (constant int 0-255) or GETTABLE.
 func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int, pend *[]pendItem) {
 	fs := c.fs
+	if uvIdx, ok := c.upvalueTableKeyFirst(e.Table, e.Key); ok {
+		// Evaluate the key, then read the upvalue table (see
+		// upvalueTableKeyFirst). A scratch target holds the key in place.
+		line := suffixLine(e.EndP, e.P)
+		saved := fs.freeReg
+		keyReg := reg
+		if reg < fs.nActVar {
+			keyReg = fs.reserveReg()
+		}
+		c.compileExprToReg(e.Key, keyReg)
+		if fs.freeReg <= keyReg {
+			fs.freeReg = keyReg + 1
+		}
+		tableReg := fs.reserveReg()
+		fs.emit(ABC(OP_GETUPVAL, tableReg, uvIdx, 0, 0), line)
+		fs.emit(ABC(OP_GETTABLE, reg, tableReg, keyReg, 0), line)
+		fs.freeReg = saved
+		return
+	}
 	// When the table is a local variable, use its register directly to
 	// avoid emitting an unnecessary MOVE. This matches Lua 5.4's behavior
 	// where VINDEXED expressions reference the table register directly.
 	tableReg := -1
-	if name, ok := unparen(e.Table).(*ast.NameExpr); ok {
+	if name, ok := bareOperand(fs, e.Table).(*ast.NameExpr); ok {
 		if localReg, found := fs.lookupLocal(name.Name); found {
 			tableReg = localReg
 		}
