@@ -74,7 +74,7 @@ func getPackString(v *vm.VM, idx int) string {
 // ("string.pack"). The fallback is used only when resolution fails entirely.
 func packCallName(v *vm.VM, fallback string) (name string, method bool) {
 	name, nameWhat := v.ArgErrorFuncName()
-	if name == "" || name == "?" {
+	if name == "?" && nameWhat == "" {
 		name = fallback
 	}
 	return name, nameWhat == "method"

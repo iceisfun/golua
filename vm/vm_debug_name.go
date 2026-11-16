@@ -10,7 +10,8 @@ import "github.com/iceisfun/golua/v2/compiler"
 // funcNameFromCall inspects the caller frame's bytecode to infer the name
 // of the function being called. It looks at the instruction at the caller's
 // current PC (which should be a CALL or TAILCALL) and traces back to find
-// what loaded the function register.
+// what loaded the function register. An empty nameWhat means no name was
+// found; name itself can be empty, for a call through an empty-string key.
 func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 	if callerFrame.closure == nil {
 		return "", ""
@@ -93,9 +94,7 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			b := prev.B()
 			c := prev.C()
 			kn, ok := kName(proto, i, c)
-			if !ok || kn == "" {
-				// The callers take an empty name for none, so an empty
-				// constant key is not told apart here.
+			if !ok {
 				kn = "?"
 			}
 			// Check if table is _ENV (global access with high constant index).
@@ -137,7 +136,12 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			// R[A] := UpValue[B]
 			idx := prev.B()
 			if idx < len(proto.Upvalues) {
-				return proto.Upvalues[idx].Name, nwUpvalue
+				// A stripped upvalue has no name; reference upvalname
+				// reports "?" for it.
+				if name := proto.Upvalues[idx].Name; name != "" {
+					return name, nwUpvalue
+				}
+				return "?", nwUpvalue
 			}
 			return "", ""
 		default:

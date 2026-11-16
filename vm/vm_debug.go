@@ -121,7 +121,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 			if i > 0 {
 				name, nameWhat = vm.funcNameFromCall(&vm.callStack[i-1])
 			}
-			if name == "" && frame.callName != "" && !suppressLuaFrameCallName(frame) {
+			if nameWhat == "" && frame.callName != "" && !suppressLuaFrameCallName(frame) {
 				name = frame.callName
 				nameWhat = frame.callNameWhat
 			}
@@ -129,7 +129,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 			switch {
 			case nameWhat == nwMetamethod:
 				fmt.Fprintf(&b, "[C]: in metamethod '%s'", name)
-			case name != "" && rendersAsQualified(nameWhat):
+			case rendersAsQualified(nameWhat):
 				fmt.Fprintf(&b, "[C]: in %s '%s'", nameWhat, name)
 			case name != "":
 				fmt.Fprintf(&b, "[C]: in function '%s'", name)
@@ -195,7 +195,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 				// A tail call reuses the frame, so its override name belongs to
 				// the function the tail call replaced; like getinfo, leave a
 				// tail-called frame unnamed.
-				if name == "" && frame.callName != "" && !suppressCallName && !frame.isTailCall {
+				if nameWhat == "" && frame.callName != "" && !suppressCallName && !frame.isTailCall {
 					name = frame.callName
 					nameWhat = frame.callNameWhat
 				}
@@ -205,19 +205,19 @@ func (vm *VM) Traceback(msg string, level int) string {
 				}
 			}
 			// If no name yet, try reverse lookup in globals for Lua functions
-			if name == "" && frame.closure != nil {
+			if nameWhat == "" && frame.closure != nil {
 				if resolved, ok := vm.lookupNativeFuncName(frame.funcValue); ok {
 					name = resolved
 				}
 			}
-			if name == "" {
+			if name == "" && nameWhat == "" {
 				name = vm.frameFuncName(frame)
 			}
 			if nameWhat == nwMetamethod {
 				fmt.Fprintf(&b, "%s in metamethod '%s'", loc, name)
 			} else if nameWhat == nwHook {
 				fmt.Fprintf(&b, "%s in hook '%s'", loc, name)
-			} else if proto.LineDef == 0 && (name == "" || name == "?") {
+			} else if proto.LineDef == 0 && ((name == "" && nameWhat == "") || name == "?") {
 				// Main chunk with no resolved name — reference pushfuncname's
 				// linedefined==0 fallback, at any stack position.
 				fmt.Fprintf(&b, "%s in main chunk", loc)
@@ -249,7 +249,9 @@ func (vm *VM) Traceback(msg string, level int) string {
 }
 
 func (vm *VM) tracebackNativeName(frame *callFrame, name, nameWhat string) string {
-	if name == "" || name == "?" {
+	// A name from the call site, even "?" or "", is used as is: reference
+	// pushfuncname tries the global name only when namewhat is empty.
+	if nameWhat == "" && (name == "" || name == "?") {
 		if resolved, ok := vm.lookupNativeFuncName(frame.funcValue); ok {
 			return resolved
 		}

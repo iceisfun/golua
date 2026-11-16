@@ -25,7 +25,9 @@ func callerFuncName(v *vm.VM, fallback string) (name, nameWhat string) {
 // The fallback name is used when bytecode resolution fails.
 func callerArgError(v *vm.VM, idx int, fallback, msg string) {
 	name, nameWhat := v.ArgErrorFuncName()
-	if name == "?" {
+	if name == "?" && nameWhat == "" {
+		// Unresolved. A "?" with a nameWhat is the name reference
+		// gives a call through a non-constant key, so it stays.
 		name = fallback
 	}
 	if nameWhat == "method" {

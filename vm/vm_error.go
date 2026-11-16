@@ -96,7 +96,8 @@ func (vm *VM) PrependCallerLocation(msg string) string {
 // name under which the current native function was called. This mirrors
 // Lua 5.4's luaG_funcnamefromcode behavior. Returns (name, nameWhat) where
 // nameWhat is "global", "field", "method", "local", "upvalue", or "".
-// Returns ("", "") if the name cannot be determined.
+// Returns ("", "") if the name cannot be determined; a call through an
+// empty-string key has an empty name but a non-empty nameWhat.
 func (vm *VM) CallerFuncName() (name, nameWhat string) {
 	n := len(vm.callStack)
 	if n < 2 {
@@ -117,7 +118,7 @@ func (vm *VM) CallerFuncName() (name, nameWhat string) {
 // value (pushglobalfuncname equivalent). Returns ("?", "") if neither works.
 func (vm *VM) ArgErrorFuncName() (name, nameWhat string) {
 	name, nameWhat = vm.CallerFuncName()
-	if name != "" {
+	if nameWhat != "" {
 		return name, nameWhat
 	}
 	n := len(vm.callStack)
