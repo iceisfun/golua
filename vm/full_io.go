@@ -267,6 +267,11 @@ func (j *pathJail) resolve(name string) (string, error) {
 // is what containment needs) but the final component is left alone, so the
 // operation hits the link and not the file it points at.
 func (j *pathJail) resolveLink(name string) (string, error) {
+	if name == "" {
+		// The empty name would otherwise anchor to the jail root itself, and
+		// remove/rename would act on the root directory. C reports ENOENT.
+		return "", &fs.PathError{Op: "remove", Path: name, Err: syscall.ENOENT}
+	}
 	candidate, err := j.candidate(name)
 	if err != nil {
 		return "", err
