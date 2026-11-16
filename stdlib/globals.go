@@ -693,7 +693,10 @@ var ipairsIter = vm.NewNativeFunc(func(v *vm.VM) int {
 	defer v.EnterNonYieldable()()
 	tval := v.Get(1)
 	i := v.Get(2)
-	idx, _ := i.ToInt()
+	idx, ok := i.ToInt()
+	if !ok {
+		idx = intArgFail(v, 2, i, v.ArgCount() < 2, "?")
+	}
 	idx++
 	// Use IndexInt to support any indexable type and produce natural
 	// "attempt to index" errors for non-indexable types (like numbers),
