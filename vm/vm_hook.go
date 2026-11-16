@@ -22,6 +22,11 @@ const (
 )
 
 // SetHook configures the debug hook.
+//
+// As in reference Lua, an error raised by the hook propagates like any other
+// error and can be caught by a Lua pcall. A host that needs an uncatchable
+// instruction or time limit must use WithLimits or WithContext instead of
+// raising from a hook.
 func (vm *VM) SetHook(fn Value, mask byte, count int) {
 	vm.hookFunc = fn
 	vm.hookMask = mask
