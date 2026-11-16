@@ -128,6 +128,13 @@ func (ws *weakStore) set(key, value Value) error {
 	if key.IsFloat() && key.fval() != key.fval() {
 		return fmt.Errorf("table index is NaN")
 	}
+	// A float key with an exact integer value is stored as that integer, as
+	// in a normal table, so traversal hands back 2 rather than 2.0.
+	if key.IsFloat() {
+		if i, ok := key.ToInt(); ok {
+			key = NewInt(i)
+		}
+	}
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 

@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"math"
 	"runtime"
 	"testing"
 )
@@ -274,5 +275,36 @@ func TestWeakStore_SweepCleansDeadEntries(t *testing.T) {
 	}
 	if keys[0].AsString() != "c" {
 		t.Errorf("expected surviving key 'c', got %v", keys[0])
+	}
+}
+
+// TestWeakTable_FloatKeysNormalized checks that a weak table stores a float key
+// with an exact integer value as that integer, as a normal table does, so
+// next() hands back 2 and 0 rather than 2.0 and -0.0.
+func TestWeakTable_FloatKeysNormalized(t *testing.T) {
+	for _, mode := range []string{"k", "v", "kv"} {
+		wt := makeWeakTable(mode)
+		wt.MustSet(NewFloat(2.0), NewString("b"))
+		wt.MustSet(NewFloat(math.Copysign(0, -1)), NewString("z"))
+		wt.MustSet(NewFloat(2.5), NewString("f"))
+
+		keys := collectNext(wt)
+		if len(keys) != 3 {
+			t.Fatalf("mode %q: got %d keys, want 3", mode, len(keys))
+		}
+		for _, k := range keys {
+			switch {
+			case k.IsInt():
+				if i := k.ival(); i != 2 && i != 0 {
+					t.Errorf("mode %q: unexpected integer key %v", mode, k)
+				}
+			case k.IsFloat() && k.fval() == 2.5:
+			default:
+				t.Errorf("mode %q: key %v not normalized to an integer", mode, k)
+			}
+		}
+		if got := wt.GetInt(2); got.AsString() != "b" {
+			t.Errorf("mode %q: t[2] = %v, want b", mode, got)
+		}
 	}
 }
