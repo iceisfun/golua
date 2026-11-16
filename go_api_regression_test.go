@@ -14,6 +14,44 @@ import (
 	"github.com/iceisfun/golua/v2/vm"
 )
 
+// Results handed to the host belong to the host: a later call into the VM, or
+// a collection that clears VM-internal buffers, must not change them.
+func TestGoAPIResultsSurviveLaterCalls(t *testing.T) {
+	v := vm.New()
+	stdlib.Open(v)
+	embedRun(t, v, `function f(x) return x, x + 1 end`)
+	f := v.GetGlobal("f")
+
+	r1, err := v.ProtectedCall(f, []vm.Value{vm.NewInt(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.ProtectedCall(f, []vm.Value{vm.NewInt(100)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r1) != 2 || r1[0].AsInt() != 1 || r1[1].AsInt() != 2 {
+		t.Fatalf("ProtectedCall results changed by a later call: %v", r1)
+	}
+
+	ra := embedRun(t, v, `return "a", "b"`)
+	embedRun(t, v, `return "c", "d"`)
+	if len(ra) != 2 || ra[0].AsString() != "a" || ra[1].AsString() != "b" {
+		t.Fatalf("Run results changed by a later Run: %v", ra)
+	}
+
+	r1v := embedRun(t, v, `return 7`)
+	embedRun(t, v, `return 8`)
+	if len(r1v) != 1 || r1v[0].AsInt() != 7 {
+		t.Fatalf("single Run result changed by a later Run: %v", r1v)
+	}
+
+	rt := embedRun(t, v, `return {}`)
+	embedRun(t, v, `collectgarbage()`)
+	if len(rt) != 1 || !rt[0].IsTable() {
+		t.Fatalf("Run result wiped by collectgarbage: %v", rt)
+	}
+}
+
 // A host native that calls ProtectedCall and handles the error itself is a
 // lua_pcall with no message handler: a Lua xpcall around it must neither run
 // its handler on that error nor lose its own error to it.

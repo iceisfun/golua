@@ -540,7 +540,14 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) ([]Value, error) {
 			vm.lastErrorCallStack = savedErrorCallStack
 		}()
 	}
-	return vm.protectedCall(fn, args)
+	results, err := vm.protectedCall(fn, args)
+	// A Lua function's results come back in vm.retBuf, which the next call
+	// into the VM overwrites and a collection clears. The caller owns what
+	// it is handed, so give it a copy.
+	if len(results) > 0 && &results[0] == &vm.retBuf[0] {
+		results = append([]Value(nil), results...)
+	}
+	return results, err
 }
 
 // ProtectedCallRaw is ProtectedCall for library code that implements
@@ -548,7 +555,9 @@ func (vm *VM) ProtectedCall(fn Value, args []Value) ([]Value, error) {
 // reports what it catches (require, dofile, load's reader). An error
 // raised inside fn reaches the pending xpcall message handler at its raise
 // point, as it would through lua_call, and IsMsgHandlerUsed and
-// GetMsgHandlerResult report what the handler made of it.
+// GetMsgHandlerResult report what the handler made of it. The results may
+// share a buffer that the VM reuses on its next call, so they must be
+// consumed before calling back into the VM.
 func (vm *VM) ProtectedCallRaw(fn Value, args []Value) ([]Value, error) {
 	return vm.protectedCall(fn, args)
 }
