@@ -47,3 +47,28 @@ func TestLoadReaderRegression_XPCallHandlerShapesReaderError(t *testing.T) {
 	`
 	runLuaSource(t, source, "test_load_reader_xpcall_handler_result")
 }
+
+// A nil handler result becomes the reference "<no error object>" string, and
+// load's own "reader function must return a string" error goes through the
+// handler like an error the reader raises.
+func TestLoadReaderRegression_XPCallHandlerNilResultAndTypeError(t *testing.T) {
+	source := `
+		local ok, f, err = xpcall(function()
+			return load(function() error("rd", 0) end)
+		end, function() return nil end)
+		assert(ok == true and f == nil and err == "<no error object>", tostring(err))
+
+		ok, f, err = xpcall(function()
+			return load(function() return {} end)
+		end, function(m) return "H(" .. m .. ")" end)
+		assert(ok == true and f == nil, tostring(f))
+		assert(err:match("^H%(.-reader function must return a string%)$"), err)
+
+		-- a pcall in between keeps the handler out of it
+		ok, f, err = xpcall(function()
+			return pcall(load, function() return {} end)
+		end, function(m) return "H(" .. m .. ")" end)
+		assert(ok == true and f == true and err == nil, tostring(err))
+	`
+	runLuaSource(t, source, "test_load_reader_xpcall_nil_and_type_error")
+}
