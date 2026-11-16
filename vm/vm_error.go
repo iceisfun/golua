@@ -96,7 +96,8 @@ func (vm *VM) PrependCallerLocation(msg string) string {
 // name under which the current native function was called. This mirrors
 // Lua 5.4's luaG_funcnamefromcode behavior. Returns (name, nameWhat) where
 // nameWhat is "global", "field", "method", "local", "upvalue", or "".
-// Returns ("", "") if the name cannot be determined.
+// Returns ("", "") if the name cannot be determined; a call through an
+// empty-string key has an empty name but a non-empty nameWhat.
 func (vm *VM) CallerFuncName() (name, nameWhat string) {
 	n := len(vm.callStack)
 	if n < 2 {
@@ -117,18 +118,38 @@ func (vm *VM) CallerFuncName() (name, nameWhat string) {
 // value (pushglobalfuncname equivalent). Returns ("?", "") if neither works.
 func (vm *VM) ArgErrorFuncName() (name, nameWhat string) {
 	name, nameWhat = vm.CallerFuncName()
-	if name != "" {
+	if nameWhat != "" {
 		return name, nameWhat
 	}
-	// Bytecode resolution failed — try global table lookup.
 	n := len(vm.callStack)
 	if n > 0 {
+		// A metamethod dispatched without a naming instruction at the
+		// caller's pc (__close from OP_CLOSE or OP_RETURN) carries its name
+		// on the frame, as getinfo already uses for Lua handlers. Like
+		// reference funcnamefromcall, only a Lua caller names it, and a
+		// close run while unwinding an error has no name.
+		if fr := &vm.callStack[n-1]; fr.callName != "" && !fr.suppressTracebackName &&
+			n >= 2 && vm.callStack[n-2].closure != nil {
+			return fr.callName, fr.callNameWhat
+		}
+		// Bytecode resolution failed — try global table lookup.
 		fn := vm.callStack[n-1].funcValue
 		if resolved, ok := vm.lookupNativeFuncName(fn); ok {
 			return resolved, ""
 		}
 	}
 	return "?", ""
+}
+
+// ArgErrorExtraArgs returns how many arguments __call metamethods prepended
+// to the current native function's arguments (debug.getinfo's extraargs).
+// Lua 5.5's luaL_argerror reports those as "extra argument" and leaves them
+// out of the number of any other argument.
+func (vm *VM) ArgErrorExtraArgs() int {
+	if n := len(vm.callStack); n > 0 {
+		return vm.callStack[n-1].extraArgs
+	}
+	return 0
 }
 
 // ObjTypeName returns the type name the VM uses in its runtime errors

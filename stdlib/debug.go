@@ -314,7 +314,8 @@ buildResult:
 		case 'l':
 			result.SetString("currentline", vm.NewInt(int64(info.CurrentLine)))
 		case 'n':
-			if info.Name != "" {
+			// An empty-string key gives an empty name, which is still a name.
+			if info.Name != "" || info.NameWhat != "" {
 				result.SetString("name", vm.NewString(info.Name))
 			}
 			result.SetString("namewhat", vm.NewString(info.NameWhat))

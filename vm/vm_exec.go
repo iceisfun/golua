@@ -1522,7 +1522,11 @@ mainLoop:
 
 			// Dispatch loop for __call support
 			callChainDepth := 0
-			tailExtraArgs := frame.extraArgs
+			// Extra arguments added by __call on the way to the target. As
+			// in luaD_pretailcall, a Lua target reuses this frame and keeps
+			// the count it was entered with (CIST_CCMT is not rewritten);
+			// a native target gets a fresh frame holding only this count.
+			callExtraArgs := 0
 			for {
 				if fn.IsFunction() {
 					closure := fn.AsClosure()
@@ -1531,7 +1535,6 @@ mainLoop:
 					frame.funcValue = fn
 					frame.pc = 0
 					frame.isTailCall = true
-					frame.extraArgs = tailExtraArgs
 					frame.argc = UseVMTop // Lua frame: use vm.top for ArgCount
 					proto := closure.Proto
 
@@ -1671,7 +1674,7 @@ mainLoop:
 						funcValue: fn,
 						ftransfer: 1,
 						ntransfer: len(args),
-						extraArgs: tailExtraArgs,
+						extraArgs: callExtraArgs,
 					}
 					vm.callStack = append(vm.callStack, nativeFrame)
 					// The native gets an ordinary pair of call/return hook
@@ -1780,7 +1783,7 @@ mainLoop:
 						copy(newArgs[1:], args)
 						args = newArgs
 						fn = mm
-						tailExtraArgs++ // Each __call adds one extra argument
+						callExtraArgs++ // Each __call adds one extra argument
 						continue        // Retry dispatch with metamethod
 					}
 					vi := ""

@@ -48,3 +48,26 @@ local t3 = setmetatable({}, {
   end
 })
 print(t3(1, 2, 3)) --> 0
+
+-- A __call chain entered from a C function (pcall) counts the same way
+print(pcall(a)) --> true	1
+print(pcall(b)) --> true	2
+
+-- A Lua function reached by a tail call keeps the extraargs of the frame
+-- it replaces, as reference luaD_pretailcall does; the __call levels on
+-- the way to it are not added
+local function tc() return a() end
+print(tc()) --> 0
+local t4 = setmetatable({}, {
+  __call = function(self)
+    return b() -- tailcall through two __call levels
+  end
+})
+print(t4()) --> 1
+
+-- A handler called by a C function has no call-site name
+local named = setmetatable({}, {__call = function(self)
+  local info = debug.getinfo(1, "n")
+  return tostring(info.name), info.namewhat == ""
+end})
+print(pcall(named)) --> true	nil	true

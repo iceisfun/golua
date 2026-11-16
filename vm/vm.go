@@ -850,8 +850,12 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 		return results, err
 	}
 
-	// Resolve __call metamethod chain (up to MaxCallChainDepth levels)
+	// Resolve __call metamethod chain (up to MaxCallChainDepth levels).
+	// Each level adds one extra argument, reported as getinfo's extraargs.
+	// The handler is called from Go (from a C function, in reference), so
+	// it gets no call-site name.
 	cur := fn
+	extraArgs := 0
 	for depth := 1; ; depth++ {
 		mm := vm.getMetafield(cur, MetaCall)
 		if mm.IsNil() {
@@ -868,10 +872,9 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 		newArgs[0] = cur
 		copy(newArgs[1:], args)
 		args = newArgs
+		extraArgs = depth
 
 		if mm.IsNativeFunc() || mm.IsFunction() {
-			vm.pendingCallName = "call"
-			vm.pendingCallNameWhat = nwMetamethod
 			fn = mm
 			break
 		}
@@ -904,6 +907,7 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 			argc:                  len(args),
 			funcValue:             fn,
 			suppressTracebackName: vm.pendingSuppressTracebackName,
+			extraArgs:             extraArgs,
 		})
 		vm.pendingSuppressTracebackName = false
 		vm.top = base + 1 + len(args)
@@ -923,6 +927,7 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 	}
 
 	// fn.IsFunction()
+	vm.pendingExtraArgs = extraArgs
 	results, err = vm.call(fn.AsClosure(), args, MultiReturn)
 	return results, err
 }
@@ -971,6 +976,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 	// Resolve __call metamethod chain (up to MaxCallChainDepth levels)
 	origFn := fn
 	cur := fn
+	extraArgs := 0
 	for depth := 1; ; depth++ {
 		mm := vm.getMetafield(cur, MetaCall)
 		if mm.IsNil() {
@@ -984,6 +990,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 		newArgs[0] = cur
 		copy(newArgs[1:], args)
 		args = newArgs
+		extraArgs = depth
 
 		if mm.IsNativeFunc() || mm.IsFunction() {
 			fn = mm
@@ -1014,6 +1021,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 			base:      base,
 			argc:      len(args),
 			funcValue: fn,
+			extraArgs: extraArgs,
 		})
 		vm.top = base + 1 + len(args)
 		nf(vm)
@@ -1022,6 +1030,7 @@ func (vm *VM) callUnprotected(fn Value, args []Value) {
 		return
 	}
 
+	vm.pendingExtraArgs = extraArgs
 	vm.call(fn.AsClosure(), args, 0) //nolint:errcheck
 }
 
@@ -1537,6 +1546,7 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 		if mm.IsFunction() {
 			vm.pendingCallName = name
 			vm.pendingCallNameWhat = nwMetamethod
+			vm.pendingExtraArgs = depth
 			results, err := vm.call(mm.AsClosure(), args, 1)
 			if err != nil {
 				return Nil, err
@@ -1560,6 +1570,7 @@ func (vm *VM) callValue(name string, fn Value, args []Value) (Value, error) {
 				funcValue:    mm,
 				callName:     name,
 				callNameWhat: nwMetamethod,
+				extraArgs:    depth,
 			}
 			vm.callStack = append(vm.callStack, nativeFrame)
 			vm.top = nativeBase + 1 + len(args)

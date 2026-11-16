@@ -107,18 +107,15 @@ func makeFileHandleWithClose(v *vm.VM, f vm.LuaFile, closeFn func(*vm.VM, *fileH
 }
 
 // fileArgError raises a "bad argument" error for file operations.
-// It mirrors Lua 5.4's luaL_argerror: resolves the function name from the
-// caller's bytecode, and if the call was via method syntax (OP_SELF),
-// decrements the arg number by 1 (since self is implicit).
+// It mirrors Lua 5.5's luaL_argerror: resolves the function name from the
+// caller's bytecode, and numbers the argument as argErrorMsg does (without
+// the implicit self of a method call or arguments added by __call).
 // idx is the 1-based argument position counting self (e.g. 2 for the first
 // explicit arg in a method call, 1 for a module function call).
 // fallback is used if the name cannot be resolved from bytecode.
 func fileArgError(v *vm.VM, idx int, _ string, msg string) {
 	name, nameWhat := v.ArgErrorFuncName()
-	if nameWhat == "method" {
-		idx-- // method call: self is implicit, decrement arg number
-	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg))
+	panic(argErrorMsg(name, nameWhat, v.ArgErrorExtraArgs(), idx, msg))
 }
 
 // getFileHandle extracts the fileHandle from a userdata value, or panics.

@@ -18,27 +18,37 @@ func callerFuncName(v *vm.VM, fallback string) (name, nameWhat string) {
 }
 
 // callerArgError panics with a "bad argument" error, resolving the function
-// name from the calling Lua frame's bytecode debug info (matching Lua 5.4's
-// luaL_argerror behavior). When the function was called via method syntax
-// (e.g., s:format()), the argument index is decremented by 1 so that the
-// implicit self parameter is not counted.
+// name from the calling Lua frame's bytecode debug info (matching Lua 5.5's
+// luaL_argerror behavior); see argErrorMsg for how idx is reported.
 // The fallback name is used when bytecode resolution fails.
 func callerArgError(v *vm.VM, idx int, fallback, msg string) {
 	name, nameWhat := v.ArgErrorFuncName()
-	if name == "?" {
+	if name == "?" && nameWhat == "" {
+		// Unresolved. A "?" with a nameWhat is the name reference
+		// gives a call through a non-constant key, so it stays.
 		name = fallback
 	}
+	panic(argErrorMsg(name, nameWhat, v.ArgErrorExtraArgs(), idx, msg))
+}
+
+// argErrorMsg formats Lua 5.5's luaL_argerror message for argument idx of a
+// function called as name/nameWhat with extra arguments prepended by __call
+// metamethods. An argument added by __call is a "bad extra argument"; other
+// arguments are numbered without the extra ones, and with method syntax
+// (e.g., s:format()) without the implicit self, where an error about self
+// itself reads "calling 'f' on bad self".
+func argErrorMsg(name, nameWhat string, extra, idx int, msg string) string {
+	if idx <= extra {
+		return fmt.Sprintf("bad extra argument #%d to '%s' (%s)", idx, name, msg)
+	}
+	idx -= extra
 	if nameWhat == "method" {
-		if idx == 1 {
-			// Lua 5.4's luaL_typeerror: when arg #1 was passed as self
-			// via method syntax (OP_SELF), produce the special message.
-			panic(fmt.Sprintf("calling '%s' on bad self (%s)", name, msg))
-		}
-		if idx > 0 {
-			idx--
+		idx--
+		if idx == 0 {
+			return fmt.Sprintf("calling '%s' on bad self (%s)", name, msg)
 		}
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg))
+	return fmt.Sprintf("bad argument #%d to '%s' (%s)", idx, name, msg)
 }
 
 // getString returns the string value at stack index idx, coercing numbers.
