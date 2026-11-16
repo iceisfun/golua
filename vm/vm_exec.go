@@ -1249,7 +1249,7 @@ mainLoop:
 					}
 				}
 				if needErr {
-					varName := localName(frame.closure.Proto, a, frame.pc)
+					varName := tbcVarName(frame.closure.Proto, a, frame.pc)
 					return nil, vm.runtimeError("variable '%s' got a non-closable value", varName)
 				}
 			}
@@ -2152,7 +2152,7 @@ mainLoop:
 					}
 				}
 				if needErr {
-					varName := localName(frame.closure.Proto, a+2, frame.pc)
+					varName := tbcVarName(frame.closure.Proto, a+2, frame.pc)
 					return nil, vm.runtimeError("variable '%s' got a non-closable value", varName)
 				}
 			}
@@ -2861,4 +2861,14 @@ func localName(proto *compiler.Proto, reg int, pc int) string {
 		}
 	}
 	return "?"
+}
+
+// tbcVarName names the register of a to-be-closed variable for the
+// "got a non-closable value" error. Like reference luaG_findlocal, a live
+// register with no debug name (a stripped function) is "(temporary)".
+func tbcVarName(proto *compiler.Proto, reg int, pc int) string {
+	if name := localName(proto, reg, pc); name != "?" {
+		return name
+	}
+	return "(temporary)"
 }
