@@ -982,17 +982,12 @@ func fileFlush(v *vm.VM) int {
 
 // fileToString implements __tostring for file handles.
 func fileToString(v *vm.VM) int {
+	// Reference f_tostring checks its argument like every other file method
+	// (luaL_checkudata), so a non-file is an argument error, not "file (?)".
+	// A metamethod has no name of its own: the reference reports '?'.
 	val := v.Get(1)
+	fh := getFileHandle(v, val, "?")
 	ud := val.AsUserdata()
-	if ud == nil {
-		v.Set(0, vm.NewString("file (?)"))
-		return 1
-	}
-	fh, ok := ud.Data.(*fileHandle)
-	if !ok {
-		v.Set(0, vm.NewString("file (?)"))
-		return 1
-	}
 	ctx := v.Context()
 	if fh.closed || fh.file.IsClosed(ctx) {
 		v.Set(0, vm.NewString("file (closed)"))
