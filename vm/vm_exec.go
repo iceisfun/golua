@@ -704,7 +704,7 @@ mainLoop:
 				}
 				var val Value
 				var err error
-				if idx.IsTable() {
+				if idx.IsTable() && !valueIsThread(idx) {
 					val, err = vm.tableGetString(idx.AsTable(), key)
 				} else {
 					val, err = vm.resolveIndex(idx, table, NewString(key))

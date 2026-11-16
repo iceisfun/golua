@@ -125,6 +125,14 @@ do
     debug.setmetatable(co, {__index = "abc"})
     ok, err = pcall(function() return co:len() end)
     assert(not ok and err:find("bad self"), "thread __index = string: " .. tostring(err))
+    -- A string method call whose __index is a thread chains through it too.
+    debug.setmetatable(co, {__index = {foo = function(s) return "foo:" .. s end}})
+    local sm = getmetatable("")
+    local oldIndex = sm.__index
+    sm.__index = co
+    ok, err = pcall(function() return ("x"):foo() end)
+    sm.__index = oldIndex
+    assert(ok and err == "foo:x", "string method through __index = thread: " .. tostring(err))
     debug.setmetatable(co, nil)
     print("PASS: thread method call")
 end
