@@ -170,7 +170,7 @@ func makeOsExecute(provider vm.LuaExecProvider) vm.NativeFunc {
 		}
 		cmd := v.Get(1)
 		if !cmd.IsString() && !cmd.IsNumber() {
-			callerArgError(v, 1, "os.execute", fmt.Sprintf("string expected, got %s", cmd.Type()))
+			callerArgError(v, 1, "os.execute", fmt.Sprintf("string expected, got %s", argTypeName(v, cmd)))
 		}
 		ok, exitType, exitCode := provider.Execute(v.Context(), valueToString(cmd))
 		if err := v.CheckInterrupt(); err != nil {
@@ -356,7 +356,7 @@ func makeOsDate(vmRef *vm.VM, provider vm.LuaOsProvider) vm.NativeFunc {
 				// Lua coerces numbers to strings for string arguments
 				format = valueToString(arg1)
 			} else {
-				callerArgError(v, 1, "os.date", fmt.Sprintf("string expected, got %s", arg1.Type()))
+				callerArgError(v, 1, "os.date", fmt.Sprintf("string expected, got %s", argTypeName(v, arg1)))
 			}
 		}
 
@@ -445,7 +445,7 @@ func makeOsRemove(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 			callerArgError(v, 1, "os.remove", "string expected, got nil")
 		}
 		if !name.IsString() && !name.IsNumber() {
-			callerArgError(v, 1, "os.remove", fmt.Sprintf("string expected, got %s", name.Type()))
+			callerArgError(v, 1, "os.remove", fmt.Sprintf("string expected, got %s", argTypeName(v, name)))
 		}
 		nameStr := valueToString(name)
 		err := ioProvider.Remove(v.Context(), nameStr)
@@ -468,7 +468,7 @@ func makeOsSetlocale(provider vm.LuaOsProvider) vm.NativeFunc {
 		if v.ArgCount() >= 1 && !v.Get(1).IsNil() {
 			arg1 := v.Get(1)
 			if !arg1.IsString() && !arg1.IsNumber() {
-				callerArgError(v, 1, "os.setlocale", fmt.Sprintf("string expected, got %s", arg1.Type()))
+				callerArgError(v, 1, "os.setlocale", fmt.Sprintf("string expected, got %s", argTypeName(v, arg1)))
 			}
 			locale = valueToString(arg1)
 		}
@@ -477,7 +477,7 @@ func makeOsSetlocale(provider vm.LuaOsProvider) vm.NativeFunc {
 		if v.ArgCount() >= 2 && !v.Get(2).IsNil() {
 			arg2 := v.Get(2)
 			if !arg2.IsString() && !arg2.IsNumber() {
-				callerArgError(v, 2, "os.setlocale", fmt.Sprintf("string expected, got %s", arg2.Type()))
+				callerArgError(v, 2, "os.setlocale", fmt.Sprintf("string expected, got %s", argTypeName(v, arg2)))
 			}
 			category = valueToString(arg2)
 			switch category {
@@ -509,7 +509,7 @@ func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 			callerArgError(v, 1, "os.rename", "string expected, got nil")
 		}
 		if !arg1.IsString() && !arg1.IsNumber() {
-			callerArgError(v, 1, "os.rename", fmt.Sprintf("string expected, got %s", arg1.Type()))
+			callerArgError(v, 1, "os.rename", fmt.Sprintf("string expected, got %s", argTypeName(v, arg1)))
 		}
 		arg2 := v.Get(2)
 		if v.ArgCount() < 2 {
@@ -519,7 +519,7 @@ func makeOsRename(ioProvider vm.LuaIoProvider) vm.NativeFunc {
 			callerArgError(v, 2, "os.rename", "string expected, got nil")
 		}
 		if !arg2.IsString() && !arg2.IsNumber() {
-			callerArgError(v, 2, "os.rename", fmt.Sprintf("string expected, got %s", arg2.Type()))
+			callerArgError(v, 2, "os.rename", fmt.Sprintf("string expected, got %s", argTypeName(v, arg2)))
 		}
 		oldname := valueToString(arg1)
 		newname := valueToString(arg2)
@@ -583,7 +583,7 @@ func makeOsGetenv(provider vm.LuaOsProvider) vm.NativeFunc {
 			callerArgError(v, 1, "os.getenv", "string expected, got nil")
 		}
 		if !name.IsString() && !name.IsNumber() {
-			callerArgError(v, 1, "os.getenv", fmt.Sprintf("string expected, got %s", name.Type()))
+			callerArgError(v, 1, "os.getenv", fmt.Sprintf("string expected, got %s", argTypeName(v, name)))
 		}
 
 		val, ok := provider.Getenv(v.Context(), valueToString(name))

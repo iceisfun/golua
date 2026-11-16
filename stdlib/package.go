@@ -144,7 +144,7 @@ func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 		}
 		nameVal := v.Get(1)
 		if !nameVal.IsString() && !nameVal.IsNumber() {
-			callerArgError(v, 1, "require", fmt.Sprintf("string expected, got %s", nameVal.Type()))
+			callerArgError(v, 1, "require", fmt.Sprintf("string expected, got %s", argTypeName(v, nameVal)))
 		}
 		var name string
 		if nameVal.IsString() {

@@ -35,10 +35,7 @@ var gcParamDefaults = map[string]int64{
 
 // gotDesc returns "got TYPE" or "got no value" for arg error messages.
 func gotDesc(v *vm.VM, argn int) string {
-	if v.ArgCount() < argn {
-		return ", got no value"
-	}
-	return fmt.Sprintf(", got %s", argTypeName(v, v.Get(argn)))
+	return ", got " + argTypeOrNone(v, v.Get(argn), v.ArgCount() < argn)
 }
 
 // argTypeName mirrors reference Lua's luaL_typeerror type resolution: it
@@ -56,6 +53,19 @@ func argTypeName(v *vm.VM, val vm.Value) string {
 		return "light userdata"
 	}
 	return val.Type()
+}
+
+// argTypeOrNone is argTypeName for an argument that may be absent: luaL_typeerror
+// looks for __name first (an absent argument reads as nil, so the nil type
+// metatable's __name applies) and only then falls back to "no value".
+func argTypeOrNone(v *vm.VM, val vm.Value, noValue bool) string {
+	if noValue {
+		if name := v.GetMetafield(vm.Nil, "__name"); name.IsString() {
+			return name.AsString()
+		}
+		return "no value"
+	}
+	return argTypeName(v, val)
 }
 
 // print(...)
@@ -199,7 +209,7 @@ func luaToNumber(v *vm.VM) int {
 		// Lua 5.4 order: (1) arg2 integer type, (2) arg1 string type, (3) base range.
 		bi := getInt(v, 2, "tonumber")
 		if !val.IsString() {
-			callerArgError(v, 1, "tonumber", fmt.Sprintf("string expected, got %s", v.ObjTypeName(val)))
+			callerArgError(v, 1, "tonumber", fmt.Sprintf("string expected, got %s", argTypeName(v, val)))
 		}
 		if bi < 2 || bi > 36 {
 			callerArgError(v, 2, "tonumber", "base out of range")
@@ -429,10 +439,7 @@ func luaXpcall(v *vm.VM) int {
 	fn := v.Get(1)
 	msgh := v.Get(2)
 	if !msgh.IsFunction() && !msgh.IsNativeFunc() {
-		got := msgh.Type()
-		if v.ArgCount() < 2 {
-			got = "no value"
-		}
+		got := argTypeOrNone(v, msgh, v.ArgCount() < 2)
 		callerArgError(v, 2, "xpcall", fmt.Sprintf("function expected, got %s", got))
 	}
 
@@ -603,13 +610,13 @@ func luaWarn(v *vm.VM) int {
 	// Lua 5.4: all arguments must be strings or numbers (coerced to string)
 	first := v.Get(1)
 	if !first.IsString() && !first.IsInt() && !first.IsFloat() {
-		callerArgError(v, 1, "warn", fmt.Sprintf("string expected, got %s", v.ObjTypeName(first)))
+		callerArgError(v, 1, "warn", fmt.Sprintf("string expected, got %s", argTypeName(v, first)))
 	}
 	s := valueToString(first)
 	for i := 2; i <= argc; i++ {
 		arg := v.Get(i)
 		if !arg.IsString() && !arg.IsInt() && !arg.IsFloat() {
-			callerArgError(v, i, "warn", fmt.Sprintf("string expected, got %s", v.ObjTypeName(arg)))
+			callerArgError(v, i, "warn", fmt.Sprintf("string expected, got %s", argTypeName(v, arg)))
 		}
 	}
 	if len(s) > 0 && s[0] == '@' {
@@ -764,11 +771,7 @@ func luaSelect(v *vm.VM) int {
 		if _, isNum := idx.ToNumber(); isNum {
 			callerArgError(v, 1, "select", "number has no integer representation")
 		}
-		typeName := idx.Type()
-		if n < 1 {
-			typeName = "no value"
-		}
-		callerArgError(v, 1, "select", "number expected, got "+typeName)
+		callerArgError(v, 1, "select", "number expected, got "+argTypeOrNone(v, idx, n < 1))
 	}
 
 	if i < 0 {

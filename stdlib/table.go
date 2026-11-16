@@ -45,10 +45,7 @@ func tableCheckLike(v *vm.VM, idx int, fname string, need int) vm.Value {
 		((need&tabL) == 0 || val.IsString() || !v.GetMetafield(val, vm.MetaLen).IsNil()) {
 		return val
 	}
-	got := argTypeName(v, val)
-	if v.ArgCount() < idx {
-		got = "no value"
-	}
+	got := argTypeOrNone(v, val, v.ArgCount() < idx)
 	callerArgError(v, idx, fname, fmt.Sprintf("table expected, got %s", got))
 	return vm.Nil // unreachable
 }

@@ -189,7 +189,7 @@ func luaLoad(v *vm.VM) int {
 		if arg2.IsString() || arg2.IsNumber() {
 			rawChunkName = valueToString(arg2)
 		} else {
-			callerArgError(v, 2, "load", fmt.Sprintf("string expected, got %s", arg2.Type()))
+			callerArgError(v, 2, "load", fmt.Sprintf("string expected, got %s", argTypeName(v, arg2)))
 		}
 	}
 	mode := "bt"
@@ -198,7 +198,7 @@ func luaLoad(v *vm.VM) int {
 		if m.IsString() || m.IsNumber() {
 			mode = valueToString(m)
 		} else {
-			callerArgError(v, 3, "load", fmt.Sprintf("string expected, got %s", m.Type()))
+			callerArgError(v, 3, "load", fmt.Sprintf("string expected, got %s", argTypeName(v, m)))
 		}
 	}
 	// Lua 5.5: mode strings containing 'B' are reserved for fixed-buffer
@@ -357,10 +357,7 @@ func luaLoad(v *vm.VM) int {
 			rawChunkName = source
 		}
 	} else {
-		got := chunk.Type()
-		if v.ArgCount() < 1 {
-			got = "no value"
-		}
+		got := argTypeOrNone(v, chunk, v.ArgCount() < 1)
 		callerArgError(v, 1, "load", fmt.Sprintf("function expected, got %s", got))
 	}
 
@@ -476,7 +473,7 @@ func luaLoadfile(v *vm.VM) int {
 		if arg1.IsString() || arg1.IsNumber() {
 			filename = valueToString(arg1)
 		} else {
-			callerArgError(v, 1, "loadfile", fmt.Sprintf("string expected, got %s", arg1.Type()))
+			callerArgError(v, 1, "loadfile", fmt.Sprintf("string expected, got %s", argTypeName(v, arg1)))
 		}
 	}
 
@@ -486,7 +483,7 @@ func luaLoadfile(v *vm.VM) int {
 		if m.IsString() || m.IsNumber() {
 			mode = valueToString(m)
 		} else {
-			callerArgError(v, 2, "loadfile", fmt.Sprintf("string expected, got %s", m.Type()))
+			callerArgError(v, 2, "loadfile", fmt.Sprintf("string expected, got %s", argTypeName(v, m)))
 		}
 	}
 	// Lua 5.5: mode strings containing 'B' are reserved for fixed-buffer
@@ -576,7 +573,7 @@ func luaDofile(v *vm.VM) int {
 		if arg1.IsString() || arg1.IsNumber() {
 			filename = valueToString(arg1)
 		} else {
-			callerArgError(v, 1, "dofile", fmt.Sprintf("string expected, got %s", arg1.Type()))
+			callerArgError(v, 1, "dofile", fmt.Sprintf("string expected, got %s", argTypeName(v, arg1)))
 		}
 	}
 
