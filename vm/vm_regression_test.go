@@ -333,10 +333,10 @@ func TestLocalEnvGlobalName(t *testing.T) {
 	}
 }
 
-// Bug: Hook errors should propagate through pcall (uncatchable), matching
-// Lua 5.4 where hook errors set LUA_ERRERR status. The error should reach
-// the top-level Run/ProtectedCall, not be caught by the inner pcall.
-func TestHookErrorPropagatesThroughPcall(t *testing.T) {
+// Bug: an error raised by a debug hook was boxed in a sentinel that every
+// pcall re-raised, so it escaped to the top level. Reference Lua runs the
+// hook as an ordinary call; the nearest pcall catches its error.
+func TestHookErrorCaughtByPcall(t *testing.T) {
 	v := New()
 
 	// Provide pcall and error as native functions
@@ -395,8 +395,7 @@ func TestHookErrorPropagatesThroughPcall(t *testing.T) {
 		return 0
 	}))
 
-	// The hook error should propagate through pcall and reach Run as a top-level error
-	_, err := runWithVM(t, v, `
+	results, err := runWithVM(t, v, `
 		local ok, msg = pcall(function()
 			sethook(function()
 				clearhook()
@@ -407,11 +406,17 @@ func TestHookErrorPropagatesThroughPcall(t *testing.T) {
 		end)
 		return ok, msg
 	`)
-	if err == nil {
-		t.Fatal("expected hook error to propagate to top level, but got nil error")
+	if err != nil {
+		t.Fatalf("hook error escaped pcall: %v", err)
 	}
-	if !strings.Contains(err.Error(), "hook") {
-		t.Errorf("expected error containing 'hook', got: %s", err.Error())
+	if len(results) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].AsBool() {
+		t.Error("expected pcall to return false")
+	}
+	if !strings.Contains(results[1].String(), "hook error") {
+		t.Errorf("expected pcall's message to carry the hook error, got: %s", results[1].String())
 	}
 }
 

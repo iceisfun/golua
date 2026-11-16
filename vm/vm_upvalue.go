@@ -112,6 +112,7 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value, hasError bool, useM
 			defer func() {
 				vm.top = savedTop
 				if r := recover(); r != nil {
+					r = vm.locatePanic(r)
 					lastPanic = r
 					// A handler errored: subsequent handlers now run in an error
 					// context (they receive an error object even if it is nil).
@@ -154,6 +155,7 @@ func (vm *VM) callCloseHandlers(indices []int, errVal Value, hasError bool, useM
 						func() {
 							defer func() {
 								if innerR := recover(); innerR != nil {
+									innerR = vm.locatePanic(innerR)
 									lastPanic = innerR
 									if le, ok := innerR.(*LuaError); ok {
 										errVal = le.Value
@@ -214,6 +216,7 @@ func (vm *VM) CloseAllTBC() {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
+					r = vm.locatePanic(r)
 					lastPanic = r
 					hasError = true
 					if le, ok := r.(*LuaError); ok {
@@ -234,6 +237,7 @@ func (vm *VM) CloseAllTBC() {
 						func() {
 							defer func() {
 								if ir := recover(); ir != nil {
+									ir = vm.locatePanic(ir)
 									lastPanic = ir
 									if le, ok := ir.(*LuaError); ok {
 										errVal = le.Value

@@ -69,6 +69,11 @@ func (vm *VM) Traceback(msg string, level int) string {
 	}
 	start := len(vm.callStack) - 1 - level
 	if start < 0 {
+		// A level just past the outermost real frame of the main VM names
+		// the synthetic host [C] frame, which is a level like any other.
+		if start == -1 && vm.yieldCh == nil {
+			b.WriteString("\n\t[C]: in ?")
+		}
 		return b.String()
 	}
 
@@ -79,8 +84,9 @@ func (vm *VM) Traceback(msg string, level int) string {
 		totalFrames++
 	}
 
-	// Determine if we need truncation
-	needTruncate := totalFrames > levels1+levels2
+	// Determine if we need truncation. Like reference luaL_traceback, a
+	// trace one level longer than levels1+levels2 is still printed whole.
+	needTruncate := totalFrames > levels1+levels2+1
 
 	written := 0
 	for i := start; i >= 0; i-- {
@@ -95,8 +101,11 @@ func (vm *VM) Traceback(msg string, level int) string {
 			}
 			remaining := i + 1 // frames from index i down to 0
 			if remaining > tailSlots {
+				// Reference luaL_traceback computes its count after
+				// consuming the first skipped level, so it reports one
+				// fewer than it omits; print the same number.
 				skipped := remaining - tailSlots
-				fmt.Fprintf(&b, "\n\t...\t(skipping %d levels)", skipped)
+				fmt.Fprintf(&b, "\n\t...\t(skipping %d levels)", skipped-1)
 				i = tailSlots // after i-- in for loop, becomes tailSlots-1
 				continue
 			}
