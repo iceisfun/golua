@@ -723,6 +723,9 @@ func (c *compiler) compileAssignStmt(s *ast.AssignStmt) {
 			precomputed[i] = precomputedTarget{tableReg: tReg, keyReg: -1, fieldK: fK, intKey: -1, envSnap: -1, upval: -1, upSnap: -1}
 		default:
 			precomputed[i] = precomputedTarget{tableReg: -1, keyReg: -1, fieldK: -1, intKey: -1, envSnap: -1, upval: -1, upSnap: -1}
+			if ne, ok := s.Targets[i].(*ast.NameExpr); ok {
+				c.checkAssignName(ne)
+			}
 			if ne, ok := s.Targets[i].(*ast.NameExpr); ok && len(pendingUpvals) > 0 {
 				// A target rebinding an upvalue whose table earlier targets
 				// store through: copy the table aside now, before the value
@@ -1135,6 +1138,29 @@ func (c *compiler) snapshotEnv(line int) int {
 		fs.emit(ABC(OP_GETUPVAL, reg, c.resolveEnv(), 0, 0), line)
 	}
 	return reg
+}
+
+// checkAssignName reports why a name cannot be assigned: a const local,
+// upvalue or global, or a global not declared under a 'global' declaration.
+// Reference restassign raises these for each target as it is parsed, left to
+// right and before the value list, so a multiple assignment checks its name
+// targets in that order before any store is emitted (the stores run right to
+// left).
+func (c *compiler) checkAssignName(t *ast.NameExpr) {
+	fs := c.fs
+	if _, ok := lookupInlinedAny(fs, t.Name); ok {
+		c.error(t, errAssignToConst, t.Name)
+	} else if _, ok := fs.lookupLocal(t.Name); ok {
+		if fs.isConst(t.Name) {
+			c.error(t, errAssignToConst, t.Name)
+		}
+	} else if _, ok := c.resolveUpvalue(fs, t.Name); ok {
+		if c.isConstUpvalue(fs, t.Name) {
+			c.error(t, errAssignToConst, t.Name)
+		}
+	} else {
+		c.checkGlobalWrite(t.Name, t)
+	}
 }
 
 // assignToTarget stores the value in srcReg into an assignment target
