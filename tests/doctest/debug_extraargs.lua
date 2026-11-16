@@ -48,3 +48,14 @@ local t3 = setmetatable({}, {
   end
 })
 print(t3(1, 2, 3)) --> 0
+
+-- A __call chain entered from a C function (pcall) counts the same way
+print(pcall(a)) --> true	1
+print(pcall(b)) --> true	2
+
+-- A handler called by a C function has no call-site name
+local named = setmetatable({}, {__call = function(self)
+  local info = debug.getinfo(1, "n")
+  return tostring(info.name), info.namewhat == ""
+end})
+print(pcall(named)) --> true	nil	true
