@@ -179,7 +179,7 @@ func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 				break
 			}
 
-			results, err := v.ProtectedCall(searcher, []vm.Value{vm.NewString(name)})
+			results, err := v.ProtectedCallRaw(searcher, []vm.Value{vm.NewString(name)})
 			if err != nil {
 				if luaErr, ok := err.(*vm.LuaError); ok {
 					panic(luaErr)
@@ -212,7 +212,7 @@ func makeRequire(v *vm.VM, pkg *vm.Table, loaded *vm.Table) vm.NativeFunc {
 
 				// Call loader(name, extra)
 				args := []vm.Value{vm.NewString(name), extra}
-				loadResults, loadErr := v.ProtectedCall(loader, args)
+				loadResults, loadErr := v.ProtectedCallRaw(loader, args)
 				if loadErr != nil {
 					// Reference Lua uses lua_call (unprotected) here; runtime
 					// errors from the loaded chunk propagate unchanged. The

@@ -630,6 +630,9 @@ func (vm *VM) SetIndexValue(val Value, key Value, value Value) error {
 		}
 		return vm.tableSet(val.ptr.(LuaTable), key, value)
 	}
+	if val.typ == typeTable && !val.AsTable().IsThread() {
+		return vm.tableSet(val.AsTable(), key, value)
+	}
 	if mm := vm.getMetafield(val, MetaNewIndex); !mm.IsNil() {
 		if mm.IsFunction() || mm.IsNativeFunc() {
 			_, err := vm.callMetamethod3("newindex", mm, val, key, value)
@@ -652,6 +655,9 @@ func (vm *VM) SetIndexInt(val Value, key int, value Value) error {
 			return nil
 		}
 		return vm.tableSetInt(val.ptr.(LuaTable), key, value)
+	}
+	if val.typ == typeTable && !val.AsTable().IsThread() {
+		return vm.tableSetInt(val.AsTable(), key, value)
 	}
 	if mm := vm.getMetafield(val, MetaNewIndex); !mm.IsNil() {
 		if mm.IsFunction() || mm.IsNativeFunc() {

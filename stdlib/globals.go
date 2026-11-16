@@ -385,7 +385,7 @@ func luaPcall(v *vm.VM) int {
 
 	// Call the function with error protection
 	// ProtectedCall handles __call metamethods for tables
-	results, err := v.ProtectedCall(fn, args)
+	results, err := v.ProtectedCallRaw(fn, args)
 
 	// Clear the error call stack snapshot — pcall has consumed the error,
 	// so stale frames shouldn't leak into subsequent unrelated tracebacks.
@@ -455,7 +455,7 @@ func luaXpcall(v *vm.VM) int {
 		defer exitDirectLoad()
 	}
 
-	results, err := v.ProtectedCall(fn, args)
+	results, err := v.ProtectedCallRaw(fn, args)
 
 	// Clear the error call stack snapshot — xpcall has consumed the error.
 	v.ClearLastErrorCallStack()
@@ -475,7 +475,7 @@ func luaXpcall(v *vm.VM) int {
 				errVal = vm.NewString(err.Error())
 			}
 			exitNonYieldable := v.EnterNonYieldable()
-			handlerResults, handlerErr := v.ProtectedCall(msgh, []vm.Value{errVal})
+			handlerResults, handlerErr := v.ProtectedCallRaw(msgh, []vm.Value{errVal})
 			exitNonYieldable()
 			if handlerErr != nil {
 				finalErrVal = vm.NewString("error in error handling")

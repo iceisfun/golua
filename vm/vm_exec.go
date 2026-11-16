@@ -392,6 +392,14 @@ mainLoop:
 					}
 					vm.stack[frame.base+a] = val
 				}
+			} else if table.typ == typeTable && !table.AsTable().IsThread() {
+				// A LuaTable implementation other than *Table.
+				val, err := vm.tableGet(table.AsTable(), key)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = val
+				frame = &vm.callStack[len(vm.callStack)-1]
 			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				// Type metatable __index
 				val, err := vm.resolveIndex(mm, table, key)
@@ -417,6 +425,13 @@ mainLoop:
 					}
 					vm.stack[frame.base+a] = val
 				}
+			} else if table.typ == typeTable && !table.AsTable().IsThread() {
+				val, err := vm.tableGetInt(table.AsTable(), c)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = val
+				frame = &vm.callStack[len(vm.callStack)-1]
 			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewInt(int64(c)))
 				if err != nil {
@@ -443,6 +458,13 @@ mainLoop:
 					}
 					vm.stack[frame.base+a] = val
 				}
+			} else if table.typ == typeTable && !table.AsTable().IsThread() {
+				val, err := vm.tableGetString(table.AsTable(), key)
+				if err != nil {
+					return nil, err
+				}
+				vm.stack[frame.base+a] = val
+				frame = &vm.callStack[len(vm.callStack)-1]
 			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewString(key))
 				if err != nil {
@@ -516,6 +538,11 @@ mainLoop:
 				} else if err := vm.tableSet(table.ptr.(LuaTable), key, value); err != nil {
 					return nil, err
 				}
+			} else if table.typ == typeTable && !table.AsTable().IsThread() {
+				if err := vm.tableSet(table.AsTable(), key, value); err != nil {
+					return nil, err
+				}
+				frame = &vm.callStack[len(vm.callStack)-1]
 			} else if mm := vm.getMetafield(table, MetaNewIndex); !mm.IsNil() {
 				if mm.IsFunction() || mm.IsNativeFunc() {
 					_, err := vm.callMetamethod3("newindex", mm, table, key, value)
@@ -570,6 +597,11 @@ mainLoop:
 						return nil, err
 					}
 				}
+			} else if table.typ == typeTable && !table.AsTable().IsThread() {
+				if err := vm.tableSetInt(table.AsTable(), b, value); err != nil {
+					return nil, err
+				}
+				frame = &vm.callStack[len(vm.callStack)-1]
 			} else if mm := vm.getMetafield(table, MetaNewIndex); !mm.IsNil() {
 				if mm.IsFunction() || mm.IsNativeFunc() {
 					_, err := vm.callMetamethod3("newindex", mm, table, NewInt(int64(b)), value)
@@ -627,6 +659,11 @@ mainLoop:
 						return nil, err
 					}
 				}
+			} else if table.typ == typeTable && !table.AsTable().IsThread() {
+				if err := vm.tableSetString(table.AsTable(), key, value); err != nil {
+					return nil, err
+				}
+				frame = &vm.callStack[len(vm.callStack)-1]
 			} else if mm := vm.getMetafield(table, MetaNewIndex); !mm.IsNil() {
 				if mm.IsFunction() || mm.IsNativeFunc() {
 					_, err := vm.callMetamethod3("newindex", mm, table, NewString(key), value)
@@ -2200,7 +2237,7 @@ mainLoop:
 					}
 					cur = next
 				}
-				results, err = vm.ProtectedCall(callMM, []Value{fn, state, ctrl})
+				results, err = vm.protectedCall(callMM, []Value{fn, state, ctrl})
 				if err != nil {
 					return nil, err
 				}

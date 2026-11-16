@@ -454,7 +454,7 @@ func (vm *VM) callMsgHandler(msgh Value, errVal Value, errorCallStack []callFram
 			}()
 			vm.callStack = errorCallStack
 			exit := vm.EnterNonYieldable()
-			hResults, hErr = vm.ProtectedCall(msgh, []Value{errv})
+			hResults, hErr = vm.protectedCall(msgh, []Value{errv})
 			exit()
 		}()
 		if panicked {
@@ -518,7 +518,51 @@ func (vm *VM) callMsgHandler(msgh Value, errVal Value, errorCallStack []callFram
 // If fn is a table with a __call metamethod, the metamethod is invoked.
 // Returns the function's results on success, or an error on failure.
 // This is the Go equivalent of Lua's pcall().
-func (vm *VM) ProtectedCall(fn Value, args []Value) (results []Value, err error) {
+//
+// Like lua_pcall with no message handler, the call is its own error
+// boundary: a native function that makes it while a Lua xpcall is in
+// progress does not run that xpcall's message handler on the errors it
+// catches, and leaves the handler armed for the xpcall's own error.
+func (vm *VM) ProtectedCall(fn Value, args []Value) ([]Value, error) {
+	if !vm.msgHandler.IsNil() {
+		savedMsgHandler := vm.msgHandler
+		savedMsgHandlerUsed := vm.msgHandlerUsed
+		savedMsgHandlerResult := vm.msgHandlerResult
+		savedErrorCallStack := vm.lastErrorCallStack
+		vm.msgHandler = Nil
+		vm.msgHandlerUsed = false
+		vm.msgHandlerResult = Nil
+		vm.lastErrorCallStack = nil
+		defer func() {
+			vm.msgHandler = savedMsgHandler
+			vm.msgHandlerUsed = savedMsgHandlerUsed
+			vm.msgHandlerResult = savedMsgHandlerResult
+			vm.lastErrorCallStack = savedErrorCallStack
+		}()
+	}
+	results, err := vm.protectedCall(fn, args)
+	// A Lua function's results come back in vm.retBuf, which the next call
+	// into the VM overwrites and a collection clears. The caller owns what
+	// it is handed, so give it a copy.
+	if len(results) > 0 && &results[0] == &vm.retBuf[0] {
+		results = append([]Value(nil), results...)
+	}
+	return results, err
+}
+
+// ProtectedCallRaw is ProtectedCall for library code that implements
+// xpcall, or that stands in for an unprotected lua_call and re-raises or
+// reports what it catches (require, dofile, load's reader). An error
+// raised inside fn reaches the pending xpcall message handler at its raise
+// point, as it would through lua_call, and IsMsgHandlerUsed and
+// GetMsgHandlerResult report what the handler made of it. The results may
+// share a buffer that the VM reuses on its next call, so they must be
+// consumed before calling back into the VM.
+func (vm *VM) ProtectedCallRaw(fn Value, args []Value) ([]Value, error) {
+	return vm.protectedCall(fn, args)
+}
+
+func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error) {
 	// Save VM state for recovery
 	savedTop := vm.top
 	savedCallStackLen := len(vm.callStack)
@@ -1150,7 +1194,7 @@ func (vm *VM) CallCoroutine(closure *Closure, args []Value) ([]Value, error) {
 // an unhandled error (only closed on GC or coroutine.close).
 func (vm *VM) ProtectedCallCoroutine(fn Value, args []Value) ([]Value, error) {
 	vm.skipTBCCleanup = true
-	return vm.ProtectedCall(fn, args)
+	return vm.protectedCall(fn, args)
 }
 
 // ProtectedCallNoTBCClose is ProtectedCall without acting as a to-be-closed
@@ -1162,7 +1206,7 @@ func (vm *VM) ProtectedCallCoroutine(fn Value, args []Value) ([]Value, error) {
 // pending for coroutine.close when the error escapes the coroutine.
 func (vm *VM) ProtectedCallNoTBCClose(fn Value, args []Value) ([]Value, error) {
 	vm.skipTBCCleanup = true
-	return vm.ProtectedCall(fn, args)
+	return vm.protectedCall(fn, args)
 }
 
 // ClosePendingTBC closes all pending to-be-closed variables on this VM.

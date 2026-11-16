@@ -994,7 +994,7 @@ func ValueToString(val Value) string {
 	case val.IsInt():
 		return fmt.Sprintf("%d", val.AsInt())
 	case val.IsFloat():
-		return fmt.Sprintf("%g", val.AsFloat())
+		return val.String()
 	case val.IsString():
 		return val.AsString()
 	default:
