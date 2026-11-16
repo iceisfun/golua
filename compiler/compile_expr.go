@@ -904,6 +904,10 @@ func lookupInlinedAny(fs *funcState, name string) (Value, bool) {
 		if _, ok := cur.lookupLocal(name); ok {
 			return Value{}, false
 		}
+		// So does a `global name` declared in that function.
+		if cur.declaresGlobal(name) {
+			return Value{}, false
+		}
 	}
 	return Value{}, false
 }

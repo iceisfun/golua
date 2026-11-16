@@ -905,6 +905,18 @@ func (fs *funcState) lookupInlined(name string) (Value, bool) {
 	return Value{}, false
 }
 
+// declaresGlobal reports whether a `global name` declaration made by this
+// function itself is in scope. Reference singlevaraux stops at the first
+// function whose active variables hold such a declaration, so the name is a
+// global there and in every function nested in it, whatever locals the
+// enclosing functions have. Declarations inherited from an enclosing function
+// (declOrder -1) are left to that function's own lookup, which orders them
+// against its locals.
+func (fs *funcState) declaresGlobal(name string) bool {
+	order, ok := fs.globalEnv.declOrder[name]
+	return ok && order >= 0
+}
+
 // needsClose returns true if any local at or above fromLocal is <close> or captured.
 func (fs *funcState) needsClose(fromLocal int) bool {
 	start := len(fs.locals) - (fs.nActVar - fromLocal)
@@ -1006,6 +1018,11 @@ func (fs *funcState) addUpvalue(name string, inStack bool, index int) int {
 // resolveUpvalue finds a variable in enclosing functions and creates upvalue
 // chain as needed.
 func (c *compiler) resolveUpvalue(fs *funcState, name string) (int, bool) {
+	// A `global name` declared in this function hides the enclosing
+	// functions' variables, even one this function already captured.
+	if fs.declaresGlobal(name) {
+		return 0, false
+	}
 	// Already an upvalue in this function?
 	if idx, ok := fs.lookupUpvalue(name); ok {
 		return idx, true
