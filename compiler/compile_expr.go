@@ -904,6 +904,10 @@ func lookupInlinedAny(fs *funcState, name string) (Value, bool) {
 		if _, ok := cur.lookupLocal(name); ok {
 			return Value{}, false
 		}
+		// So does a `global name` declared in that function.
+		if cur.declaresGlobal(name) {
+			return Value{}, false
+		}
 	}
 	return Value{}, false
 }
@@ -944,13 +948,34 @@ func (c *compiler) emitInlinedConst(reg int, v Value, line int) {
 	}
 }
 
+// exp2const reports whether expr is a compile-time constant once parsed, as
+// reference luaK_exp2const decides it for the initializer of a `<const>`
+// local: its final kind is a constant and no jumps are pending. Besides what
+// tryFoldConstScalar folds, that covers `not` over such a constant (codenot
+// flips it without code) and an and/or that reduces to its right operand (see
+// bareOperand). The left operands passed over that still emit code are
+// returned in evaluation order: reference emits their code even though the
+// constant itself needs none, so the caller must compile them.
+func (c *compiler) exp2const(expr ast.Expr) (Value, []ast.Expr, bool) {
+	operand, effects := bareOperand(c.fs, expr)
+	if u, ok := operand.(*ast.UnopExpr); ok && u.Op == "not" {
+		v, more, ok := c.exp2const(u.Operand)
+		if !ok {
+			return Value{}, nil, false
+		}
+		return BoolValue(v.Type == ValNil || v.Type == ValFalse), append(effects, more...), true
+	}
+	v, ok := c.tryFoldConstScalar(operand)
+	return v, effects, ok
+}
+
 // tryFoldConstScalar attempts to evaluate expr to a compile-time scalar
 // constant suitable for inlining a `<const>` local. Returns the resulting
 // Value (typed nil/bool/int/float/string) and ok=true on success. Mirrors
 // Lua 5.5's reference compiler which inlines `<const>` locals whose
 // initializer is a literal nil, true, false, integer, float, or string,
-// or any compile-time-foldable arithmetic over those (matching the
-// `vkisinreg`/constant test in `lparser.c`).
+// an inlined `<const>` local, or any compile-time-foldable arithmetic over
+// those (matching the `vkisinreg`/constant test in `lparser.c`).
 //
 // Function and table initializers are intentionally not inlined: even
 // `<const>` locals bound to those keep a real register and a debug entry.
@@ -970,6 +995,8 @@ func (c *compiler) tryFoldConstScalar(expr ast.Expr) (Value, bool) {
 		return StringValue(e.Value), true
 	case *ast.ParenExpr:
 		return c.tryFoldConstScalar(e.Inner)
+	case *ast.NameExpr:
+		return lookupInlinedAny(c.fs, e.Name)
 	case *ast.UnopExpr:
 		// Numeric unary folds (-x, ~x).
 		if folded := c.foldUnaryArith(e); folded != nil {
@@ -2239,7 +2266,7 @@ func (c *compiler) upvalueTableKeyFirst(table, key ast.Expr) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	if _, ok := c.tryFoldConstScalar(key); ok {
+	if _, effects, ok := c.exp2const(key); ok && len(effects) == 0 {
 		return 0, false
 	}
 	// A key that reduces to a local emits no code only if nothing it passes
@@ -2271,6 +2298,16 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int, pend *[]pendItem)
 		// upvalueTableKeyFirst). A scratch target holds the key in place.
 		line := suffixLine(e.EndP, e.P)
 		saved := fs.freeReg
+		if k, effects, ok := c.exp2const(e.Key); ok && isCint(k) {
+			// A constant key whose and/or operands emit code: run them, then
+			// GETI as finishIndexExpr does.
+			c.compileForEffect(effects)
+			tableReg := fs.reserveReg()
+			fs.emit(ABC(OP_GETUPVAL, tableReg, uvIdx, 0, 0), line)
+			fs.emit(ABC(OP_GETI, reg, tableReg, int(k.IVal), 0), line)
+			fs.freeReg = saved
+			return
+		}
 		keyReg := reg
 		if reg < fs.nActVar {
 			keyReg = fs.reserveReg()
@@ -2319,12 +2356,16 @@ func (c *compiler) compileIndexExpr(e *ast.IndexExpr, reg int, pend *[]pendItem)
 }
 
 // finishIndexExpr emits the indexed read for a t[key] expression whose table is
-// already in tableReg.
+// already in tableReg. Like reference luaK_indexed, it takes GETI for any key
+// that is an integer constant in C range once parsed, not only a literal:
+// t[K] for an inlined <const> K, t[1+1] or t[nil or 1]. Error messages name
+// such an access field 'integer index'.
 func (c *compiler) finishIndexExpr(e *ast.IndexExpr, reg, tableReg int, needFree bool) {
 	fs := c.fs
 	line := suffixLine(e.EndP, e.P)
-	if n, ok := e.Key.(*ast.NumberExpr); ok && n.Value >= 0 && n.Value <= int64(MaxArgC) {
-		fs.emit(ABC(OP_GETI, reg, tableReg, int(n.Value), 0), line)
+	if k, effects, ok := c.exp2const(e.Key); ok && isCint(k) {
+		c.compileForEffect(effects)
+		fs.emit(ABC(OP_GETI, reg, tableReg, int(k.IVal), 0), line)
 		if needFree {
 			fs.freeReg = tableReg
 		}
@@ -2338,6 +2379,11 @@ func (c *compiler) finishIndexExpr(e *ast.IndexExpr, reg, tableReg int, needFree
 			fs.freeReg = keyReg // reg is caller-owned; free only the key temp
 		}
 	}
+}
+
+// isCint reports whether k fits GETI's C operand, as reference isCint does.
+func isCint(k Value) bool {
+	return k.Type == ValInt && k.IVal >= 0 && k.IVal <= int64(MaxArgC)
 }
 
 // powWithSubnormalFix computes x^y with a rescaling fix for positive
