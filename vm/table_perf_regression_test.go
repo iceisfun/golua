@@ -2,7 +2,10 @@ package vm
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
+	"runtime"
+	"runtime/debug"
 	"testing"
 	"time"
 )
@@ -124,19 +127,72 @@ func TestNextCursorSurvivesMutationDuringTraversal(t *testing.T) {
 	}
 }
 
-// TestPairsTraversalScalesLinearly is the regression guard for the O(n^2)
-// pairs() walk: a full traversal used to rescan t.keys for every key. The
-// thresholds are deliberately loose (quadratic growth is 4x per doubling and
-// took tens of seconds at 160k keys, linear is milliseconds).
-func TestPairsTraversalScalesLinearly(t *testing.T) {
+// linearSlack is how many times a linear baseline an operation probed by
+// checkCostIsLinear may cost. The operations probed here cost between half and
+// twice their baseline; the quadratic versions they replaced cost hundreds of
+// times it at the sizes probed, so the slack absorbs a busy host many times
+// over without letting one through.
+const linearSlack = 16
+
+// checkCostIsLinear fails if op costs more than linearSlack times base at size
+// n, base being a workload known to be linear over the same kind and number of
+// keys, and n a size at which a quadratic op costs seconds where a linear one
+// costs milliseconds. op and base time only the work they are about, not
+// their setup.
+//
+// Timing op alone at n and at 4n and comparing the growth reads the working
+// set spilling out of a cache level between the two sizes as superlinearity —
+// on its own it can make every key several times dearer — and two short runs
+// timed seconds apart on a busy host can differ by as much again. That made
+// the earlier form of these probes fail for code that was linear all along.
+// Comparing against a baseline at the same size, run alternately with op,
+// cancels both.
+//
+// Each run starts from a freshly collected heap, with the collector kept from
+// starting mid-run, and the fastest of three runs counts, since anything else
+// a loaded host does only ever adds time. Once op takes over a second it is
+// not run again.
+func checkCostIsLinear(t *testing.T, what string, n int, op, base func(n int) time.Duration) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("scaling probe")
 	}
-	walk := func(n int) time.Duration {
-		tbl := NewEmptyTable()
-		for i := 0; i < n; i++ {
-			tbl.MustSet(NewString(fmt.Sprintf("key_%d", i)), NewInt(int64(i)))
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	bestOp, bestBase := time.Duration(math.MaxInt64), time.Duration(math.MaxInt64)
+	for i := 0; i < 3; i++ {
+		runtime.GC()
+		bestOp = min(bestOp, op(n))
+		runtime.GC()
+		bestBase = min(bestBase, base(n))
+		if bestOp > time.Second {
+			break
 		}
+	}
+	ratio := float64(bestOp) / float64(max(bestBase, time.Microsecond))
+	t.Logf("%s: %v for n=%d, %.2fx a linear baseline (%v)", what, bestOp, n, ratio, bestBase)
+	if ratio > linearSlack && bestOp > 20*time.Millisecond {
+		t.Fatalf("%s looks superlinear: %v for n=%d, %.1fx a linear baseline (%v)", what, bestOp, n, ratio, bestBase)
+	}
+}
+
+// TestPairsTraversalScalesLinearly is the regression guard for the O(n^2)
+// pairs() walk: a full traversal used to rescan t.keys for every key. The
+// baseline reads every key with Get in the same order, which touches the same
+// memory; a 20k-key table fits in cache where an 80k-key one does not, and
+// comparing raw times across that boundary made this test fail on a busy host
+// for a walk that was linear all along.
+func TestPairsTraversalScalesLinearly(t *testing.T) {
+	build := func(n int) (*Table, []Value) {
+		tbl := NewEmptyTable()
+		keys := make([]Value, n)
+		for i := range keys {
+			keys[i] = NewString(fmt.Sprintf("key_%d", i))
+			tbl.MustSet(keys[i], NewInt(int64(i)))
+		}
+		return tbl, keys
+	}
+	walk := func(n int) time.Duration {
+		tbl, _ := build(n)
 		start := time.Now()
 		count := 0
 		k, _, _ := tbl.Next(Nil)
@@ -150,13 +206,36 @@ func TestPairsTraversalScalesLinearly(t *testing.T) {
 		}
 		return d
 	}
-	small := walk(20000)
-	large := walk(80000)
-	// 4x the keys must not cost anywhere near 16x the time. Allow a very wide
-	// margin (8x) so a loaded host or a GC pause cannot make this flaky.
-	if large > 8*small+50*time.Millisecond {
-		t.Fatalf("pairs() traversal looks superlinear: 20k keys %v, 80k keys %v", small, large)
+	getAll := func(n int) time.Duration {
+		tbl, keys := build(n)
+		start := time.Now()
+		for _, k := range keys {
+			if tbl.Get(k).IsNil() {
+				t.Fatalf("lost key %s", k.String())
+			}
+		}
+		return time.Since(start)
 	}
+	checkCostIsLinear(t, "pairs() traversal", 80000, walk, getAll)
+}
+
+// hashFill is the linear baseline for the churn probes below: n fresh keys
+// stored into an empty table's hash part, with no deletes in between.
+func hashFill(keys []Value) time.Duration {
+	tbl := NewEmptyTable()
+	start := time.Now()
+	for _, k := range keys {
+		tbl.MustSet(k, True)
+	}
+	return time.Since(start)
+}
+
+func strKeys(n int) []Value {
+	keys := make([]Value, n)
+	for i := range keys {
+		keys[i] = NewString(fmt.Sprintf("k%d", i))
+	}
+	return keys
 }
 
 // --- OPT 2: tombstone index -----------------------------------------------
@@ -356,9 +435,6 @@ func TestTombstoneIndexFreedWhenRevived(t *testing.T) {
 // delete-then-refill blowup. Inserting n fresh keys into a table holding n
 // tombstones used to rescan t.keys per insert.
 func TestTombstoneChurnScalesLinearly(t *testing.T) {
-	if testing.Short() {
-		t.Skip("scaling probe")
-	}
 	churn := func(n int) time.Duration {
 		tbl := NewEmptyTable()
 		for i := 0; i < n; i++ {
@@ -367,9 +443,13 @@ func TestTombstoneChurnScalesLinearly(t *testing.T) {
 		for i := 0; i < n; i++ {
 			tbl.MustSet(NewString(fmt.Sprintf("k_%d", i)), Nil)
 		}
+		fresh := make([]Value, n)
+		for i := range fresh {
+			fresh[i] = NewString(fmt.Sprintf("fresh_%d", i))
+		}
 		start := time.Now()
-		for i := 0; i < n; i++ {
-			tbl.MustSet(NewString(fmt.Sprintf("fresh_%d", i)), NewInt(int64(i)))
+		for i, k := range fresh {
+			tbl.MustSet(k, NewInt(int64(i)))
 		}
 		d := time.Since(start)
 		if tbl.deadKeys != 0 {
@@ -380,11 +460,8 @@ func TestTombstoneChurnScalesLinearly(t *testing.T) {
 		}
 		return d
 	}
-	small := churn(10000)
-	large := churn(40000)
-	if large > 8*small+50*time.Millisecond {
-		t.Fatalf("tombstone refill looks superlinear: 10k keys %v, 40k keys %v", small, large)
-	}
+	checkCostIsLinear(t, "tombstone refill", 40000, churn,
+		func(n int) time.Duration { return hashFill(strKeys(n)) })
 }
 
 // --- OPT 3: co-allocated small-table block --------------------------------
