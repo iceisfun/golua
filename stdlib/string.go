@@ -125,7 +125,9 @@ func stringRep(v *vm.VM) int {
 		sep = getString(v, 3, "string.rep")
 	}
 
-	if n <= 0 {
+	// An empty result needs no work, however large n is (reference str_rep
+	// returns "" when l + lsep == 0 before looking at n).
+	if n <= 0 || len(s)+len(sep) == 0 {
 		v.Set(0, vm.NewString(""))
 		return 1
 	}
