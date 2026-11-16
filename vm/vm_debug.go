@@ -121,7 +121,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 			if i > 0 {
 				name, nameWhat = vm.funcNameFromCall(&vm.callStack[i-1])
 			}
-			if name == "" && frame.callName != "" && !suppressLuaFrameCallName(frame, hasHigherLuaFrame(vm.callStack, i, start)) {
+			if name == "" && frame.callName != "" && !suppressLuaFrameCallName(frame) {
 				name = frame.callName
 				nameWhat = frame.callNameWhat
 			}
@@ -177,7 +177,7 @@ func (vm *VM) Traceback(msg string, level int) string {
 				name = "?"
 				nameWhat = nwHook
 			} else {
-				suppressCallName := suppressLuaFrameCallName(frame, hasHigherLuaFrame(vm.callStack, i, start))
+				suppressCallName := suppressLuaFrameCallName(frame)
 				if i > 0 && !frame.isTailCall {
 					callerIdx := i - 1
 					for callerIdx > 0 && vm.callStack[callerIdx].isTailCall {
@@ -191,8 +191,11 @@ func (vm *VM) Traceback(msg string, level int) string {
 					name = ""
 					nameWhat = ""
 				}
-				// Check for override name (e.g., "close" for __close metamethod calls)
-				if name == "" && frame.callName != "" && !suppressCallName {
+				// Check for override name (e.g., "close" for __close metamethod calls).
+				// A tail call reuses the frame, so its override name belongs to
+				// the function the tail call replaced; like getinfo, leave a
+				// tail-called frame unnamed.
+				if name == "" && frame.callName != "" && !suppressCallName && !frame.isTailCall {
 					name = frame.callName
 					nameWhat = frame.callNameWhat
 				}
@@ -349,26 +352,13 @@ func (vm *VM) debugCallStack() ([]callFrame, bool) {
 	return vm.lastErrorCallStack, false
 }
 
-func suppressLuaFrameCallName(frame *callFrame, hasHigherLuaFrame bool) bool {
-	if frame == nil || frame.closure == nil {
-		return false
-	}
-	if frame.suppressTracebackName {
-		return true
-	}
-	if frame.callNameWhat != nwMetamethod || frame.callName != "close" {
-		return false
-	}
-	return hasHigherLuaFrame
-}
-
-func hasHigherLuaFrame(stack []callFrame, idx, top int) bool {
-	for i := top; i > idx; i-- {
-		if stack[i].closure != nil {
-			return true
-		}
-	}
-	return false
+// suppressLuaFrameCallName reports whether a Lua frame must stay unnamed
+// although it has a call name: a __close handler run while an error unwinds
+// is called from the protected boundary, not from the closing Lua frame, so
+// reference funcnamefromcall finds no name for it. A handler run by a
+// normal block exit is named "close" however deep the traceback starts.
+func suppressLuaFrameCallName(frame *callFrame) bool {
+	return frame != nil && frame.closure != nil && frame.suppressTracebackName
 }
 
 // frameFuncName attempts to determine a display name for a call frame's function.

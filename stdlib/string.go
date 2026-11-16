@@ -892,9 +892,14 @@ func stringArithFallback(v *vm.VM, a, b vm.Value, ok1, ok2 bool, mmName string) 
 		}
 		mm := v.GetMetafield(other, mmName)
 		if !mm.IsNil() {
+			// Reference trymt makes a plain lua_call from a C function:
+			// the metamethod cannot yield, and its error propagates as
+			// raised, whatever its value.
+			exitNonYieldable := v.EnterNonYieldable()
 			results, err := v.ProtectedCallNoTBCClose(mm, []vm.Value{a, b})
+			exitNonYieldable()
 			if err != nil {
-				panic(err.Error())
+				panic(err)
 			}
 			if len(results) > 0 {
 				return results[0], true

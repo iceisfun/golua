@@ -580,6 +580,10 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 	// add such a caller without splitting the flag first.
 	skipTBC := vm.skipTBCCleanup
 	vm.skipTBCCleanup = false
+	// callFunction restores the caller's line-hook state only when the
+	// callee returns; an error that unwinds past it leaves the callee's.
+	savedHookLine := vm.lastHookLine
+	savedHookPC := vm.lastHookPC
 
 	// Record this call's nesting depth so the closingCoroutine re-panic logic
 	// can distinguish suspended frames (which must propagate __close errors)
@@ -608,6 +612,11 @@ func (vm *VM) protectedCall(fn Value, args []Value) (results []Value, err error)
 			if vm.closingCoroutine && entryDepth <= vm.closingCoroutineDepth {
 				panic(r)
 			}
+			// Like rethook setting L->oldpc when pcall returns, give the
+			// calling frame back its own line tracking, so the rest of the
+			// line the pcall sits on is not reported as a new line.
+			vm.lastHookLine = savedHookLine
+			vm.lastHookPC = savedHookPC
 			// Preserve LuaError so pcall/xpcall can return the original Lua value
 			// locatedMsg stores the file:line-prefixed error for non-LuaError panics,
 			// used later by the xpcall message handler.
