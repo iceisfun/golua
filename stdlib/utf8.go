@@ -291,39 +291,22 @@ func luaUtf8Codes(v *vm.VM) int {
 			callerArgError(v, 2, "?", fmt.Sprintf("number expected, got %s", v.ObjTypeName(stateVal)))
 		}
 
-		// State is: 0 = initial, >0 = 1-indexed position of last returned codepoint.
-		// Convert to 0-indexed byte offset for next codepoint to decode.
+		// State is the 1-indexed position of the last returned codepoint,
+		// which is also the 0-indexed offset just past its first byte. Like
+		// reference lutf8lib.c iter_aux, skip continuation bytes from there to
+		// reach the next character; this makes any control value inside the
+		// string resume at the next character start. A negative state (huge
+		// once unsigned in C) or one at or past the end finishes the
+		// iteration with no results.
 		n := int(state)
-
-		if n < 0 {
-			v.Set(0, vm.Nil)
-			return 1
+		if n < 0 || n >= len(str) {
+			return 0
 		}
-
-		if n == 0 {
-			// Initial call: decode at byte 0
-			n = 0
-		} else {
-			// Advance past previous codepoint: state is 1-indexed position,
-			// so byte[state-1] was the start of the previous codepoint.
-			// Decode it to find its size, then advance past it.
-			prev := n - 1 // 0-indexed position of previous codepoint
-			if prev < len(str) {
-				if lax {
-					_, size := decodeExtendedUTF8(str[prev:])
-					if size > 0 {
-						n = prev + size
-					}
-				} else {
-					_, size := utf8.DecodeRuneInString(str[prev:])
-					n = prev + size
-				}
-			}
+		for n < len(str) && str[n]&0xC0 == 0x80 {
+			n++
 		}
-
 		if n >= len(str) {
-			v.Set(0, vm.Nil)
-			return 1
+			return 0
 		}
 
 		if lax {
