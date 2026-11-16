@@ -740,10 +740,32 @@ type fullFile struct {
 	writable bool
 }
 
+// beforeRead publishes pending writes so a read that follows a write on the
+// same stream sees them and starts at the logical position. glibc does this
+// implicitly; the separate bufio.Writer would otherwise flush at the wrong
+// offset, after the reader's read-ahead.
+func (f *fullFile) beforeRead() {
+	if f.writer != nil && f.writer.Buffered() > 0 {
+		f.writer.Flush()
+	}
+}
+
+// beforeWrite drops the reader's read-ahead and moves the descriptor back to
+// the logical position, so a write that follows a read lands where the read
+// stopped instead of where the read-ahead did.
+func (f *fullFile) beforeWrite() {
+	if f.readable && f.reader.Buffered() > 0 {
+		if _, err := f.file.Seek(-int64(f.reader.Buffered()), io.SeekCurrent); err == nil {
+			f.reader.Reset(f.file)
+		}
+	}
+}
+
 func (f *fullFile) Read(ctx context.Context, format string) (string, error) {
 	if f.closed {
 		return "", fmt.Errorf("attempt to use a closed file")
 	}
+	f.beforeRead()
 
 	// Normalize format: strip leading * and check first character
 	// This matches Lua 5.4 behavior where "all" == "a", "line" == "l", etc.
@@ -778,6 +800,7 @@ func (f *fullFile) ReadBytes(ctx context.Context, n int) (string, error) {
 	if n < 0 {
 		return "", fmt.Errorf("not enough memory")
 	}
+	f.beforeRead()
 	if n == 0 {
 		// EOF test: peek 1 byte to check if data remains
 		_, err := f.reader.Peek(1)
@@ -900,6 +923,8 @@ func (f *fullFile) Write(ctx context.Context, data string) error {
 		}
 		return nil
 	}
+
+	f.beforeWrite()
 
 	if f.bufMode == "no" {
 		// Unbuffered: write directly
