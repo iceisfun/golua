@@ -57,3 +57,22 @@ func TestForInIteratorErrorLine(t *testing.T) {
 		t.Fatalf("for-in iterator line: got %q want line 2", got)
 	}
 }
+
+// a method call whose arguments start on a later line than the method name
+// must report the line of the arguments ('(', a string or a table), like a
+// plain call: reference funcargs stamps the CALL with luaK_fixline.
+func TestMethodCallErrorLine(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"paren", "local f = {}\nf:x\n(1)\n"},
+		{"string", "local s = 'a'\ns:x\n'y'\n"},
+		{"table", "local s = 'a'\ns:x\n{}\n"},
+		{"multret", "local f = {}\nlocal r = f:x\n(...)\n"},
+		{"return", "local f = {}\nreturn f:x\n(1)\n"},
+	}
+	for _, tc := range cases {
+		got := runLuaExpectError(t, tc.src)
+		if !strings.Contains(got, "]:3: attempt to call a nil value (method 'x')") {
+			t.Errorf("%s: got %q want line 3 (method 'x')", tc.name, got)
+		}
+	}
+}

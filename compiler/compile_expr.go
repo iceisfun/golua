@@ -1714,12 +1714,19 @@ func (c *compiler) finishMethodCall(e *ast.MethodCallExpr, base int, nResults in
 		fs.limitError("registers", fs.c.limits.MaxRegs, line, "")
 	}
 
+	// SELF keeps the method-name line; the CALL takes the line where the
+	// arguments start, like a plain call (reference funcargs luaK_fixline).
+	callLine := line
+	if e.ArgsP.Line > 0 {
+		callLine = e.ArgsP.Line
+	}
+
 	// Arguments start at base+2
 	nArgs := len(e.Args)
 	for i, arg := range e.Args {
 		if i == nArgs-1 && isMultiRet(arg) {
 			c.compileExprMultiRet(arg, 0)
-			fs.emit(ABC(OP_CALL, base, 0, nResults, 0), line)
+			fs.emit(ABC(OP_CALL, base, 0, nResults, 0), callLine)
 			return
 		}
 		argReg := base + 2 + i
@@ -1732,7 +1739,7 @@ func (c *compiler) finishMethodCall(e *ast.MethodCallExpr, base int, nResults in
 	}
 
 	// +1 for self
-	fs.emit(ABC(OP_CALL, base, nArgs+2, nResults, 0), line)
+	fs.emit(ABC(OP_CALL, base, nArgs+2, nResults, 0), callLine)
 	fs.freeReg = base + 1
 }
 
