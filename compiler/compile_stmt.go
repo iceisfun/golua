@@ -973,12 +973,14 @@ func (c *compiler) compileSingleAssign(target ast.Expr, value ast.Expr, line int
 // possible).
 func (c *compiler) indexAssignOperand(e ast.Expr, conflictsLater func(reg int) bool) int {
 	fs := c.fs
-	if ne, ok := bareOperand(fs, e).(*ast.NameExpr); ok {
+	operand, effects := bareOperand(fs, e)
+	if ne, ok := operand.(*ast.NameExpr); ok {
 		// Inlined consts are scalar literals, not live locals — fall through
 		// to load them into a temp.
 		if _, inlined := lookupInlinedAny(fs, ne.Name); !inlined {
 			if reg, ok := fs.lookupLocal(ne.Name); ok {
 				if conflictsLater == nil || !conflictsLater(reg) {
+					c.compileForEffect(effects)
 					return reg
 				}
 			}

@@ -94,7 +94,7 @@ func Compile(source string, block *ast.Block, opts ...CompileOption) (*Proto, er
 	if endLine == 0 {
 		endLine = blockMaxLine(block)
 	}
-	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: endLine, foldMemo: make(map[ast.Expr]foldResult), truthMemo: make(map[*ast.BinopExpr]truthResult)}
+	c := &compiler{limits: cfg.limits.effective(), stringPool: make(map[string]string), endLine: endLine, foldMemo: make(map[ast.Expr]foldResult), shapeMemo: make(map[*ast.BinopExpr]exprShape)}
 	p := c.compileChunk(source, block)
 	if c.err != nil {
 		return nil, c.err
@@ -340,8 +340,8 @@ type compiler struct {
 	// chain re-walked the entire left spine at every node (O(n^2) compile time,
 	// a source-level DoS).
 	foldMemo map[ast.Expr]foldResult
-	// truthMemo caches constTruth for and/or nodes, for the same reason.
-	truthMemo map[*ast.BinopExpr]truthResult
+	// shapeMemo caches shapeOf for and/or nodes, for the same reason.
+	shapeMemo map[*ast.BinopExpr]exprShape
 	// exprDepth counts nested expression compilations, bounding Go recursion
 	// on deeply nested expressions (see maxExprDepth).
 	exprDepth int
@@ -353,12 +353,6 @@ type foldResult struct {
 	iv    int64
 	fv    float64
 	ok    bool
-}
-
-// truthResult is a memoized constTruth outcome for one and/or node.
-type truthResult struct {
-	truthy bool
-	ok     bool
 }
 
 // internString returns a string that shares the same backing memory as
