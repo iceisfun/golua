@@ -999,10 +999,10 @@ func (f *fullFile) ReadBytes(ctx context.Context, n int) (string, error) {
 		return "", err
 	}
 	if n == 0 {
-		// EOF test: peek 1 byte to check if data remains
-		_, err := f.reader.Peek(1)
-		if err != nil {
-			return "", io.EOF
+		// EOF test: peek 1 byte to check if data remains. Any other failure
+		// is a read error (ferror in C) and is reported as one.
+		if _, err := f.reader.Peek(1); err != nil {
+			return "", err
 		}
 		return "", nil
 	}
@@ -1531,10 +1531,10 @@ func (f *stdFile) ReadBytes(ctx context.Context, n int) (string, error) {
 		return "", fmt.Errorf("not enough memory")
 	}
 	if n == 0 {
-		// EOF test: peek 1 byte to check if data remains
-		_, err := r.Peek(1)
-		if err != nil {
-			return "", io.EOF
+		// EOF test: peek 1 byte to check if data remains. Any other failure
+		// is a read error (ferror in C) and is reported as one.
+		if _, err := r.Peek(1); err != nil {
+			return "", err
 		}
 		return "", nil
 	}
