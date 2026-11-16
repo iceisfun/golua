@@ -323,30 +323,58 @@ func (ws *weakStore) nextAliveFrom(start int) (Value, Value, error) {
 	return Nil, Nil, nil
 }
 
-// length returns the sequence length (# operator) for the weak table.
+// length returns a border of the weak table (# operator). Like
+// hashSearchBorder for a normal table's hash part, it probes doubling
+// indices for an absent one and then binary-searches below it, so it costs
+// O(log n) lookups rather than one per element.
 func (ws *weakStore) length() int {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
-	n := 0
-	for {
-		nextKey := int64(n + 1)
-		// Integer keys are value types, always use int64 as lookup key.
-		idx, ok := ws.index[nextKey]
-		if !ok {
-			break
-		}
-		e := &ws.entries[idx]
-		if !e.alive {
-			break
-		}
-		v := ws.entryValue(e)
-		if v.IsNil() {
-			ws.killEntry(idx)
-			break
-		}
-		n++
+	if !ws.hasInt(1) {
+		return 0
 	}
-	return n
+	const maxInt = int(^uint(0) >> 1)
+	i, j := 1, 2 // t[i] present
+	for ws.hasInt(j) {
+		i = j
+		if j > maxInt/2 {
+			j = maxInt
+			if ws.hasInt(j) {
+				return j
+			}
+			break
+		}
+		j *= 2
+	}
+	// t[i] present, t[j] absent; binary search in (i, j].
+	for j-i > 1 {
+		mid := i + (j-i)/2
+		if ws.hasInt(mid) {
+			i = mid
+		} else {
+			j = mid
+		}
+	}
+	return i
+}
+
+// hasInt reports whether integer key i holds a live value. The caller holds
+// ws.mu.
+func (ws *weakStore) hasInt(i int) bool {
+	// Integer keys are value types, always use int64 as lookup key.
+	idx, ok := ws.index[int64(i)]
+	if !ok {
+		return false
+	}
+	e := &ws.entries[idx]
+	if !e.alive {
+		return false
+	}
+	if ws.entryValue(e).IsNil() {
+		ws.killEntry(idx)
+		return false
+	}
+	return true
 }
 
 // forEach calls fn for each live key-value pair in insertion order.

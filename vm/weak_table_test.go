@@ -393,6 +393,65 @@ func TestWeakTableChurnScalesLinearly(t *testing.T) {
 		func(n int) time.Duration { return weakFill(intHashKeys(n)) })
 }
 
+// TestWeakTableAppendScalesLinearly guards the t[#t+1] = v append idiom on a
+// weak table: # used to count up from 1, so every append paid O(n).
+func TestWeakTableAppendScalesLinearly(t *testing.T) {
+	appendAll := func(n int) time.Duration {
+		wt := makeWeakTable("v")
+		start := time.Now()
+		for i := 0; i < n; i++ {
+			wt.SetInt(wt.Len()+1, True)
+		}
+		d := time.Since(start)
+		if got := wt.Len(); got != n {
+			t.Fatalf("#t = %d after %d appends", got, n)
+		}
+		return d
+	}
+	checkCostIsLinear(t, "weak table append", 1<<15, appendAll,
+		func(n int) time.Duration { return weakFill(intHashKeys(n)) })
+}
+
+// TestWeakTableLenIsBorder checks that # on a weak table returns a border:
+// 0 when t[1] is absent, otherwise some n with t[n] present and t[n+1]
+// absent, including when values in the sequence have been collected.
+func TestWeakTableLenIsBorder(t *testing.T) {
+	isBorder := func(wt *Table, n int) bool {
+		if n == 0 {
+			return wt.GetInt(1).IsNil()
+		}
+		return !wt.GetInt(n).IsNil() && wt.GetInt(n+1).IsNil()
+	}
+	for _, size := range []int{0, 1, 2, 3, 7, 8, 9, 100, 1000} {
+		for _, hole := range []int{0, 1, 2, size / 2, size} {
+			wt := makeWeakTable("v")
+			for i := 1; i <= size; i++ {
+				wt.SetInt(i, NewInt(int64(i)))
+			}
+			if hole > 0 {
+				wt.SetInt(hole, Nil)
+			}
+			if n := wt.Len(); !isBorder(wt, n) {
+				t.Errorf("size %d, hole %d: #t = %d is not a border", size, hole, n)
+			}
+		}
+	}
+
+	wt := makeWeakTable("v")
+	keep := make([]*Table, 64)
+	for i := range keep {
+		keep[i] = NewEmptyTable()
+		wt.SetInt(i+1, NewTable(keep[i]))
+	}
+	keep[40] = nil // t[41] becomes collectable
+	runtime.GC()
+	runtime.GC()
+	if n := wt.Len(); !isBorder(wt, n) {
+		t.Errorf("#t = %d is not a border after a value was collected", n)
+	}
+	runtime.KeepAlive(keep)
+}
+
 // TestWeakTableFreeSlotsStayBounded checks that clearing and re-storing the
 // same key, which revives its slot in place, does not grow the free-slot
 // stack, and that a slot revived while on the stack is not handed out again.
