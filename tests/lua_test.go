@@ -168,13 +168,16 @@ func runLuaTest(t *testing.T, filename string) {
 	ctx, cancel := context.WithTimeout(context.Background(), luaTestTimeout)
 	defer cancel()
 
-	// Run with GC stepping enabled so Go's concurrent GC collects weak table
-	// entries during tight Lua loops (needed for weak-table tests).
 	// Capture print() output into the VM buffer instead of stdout so the test
 	// run stays quiet; this runner only asserts on the run error.
+	//
+	// No GCStepInterval: a forced runtime.GC is process-wide, so stepping
+	// every file made each GC mark the heap of every file running in
+	// parallel, and a file whose live heap grows with its instruction count
+	// paid for it quadratically. The files that need a collection ask for one
+	// with collectgarbage().
 	v := vm.New(
 		vm.WithContext(ctx),
-		vm.WithLimits(vm.Limits{GCStepInterval: 10000}),
 		vm.WithCaptureOutput(true),
 	)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
@@ -267,10 +270,10 @@ func runLuaTestFullIo(t *testing.T, filename string) {
 	defer cancel()
 
 	// Capture print() output into the VM buffer instead of stdout so the test
-	// run stays quiet; this runner only asserts on the run error.
+	// run stays quiet; this runner only asserts on the run error. No
+	// GCStepInterval, for the reason given in runLuaTest.
 	v := vm.New(
 		vm.WithContext(ctx),
-		vm.WithLimits(vm.Limits{GCStepInterval: 10000}),
 		vm.WithCaptureOutput(true),
 	)
 	v.SetOsProvider(vm.NewDefaultOsProvider())
