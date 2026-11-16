@@ -416,7 +416,8 @@ func stringGsub(v *vm.VM) int {
 	// Validate replacement type — Lua 5.4 also accepts numbers (coerced to string)
 	if repl.IsNumber() {
 		repl = vm.NewString(valueToString(repl))
-	} else if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() && !repl.IsTable() {
+	} else if !repl.IsString() && !repl.IsFunction() && !repl.IsNativeFunc() &&
+		(!repl.IsTable() || repl.AsTable().IsThread()) {
 		got := repl.Type()
 		if v.ArgCount() < 3 {
 			got = "no value"

@@ -65,7 +65,7 @@ func makeProcessHandle(v *vm.VM, proc vm.LuaProcess, opts vm.ProcessOptions) vm.
 func getProcessHandle(v *vm.VM, val vm.Value, funcName string) *processHandle {
 	ud := val.AsUserdata()
 	if ud == nil {
-		panic(fmt.Sprintf("bad argument #1 to '%s' (PROCESS* expected, got %s)", funcName, v.ObjTypeName(val)))
+		panic(fmt.Sprintf("bad argument #1 to '%s' (PROCESS* expected, got %s)", funcName, argTypeName(v, val)))
 	}
 	ph, ok := ud.Data.(*processHandle)
 	if !ok {
@@ -463,7 +463,7 @@ func checkString(v *vm.VM, idx int, funcName string) string {
 	if val.IsNumber() {
 		return vm.ValueToString(val)
 	}
-	panic(fmt.Sprintf("bad argument #%d to '%s' (string expected, got %s)", idx, funcName, v.ObjTypeName(val)))
+	panic(fmt.Sprintf("bad argument #%d to '%s' (string expected, got %s)", idx, funcName, argTypeName(v, val)))
 }
 
 func makeResultTable(result vm.ProcessResult) vm.Value {

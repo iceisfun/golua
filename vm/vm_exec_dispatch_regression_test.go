@@ -281,3 +281,185 @@ func TestStringMethodIndexChainMatchesFieldAccess(t *testing.T) {
 		})
 	}
 }
+
+// OP_SELF on userdata handled only a table or function __index and raised a
+// bare "attempt to index a userdata value" for anything else, so u:len() with
+// __index = "str" failed while u.len resolved string.len. The error also
+// dropped the __name type and the variable name that the field path reports.
+func TestUserdataMethodIndexChainMatchesFieldAccess(t *testing.T) {
+	newUd := func(index Value) Value {
+		mt := NewEmptyTable()
+		mt.SetString("__name", NewString("Obj"))
+		if !index.IsNil() {
+			mt.SetString(MetaIndex, index)
+		}
+		return NewUserdataValue(nil, mt)
+	}
+
+	// A string __index chains through the string metatable for both forms.
+	for _, src := range []string{`return u:len()`, `return u.len()`} {
+		v := New()
+		smeta := NewEmptyTable()
+		lib := NewEmptyTable()
+		lib.SetString("len", NewNativeFunc(func(vm *VM) int {
+			vm.Set(0, NewString("from-string-lib"))
+			return 1
+		}))
+		smeta.SetString(MetaIndex, NewTable(lib))
+		v.SetStringMeta(smeta)
+		v.SetGlobal("u", newUd(NewString("str")))
+		results, err := runWithVM(t, v, src)
+		if err != nil {
+			t.Fatalf("%s: %v", src, err)
+		}
+		if len(results) != 1 || results[0].AsString() != "from-string-lib" {
+			t.Errorf("%s = %v, want \"from-string-lib\"", src, results)
+		}
+	}
+
+	// A thread __index chains through the thread type metatable rather than
+	// reading the thread's empty backing table.
+	{
+		v := New()
+		threadTbl := NewEmptyTable()
+		threadTbl.SetThread(true)
+		co := NewTable(threadTbl)
+		methods := NewEmptyTable()
+		methods.SetString("foo", NewNativeFunc(func(vm *VM) int {
+			vm.Set(0, NewString("from-thread-meta"))
+			return 1
+		}))
+		tmt := NewEmptyTable()
+		tmt.SetString(MetaIndex, NewTable(methods))
+		v.SetTypeMeta(co, tmt)
+		v.SetGlobal("u", newUd(co))
+		results, err := runWithVM(t, v, `return u:foo()`)
+		if err != nil {
+			t.Fatalf("u:foo() with __index = thread: %v", err)
+		}
+		if len(results) != 1 || results[0].AsString() != "from-thread-meta" {
+			t.Errorf("u:foo() = %v, want \"from-thread-meta\"", results)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		index Value
+		want  string
+	}{
+		{"number __index", NewInt(5), "attempt to index a number value"},
+		{"missing __index", Nil, "attempt to index a Obj value (local 'u')"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, src := range []string{`local u = ud return u:foo()`, `local u = ud return u.foo`} {
+				v := New()
+				v.SetGlobal("ud", newUd(tc.index))
+				_, err := runWithVM(t, v, src)
+				if err == nil {
+					t.Fatalf("%s: expected an error", src)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("%s: error = %v, want it to contain %q", src, err, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// OP_TFORCALL fell back to __call only for tables, so a callable userdata
+// (or a string/number/thread whose type metatable has __call) could be called
+// directly but not used as a generic-for iterator. Reference lvm.c runs the
+// iterator through luaD_call, which honours __call on any value.
+func TestGenericForCallsIteratorThroughCallMetamethod(t *testing.T) {
+	// __call(self, state, ctrl) counts the control variable up to 3.
+	callMM := NewNativeFunc(func(vm *VM) int {
+		var c int64
+		if v := vm.Get(3); v.IsInt() {
+			c = v.AsInt()
+		}
+		if c >= 3 {
+			return 0
+		}
+		vm.Set(0, NewInt(c+1))
+		return 1
+	})
+	const src = `local s = 0 for i in it, nil, 0 do s = s + i end return s`
+	run := func(t *testing.T, v *VM, it Value) {
+		t.Helper()
+		v.SetGlobal("it", it)
+		results, err := runWithVM(t, v, src)
+		if err != nil {
+			t.Fatalf("runtime error: %v", err)
+		}
+		if len(results) != 1 || results[0].AsInt() != 6 {
+			t.Errorf("sum = %v, want 6", results)
+		}
+	}
+
+	t.Run("userdata", func(t *testing.T) {
+		mt := NewEmptyTable()
+		mt.SetString(MetaCall, callMM)
+		run(t, New(), NewUserdataValue(nil, mt))
+	})
+	t.Run("string type metatable", func(t *testing.T) {
+		v := New()
+		smeta := NewEmptyTable()
+		smeta.SetString(MetaCall, callMM)
+		v.SetStringMeta(smeta)
+		run(t, v, NewString("iter"))
+	})
+	t.Run("thread type metatable", func(t *testing.T) {
+		v := New()
+		threadTbl := NewEmptyTable()
+		threadTbl.SetThread(true)
+		co := NewTable(threadTbl)
+		tmt := NewEmptyTable()
+		tmt.SetString(MetaCall, callMM)
+		v.SetTypeMeta(co, tmt)
+		run(t, v, co)
+	})
+	t.Run("no __call", func(t *testing.T) {
+		v := New()
+		v.SetGlobal("it", NewUserdataValue(nil, nil))
+		_, err := runWithVM(t, v, src)
+		if err == nil || !strings.Contains(err.Error(), "attempt to call a userdata value") {
+			t.Errorf("error = %v, want an attempt-to-call error", err)
+		}
+	})
+}
+
+// When an iterator's __call (or a later link of its __call chain) was not
+// callable, OP_TFORCALL handed it to ProtectedCall, whose generic error lost
+// the "(for iterator 'for iterator')" context. Reference luaD_tryfuncTM
+// reports the first non-callable link with that context.
+func TestGenericForNonCallableCallMetamethodKeepsIteratorContext(t *testing.T) {
+	const src = `for x in it do end`
+	const suffix = "(for iterator 'for iterator')"
+	t.Run("__call is a number", func(t *testing.T) {
+		v := New()
+		mt := NewEmptyTable()
+		mt.SetString(MetaCall, NewInt(5))
+		v.SetGlobal("it", NewUserdataValue(nil, mt))
+		_, err := runWithVM(t, v, src)
+		if err == nil || !strings.Contains(err.Error(), "attempt to call a number value "+suffix) {
+			t.Errorf("error = %v, want a number call error with %s", err, suffix)
+		}
+	})
+	t.Run("chained __call ends at a boolean", func(t *testing.T) {
+		v := New()
+		innerMT := NewEmptyTable()
+		innerMT.SetString(MetaCall, True)
+		inner := NewEmptyTable()
+		inner.SetMetatable(innerMT)
+		outerMT := NewEmptyTable()
+		outerMT.SetString(MetaCall, NewTable(inner))
+		outer := NewEmptyTable()
+		outer.SetMetatable(outerMT)
+		v.SetGlobal("it", NewTable(outer))
+		_, err := runWithVM(t, v, src)
+		if err == nil || !strings.Contains(err.Error(), "attempt to call a boolean value "+suffix) {
+			t.Errorf("error = %v, want a boolean call error with %s", err, suffix)
+		}
+	})
+}

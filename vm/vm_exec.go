@@ -351,7 +351,10 @@ mainLoop:
 			a, b, c := inst.A(), inst.B(), inst.C()
 			table := frame.closure.Upvalues[b].Get()
 			key := consts[c]
-			if t := table.AsTable(); t != nil {
+			// A thread is backed by a *Table, but it must not be indexed as
+			// one: an _ENV upvalue holding a thread resolves through the
+			// thread type metatable (or raises) like the other index paths.
+			if t := table.AsTable(); t != nil && !table.isThread() {
 				val, err := vm.tableGet(t, key)
 				if err != nil {
 					return nil, err
@@ -461,7 +464,7 @@ mainLoop:
 			} else {
 				value = vm.stack[frame.base+c]
 			}
-			if t := table.AsTable(); t != nil {
+			if t := table.AsTable(); t != nil && !table.isThread() {
 				if err := vm.tableSet(t, key, value); err != nil {
 					return nil, err
 				}
@@ -686,7 +689,9 @@ mainLoop:
 			table := vm.stack[frame.base+b]
 			vm.stack[frame.base+a+1] = table
 			key := proto.Constants[c].SVal
-			if t := table.AsTable(); t != nil {
+			// A thread is backed by a *Table, but its metatable is the
+			// thread type metatable: leave it to the getMetafield path.
+			if t := table.AsTable(); t != nil && !t.IsThread() {
 				val, err := vm.tableGetString(t, key)
 				if err != nil {
 					return nil, err
@@ -702,7 +707,7 @@ mainLoop:
 				}
 				var val Value
 				var err error
-				if idx.IsTable() {
+				if idx.IsTable() && !valueIsThread(idx) {
 					val, err = vm.tableGetString(idx.AsTable(), key)
 				} else {
 					val, err = vm.resolveIndex(idx, table, NewString(key))
@@ -717,31 +722,32 @@ mainLoop:
 				consts = frame.closure.ConstValues()
 				vm.stack[frame.base+a] = val
 			} else if ud := table.AsUserdata(); ud != nil {
-				// Userdata method call - use __index from userdata metatable
+				// Userdata method call: a table __index is read directly (the
+				// common case for host objects); anything else runs the same
+				// luaV_finishget chain as the plain field path.
+				var index Value
 				if mt := ud.Metatable(); mt != nil {
-					index := mt.Get(metaIndex)
-					if index.IsTable() {
-						val, err := vm.tableGetString(index.AsTable(), key)
-						if err != nil {
-							return nil, err
-						}
-						vm.stack[frame.base+a] = val
-					} else if index.IsFunction() || index.IsNativeFunc() {
-						val, err := vm.callMetamethod("index", index, table, NewString(key))
-						if err != nil {
-							return nil, err
-						}
-						vm.stack[frame.base+a] = val
-						frame = &vm.callStack[len(vm.callStack)-1]
-						proto = frame.closure.Proto
-						code = proto.Code
-						consts = frame.closure.ConstValues()
-					} else {
-						return nil, vm.runtimeError("attempt to index a userdata value")
-					}
-				} else {
-					return nil, vm.runtimeError("attempt to index a userdata value")
+					index = mt.Get(metaIndex)
 				}
+				if index.IsNil() {
+					return nil, vm.runtimeError("attempt to index a %s value%s", vm.ObjTypeName(table), vm.varInfo(b))
+				}
+				var val Value
+				var err error
+				if index.IsTable() && !valueIsThread(index) {
+					val, err = vm.tableGetString(index.AsTable(), key)
+				} else {
+					val, err = vm.resolveIndex(index, table, NewString(key))
+				}
+				if err != nil {
+					return nil, err
+				}
+				// Resolving the chain can call back into Lua and grow the call stack.
+				frame = &vm.callStack[len(vm.callStack)-1]
+				proto = frame.closure.Proto
+				code = proto.Code
+				consts = frame.closure.ConstValues()
+				vm.stack[frame.base+a] = val
 			} else if mm := vm.getMetafield(table, MetaIndex); !mm.IsNil() {
 				val, err := vm.resolveIndex(mm, table, NewString(key))
 				if err != nil {
@@ -2177,22 +2183,26 @@ mainLoop:
 				// Pop native frame and restore top
 				vm.callStack = vm.callStack[:len(vm.callStack)-1]
 				vm.top = oldTop
-			} else if fn.IsTable() {
-				// Check for __call metamethod
-				mt := fn.AsTable().Metatable()
-				if mt != nil {
-					callMM := mt.Get(metaCall)
-					if !callMM.IsNil() {
-						// Call __call(self, state, ctrl)
-						results, err = vm.ProtectedCall(callMM, []Value{fn, state, ctrl})
-						if err != nil {
-							return nil, err
-						}
-					} else {
-						return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))
+			} else if callMM := vm.getMetafield(fn, MetaCall); !callMM.IsNil() {
+				// Any value with a __call metamethod (table, userdata, or a
+				// type metatable for strings, numbers, threads, ...) is a
+				// callable iterator: call __call(self, state, ctrl).
+				//
+				// Walk the rest of the __call chain first: when it ends at a
+				// value that is not callable, report that value with the
+				// for-iterator context, as reference luaD_tryfuncTM does via
+				// funcnamefromcode. A chain that is merely too long is left
+				// to ProtectedCall, which raises its own error.
+				for cur, depth := callMM, 1; depth <= MaxCallChainDepth && !cur.IsFunction() && !cur.IsNativeFunc(); depth++ {
+					next := vm.getMetafield(cur, MetaCall)
+					if next.IsNil() {
+						return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(cur))
 					}
-				} else {
-					return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))
+					cur = next
+				}
+				results, err = vm.ProtectedCall(callMM, []Value{fn, state, ctrl})
+				if err != nil {
+					return nil, err
 				}
 			} else {
 				return nil, vm.runtimeError("attempt to call a %s value (for iterator 'for iterator')", vm.ObjTypeName(fn))
