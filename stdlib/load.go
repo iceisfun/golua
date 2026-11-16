@@ -477,14 +477,7 @@ func luaLoadfile(v *vm.VM) int {
 
 	// Detect binary chunk. A file may start with a shebang (#) line
 	// followed by binary data, so strip the first line before checking.
-	binarySource := source
-	if len(binarySource) > 0 && binarySource[0] == '#' {
-		if idx := bytes.IndexByte(binarySource, '\n'); idx >= 0 {
-			binarySource = binarySource[idx+1:]
-		} else {
-			binarySource = nil // entire file is a shebang line
-		}
-	}
+	binarySource := skipFilePrefix(source)
 	isBinary := len(binarySource) > 0 && binarySource[0] == '\x1b'
 
 	if isBinary {
@@ -566,14 +559,7 @@ func luaDofile(v *vm.VM) int {
 	// Detect binary chunk. A file may start with a shebang (#) line
 	// followed by binary data, so strip the first line before checking.
 	var fn vm.Value
-	binarySource := source
-	if len(binarySource) > 0 && binarySource[0] == '#' {
-		if idx := bytes.IndexByte(binarySource, '\n'); idx >= 0 {
-			binarySource = binarySource[idx+1:]
-		} else {
-			binarySource = nil
-		}
-	}
+	binarySource := skipFilePrefix(source)
 	isBinary := len(binarySource) > 0 && binarySource[0] == '\x1b'
 
 	if isBinary {
@@ -614,6 +600,22 @@ func luaDofile(v *vm.VM) int {
 		v.Set(i, r)
 	}
 	return len(results)
+}
+
+// skipFilePrefix returns file contents after an optional UTF-8 BOM and an
+// optional first line starting with '#', as reference luaL_loadfilex does
+// before it looks for the binary chunk signature.
+func skipFilePrefix(source []byte) []byte {
+	if len(source) >= 3 && source[0] == 0xEF && source[1] == 0xBB && source[2] == 0xBF {
+		source = source[3:]
+	}
+	if len(source) > 0 && source[0] == '#' {
+		if idx := bytes.IndexByte(source, '\n'); idx >= 0 {
+			return source[idx+1:]
+		}
+		return nil // entire file is a shebang line
+	}
+	return source
 }
 
 // compileChunkOpts holds optional settings for compileChunk.
