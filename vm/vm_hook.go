@@ -138,6 +138,26 @@ func (vm *VM) fireReturnHook() {
 	}
 }
 
+// skipTForLoopHooks keeps line and count hooks off the next instruction.
+// Reference lvm.c reaches a generic for's TFORCALL from TFORPREP, and its
+// TFORLOOP from TFORCALL, with a goto that bypasses the hook dispatch, so
+// neither counts as an instruction nor reports a line there.
+func (vm *VM) skipTForLoopHooks() {
+	if vm.hookMask != 0 && !vm.inHook {
+		vm.hookSkipNext = true
+	}
+}
+
+// tforCallReturned finishes the hook state of a TFORCALL in frame: like
+// rethook after the iterator call (native ones included), line tracking
+// resumes at the TFORCALL, and the TFORLOOP that follows is not traced.
+func (vm *VM) tforCallReturned(frame *callFrame) {
+	if vm.hookMask != 0 && !vm.inHook {
+		vm.hookReturnTo(frame)
+		vm.hookSkipNext = true
+	}
+}
+
 // hookReturnTo sets the line hook's tracking for a call returning into the
 // Lua frame caller, as rethook sets L->oldpc to the caller's pending
 // instruction: the rest of that instruction's line is not a new line, even

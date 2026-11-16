@@ -105,13 +105,17 @@ type VM struct {
 	registeredProviders []any
 
 	// Hook support
-	hookFunc     Value // Hook callback function
-	hookMask     byte  // Bitmask of active hook events
-	hookCount    int   // Instruction count interval for count hooks
-	hookCounter  int   // Current counter (counts down to 0)
-	inHook       bool  // Re-entrancy guard
-	lastHookLine int   // Last line reported by line hook (-1 = none)
-	lastHookPC   int   // Last pc checked by line hook (for backward jump detection)
+	hookFunc    Value // Hook callback function
+	hookMask    byte  // Bitmask of active hook events
+	hookCount   int   // Instruction count interval for count hooks
+	hookCounter int   // Current counter (counts down to 0)
+	inHook      bool  // Re-entrancy guard
+	// hookSkipNext makes the next instruction skip line and count hooks,
+	// as reference enters a generic for's first TFORCALL with
+	// 'goto l_tforcall' and does not trace it.
+	hookSkipNext bool
+	lastHookLine int // Last line reported by line hook (-1 = none)
+	lastHookPC   int // Last pc checked by line hook (for backward jump detection)
 
 	// Pending call name hint for debug.getinfo name inference.
 	// Set before calling vm.call() and consumed by vm.call().

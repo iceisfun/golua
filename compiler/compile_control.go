@@ -597,10 +597,18 @@ func (c *compiler) compileForInStmt(s *ast.ForInStmt) {
 				fs.freeReg = tmp
 			}
 		}
-		// Fill missing with nil (only needed when last expr was not multires)
+		// Fill missing with nil (only needed when last expr was not multires).
+		// Like reference adjust_assign, the padding takes the line of the
+		// explist's last token, not the 'for' line.
 		lastFillsRemaining := nIter > 0 && nIter <= 4 && isMultiRet(s.Iters[nIter-1])
+		padLine := line
+		if nIter > 0 {
+			if l := exprEndLine(s.Iters[nIter-1]); l > 0 {
+				padLine = l
+			}
+		}
 		for i := nIter; i < 4 && !lastFillsRemaining; i++ {
-			fs.emit(ABC(OP_LOADNIL, base+i, 0, 0, 0), line)
+			fs.emit(ABC(OP_LOADNIL, base+i, 0, 0, 0), padLine)
 			fs.freeReg = base + i + 1
 			if fs.freeReg > fs.maxReg {
 				fs.maxReg = fs.freeReg

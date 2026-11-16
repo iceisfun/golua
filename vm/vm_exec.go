@@ -276,7 +276,9 @@ mainLoop:
 		// Skip line hook for VARARGPREP (pc=0) — in Lua 5.4, OP_VARARGPREP
 		// suppresses its own line hook and sets L->oldpc = 1 so the next
 		// instruction fires. Count hooks still fire for VARARGPREP.
-		if vm.hookMask != 0 && !vm.inHook {
+		if vm.hookSkipNext {
+			vm.hookSkipNext = false
+		} else if vm.hookMask != 0 && !vm.inHook {
 			skipLine := frame.pc == 1 && inst.OpCode() == compiler.OP_VARARGPREP
 			if skipLine {
 				// Only fire count hook, not line hook, for VARARGPREP
@@ -2188,6 +2190,8 @@ mainLoop:
 			}
 			vm.tbcVars = append(vm.tbcVars, frame.base+a+2)
 			frame.pc += bx
+			// Reference jumps straight into TFORCALL without tracing it.
+			vm.skipTForLoopHooks()
 
 		case compiler.OP_TFORCALL:
 			a, c := inst.A(), inst.C()
@@ -2226,6 +2230,7 @@ mainLoop:
 					for i := 0; i < c; i++ {
 						vm.stack[frame.base+a+3+i] = vm.stack[frame.base+callBase+i]
 					}
+					vm.tforCallReturned(frame)
 					break
 				}
 				// Set up stack for native call at R[A+4] so results land there
@@ -2289,6 +2294,7 @@ mainLoop:
 			for i := len(results); i < c; i++ {
 				vm.stack[frame.base+a+3+i] = Nil
 			}
+			vm.tforCallReturned(frame)
 
 		case compiler.OP_TFORLOOP:
 			a, bx := inst.A(), inst.Bx()
