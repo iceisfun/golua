@@ -92,23 +92,22 @@ func (vm *VM) funcNameFromCall(callerFrame *callFrame) (name, nameWhat string) {
 			// R[A] = R[B][R[C]] — resolve key name from register C.
 			b := prev.B()
 			c := prev.C()
-			kn := kName(proto, i, c)
+			kn, ok := kName(proto, i, c)
+			if !ok || kn == "" {
+				// The callers take an empty name for none, so an empty
+				// constant key is not told apart here.
+				kn = "?"
+			}
 			// Check if table is _ENV (global access with high constant index).
 			if localName(proto, b, i) == "_ENV" || isUpvalEnv(proto, i, b) {
-				if kn != "" {
-					return kn, nwGlobal
-				}
-				return "?", nwGlobal
+				return kn, nwGlobal
 			}
 			// The SELF-opcode fallback (MOVE base+1,obj + LOADK + GETTABLE) is
 			// indistinguishable from a plain table access here, and reference
 			// Lua's getobjname names it "field" (it has no fallback heuristic;
 			// OP_GETTABLE → "field"). Do NOT recover "method" — see errors.lua
 			// "t:bbb()" with >256 constants forcing the RK-limit fallback.
-			if kn != "" {
-				return kn, nwField
-			}
-			return "?", nwField
+			return kn, nwField
 		case compiler.OP_GETFIELD:
 			// R[A] := R[B][K[C]:string]
 			c := prev.C()
@@ -343,21 +342,18 @@ func regObjName(proto *compiler.Proto, pc int, reg int) (string, string) {
 			// R[A] = R[B][R[C]] — resolve key name from register C.
 			b := inst.B()
 			c := inst.C()
-			kn := kName(proto, i, c)
+			kn, ok := kName(proto, i, c)
+			if !ok {
+				kn = "?"
+			}
 			// Check if table is _ENV (global access with high constant index).
 			if localName(proto, b, i) == "_ENV" || isUpvalEnv(proto, i, b) {
-				if kn != "" {
-					return kn, nwGlobal
-				}
-				return "?", nwGlobal
+				return kn, nwGlobal
 			}
 			// The SELF-opcode fallback (MOVE base+1,obj + LOADK + GETTABLE) is
 			// named "field" by reference Lua's getobjname (OP_GETTABLE → "field";
 			// no method-recovery heuristic). Do not return "method" here.
-			if kn != "" {
-				return kn, nwField
-			}
-			return "?", nwField
+			return kn, nwField
 		default:
 			ln := localName(proto, reg, i)
 			if ln != "" && ln != "?" && !isInternalName(ln) {
@@ -455,44 +451,46 @@ func isUpvalEnv(proto *compiler.Proto, pc int, reg int) bool {
 	return false
 }
 
-// kName resolves a register reference to a constant name at the given PC.
-// If register reg was loaded from a constant (via OP_LOADK/OP_LOADKX) and
-// the constant is a string, returns that string. Otherwise returns "".
-func kName(proto *compiler.Proto, pc int, reg int) string {
-	for i := pc - 1; i >= 0; i-- {
+// kName resolves the key register reg of an indexing instruction at pc to the
+// string constant it holds, as reference rname does. ok is false unless the
+// register provably holds a string constant (which may be empty): it was last
+// set, on every path to pc, by a LOADK/LOADKX of a string, possibly through
+// MOVEs from lower registers. A register that is a named local at that point
+// holds a variable, not a constant, even when its initializer was a LOADK, so
+// it has no name either.
+func kName(proto *compiler.Proto, pc int, reg int) (name string, ok bool) {
+	for {
+		if localName(proto, reg, pc) != "?" {
+			return "", false
+		}
+		i := pc - 1
+		for ; i >= 0; i-- {
+			inst := proto.Code[i]
+			if !aNotDest(inst.OpCode()) && inst.A() == reg {
+				break
+			}
+		}
+		if i < 0 || hasForwardBypass(proto, i, pc) {
+			return "", false
+		}
 		inst := proto.Code[i]
-		op := inst.OpCode()
-		a := inst.A()
-		if a != reg {
-			continue
-		}
-		switch op {
-		case compiler.OP_LOADK:
-			if hasForwardBypass(proto, i, pc) {
-				continue
-			}
-			bx := inst.Bx()
-			if bx < len(proto.Constants) && proto.Constants[bx].Type == compiler.ValString {
-				return proto.Constants[bx].SVal
-			}
-			return ""
-		case compiler.OP_LOADKX:
-			if hasForwardBypass(proto, i, pc) {
-				continue
-			}
-			if i+1 < len(proto.Code) {
-				ax := proto.Code[i+1].Ax()
-				if ax < len(proto.Constants) && proto.Constants[ax].Type == compiler.ValString {
-					return proto.Constants[ax].SVal
-				}
-			}
-			return ""
+		k := -1
+		switch inst.OpCode() {
 		case compiler.OP_MOVE:
-			reg = inst.B()
-			continue
-		default:
-			return ""
+			if b := inst.B(); b < reg {
+				reg, pc = b, i
+				continue
+			}
+		case compiler.OP_LOADK:
+			k = inst.Bx()
+		case compiler.OP_LOADKX:
+			if i+1 < len(proto.Code) {
+				k = proto.Code[i+1].Ax()
+			}
 		}
+		if k >= 0 && k < len(proto.Constants) && proto.Constants[k].Type == compiler.ValString {
+			return proto.Constants[k].SVal, true
+		}
+		return "", false
 	}
-	return ""
 }
