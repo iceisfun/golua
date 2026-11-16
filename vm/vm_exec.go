@@ -1785,7 +1785,8 @@ mainLoop:
 					}
 					vi := ""
 					name, what := regObjName(tailProto, tailPC, a)
-					if name != "" {
+					// Guard on 'what' as varInfo does: "" is a valid name.
+					if what != "" {
 						vi = fmt.Sprintf(" (%s '%s')", what, name)
 					}
 					return nil, vm.runtimeError("attempt to call a %s value%s", vm.ObjTypeName(fn), vi)
